@@ -124,6 +124,21 @@ dry mid-motion, the MCU synthesizes a controlled deceleration to zero
 velocity and reports an underrun event — a resumable pause instead of
 today's instant shutdown.
 
+**Failures pause and hold; they do not abort.** Boards preserve their
+positions, keep motors energized, keep the bed at temperature (per an
+explicit opt-in policy), and log what they actually executed to an
+uplink **execution log** — the symmetric twin of the intention queue.
+A loose toolhead cable becomes: replug, re-handshake, rebase, resume —
+not a cold bed and a detached print
+([08-Failure_Recovery.md](08-Failure_Recovery.md)).
+
+**Sensing becomes event-driven.** Endstops, probes, and analog
+thresholds move from timer-polled sampling to the hardware the MCUs
+already ship — edge interrupts, analog comparators with DAC
+thresholds, timer input-capture timestamps — so triggers are
+microsecond events, not samples that got lucky
+([09-Hardware_Triggers.md](09-Hardware_Triggers.md)).
+
 **The link layer gains forward error correction and a UDP transport.**
 A backwards-compatible framing extension (negotiated through reserved
 bits that legacy firmware provably rejects) replaces the 16-bit CRC
@@ -181,6 +196,13 @@ relitigating them:
 5. **Link evolution is backwards compatible.** Legacy CRC16 framing
    remains the default and permanent fallback; the new framing is
    negotiated per link ([07-Link_Transport.md](07-Link_Transport.md)).
+6. **This is a permanent, friendly fork.** The work does not target
+   merging into mainline Klipper and does not depend on upstream
+   acceptance of any part of it. It tracks upstream (regular rebases,
+   identical config/G-code surface by default, the legacy protocol
+   kept intact so every existing board works), but the design is free
+   to follow its own philosophy
+   ([06-Migration.md](06-Migration.md)).
 
 ## Non-goals
 
@@ -189,10 +211,13 @@ relitigating them:
 * **No closed-loop control on the host.** Control loops (FOC, servo
   PID) live entirely on the MCU/drive side; the host ships trajectories
   and reads telemetry.
-* **No change to the heater safety model.** The `max_duration`
-  watchdog semantics are preserved (see
-  [03-Traffic_Classes.md](03-Traffic_Classes.md) for the scheduling
-  class discussion).
+* **No weakening of the default heater safety model.** The
+  `max_duration` watchdog semantics are preserved by default; the
+  opt-in per-heater *failsafe hold* policy of
+  [08-Failure_Recovery.md](08-Failure_Recovery.md) substitutes a
+  different, still strictly bounded envelope only where the user
+  explicitly configures it (see also
+  [03-Traffic_Classes.md](03-Traffic_Classes.md)).
 * **No new transport requirement.** Everything works over today's
   serial/USB/CAN links; UDP/WiFi is an addition, not a replacement.
 * **No AVR port of the new motion path.** The legacy path is the
@@ -234,4 +259,6 @@ adjacent industries, which is strong evidence for its viability:
 | [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backend split; stepper, FOC, PWM backends; stop semantics |
 | [05-Host_Architecture.md](05-Host_Architecture.md) | What survives, what is repurposed, what dies in klippy/chelper |
 | [06-Migration.md](06-Migration.md) | Coexistence, validation harness, phased rollout, risks |
-| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP/WiFi transport, ESP32 |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, link security, ESP32 |
+| [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume |
+| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps |

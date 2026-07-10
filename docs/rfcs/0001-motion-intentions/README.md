@@ -1,10 +1,14 @@
 # RFC 0001: Motion Intentions
 
-A proposed architectural evolution of Klipper: per-joint trajectory
-**intentions** instead of pre-computed step pulses, the primary MCU as
-the machine's **time authority**, explicit **traffic classes** so
-non-critical traffic can never halt a print, and a
-backwards-compatible **FEC/UDP link layer** for wireless boards.
+A proposed architectural evolution of Klipper (as a permanent,
+backwards-compatible fork): per-joint trajectory **intentions**
+instead of pre-computed step pulses, the primary MCU as the machine's
+**time authority**, explicit **traffic classes** so non-critical
+traffic can never halt a print, **pause-and-hold failure recovery**
+with an execution log so failures resume instead of aborting,
+**hardware-event triggers** in place of polling, and a
+backwards-compatible, authenticated **FEC/UDP link layer** for
+wireless and Ethernet boards.
 
 ## Status
 
@@ -16,17 +20,19 @@ backwards-compatible **FEC/UDP link layer** for wireless boards.
 | [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Draft / Discussion |
 | [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Draft / Discussion |
 | [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Draft / Discussion |
-| [06-Migration.md](06-Migration.md) | Coexistence, validation differ, phases, risk register | Draft / Discussion |
-| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP/WiFi transport, ESP32 | Draft / Discussion |
+| [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Draft / Discussion |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Draft / Discussion |
+| [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Draft / Discussion |
+| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Draft / Discussion |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 04 → 01 → 03 → 07
-* *Host / klippy*: 02 → 05 → 06
-* *"Is this safe and landable?"*: 00 → 06 (risk register) → 02
-  (underrun) → 03
+* *Protocol / firmware*: 02 → 04 → 01 → 03 → 09 → 07
+* *Host / klippy*: 02 → 05 → 08 → 06
+* *"Is this safe and landable?"*: 00 → 06 (risk register) → 08
+  (pause-and-hold, heater policy) → 02 (underrun) → 03
 
 ## Glossary
 
@@ -55,6 +61,22 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
 * **Underrun ramp** — the deceleration-to-zero an actuator executes
   autonomously if its queue runs dry mid-motion; a resumable event,
   not a shutdown.
+* **Pause-and-hold** — the default response to recoverable failures:
+  motors stay energized at their held positions, heaters follow their
+  failure policy, state and logs are retained
+  ([08-Failure_Recovery.md](08-Failure_Recovery.md)).
+* **Execution log** — the uplink twin of the intention queue: a
+  per-board ring buffer of what was *actually* executed (segments,
+  triggers, holds), streamed live on Class 2 and reliably dumped
+  after failures; both flight recorder and resume ground-truth.
+* **Failsafe hold (heaters)** — opt-in per-heater policy keeping a
+  heater (typically the bed) at its last target autonomously during
+  pause-and-hold, under a hard temperature ceiling, duration bound,
+  and on-MCU runaway checks.
+* **Trigger source** — a hardware event producer (GPIO edge IRQ,
+  analog comparator, ADC watchdog) that fires trsync directly, with
+  optional timer-capture timestamps
+  ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)).
 * **Traffic class** — one of Scheduled (Class 0), Prompt (Class 1),
   Telemetry (Class 2), distinguished by failure semantics
   ([03-Traffic_Classes.md](03-Traffic_Classes.md)).

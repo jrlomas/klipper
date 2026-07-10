@@ -7,6 +7,33 @@ document defines how old and new coexist, how equivalence is proven
 before any printer runs the new path, the phased rollout, and the
 consolidated risk register.
 
+## Fork stance
+
+This project is a **permanent, friendly fork** of Klipper. It does
+not target being merged into mainline, and no part of the plan
+depends on upstream acceptance — the philosophy here (autonomous
+boards, intentions, pause-and-hold) is a deliberate departure from
+mainline's design center, and that is respected in both directions.
+
+What "friendly" means concretely:
+
+* **Track upstream.** Regularly rebase/merge mainline master; the
+  legacy protocol path is kept fully intact, so upstream fixes to it
+  (and to kinematics, extras, and hardware support) flow in cheaply.
+* **Stay backwards compatible with the mainline surface.** Config
+  files, G-code, macros, and the API server keep working; a printer
+  can be moved between this fork and mainline without rewriting its
+  configuration. Every board that runs mainline Klipper runs here in
+  legacy mode.
+* **No merge-back obligation.** Individual pieces (traffic classes,
+  BCH framing) may be *offered* upstream if there's interest, but
+  nothing in the roadmap waits on it.
+
+The practical consequence for this document: "migration" means
+migrating *a machine* from legacy behavior to the new architecture,
+one actuator and one link at a time — not migrating patches into
+mainline.
+
 ## Coexistence
 
 * **Per-actuator opt-in.** A config knob selects the protocol per
@@ -82,7 +109,9 @@ until it is met.
 | P4 | Stepper backend on real silicon (STM32F1/F4, RP2040); benchmarks | Meets estimated step-rate ceilings ±25%; prints on a test machine match legacy prints |
 | P5 | Time model: machine-time authority + beacon sync; multi-MCU trajectory machines | ≤ ±10 µs measured inter-MCU sync; multi-board test machine prints |
 | P6 | FOC reference backend (one open servo platform) + BLDC extruder demo | Servo joint tracks fitted trajectory within its own loop spec; fault→trsync stop demonstrated |
-| P7 | Framing v2 (BCH) + UDP/WiFi transport, ESP32 target — separable; can run in parallel from P3 | WiFi toolboard survives scripted 200 ms link stalls with zero shutdowns; underrun/resume demonstrated |
+| P7 | Framing v2 (BCH) + UDP transport over WiFi/Ethernet with mandatory HMAC, ESP32 target — separable; can run in parallel from P3 | WiFi toolboard survives scripted 200 ms link stalls with zero shutdowns; underrun/resume demonstrated; unauthenticated datagrams rejected |
+| P8 | Failure recovery ([08-Failure_Recovery.md](08-Failure_Recovery.md)): pause-and-hold states, execution log + reliable dump, heater failsafe hold, reconnect-resume | Scripted cable-pull on a toolhead board mid-print: replug → resume completes the print with the bed never leaving temperature |
+| P9 | Hardware triggers ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)): EXTI trigger sources, comparator integration (building on the `rt-comparator` branch: `src/stm32/comp.c` window comparator), capture timestamps — separable; can run in parallel from P4 | Probe repeatability measurably better than polled endstop path on the same hardware; trigger latency ≤ 10 µs local |
 
 ## Risk register
 
@@ -96,16 +125,25 @@ until it is met.
 | **Host CPU regression** (fitter vs itersolve+stepcompress) | Expected neutral-to-favorable ([05-Host_Architecture.md](05-Host_Architecture.md)); measured in P2 batch benchmarks before opt-in is documented. |
 | **Low-bandwidth links** (250 kbaud UART vs shaped-motion segment rates) | Detected at connect (link speed known); relaxed tolerance or legacy mode per actuator; numbers in [05-Host_Architecture.md](05-Host_Architecture.md). |
 | **Two protocols to maintain** | Real, accepted cost of the permanent legacy path; contained by the backend split (the segment core is one module) and by the differ keeping both paths honest against each other. |
-| **WiFi link security** | Flagged, not solved — see [07-Link_Transport.md](07-Link_Transport.md); UDP transport ships behind an explicit "trusted network" statement until an auth layer is specified. |
+| **Network link security** | Addressed, not just flagged: HMAC authentication is mandatory in v1 of the UDP transport ([07-Link_Transport.md](07-Link_Transport.md)); only PSK provisioning remains open. |
+| **Heater failsafe hold is a fire-safety trade** | Opt-in per heater, hard ceiling + hard duration bound + on-MCU deviation/runaway checks ([08-Failure_Recovery.md](08-Failure_Recovery.md)); hotends default off. The trade (an unattended warm bed vs a lost print) is made explicitly by the user in config, never by default. |
+| **Hardware-trigger false positives** (noisy endstop lines firing edge IRQs) | Qualify-after-event confirmation and hardware glitch filters ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)); a false edge costs a µs-scale confirmation, never an unconfirmed trsync. |
+| **Shaper ringing near zero velocity clusters segment breaks** (the v-sign-change invariant forces a break at every crossing; slow moves under input shaping can crowd them) | Fitter-side hysteresis: collapse sub-tolerance oscillations into holds; pre-registered as an expected P2 differ finding rather than a surprise. |
+| **Extruder under pressure advance is the fitter's worst case** (E-joint curvature at shaper frequency may demand high segment rates) | Looser default E tolerance (extrusion is mechanically low-pass), measured in P2; flags bits 6–7 reserve a cubic-segment escape hatch ([02-Intention_Protocol.md](02-Intention_Protocol.md)). |
 
 ## What success looks like
 
-A corexy printer with an STM32 mainboard, an ESP32 WiFi toolboard
-running a BLDC extruder, and a Raspberry Pi host: the host plans
-everything it plans today, ships ~10 KB/s of intentions, and a 200 ms
-WiFi stall during a speed benchmark produces — nothing. The queues
-absorb it. Pull the antenna off mid-print and the toolhead decelerates
-cleanly, reports where it stopped, and resumes when the link returns.
-An LED animation runs the whole time and could not have hurt anything
-even if it had stalled the link, because it was never allowed near the
-hard timer list.
+A corexy printer with an STM32 mainboard, an ESP32 toolboard (WiFi or
+a single Ethernet cable) running a BLDC extruder, and a Raspberry Pi
+host: the host plans everything it plans today, ships ~10 KB/s of
+HMAC-authenticated intentions, and a 200 ms link stall during a speed
+benchmark produces — nothing. The queues absorb it. Pull the toolhead
+cable mid-print and the machine pauses and holds: motors energized,
+positions kept, the bed staying at temperature so the part never
+lets go of the plate. Replug the cable; the board reports it never
+rebooted, the host drains the execution log, rebases, and the print
+finishes. Probing runs off a hardware window comparator with
+capture-timestamped triggers, so the probe is as repeatable as its
+mechanics, not its polling loop. An LED animation runs the whole time
+and could not have hurt anything even if it had stalled the link,
+because it was never allowed near the hard timer list.

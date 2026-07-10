@@ -19,9 +19,16 @@ everything actuator-independent:
 * machine-time → local-clock conversion on segment ingest
   ([01-Time_Model.md](01-Time_Model.md)),
 * underrun ramp synthesis ([02-Intention_Protocol.md](02-Intention_Protocol.md)),
-* trsync stop-signal registration (IRQ-context abort),
+* trsync stop-signal registration (IRQ-context abort) — with trigger
+  *detection* increasingly delegated to hardware event sources
+  ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)),
+* the **execution log**: appending segment-complete, trigger, hold and
+  rebase records to the board's ring buffer — the flight recorder and
+  resume ground-truth of
+  [08-Failure_Recovery.md](08-Failure_Recovery.md),
+* pause-and-hold state management on link loss or host command,
 * the host-visible commands (`queue_traj_segment`, `traj_hold`,
-  `traj_get_position`, …) and status/underrun messages.
+  `traj_get_position`, `log_dump`, …) and status/underrun messages.
 
 A backend implements a small ops interface:
 
@@ -115,6 +122,7 @@ standard raster requirement) without a special-purpose module.
 | --- | --- | --- | --- |
 | trsync trigger (endstop/probe/fault) | cease edges immediately (IRQ context), queue flushed, enable unchanged | ramp/servo to hold at current position; queue flushed | freeze output; queue flushed |
 | Underrun terminal | at v=0 after synthesized ramp; hold enable | hold position | freeze output |
+| Pause-and-hold (link loss, host command — [08](08-Failure_Recovery.md)) | at v=0 after ramp; **stay energized**, position retained | closed-loop hold | freeze output |
 | Host abort (rebase/flush) | cease edges | hold position | freeze output |
 | Machine shutdown | edges cease; enable pin released by existing shutdown handlers | disable drive (configurable hold-vs-free) | output to configured shutdown value |
 

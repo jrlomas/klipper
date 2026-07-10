@@ -93,9 +93,15 @@ Field definitions:
   one level up. Resolution: 2⁻³² sub-unit/tick².
 * `pos` — signed 32-bit in sub-units (±2³¹ sub-units = ±32768 native
   units; at a typical 1280 microsteps/mm that is ±25 m of travel).
-* `flags` — reserved (bit 0 proposed: *hold-at-end* hint — prefer
-  position hold over underrun ramp if the queue empties after this
-  segment; see underrun policy).
+* `flags` — bit 0 proposed: *hold-at-end* hint — prefer position hold
+  over underrun ramp if the queue empties after this segment (see
+  underrun policy). Bits 6–7 are **reserved for segment polynomial
+  order** (00 = quadratic): if a jerk-limited cubic extension is ever
+  wanted, it becomes a negotiated capability using these bits rather
+  than a protocol redesign. Reserving them costs nothing now and is
+  cheap insurance — the extruder under pressure advance is the most
+  likely customer (see the fitter discussion in
+  [05-Host_Architecture.md](05-Host_Architecture.md)).
 * `underrun_decel` — emergency deceleration magnitude in `accel` wire
   units.
 
@@ -294,6 +300,11 @@ the host choose). Heater safety is unaffected — the independent
 **Recovery flow:** host notices `traj_underrun` → re-plans from the
 reported (clock, pos) → sends `trajectory_rebase` + fresh segments.
 For a printer this surfaces as a resumable pause, not a failed print.
+The underrun ramp is one instance of the general **pause-and-hold**
+failure model — link loss, board replug, and host-crash recovery,
+including what every board preserves and the execution log that makes
+resume exact, are specified in
+[08-Failure_Recovery.md](08-Failure_Recovery.md).
 
 ## Homing, probing, and trsync
 

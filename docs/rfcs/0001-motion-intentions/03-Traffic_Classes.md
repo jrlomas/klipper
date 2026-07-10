@@ -67,7 +67,11 @@ traffic should not carry shutdown semantics it never needed.
 ### Class 2 — Telemetry
 
 *Traffic:* ADC/temperature reports, trajectory status (queue
-horizons), FOC tracking error, diagnostic dumps.
+horizons), FOC tracking error, diagnostic dumps, and the live stream
+of the **execution log** ([08-Failure_Recovery.md](08-Failure_Recovery.md))
+— note the log's *post-failure dump* is deliberately Class 1
+(reliable pull), because recovery must never depend on records that
+were droppable while things were going wrong.
 
 *Semantics:* best-effort. Rate-limited at the source, droppable under
 congestion; every producer maintains a drop counter so loss is
@@ -125,9 +129,14 @@ either direction.
   [klippy/extras/heaters.py](../../../klippy/extras/heaters.py)) that shuts the
   heater off if the host stops refreshing it. A PWM update landing a
   few hundred µs "late" is thermally meaningless, while today it can
-  kill the print. The watchdog semantics are preserved bit-for-bit.
+  kill the print. The watchdog semantics are preserved bit-for-bit by
+  default; the opt-in per-heater *failsafe hold* policy
+  ([08-Failure_Recovery.md](08-Failure_Recovery.md)) substitutes its
+  own bounded envelope where configured.
   *Flagged as an open question for review since it touches heaters.*
-* **Endstop sampling, trsync:** Class 0 (they arm hard timers).
+* **Endstop sampling, trsync:** Class 0 (they arm hard timers) — and
+  see [09-Hardware_Triggers.md](09-Hardware_Triggers.md) for moving
+  the detection itself out of the timer list entirely.
 * **ADC sampling:** configuration is Class 1; the periodic reports are
   Class 2 (they already are MCU-driven and loss-tolerant — the host
   treats a gap as a stale reading and the heater watchdog covers the

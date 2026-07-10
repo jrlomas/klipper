@@ -111,7 +111,7 @@ negotiable layers:
 Both layers ride the same negotiation mechanism (dictionary
 capability + header bits).
 
-## UDP transport binding (ESP32 and friends)
+## UDP transport binding (WiFi and Ethernet)
 
 * **Datagram = one or more complete frames** (typical WiFi MTU fits
   ~20 frames; batching amortizes per-packet overhead exactly as
@@ -128,11 +128,29 @@ capability + header bits).
   Class 0 and 1 are acked and erasure-protected; Class 2 telemetry may
   be sent as unacked datagrams and simply lost under congestion — the
   class semantics were designed for exactly this.
+* **Ethernet is the preferred wired network transport.** The same UDP
+  binding runs unchanged over Ethernet, and for new board designs
+  Ethernet is architecturally *more* universal than UART: switched
+  full-duplex links with per-port bandwidth, deterministic sub-ms
+  latency (no radio jitter), one cable standard from mainboard to
+  toolhead to peripheral, cheap PHYs/MACs (W5500-class SPI parts,
+  RMII PHYs on STM32/ESP32), and optional PoE for single-cable
+  toolheads. WiFi and Ethernet differ only in the loss model: over
+  Ethernet the erasure-FEC layer can typically be negotiated off,
+  while everything else — datagram sequencing, class mapping,
+  authentication — is identical. UART/USB/CAN remain fully supported;
+  they stop being the only respectable options.
 * **ESP32 as a target:** dual-core 240 MHz with the radio stack pinned
   to one core and motion execution on the other fits the 32-bit floor
-  of this RFC ([00-Vision.md](00-Vision.md)) comfortably. The port
-  concerns (WiFi stack integration, timer source) belong to the
-  migration plan, not this protocol document.
+  of this RFC ([00-Vision.md](00-Vision.md)) comfortably (and the
+  chip offers RMII Ethernet as well as WiFi). One honest caution: the
+  WiFi stack's interrupt behavior makes tick-precise step generation
+  on the same silicon genuinely hard — core pinning helps, and the
+  RMT/PCNT pulse peripherals are the likely escape hatch for the
+  stepper backend; the FOC backend (its own timer, tolerant of µs-level
+  ISR jitter) is frankly a better first citizen of that chip. The
+  port specifics belong to the migration plan, not this protocol
+  document.
 * **Jitter budget — the synergy argument:** with a 0.5–1 s MCU-side
   intention horizon and the underrun ramp of
   [02-Intention_Protocol.md](02-Intention_Protocol.md), the link may
@@ -143,15 +161,37 @@ capability + header bits).
   WiFi-attached motion boards are credible under this RFC and are not
   credible today.
 
-## Security note (flagged, not solved)
+## Security: mandatory for network transports
 
-A UDP/WiFi control link is exposed in a way a USB cable is not.
-This RFC flags — and deliberately does not design — link
-authentication (at minimum an HMAC on datagrams with a pre-shared key;
-possibly DTLS). Requirement recorded: the transport must leave room
-for an authentication layer without re-framing. Running an unsecured
-printer control link over an open network is out of scope in the same
-way physical USB security is.
+Today *everything* in the printer is unauthenticated — any process
+that can reach the serial device, CAN bus, or (worse) the network
+socket controls motors and heaters. A physical cable requires
+physical access; a datagram requires being on the network segment of
+a device that drives a 300 °C heater. Virtual networks and firewalls
+can wrap the problem, but the protocol itself is due for the upgrade,
+and going WiFi/Ethernet makes it non-optional.
+
+Position this RFC takes: **authentication is mandatory in v1 of the
+UDP transport** — not an open question, not a later phase:
+
+* Every datagram carries a truncated **HMAC** (e.g. HMAC-SHA256/8
+  bytes) over its contents plus a nonce/sequence, keyed by a
+  pre-shared key established at pairing time. Cost is a few µs per
+  datagram on any 32-bit MCU — negligible against WiFi latencies —
+  and it kills both forgery and blind replay.
+* An unauthenticated mode exists only as an explicit
+  `trust_network: true` configuration confession, for lab benches and
+  isolated VLANs.
+* Heavier machinery (DTLS, key rotation, per-board identities) is
+  deferred, but the datagram layout reserves the header space so
+  adopting it later is not a re-framing.
+* Wired point-to-point transports (USB, UART, CAN) keep their current
+  physical-access trust model — unchanged, but now that model is a
+  *stated* decision rather than an accident.
+
+Key provisioning (how the PSK gets onto the board: build-time,
+bootstrap-over-USB at first pairing, or NVS storage) is the open
+design item — the *requirement* is not.
 
 ## Open questions
 
@@ -159,7 +199,8 @@ way physical USB security is.
   link-configurable.
 * Erasure layer code: XOR (k+1, simple) vs Reed–Solomon (burst
   tolerant); and the default k.
-* Datagram authentication mechanism and key provisioning.
+* PSK provisioning flow and storage (the authentication requirement
+  itself is settled above).
 * Whether framing v2 should also lift `MESSAGE_MAX` (64) for
   high-MTU transports, or keep frame size and batch instead
   (proposed: keep 64, batch datagrams).
