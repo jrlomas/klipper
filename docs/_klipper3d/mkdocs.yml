@@ -129,6 +129,16 @@ nav:
     - Benchmarks.md
     - CONTRIBUTING.md
     - Packaging.md
+  - Design Proposals:
+    - rfcs/0001-motion-intentions/README.md
+    - rfcs/0001-motion-intentions/00-Vision.md
+    - rfcs/0001-motion-intentions/01-Time_Model.md
+    - rfcs/0001-motion-intentions/02-Intention_Protocol.md
+    - rfcs/0001-motion-intentions/03-Traffic_Classes.md
+    - rfcs/0001-motion-intentions/04-Actuator_Backends.md
+    - rfcs/0001-motion-intentions/05-Host_Architecture.md
+    - rfcs/0001-motion-intentions/06-Migration.md
+    - rfcs/0001-motion-intentions/07-Link_Transport.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md

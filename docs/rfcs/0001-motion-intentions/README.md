@@ -1,0 +1,71 @@
+# RFC 0001: Motion Intentions
+
+A proposed architectural evolution of Klipper: per-joint trajectory
+**intentions** instead of pre-computed step pulses, the primary MCU as
+the machine's **time authority**, explicit **traffic classes** so
+non-critical traffic can never halt a print, and a
+backwards-compatible **FEC/UDP link layer** for wireless boards.
+
+## Status
+
+| Document | Contents | Status |
+| --- | --- | --- |
+| [00-Vision.md](00-Vision.md) | Problem, proposal, premises, non-goals, prior art | Draft / Discussion |
+| [01-Time_Model.md](01-Time_Model.md) | Machine time, primary-MCU authority, beacon sync, budgets | Draft / Discussion |
+| [02-Intention_Protocol.md](02-Intention_Protocol.md) | Segment semantics, wire format, FPU-free execution, queue/refill, underrun | Draft / Discussion |
+| [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Draft / Discussion |
+| [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Draft / Discussion |
+| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Draft / Discussion |
+| [06-Migration.md](06-Migration.md) | Coexistence, validation differ, phases, risk register | Draft / Discussion |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP/WiFi transport, ESP32 | Draft / Discussion |
+
+## Reading order
+
+Start with [00-Vision.md](00-Vision.md). Then, by interest:
+
+* *Protocol / firmware*: 02 → 04 → 01 → 03 → 07
+* *Host / klippy*: 02 → 05 → 06
+* *"Is this safe and landable?"*: 00 → 06 (risk register) → 02
+  (underrun) → 03
+
+## Glossary
+
+* **Intention / segment** — a per-joint statement "position is
+  q(t) = q₀ + v·t + ½a·t² from machine clock C for duration T". The
+  unit of the new motion protocol; says *where*, never *how*.
+* **Joint / actuator** — one independently driven degree of freedom in
+  the machine's *actuator* space (a stepper, a BLDC servo, a DAC
+  channel) — after kinematics, not a cartesian axis.
+* **Machine time** — the timeline all intentions are scheduled
+  against; defined as the primary MCU's counter
+  ([01-Time_Model.md](01-Time_Model.md)).
+* **Actuator backend** — the MCU-side executor that realizes segments
+  on specific hardware (step/dir pulses, FOC setpoints, PWM duty).
+* **Segment core** — the actuator-independent MCU module owning
+  queues, chaining, time conversion, underrun, and trsync aborts.
+* **Chained encoding** — segments carry only (duration, v, a); start
+  position and time are implied by the previous segment's exact
+  quantized endpoint, so no drift can accumulate.
+* **Rebase** — the explicit re-anchoring command
+  (`trajectory_rebase`) used at motion start, after homing, and after
+  an underrun.
+* **Horizon** — how far into the future an actuator's queued segments
+  extend, in machine time; reported by the MCU and used for refill
+  flow control.
+* **Underrun ramp** — the deceleration-to-zero an actuator executes
+  autonomously if its queue runs dry mid-motion; a resumable event,
+  not a shutdown.
+* **Traffic class** — one of Scheduled (Class 0), Prompt (Class 1),
+  Telemetry (Class 2), distinguished by failure semantics
+  ([03-Traffic_Classes.md](03-Traffic_Classes.md)).
+* **Framing v2** — the negotiated frame format replacing CRC16 with a
+  BCH error-correcting trailer
+  ([07-Link_Transport.md](07-Link_Transport.md)).
+
+## Relationship to existing docs
+
+These RFCs describe a *proposal*; the authoritative descriptions of
+current behavior remain [Code_Overview.md](../../Code_Overview.md),
+[Protocol.md](../../Protocol.md),
+[MCU_Commands.md](../../MCU_Commands.md), and
+[Benchmarks.md](../../Benchmarks.md), which are cited throughout.
