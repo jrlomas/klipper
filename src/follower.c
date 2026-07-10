@@ -10,12 +10,16 @@
 // feed-forward velocity segments sampled ahead of real time from the motion
 // queue; a 1 kHz control tick combines them:
 //     v = slew(clamp(ff(t) + PID(fps_target - fps), +-max_v), accel)
-// A self-rescheduling step timer turns v into step pulses. Load/unload ops
-// run on the two filament switches (PRE = spool staged, POST = fed through)
-// with step-count budgets. All op completions carry the host's echoed `gen`
-// and every op emits EXACTLY ONE terminal status. Watchdogs stop the motor
-// if the host's FPS stream goes stale (host death) and time ops out on
-// no-progress; a shutdown handler de-energizes the motor.
+// A velocity-DDA step timer turns v into step pulses, re-evaluating the
+// commanded velocity at least once per control period so slewing through
+// low speeds never commits the motor to a stale (potentially seconds-long)
+// step interval. Load/unload ops run on the two filament switches (PRE =
+// spool staged, POST = fed through) with step-count budgets. All op
+// completions carry the host's echoed `gen` and every op emits EXACTLY ONE
+// terminal status (exception: an MCU shutdown mid-op emits none — the host's
+// disconnect backstop owns that case). Watchdogs stop the motor if the
+// host's FPS stream goes stale (host death; fast-decelerated within ~100 ms)
+// and time ops out on no-progress; a shutdown handler de-energizes the motor.
 //
 // Everything on the wire is an integer: distances in steps, velocities in
 // steps/s, FPS on a 0..65535 scale, PID gains in Q12 (steps/s of trim per
@@ -72,9 +76,10 @@ enum {
 enum {
     OP_NONE = 0,
     OP_LOAD_TO_POST,     // feed until POST makes (budget: switch_travel)
-    OP_LOAD_TO_FPS,      // feed until FPS >= fps_upper (budget: 1.2*path)
+    OP_LOAD_TO_FPS,      // feed until FPS >= fps_upper (budget: 1.2*path,
+                         // measured from the POST edge)
     OP_UNLOAD_TO_CLEAR,  // reverse until POST clears (budget: 1.2*path)
-    OP_UNLOAD_PARK,      // reverse park_extra more, then done
+    OP_UNLOAD_PARK,      // reverse park_extra more (or until PRE clears)
 };
 
 // config flag bits (config_follower flags=%c)
@@ -88,11 +93,16 @@ enum { CF_INVERT_STEP = 1, CF_INVERT_DIR = 2, CF_INVERT_ENABLE = 4 };
 #define MAX_STEP_RATE 100000
 // FPS staleness escalation: op aborts after this many ms of staleness.
 #define FPS_OP_ABORT_MS 5000
+// Feed-forward underrun: nothing received from the host for this long while
+// forward-following. The host refreshes at least every ~500 ms (even under
+// delta suppression) and keepalives ~1 Hz when idle, so 2 s of silence means
+// the stream is genuinely gone; hold ff at 0 and continue on FPS trim.
+#define FF_UNDERRUN_MS 2000
 // Load slows for the final segment of the path (press into the gears).
 #define LOAD_SLOW_ZONE_STEPS(f) ((f)->path_steps / 8)
 
 #define FF_RING_SIZE 64          // power of two
-#define STATUS_RING_SIZE 4       // power of two
+#define STATUS_RING_SIZE 8       // power of two; holds 7
 
 struct ff_seg {
     uint32_t clock;
@@ -110,30 +120,32 @@ struct follower {
     struct gpio_in pre_pin, post_pin;
     uint32_t ticks_per_sec, control_ticks, pulse_ticks;
     // --- configuration (steps / steps/s / Q12 / ms) ---
-    uint32_t max_v, accel_per_tick, load_v, unload_v;
+    uint32_t max_v, accel_per_tick, stale_decel_per_tick, load_v, unload_v;
     uint32_t path_steps, switch_travel_steps, park_extra_steps;
     uint32_t fps_stale_ms, telemetry_ms;
     uint16_t kp, ki, kd;
     uint16_t fps_target, fps_lower, fps_upper;
     uint8_t fps_reversed, debounce_ms;
-    uint8_t invert_enable, have_switches, have_tuning;
+    uint8_t invert_dir, invert_enable, have_switches;
     // --- switch debounce ---
-    uint8_t pre_state, post_state, pre_raw, post_raw;
+    uint8_t pre_state, post_state;
     uint8_t pre_count, post_count;
     uint8_t pre_invert, post_invert;
     // --- control state ---
     int32_t v_cmd, v_target;     // steps/s signed
     int32_t step_count;
     int32_t pid_integ;           // count*ms, clamped
-    int16_t pid_prev_err;
+    int32_t pid_prev_err;
     uint16_t fps_value;
     uint32_t fps_age_ms;
+    uint8_t fps_fresh;           // a sample arrived since follow/op start
     uint8_t following, direction, motor_on;
     // --- feed-forward ring ---
     struct ff_seg ff[FF_RING_SIZE];
     uint8_t ff_head, ff_tail;
     int32_t ff_current;
-    uint8_t ff_underrun, ff_seen;
+    uint32_t ff_recv_age_ms;     // ms since the host last sent ANY segment
+    uint8_t ff_underrun;
     // --- op state machine ---
     uint8_t op, op_gen, op_cancel;
     int32_t op_origin;           // step_count at phase start
@@ -143,9 +155,13 @@ struct follower {
     uint8_t status_head, status_tail;
     uint32_t telemetry_countdown_ms;
     uint8_t telemetry_due, error_latched;
-    // --- step generator ---
+    // --- step generator (velocity DDA) ---
     uint8_t step_phase;          // 1 = pulse high, awaiting unstep
-    uint8_t dir_state;           // last written dir level (logical forward=1)
+    uint8_t dir_state;           // last written LOGICAL direction (forward=1)
+    uint32_t dda_last_eval;      // clock of the last accumulator update
+    uint64_t dda_acc;            // sum of |v|*elapsed_ticks; a step per
+                                 // ticks_per_sec accumulated
+    uint8_t dda_active;
     uint8_t oid;
 };
 
@@ -158,10 +174,16 @@ static struct task_wake follower_wake;
 static void
 follower_motor_enable(struct follower *f, uint8_t on)
 {
-    // enable_pin invert is handled by gpio_out_setup polarity: we store the
-    // logical level; gpio_out_write takes the physical level.
     gpio_out_write(f->enable_pin, f->invert_enable ? !on : on);
     f->motor_on = on;
+}
+
+static void
+follower_pid_reset(struct follower *f)
+{
+    f->pid_integ = 0;
+    f->pid_prev_err = 0;
+    f->fps_fresh = 0;            // hold trim at 0 until a sample arrives
 }
 
 static void
@@ -172,18 +194,46 @@ follower_hard_stop(struct follower *f)
     f->following = 0;
     f->ff_head = f->ff_tail = 0;
     f->ff_current = 0;
-    f->ff_seen = 0;
+    f->ff_underrun = 0;
 }
 
 static void
 follower_push_status(struct follower *f, uint8_t action, uint8_t code,
                      uint32_t value, uint8_t gen)
 {
-    // Callers hold irq_disable (or run pre-sched). Drop-oldest on overflow
-    // is impossible in practice (ring 4, one op in flight); guard anyway.
+    // Callers hold irq_disable (or run pre-sched). On overflow (task starved
+    // for a long time while the host spams rejected ops), NEVER evict a
+    // terminal status: drop an incoming BUSY rejection instead, else evict
+    // the oldest BUSY in the ring. Terminal statuses are irreplaceable
+    // (contract: exactly one per op); rejections are advisory.
     uint8_t next = (f->status_head + 1) % STATUS_RING_SIZE;
-    if (next == f->status_tail)
-        f->status_tail = (f->status_tail + 1) % STATUS_RING_SIZE;
+    if (next == f->status_tail) {
+        if (code == OP_CODE_BUSY)
+            return;                      // drop the incoming rejection
+        uint8_t i = f->status_tail, found = 0;
+        while (i != f->status_head) {
+            if (f->status[i].code == OP_CODE_BUSY) {
+                found = 1;
+                break;
+            }
+            i = (i + 1) % STATUS_RING_SIZE;
+        }
+        if (found) {
+            // compact the ring over the evicted rejection
+            uint8_t j = i, nj = (i + 1) % STATUS_RING_SIZE;
+            while (nj != f->status_head) {
+                f->status[j] = f->status[nj];
+                j = nj;
+                nj = (nj + 1) % STATUS_RING_SIZE;
+            }
+            f->status_head = j;
+            next = (f->status_head + 1) % STATUS_RING_SIZE;
+        } else {
+            // Ring full of terminals: impossible in practice (one op in
+            // flight); prefer the newest terminal over the oldest.
+            f->status_tail = (f->status_tail + 1) % STATUS_RING_SIZE;
+        }
+    }
     struct pending_status *ps = &f->status[f->status_head];
     ps->action = action;
     ps->code = code;
@@ -210,20 +260,30 @@ follower_op_finish(struct follower *f, uint8_t code)
         // Contract: auto-start forward following after a successful load.
         f->following = 1;
         f->direction = DIR_FORWARD;
-        f->fps_age_ms = 0;       // grace period for the trim loop
+        f->fps_age_ms = 0;
+        follower_pid_reset(f);   // never inherit a wound-up integrator
     } else {
         f->v_cmd = 0;            // failure/cancel/unload-done: stop now
     }
 }
 
 /****************************************************************
- * Step generation (self-rescheduling timer, velocity driven)
+ * Step generation: velocity DDA, re-evaluated at >= CONTROL_HZ
+ *
+ * The naive "sleep ticks_per_sec/v between steps" commits the motor to a
+ * potentially enormous interval when v is small (slewing from rest visits
+ * v=1 -> a ~1 second dead stall while v_cmd has long since risen). Instead
+ * the timer wakes at least once per control period, accumulates |v|*elapsed
+ * into dda_acc, and emits a step whenever a full ticks_per_sec's worth has
+ * accumulated — so velocity changes take effect within one control period
+ * at ANY speed, and sustained rates are exact on average.
  ****************************************************************/
 
 static uint_fast8_t
 follower_step_event(struct timer *t)
 {
     struct follower *f = container_of(t, struct follower, step_timer);
+    uint32_t now = f->step_timer.waketime;
     if (f->step_phase) {
         // Unstep half of the pulse
         gpio_out_toggle_noirq(f->step_pin);
@@ -233,28 +293,58 @@ follower_step_event(struct timer *t)
     }
     int32_t v = f->v_cmd;
     if (!v) {
-        // Idle: poll for a new velocity at the control cadence. Keeping the
-        // timer alive avoids re-arming a timer from another timer's context.
-        f->step_timer.waketime += f->control_ticks;
-        return SF_RESCHEDULE;
+        f->dda_active = 0;
+        f->dda_acc = 0;
+        goto idle;
     }
     uint8_t fwd = v > 0;
     uint32_t mag = fwd ? v : -v;
+    if (!f->dda_active) {
+        f->dda_active = 1;
+        f->dda_last_eval = now;
+        // A freshly (re)started generator owes a full period before its
+        // first step; the accumulator starts empty.
+        f->dda_acc = 0;
+    }
     if (fwd != f->dir_state) {
-        gpio_out_write(f->dir_pin, fwd);
+        gpio_out_write(f->dir_pin, fwd ^ f->invert_dir);
         f->dir_state = fwd;
-        // Direction setup time: skip one interval before stepping.
+        f->dda_last_eval = now;  // direction setup gap resets the window
         f->step_timer.waketime += f->pulse_ticks;
         return SF_RESCHEDULE;
     }
-    // Step pulse leading edge
-    gpio_out_toggle_noirq(f->step_pin);
-    f->step_phase = 1;
-    f->step_count += fwd ? 1 : -1;
-    uint32_t interval = f->ticks_per_sec / mag;
-    if (interval < 2 * f->pulse_ticks)
-        interval = 2 * f->pulse_ticks;
-    f->step_timer.waketime += interval - f->pulse_ticks;
+    f->dda_acc += (uint64_t)mag * (uint32_t)(now - f->dda_last_eval);
+    f->dda_last_eval = now;
+    // Never bank more than ~2 steps of debt (velocity semantics: we follow
+    // a rate, we don't chase a position).
+    if (f->dda_acc > 2 * (uint64_t)f->ticks_per_sec)
+        f->dda_acc = 2 * (uint64_t)f->ticks_per_sec;
+    if (f->dda_acc >= f->ticks_per_sec) {
+        f->dda_acc -= f->ticks_per_sec;
+        gpio_out_toggle_noirq(f->step_pin);
+        f->step_phase = 1;
+        f->step_count += fwd ? 1 : -1;
+        f->step_timer.waketime += f->pulse_ticks;
+        return SF_RESCHEDULE;
+    }
+    // Sleep until the next step is due, but never past a control period so
+    // a changed v_cmd is picked up promptly.
+    {
+        uint32_t remain = f->ticks_per_sec - (uint32_t)f->dda_acc;
+        uint32_t wait = remain / mag + 1;
+        if (wait > f->control_ticks)
+            wait = f->control_ticks;
+        if (wait < f->pulse_ticks)
+            wait = f->pulse_ticks;
+        f->step_timer.waketime += wait;
+        return SF_RESCHEDULE;
+    }
+idle:
+    f->step_timer.waketime += f->control_ticks;
+    // Resync if the scheduler ran us late (e.g. after a comms storm) so a
+    // stale waketime can never trip "Rescheduled timer in the past".
+    if (timer_is_before(f->step_timer.waketime, timer_read_time()))
+        f->step_timer.waketime = timer_read_time() + f->control_ticks;
     return SF_RESCHEDULE;
 }
 
@@ -288,24 +378,21 @@ follower_debounce(struct follower *f)
 static int32_t
 follower_ff_playback(struct follower *f, uint32_t now)
 {
-    // Advance to the newest segment whose start clock has passed.
-    uint8_t advanced = 0;
+    // Advance to the newest segment whose start clock has passed. Segments
+    // are piecewise-constant and the LAST velocity is held until a newer
+    // segment arrives (the host delta-suppresses cruises); underrun is
+    // declared only when the host has sent NOTHING for FF_UNDERRUN_MS.
     while (f->ff_tail != f->ff_head) {
         struct ff_seg *seg = &f->ff[f->ff_tail];
         if (timer_is_before(now, seg->clock))
             break;
         f->ff_current = seg->velocity;
         f->ff_tail = (f->ff_tail + 1) % FF_RING_SIZE;
-        f->ff_seen = 1;
-        advanced = 1;
     }
-    if (f->ff_tail == f->ff_head && !advanced && f->ff_seen) {
-        // Ring drained and nothing new: the host stream underran. Hold ff
-        // at 0 and continue on FPS trim alone (degraded, not fatal).
-        if (f->ff_current) {
+    if (f->ff_recv_age_ms > FF_UNDERRUN_MS) {
+        if (f->ff_current)
             f->ff_current = 0;
-            f->ff_underrun = 1;
-        }
+        f->ff_underrun = 1;
     }
     return f->ff_current;
 }
@@ -313,8 +400,12 @@ follower_ff_playback(struct follower *f, uint32_t now)
 static int32_t
 follower_pid(struct follower *f)
 {
+    if (!f->fps_fresh)
+        // No pressure sample since the loop (re)started: no trim. This
+        // prevents a cold-start surge from fps_value's zero default.
+        return 0;
     int32_t err = (int32_t)f->fps_target - (int32_t)f->fps_value;
-    // Integrator in count*ms; clamp so ki*integ can't wind up past max_v.
+    // Integrator in count*ms, clamped.
     f->pid_integ += err;
     int32_t integ_max = 65535 * 1000;
     if (f->pid_integ > integ_max)
@@ -328,7 +419,14 @@ follower_pid(struct follower *f)
     int64_t out = ((int64_t)(int32_t)f->kp * err)
         + ((int64_t)(int32_t)f->ki * f->pid_integ) / 1000
         + ((int64_t)(int32_t)f->kd * deriv) * 1000;
-    return (int32_t)(out >> 12);
+    out >>= 12;
+    // Clamp in 64-bit BEFORE the narrowing cast so extreme (but legal)
+    // gains cannot wrap into the opposite sign.
+    if (out > (int64_t)MAX_STEP_RATE)
+        out = MAX_STEP_RATE;
+    else if (out < -(int64_t)MAX_STEP_RATE)
+        out = -(int64_t)MAX_STEP_RATE;
+    return (int32_t)out;
 }
 
 static void
@@ -359,7 +457,7 @@ follower_run_op(struct follower *f)
             follower_op_finish(f, OP_CODE_CANCEL);
             return;
         }
-        if (f->fps_value >= f->fps_upper) {
+        if (f->fps_fresh && f->fps_value >= f->fps_upper) {
             follower_op_finish(f, OP_CODE_SUCCESS);
             return;
         }
@@ -387,7 +485,9 @@ follower_run_op(struct follower *f)
         f->v_target = -(int32_t)f->unload_v;
         break;
     case OP_UNLOAD_PARK:
-        if ((uint32_t)moved >= f->park_extra_steps) {
+        // Contract: never eject past PRE — the bay must stay "ready".
+        if ((uint32_t)moved >= f->park_extra_steps
+            || (f->have_switches && !f->pre_state)) {
             follower_op_finish(f, OP_CODE_SUCCESS);
             return;
         }
@@ -401,7 +501,6 @@ follower_control_event(struct timer *t)
 {
     struct follower *f = container_of(t, struct follower, control_timer);
     uint32_t now = f->control_timer.waketime;
-    f->control_timer.waketime += f->control_ticks;
 
     if (f->have_switches)
         follower_debounce(f);
@@ -416,10 +515,16 @@ follower_control_event(struct timer *t)
     } else {
         f->fps_age_ms = 0;
     }
+    if (f->ff_recv_age_ms < 0xFFFFFF)
+        f->ff_recv_age_ms++;
     uint8_t fps_stale = active && f->fps_age_ms > f->fps_stale_ms;
 
     if (f->op != OP_NONE) {
-        if (fps_stale) {
+        if (f->op_cancel
+            && (f->op == OP_LOAD_TO_POST || f->op == OP_LOAD_TO_FPS)) {
+            // Honor a cancel even while the FPS stream is stale.
+            follower_op_finish(f, OP_CODE_CANCEL);
+        } else if (fps_stale) {
             f->op_stale_ms++;
             f->v_target = 0;
             if (f->op_stale_ms > FPS_OP_ABORT_MS)
@@ -437,14 +542,16 @@ follower_control_event(struct timer *t)
         } else {
             // Reverse follow (unload assist): back out while the buffer
             // still shows pressure, stop once it drops below fps_lower.
-            f->v_target = f->fps_value > f->fps_lower
+            f->v_target = (f->fps_fresh && f->fps_value > f->fps_lower)
                 ? -(int32_t)f->unload_v : 0;
         }
     } else {
         f->v_target = 0;
     }
 
-    // Clamp and slew v_cmd toward v_target
+    // Clamp and slew v_cmd toward v_target. A stale FPS stream (host death)
+    // uses the fast decel so the motor stops within ~100 ms regardless of
+    // the configured accel.
     int32_t vt = f->v_target;
     int32_t maxv = f->max_v;
     if (vt > maxv)
@@ -452,7 +559,8 @@ follower_control_event(struct timer *t)
     else if (vt < -maxv)
         vt = -maxv;
     int32_t v = f->v_cmd;
-    int32_t step = f->accel_per_tick;
+    int32_t step = fps_stale ? (int32_t)f->stale_decel_per_tick
+                             : (int32_t)f->accel_per_tick;
     if (vt > v)
         v = (vt - v > step) ? v + step : vt;
     else if (vt < v)
@@ -467,6 +575,13 @@ follower_control_event(struct timer *t)
     }
     f->telemetry_countdown_ms--;
 
+    // Reschedule; resync if the scheduler ran us late (comms storm, long
+    // irq-off window elsewhere) — a stale += chain would otherwise trip the
+    // MCU-wide "Rescheduled timer in the past" shutdown on ARM targets,
+    // whose budget is only ~1 ms.
+    f->control_timer.waketime = now + f->control_ticks;
+    if (timer_is_before(f->control_timer.waketime, timer_read_time()))
+        f->control_timer.waketime = timer_read_time() + f->control_ticks;
     return SF_RESCHEDULE;
 }
 
@@ -482,7 +597,9 @@ command_config_follower(uint32_t *args)
     f->oid = args[0];
     uint8_t flags = args[4];
     f->step_pin = gpio_out_setup(args[1], flags & CF_INVERT_STEP ? 1 : 0);
-    f->dir_pin = gpio_out_setup(args[2], flags & CF_INVERT_DIR ? 1 : 0);
+    f->invert_dir = !!(flags & CF_INVERT_DIR);
+    // dir_state starts at logical "reverse" (0); write the matching level.
+    f->dir_pin = gpio_out_setup(args[2], f->invert_dir ? 1 : 0);
     f->invert_enable = !!(flags & CF_INVERT_ENABLE);
     // Motor de-energized until first commanded motion
     f->enable_pin = gpio_out_setup(args[3], f->invert_enable ? 1 : 0);
@@ -494,10 +611,12 @@ command_config_follower(uint32_t *args)
     // Safe defaults until the tuning/limit commands arrive
     f->max_v = 1;
     f->accel_per_tick = 1;
+    f->stale_decel_per_tick = 1;
     f->fps_stale_ms = 500;
     f->telemetry_ms = 500;
     f->telemetry_countdown_ms = 500;
     f->debounce_ms = 5;
+    f->ff_recv_age_ms = 0xFFFFFF;      // nothing received yet
     f->step_timer.func = follower_step_event;
     f->control_timer.func = follower_control_event;
     irq_disable();
@@ -515,13 +634,23 @@ void
 command_config_follower_switches(uint32_t *args)
 {
     struct follower *f = oid_lookup(args[0], command_config_follower);
-    f->pre_pin = gpio_in_setup(args[1], args[2] ? 1 : 0);
-    f->pre_invert = !!args[3];
-    f->post_pin = gpio_in_setup(args[4], args[5] ? 1 : 0);
-    f->post_invert = !!args[6];
+    struct gpio_in pre = gpio_in_setup(args[1], args[2] ? 1 : 0);
+    struct gpio_in post = gpio_in_setup(args[4], args[5] ? 1 : 0);
     uint32_t debounce = args[7];
-    f->debounce_ms = debounce && debounce < 255 ? debounce : 5;
+    if (!debounce)
+        debounce = 5;
+    else if (debounce > 254)
+        debounce = 254;
+    // The control timer is already live: publish under irq-off so it never
+    // sees a half-written switch config.
+    irq_disable();
+    f->pre_pin = pre;
+    f->pre_invert = !!args[3];
+    f->post_pin = post;
+    f->post_invert = !!args[6];
+    f->debounce_ms = debounce;
     f->have_switches = 1;
+    irq_enable();
 }
 DECL_COMMAND(command_config_follower_switches,
              "config_follower_switches oid=%c pre_pin=%u pre_pullup=%c"
@@ -532,6 +661,7 @@ void
 command_config_follower_tuning(uint32_t *args)
 {
     struct follower *f = oid_lookup(args[0], command_config_follower);
+    irq_disable();
     f->kp = args[1];
     f->ki = args[2];
     f->kd = args[3];
@@ -539,7 +669,7 @@ command_config_follower_tuning(uint32_t *args)
     f->fps_lower = args[5];
     f->fps_upper = args[6];
     f->fps_reversed = !!args[7];
-    f->have_tuning = 1;
+    irq_enable();
 }
 DECL_COMMAND(command_config_follower_tuning,
              "config_follower_tuning oid=%c kp=%u ki=%u kd=%u fps_target=%u"
@@ -555,12 +685,21 @@ command_config_follower_limits(uint32_t *args)
         shutdown("follower max_v exceeds step generation budget");
     if (args[3] > max_v || args[4] > max_v)
         shutdown("follower load/unload speed exceeds max_v");
+    uint32_t apt = accel / CONTROL_HZ;
+    if (!apt)
+        apt = 1;
+    // Stale-stream stop must complete within ~100 ms even with a gentle
+    // configured accel.
+    uint32_t sdpt = max_v / 100;
+    if (sdpt < apt)
+        sdpt = apt;
+    irq_disable();
     f->max_v = max_v;
-    f->accel_per_tick = accel / CONTROL_HZ;
-    if (!f->accel_per_tick)
-        f->accel_per_tick = 1;
+    f->accel_per_tick = apt;
+    f->stale_decel_per_tick = sdpt;
     f->load_v = args[3];
     f->unload_v = args[4];
+    irq_enable();
 }
 DECL_COMMAND(command_config_follower_limits,
              "config_follower_limits oid=%c max_v=%u accel=%u load_v=%u"
@@ -570,9 +709,11 @@ void
 command_config_follower_geometry(uint32_t *args)
 {
     struct follower *f = oid_lookup(args[0], command_config_follower);
+    irq_disable();
     f->path_steps = args[1];
     f->switch_travel_steps = args[2];
     f->park_extra_steps = args[3];
+    irq_enable();
 }
 DECL_COMMAND(command_config_follower_geometry,
              "config_follower_geometry oid=%c path_steps=%u"
@@ -582,8 +723,11 @@ void
 command_config_follower_watchdog(uint32_t *args)
 {
     struct follower *f = oid_lookup(args[0], command_config_follower);
+    irq_disable();
     f->fps_stale_ms = args[1] ? args[1] : 500;
     f->telemetry_ms = args[2] ? args[2] : 500;
+    f->telemetry_countdown_ms = f->telemetry_ms;
+    irq_enable();
 }
 DECL_COMMAND(command_config_follower_watchdog,
              "config_follower_watchdog oid=%c fps_stale_ms=%u telemetry_ms=%u");
@@ -615,12 +759,14 @@ command_follower_cmd_load(uint32_t *args)
         irq_enable();
         return;
     }
+    f->following = 0;            // ops own the motor
     f->op = OP_LOAD_TO_POST;
     f->op_gen = gen;
     f->op_cancel = 0;
     f->op_origin = f->step_count;
     f->op_stale_ms = 0;
     f->fps_age_ms = 0;
+    f->fps_fresh = 0;
     follower_motor_enable(f, 1);
     irq_enable();
 }
@@ -677,16 +823,20 @@ command_follower_cmd_set(uint32_t *args)
             f->following = 1;
             f->direction = direction ? DIR_FORWARD : DIR_REVERSE;
             f->fps_age_ms = 0;
-            f->pid_integ = 0;
-            f->pid_prev_err = 0;
+            follower_pid_reset(f);
             follower_motor_enable(f, 1);
         } else {
             follower_hard_stop(f);
         }
     } else if (!enable) {
-        // An explicit stop always wins; the in-flight op is cancelled the
-        // hard way and still gets its one terminal status.
-        follower_op_finish(f, OP_CODE_CANCEL);
+        // An explicit stop always wins; the in-flight op is aborted the
+        // hard way and still gets its one terminal status. Loads report
+        // CANCEL; unloads report ERROR_UNSPECIFIED (CANCEL is a load-only
+        // code and the lane stays LOADED host-side, matching the partially
+        // retracted filament).
+        uint8_t code = (f->op == OP_UNLOAD_TO_CLEAR || f->op == OP_UNLOAD_PARK)
+            ? OP_CODE_ERROR_UNSPECIFIED : OP_CODE_CANCEL;
+        follower_op_finish(f, code);
         follower_hard_stop(f);
     }
     irq_enable();
@@ -704,6 +854,7 @@ command_follower_cmd_fps(uint32_t *args)
     irq_disable();
     f->fps_value = value;
     f->fps_age_ms = 0;
+    f->fps_fresh = 1;
     irq_enable();
 }
 DECL_COMMAND(command_follower_cmd_fps, "follower_cmd_fps oid=%c value=%u");
@@ -720,6 +871,7 @@ command_follower_cmd_ff(uint32_t *args)
     f->ff[f->ff_head].clock = args[1];
     f->ff[f->ff_head].velocity = args[2];
     f->ff_head = next;
+    f->ff_recv_age_ms = 0;
     f->ff_underrun = 0;
     irq_enable();
 }
@@ -732,7 +884,9 @@ command_follower_cmd_clear_errors(uint32_t *args)
     struct follower *f = oid_lookup(args[0], command_config_follower);
     irq_disable();
     if (f->op != OP_NONE)
-        follower_op_finish(f, OP_CODE_CANCEL);
+        follower_op_finish(f, f->op == OP_UNLOAD_TO_CLEAR
+                           || f->op == OP_UNLOAD_PARK
+                           ? OP_CODE_ERROR_UNSPECIFIED : OP_CODE_CANCEL);
     follower_hard_stop(f);
     f->error_latched = 0;
     f->ff_underrun = 0;
@@ -789,6 +943,9 @@ DECL_TASK(follower_task);
 void
 follower_shutdown(void)
 {
+    // Note: an op in flight at shutdown emits NO terminal status (sched has
+    // already stopped timers/tasks); the host's disconnect backstop and its
+    // shutdown handling own this case.
     uint8_t oid;
     struct follower *f;
     foreach_oid(oid, f, command_config_follower) {
