@@ -128,6 +128,10 @@ config WANT_PULSE_COUNTER
     bool
     depends on HAVE_GPIO
     default y
+config WANT_FOLLOWER
+    bool
+    depends on HAVE_GPIO && !MACH_AVR
+    default y
 config WANT_ST7920
     bool
     depends on HAVE_GPIO
@@ -225,6 +229,9 @@ config WANT_NEOPIXEL
 config WANT_PULSE_COUNTER
     bool "Support measuring fan tachometer GPIO pins"
     depends on HAVE_GPIO
+config WANT_FOLLOWER
+    bool "Support OpenAMS inline follower (autonomous filament stepper)"
+    depends on HAVE_GPIO && !MACH_AVR
 comment "LCD chips"
 config WANT_ST7920
     bool "Support ST7920 LCD display"
