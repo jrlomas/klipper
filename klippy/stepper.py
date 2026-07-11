@@ -44,6 +44,12 @@ class MCU_stepper:
         self._mcu_position_offset = 0.
         self._reset_cmd_tag = self._get_position_cmd = None
         self._active_callbacks = []
+        self._traj = None
+        motion_protocol = config.getchoice(
+            'motion_protocol', ['legacy', 'trajectory'], 'legacy')
+        if motion_protocol == 'trajectory':
+            tq = printer.load_object(config, 'trajectory_queuing')
+            self._traj = tq.register_stepper(self, config)
         motion_queuing = printer.load_object(config, 'motion_queuing')
         self._syncemitter = motion_queuing.allocate_syncemitter(mcu, self._name)
         ffi_main, ffi_lib = chelper.get_ffi()
@@ -78,6 +84,16 @@ class MCU_stepper:
     def _build_config(self):
         if self._step_pulse_duration is None:
             self._step_pulse_duration = .000002
+        if self._traj is not None:
+            step_pulse_ticks = self._mcu.seconds_to_clock(
+                self._step_pulse_duration)
+            self._traj.build_config(self._step_pin, self._dir_pin,
+                                    int(self._invert_step),
+                                    int(self._invert_dir), step_pulse_ticks)
+            self._get_position_cmd = self._mcu.lookup_query_command(
+                "traj_get_position oid=%c",
+                "traj_position oid=%c clock=%u pos=%i", oid=self._oid)
+            return
         invert_step = self._invert_step
         # Check if can enable "step on both edges"
         constants = self._mcu.get_constants()
@@ -156,6 +172,8 @@ class MCU_stepper:
         return ffi_lib.itersolve_calc_position_from_coord(
             self._stepper_kinematics, coord[0], coord[1], coord[2])
     def set_position(self, coord):
+        if self._traj is not None:
+            self._traj.note_rebase_needed()
         mcu_pos = self.get_mcu_position()
         sk = self._stepper_kinematics
         ffi_main, ffi_lib = chelper.get_ffi()
@@ -197,11 +215,16 @@ class MCU_stepper:
             mcu_pos = self.get_mcu_position()
         self._stepper_kinematics = sk
         ffi_main, ffi_lib = chelper.get_ffi()
-        ffi_lib.syncemitter_set_stepper_kinematics(self._syncemitter, sk);
+        if self._traj is None:
+            ffi_lib.syncemitter_set_stepper_kinematics(self._syncemitter, sk)
         self.set_trapq(self._trapq)
         self._set_mcu_position(mcu_pos)
         return old_sk
     def note_homing_end(self):
+        if self._traj is not None:
+            self._traj.note_rebase_needed()
+            self._query_mcu_position()
+            return
         ffi_main, ffi_lib = chelper.get_ffi()
         ret = ffi_lib.stepcompress_reset(self._stepqueue, 0)
         if ret:
@@ -214,6 +237,13 @@ class MCU_stepper:
             return
         params = self._get_position_cmd.send([self._oid])
         last_pos = params['pos']
+        if self._traj is not None:
+            # traj_position reports sub-units (1 microstep = 2^16)
+            last_pos = int(round(last_pos / 65536.))
+            self._set_mcu_position(last_pos)
+            printer = self._mcu.get_printer()
+            printer.send_event("stepper:sync_mcu_position", self)
+            return
         if self._invert_dir:
             last_pos = -last_pos
         print_time = self._mcu.estimated_print_time(params['#receive_time'])

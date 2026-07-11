@@ -21,7 +21,8 @@ SOURCE_FILES = [
     'itersolve.c', 'trapq.c', 'pollreactor.c', 'msgblock.c', 'trdispatch.c',
     'kin_cartesian.c', 'kin_corexy.c', 'kin_corexz.c', 'kin_delta.c',
     'kin_deltesian.c', 'kin_polar.c', 'kin_rotary_delta.c', 'kin_winch.c',
-    'kin_extruder.c', 'kin_shaper.c', 'kin_idex.c', 'kin_generic.c'
+    'kin_extruder.c', 'kin_shaper.c', 'kin_idex.c', 'kin_generic.c',
+    'segfit.c'
 ]
 DEST_LIB = "c_helper.so"
 OTHER_FILES = [
@@ -233,13 +234,34 @@ defs_std = """
     void free(void*);
 """
 
+defs_segfit = """
+    struct segfit_seg {
+        uint32_t duration;
+        int32_t velocity;
+        int32_t accel;
+        uint8_t flags;
+    };
+    struct segfit *segfit_alloc(void);
+    void segfit_free(struct segfit *sf);
+    void segfit_setup(struct segfit *sf, struct stepper_kinematics *sk
+        , double mcu_freq, double su_per_mm, double tolerance_su
+        , double sample_time);
+    void segfit_set_anchor(struct segfit *sf, double print_time
+        , int64_t acc);
+    int64_t segfit_get_anchor(struct segfit *sf);
+    double segfit_get_gen_time(struct segfit *sf);
+    int segfit_generate(struct segfit *sf, double flush_time);
+    int segfit_finalize(struct segfit *sf);
+    struct segfit_seg *segfit_get_segs(struct segfit *sf);
+"""
+
 defs_all = [
     defs_pyhelper, defs_serialqueue, defs_std, defs_stepcompress,
     defs_steppersync, defs_itersolve, defs_trapq, defs_trdispatch,
     defs_kin_cartesian, defs_kin_corexy, defs_kin_corexz, defs_kin_delta,
     defs_kin_deltesian, defs_kin_polar, defs_kin_rotary_delta, defs_kin_winch,
     defs_kin_extruder, defs_kin_shaper, defs_kin_idex,
-    defs_kin_generic_cartesian,
+    defs_kin_generic_cartesian, defs_segfit,
 ]
 
 # Update filenames to an absolute path

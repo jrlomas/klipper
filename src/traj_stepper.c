@@ -47,7 +47,8 @@ struct traj_stepper {
     struct trsync_signal stop_signal;
 };
 
-enum { TSF_INVERT_STEP = 1 << 0, TSF_DIR_HIGH = 1 << 1 };
+enum { TSF_INVERT_STEP = 1 << 0, TSF_DIR_HIGH = 1 << 1,
+       TSF_INVERT_DIR = 1 << 2 };
 
 // Solve for the tick (relative to segment start) where the active
 // segment next crosses s->target16, strictly after s->t_prev.
@@ -125,7 +126,7 @@ traj_stepper_load(struct traj_stepper *s)
     int64_t boundary = dir > 0 ? ((int64_t)(s->mpos + 1) << 48)
                                : ((int64_t)s->mpos << 48);
     s->target16 = (boundary - tq->acc) >> 16;
-    uint8_t dirstate = dir > 0;
+    uint8_t dirstate = (dir > 0) ^ !!(s->flags & TSF_INVERT_DIR);
     if (dirstate != !!(s->flags & TSF_DIR_HIGH)) {
         s->flags ^= TSF_DIR_HIGH;
         gpio_out_write(s->dir_pin, dirstate);
@@ -262,15 +263,20 @@ command_config_traj_stepper(uint32_t *args)
         args[0], command_config_traj_stepper, sizeof(*s));
     if (args[3])
         s->flags = TSF_INVERT_STEP;
+    if (args[4])
+        s->flags |= TSF_INVERT_DIR;
     s->step_pin = gpio_out_setup(args[1], s->flags & TSF_INVERT_STEP);
-    s->dir_pin = gpio_out_setup(args[2], 0);
-    s->step_pulse_ticks = args[4];
+    s->dir_pin = gpio_out_setup(args[2], !!(s->flags & TSF_INVERT_DIR));
+    if (s->flags & TSF_INVERT_DIR)
+        s->flags |= TSF_DIR_HIGH;
+    s->step_pulse_ticks = args[5];
     s->time.func = traj_stepper_event;
-    trajq_setup(&s->tq, args[0], &traj_stepper_ops, args[5]);
+    trajq_setup(&s->tq, args[0], &traj_stepper_ops, args[6]);
 }
 DECL_COMMAND(command_config_traj_stepper,
              "config_traj_stepper oid=%c step_pin=%c dir_pin=%c"
-             " invert_step=%c step_pulse_ticks=%u underrun_decel=%u");
+             " invert_step=%c invert_dir=%c step_pulse_ticks=%u"
+             " underrun_decel=%u");
 
 static struct traj_stepper *
 traj_stepper_oid_lookup(uint8_t oid)
