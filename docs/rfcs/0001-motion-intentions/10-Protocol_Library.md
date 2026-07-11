@@ -12,17 +12,19 @@ vendor, a custom toolboard, a test harness) gets neither: they
 reimplement from documentation.
 
 This document specifies **one protocol library** — a single,
-self-contained, MIT-licensed C implementation of the entire wire
-protocol, consumed by the host, by our firmware, by the bootloader
-([11-Bootloader.md](11-Bootloader.md)), and by anyone else's firmware
-or tooling, open or closed.
+self-contained, MIT-licensed implementation of the entire wire
+protocol (freestanding-profile C++ behind a C-linkage API — see the
+language decision below), consumed by the host, by our firmware, by
+the bootloader ([11-Bootloader.md](11-Bootloader.md)), and by anyone
+else's firmware or tooling, open or closed.
 
 The demand is proven, not speculative: Annex Engineering's *Anchor*
 is an independent implementation of the MCU side of the Klipper
 protocol, written in Rust, built precisely so custom hardware could
 join the ecosystem without running Klipper's firmware. This library
-serves the same need in plain C — no toolchain opinion imposed on
-adopters, linkable from any firmware including our own bootloader —
+serves the same need with a C-linkage API — linkable from any C or
+C++ firmware including our own bootloader (building it requires a
+C++17 toolchain, which every GCC/Clang on the 32-bit floor provides) —
 and covers both sides of the wire (device *and* host) plus the v2
 protocol. Its seed has the same lineage: the author's own C
 implementation of the legacy protocol, written for the OpenAMS
@@ -83,6 +85,85 @@ every validation run from day one. Fuzzing the frame parser and
 dictionary parser is part of the library's own test suite — it is the
 attack surface of the whole system.
 
+## Language and declarations (decided 2026-07)
+
+The protocol is dictionary-driven and the implementation languages
+are non-reflective, so *something* must produce the typed glue
+between wire messages and handler functions. Exactly four mechanisms
+exist, and the OpenAMS firmware's history is a tour of them:
+
+1. **Scrape the source** (the OpenAMS libclang/lark generators): the
+   C++ signature is the single source of truth — the right property,
+   bought at the price of owning a compiler front-end and emitting
+   the protocol core itself from a template.
+2. **An external IDL** with a generator: trivial tooling, but the
+   protocol now lives in a second artifact and the application calls
+   generated stubs — rejected as trading one indirection for another.
+3. **Macro metaprogramming (X-macros/FOR_EACH) in plain C**: no
+   tools, but the machinery is the least readable of the four and
+   lands in application code.
+4. **Static registration in C++**: the annotation *itself* emits the
+   metadata when it expands. This is what Java's `@annotation`
+   actually is — metadata emitted where the runtime can find it —
+   done at compile/link time because there is no VM.
+
+**Decision: option 4.** The library is implemented in *bare* C++ — a
+freestanding subset: no heap, no exceptions, no RTTI, no virtual
+dispatch, no STL containers; templates and `constexpr` are allowed as
+compile-time machinery only. Declaring a device command is one
+annotation plus the body, at the definition site, with nothing else
+anywhere:
+
+```cpp
+KLIPPER_RESPONSE(oams_action_status,
+                 (uint8_t, action), (uint8_t, code), (uint32_t, value));
+
+KLIPPER_METHOD(oams_cmd_load_spool, (uint8_t, spool)) {
+    if (busy) {
+        intentproto::reply(oams_action_status{ACTION_LOAD, ERR_BUSY, 0});
+        return;
+    }
+    start_load(spool);
+}
+```
+
+The macro defines the function exactly as written and drops a plain
+static descriptor next to it; the descriptor self-registers into an
+intrusive, heap-free list before `main()`. Parameter **types** are
+deduced from the function's real signature by a template — they
+cannot drift from the code, which preserves the property that made
+the source-scraping approach attractive. Parameter **names** appear
+once in the annotation, because no usable C++ standard has reflection
+over parameter names. Wire ids are assigned at `init()` in definition
+order. The descriptors are ordinary structs, visible in a debugger.
+
+Consequences:
+
+* **The dictionary is served, not scraped.** The identify JSON is a
+  *serialization of the live registry* — data to data — compressed at
+  build time by a tool that links the same tables the firmware ships.
+  Nothing in any build ever parses application source code.
+* **In the v2 protocol the dictionary is demoted further:** the core
+  command set gets fixed ids in the spec (VLQ encoding makes dense
+  per-build numbering worthless anyway), so a v2 peer needs no
+  dictionary round-trip at all; device-specific extension commands
+  self-describe over a fixed meta-command, and the host — Python,
+  where dynamism is native — binds to them at connect. The full JSON
+  dictionary remains only for the legacy protocol.
+* **Core protocol is implemented, not declared.** Commands that every
+  board must answer (clock, uptime, config, stats, identify) are
+  library code with semantics, not application boilerplate — the
+  annotation layer is only for what is genuinely device-specific.
+* **C consumers keep a C API**: the core is exposed behind
+  `extern "C"` headers for the host binding and for third-party C
+  firmware; the annotation layer is a C++-only convenience, and the
+  same registry can be filled by hand with plain structs.
+
+A working skeleton implementing this — legacy framing, VLQ, dispatch,
+identify, dictionary builder, and the annotation layer, with a
+desktop test suite that ports a slice of the OpenAMS command set —
+lives in [lib/intentproto/](../../../lib/intentproto/).
+
 ## Design values (a deliberate contrast)
 
 The current codebase makes protocol changes a specialist activity:
@@ -98,9 +179,11 @@ The library takes the opposite position, stated as rules:
 
 * **One implementation of every concept.** If host and firmware both
   need it, it is in the library, once.
-* **No linker magic.** Command tables are plain `const` arrays of
-  plain structs, written where the compiler, the debugger, and a
-  newcomer can see them. Registration is data, not macro expansion.
+* **No linker magic, no source scraping.** Registration is static
+  data: self-registering descriptor records created at the
+  declaration site (see the language decision above), visible to the
+  compiler, the debugger, and a newcomer. No linker-section string
+  tables, and no build step that parses application source.
 * **Boring, documented, replaceable interfaces.** Real headers, doc
   comments on every public symbol, a written wire specification that
   the implementation follows rather than *being*. A competent
@@ -162,3 +245,8 @@ budget, and as part of the firmware images.
   to vendors *today*, before v2 hardware exists).
 * Dictionary generation for non-C firmwares (Rust/MicroPython
   vendors): provide a JSON schema for the dictionary format.
+* Declaration layer: string/buffer parameters (`%.*s`) in commands;
+  enumerations; whether a guard against declaring the same method in
+  two translation units is worth the machinery.
+* The exact fixed-id allocation for the v2 core command set (which
+  ids are spec-frozen vs. left to the extension space).

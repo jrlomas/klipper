@@ -80,10 +80,11 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
   analog comparator, ADC watchdog) that fires trsync directly, with
   optional timer-capture timestamps
   ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)).
-* **Protocol library** — the single MIT-licensed C implementation of
-  the wire protocol (both framings, codecs, state machines), consumed
-  by host, firmware, bootloader, and third parties; embedded profile
-  is heap-free and sized for the STM32F072
+* **Protocol library** — the single MIT-licensed implementation of
+  the wire protocol (both framings, codecs, state machines; a
+  freestanding C++ core with a C-linkage API), consumed by host,
+  firmware, bootloader, and third parties; embedded profile is
+  heap-free and sized for the STM32F072
   ([10-Protocol_Library.md](10-Protocol_Library.md)).
 * **First-class bootloader** — bootloader shipped inside every
   firmware image, speaking the same protocol for in-band,

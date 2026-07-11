@@ -142,10 +142,11 @@ microsecond events, not samples that got lucky
 **The protocol is one library, and it is permissive.** Today the wire
 protocol is implemented twice — once in the firmware, once in the
 host's C helper — and third parties get neither. A single,
-MIT-licensed, no-heap C library implements the entire protocol for
-the host, our firmware, the bootloader, and anyone else's device,
-open or closed ([10-Protocol_Library.md](10-Protocol_Library.md)).
-The fork itself remains GPL.
+MIT-licensed, no-heap library (freestanding C++ core, C-linkage API)
+implements the entire protocol for the host, our firmware, the
+bootloader, and anyone else's device, open or closed
+([10-Protocol_Library.md](10-Protocol_Library.md)). The fork itself
+remains GPL.
 
 **The bootloader is part of the firmware, not an add-on.** Every
 build ships bootloader + application as one image; updates are
@@ -223,9 +224,10 @@ relitigating them:
    ([10-Protocol_Library.md](10-Protocol_Library.md)).
 8. **Readability is a requirement, not a style preference.** One
    implementation per concept, plain data over linker-section
-   metaprogramming, documented and versioned interfaces at every
-   boundary, and new host components on standard asyncio rather than
-   a bespoke reactor. A competent developer must be able to join at
+   metaprogramming (self-registering static descriptors — no source
+   scraping, no external generators), documented and versioned
+   interfaces at every boundary, and new host components on standard
+   asyncio rather than a bespoke reactor. A competent developer must be able to join at
    any single boundary without apprenticeship in the whole
    ([05-Host_Architecture.md](05-Host_Architecture.md),
    [10-Protocol_Library.md](10-Protocol_Library.md)).
