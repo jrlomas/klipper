@@ -12,6 +12,7 @@
 #include "basecmd.h" // move_alloc
 #include "board/irq.h" // irq_disable
 #include "command.h" // shutdown
+#include "execlog.h" // execlog_append
 #include "sched.h" // sched_wake_task
 #include "trajq.h" // trajq_setup
 
@@ -131,6 +132,8 @@ trajq_advance(struct trajq *tq)
     tq->acc += trajq_end_delta(tq->duration, tq->velocity, tq->accel);
     tq->seg_start_clock += tq->duration;
     int32_t v_end = trajq_velocity_at(tq->velocity, tq->accel, tq->duration);
+    execlog_append(EL_SEG_DONE, tq->oid, tq->seg_start_clock
+                   , (int32_t)(tq->acc >> 32), 0);
 
     if (tq->flags & TQF_RAMPING) {
         // Emergency ramp in progress: keep ramping until stopped,
@@ -141,6 +144,8 @@ trajq_advance(struct trajq *tq)
         tq->flags |= TQF_UNDERRUN | TQF_NEED_REBASE | TQF_EVENT_PENDING;
         tq->event_clock = tq->seg_start_clock;
         tq->event_pos = (int32_t)(tq->acc >> 32);
+        execlog_append(EL_UNDERRUN, tq->oid, tq->event_clock
+                       , tq->event_pos, 0);
         sched_wake_task(&traj_event_wake);
         tq->flags &= ~TQF_ACTIVE;
         return TQ_ADV_IDLE;
@@ -159,6 +164,8 @@ trajq_advance(struct trajq *tq)
     // Queue ran dry. Stopped (or told to hold): idle at position.
     if (!v_end || tq->seg_flags & TSEG_HOLD_AT_END) {
         tq->flags &= ~TQF_ACTIVE;
+        execlog_append(EL_HOLD, tq->oid, tq->seg_start_clock
+                       , (int32_t)(tq->acc >> 32), 0);
         return TQ_ADV_IDLE;
     }
     // Moving: synthesize the underrun deceleration ramp.
@@ -168,6 +175,7 @@ trajq_advance(struct trajq *tq)
     tq->flags |= TQF_UNDERRUN | TQF_NEED_REBASE | TQF_EVENT_PENDING;
     tq->event_clock = tq->seg_start_clock;
     tq->event_pos = (int32_t)(tq->acc >> 32);
+    execlog_append(EL_UNDERRUN, tq->oid, tq->event_clock, tq->event_pos, 0);
     sched_wake_task(&traj_event_wake);
     tq->flags &= ~TQF_ACTIVE;
     return TQ_ADV_IDLE;
@@ -231,6 +239,7 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
     tq->horizon_clock = clock;
     tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING);
     tq->dropped = 0;
+    execlog_append(EL_REBASE, tq->oid, clock, pos, 0);
     irq_enable();
 }
 

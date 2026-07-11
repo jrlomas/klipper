@@ -15,6 +15,7 @@
 #include "board/irq.h" // irq_disable
 #include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_COMMAND
+#include "execlog.h" // execlog_append
 #include "sched.h" // struct timer
 #include "trajq.h" // trajq_setup
 #include "trsync.h" // trsync_add_signal
@@ -354,6 +355,8 @@ traj_stepper_trigger_stop(struct trsync_signal *tss, uint8_t reason)
     struct traj_stepper *s = container_of(
         tss, struct traj_stepper, stop_signal);
     trajq_halt(&s->tq, TQF_NEED_REBASE);
+    execlog_append(EL_TRIGGER, s->tq.oid, s->tq.seg_start_clock
+                   , (int32_t)(s->tq.acc >> 32), reason);
 }
 
 void
