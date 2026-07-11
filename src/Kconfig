@@ -196,7 +196,11 @@ config NEED_SOS_FILTER
 config WANT_TRAJECTORY
     bool
     depends on HAVE_GPIO && !MACH_AVR
-    default y
+    default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_TRIGGER_SOURCE
+    bool
+    depends on HAVE_GPIO_EDGE_TRIGGER
+    default y if !HAVE_LIMITED_CODE_SIZE
 menu "Optional features (to reduce code size)"
     depends on HAVE_LIMITED_CODE_SIZE
 config WANT_ADC
@@ -279,6 +283,12 @@ comment "Other features"
 config WANT_TRIGGER_ANALOG
     bool "Support for homing/probing events using analog sensors"
     depends on WANT_ADC || WANT_HX71X || WANT_ADS1220 || WANT_ADS131M0X || WANT_LDC1612
+config WANT_TRAJECTORY
+    bool "Support trajectory intention segments"
+    depends on HAVE_GPIO && !MACH_AVR
+config WANT_TRIGGER_SOURCE
+    bool "Support hardware event trigger sources"
+    depends on HAVE_GPIO_EDGE_TRIGGER
 endmenu
 
 # Generic configuration options for CANbus
@@ -340,6 +350,8 @@ config HAVE_GPIO_SDIO
 config HAVE_GPIO_I2C
     bool
 config HAVE_GPIO_HARD_PWM
+    bool
+config HAVE_GPIO_EDGE_TRIGGER
     bool
 config HAVE_STRICT_TIMING
     bool

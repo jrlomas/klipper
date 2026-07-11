@@ -1,0 +1,48 @@
+#ifndef __TRIGGER_SOURCE_H
+#define __TRIGGER_SOURCE_H
+
+#include <stdint.h>
+#include "board/gpio.h" // struct gpio_in
+
+// Hardware event trigger sources (RFC 0001 doc 09): edge interrupts
+// and analog comparators fire trsync directly, replacing timer-list
+// polling for detection. The polled endstop path remains the
+// portability fallback.
+
+struct trsync;
+
+struct trigger_source {
+    struct trsync *ts;
+    // Mask/unmask the hardware event delivery (called irqs off or
+    // from irq context); may be NULL for always-on sources.
+    void (*hw_arm)(struct trigger_source *tsrc, int enable);
+    struct gpio_in pin_in;   // for qualify-after-event re-reads
+    uint32_t pin;
+    uint32_t qualify_ticks;
+    uint32_t trigger_clock;  // timestamp latched at hardware event
+    uint32_t hw[2];          // board-half scratch
+    uint8_t qualify_count;
+    uint8_t edge;            // 1 = rising (trigger level high)
+    uint8_t reason;
+    uint8_t flags;
+    uint8_t kind;
+    uint8_t oid;
+};
+
+enum { TS_KIND_GPIO, TS_KIND_COMP, TS_KIND_ADC_WATCHDOG };
+enum { TSRC_ARMED = 1 << 0, TSRC_TRIGGERED = 1 << 1, TSRC_CAN_QUALIFY = 1<<2 };
+
+// Allocate a trigger source oid for a non-gpio hardware kind (e.g.
+// the analog comparator); the arm/disarm/query commands then apply.
+struct trigger_source *trigger_source_alloc(uint8_t oid, uint8_t kind);
+
+// Board-half contract for the gpio_edge kind (implemented per-mcu,
+// gated by CONFIG_HAVE_GPIO_EDGE_TRIGGER):
+int board_edge_trigger_setup(struct trigger_source *tsrc);
+void board_edge_trigger_arm(struct trigger_source *tsrc, int enable);
+
+// Board -> generic event delivery; called from the peripheral IRQ
+// with the hardware timestamp (or timer_read_time() at IRQ entry).
+void trigger_source_notify(struct trigger_source *tsrc, uint32_t clock);
+
+#endif // trigger_source.h
