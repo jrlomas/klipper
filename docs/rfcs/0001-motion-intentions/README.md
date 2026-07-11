@@ -24,15 +24,18 @@ wireless and Ethernet boards.
 | [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Draft / Discussion |
 | [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Draft / Discussion |
 | [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Draft / Discussion |
+| [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Draft / Discussion |
+| [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Draft / Discussion |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 04 → 01 → 03 → 09 → 07
-* *Host / klippy*: 02 → 05 → 08 → 06
-* *"Is this safe and landable?"*: 00 → 06 (risk register) → 08
+* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 07 → 11
+* *Host / klippy*: 02 → 05 → 10 → 08 → 06
+* *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 02 (underrun) → 03
+* *Third-party device vendor*: 10 → 02 → 03 → 07 → 11
 
 ## Glossary
 
@@ -77,6 +80,15 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
   analog comparator, ADC watchdog) that fires trsync directly, with
   optional timer-capture timestamps
   ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)).
+* **Protocol library** — the single MIT-licensed C implementation of
+  the wire protocol (both framings, codecs, state machines), consumed
+  by host, firmware, bootloader, and third parties; embedded profile
+  is heap-free and sized for the STM32F072
+  ([10-Protocol_Library.md](10-Protocol_Library.md)).
+* **First-class bootloader** — bootloader shipped inside every
+  firmware image, speaking the same protocol for in-band,
+  authenticated, unbrickable updates
+  ([11-Bootloader.md](11-Bootloader.md)).
 * **Traffic class** — one of Scheduled (Class 0), Prompt (Class 1),
   Telemetry (Class 2), distinguished by failure semantics
   ([03-Traffic_Classes.md](03-Traffic_Classes.md)).

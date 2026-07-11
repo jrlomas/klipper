@@ -141,6 +141,8 @@ nav:
     - rfcs/0001-motion-intentions/07-Link_Transport.md
     - rfcs/0001-motion-intentions/08-Failure_Recovery.md
     - rfcs/0001-motion-intentions/09-Hardware_Triggers.md
+    - rfcs/0001-motion-intentions/10-Protocol_Library.md
+    - rfcs/0001-motion-intentions/11-Bootloader.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md

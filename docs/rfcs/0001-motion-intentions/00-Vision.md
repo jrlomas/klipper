@@ -139,6 +139,20 @@ thresholds, timer input-capture timestamps — so triggers are
 microsecond events, not samples that got lucky
 ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)).
 
+**The protocol is one library, and it is permissive.** Today the wire
+protocol is implemented twice — once in the firmware, once in the
+host's C helper — and third parties get neither. A single,
+MIT-licensed, no-heap C library implements the entire protocol for
+the host, our firmware, the bootloader, and anyone else's device,
+open or closed ([10-Protocol_Library.md](10-Protocol_Library.md)).
+The fork itself remains GPL.
+
+**The bootloader is part of the firmware, not an add-on.** Every
+build ships bootloader + application as one image; updates are
+in-band protocol commands over whatever link the board already uses,
+authenticated on networks, unbrickable by construction
+([11-Bootloader.md](11-Bootloader.md)).
+
 **The link layer gains forward error correction and a UDP transport.**
 A backwards-compatible framing extension (negotiated through reserved
 bits that legacy firmware provably rejects) replaces the 16-bit CRC
@@ -203,6 +217,18 @@ relitigating them:
    kept intact so every existing board works), but the design is free
    to follow its own philosophy
    ([06-Migration.md](06-Migration.md)).
+7. **Licensing split.** The protocol library is MIT (original,
+   clean-room code — enabling closed-source devices and vendors);
+   the host and firmware applications remain GPL
+   ([10-Protocol_Library.md](10-Protocol_Library.md)).
+8. **Readability is a requirement, not a style preference.** One
+   implementation per concept, plain data over linker-section
+   metaprogramming, documented and versioned interfaces at every
+   boundary, and new host components on standard asyncio rather than
+   a bespoke reactor. A competent developer must be able to join at
+   any single boundary without apprenticeship in the whole
+   ([05-Host_Architecture.md](05-Host_Architecture.md),
+   [10-Protocol_Library.md](10-Protocol_Library.md)).
 
 ## Non-goals
 
@@ -262,3 +288,5 @@ adjacent industries, which is strong evidence for its viability:
 | [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, link security, ESP32 |
 | [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume |
 | [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps |
+| [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT protocol library for host, firmware, and third parties |
+| [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates |

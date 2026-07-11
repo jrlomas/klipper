@@ -120,6 +120,40 @@ printing and rough parity in the worst shaped corners.
 None of it is deleted while any configured actuator still uses the
 legacy path ([06-Migration.md](06-Migration.md)).
 
+## Host modernization: boundaries and the reactor question
+
+The current host carries two irreconcilable programming philosophies:
+klippy's bespoke greenlet reactor and hand-rolled event loop, and the
+asyncio world everything *around* klippy (Moonraker, front-ends,
+tooling) is written in. The boundary between klippy's Python and its
+C helpers is the sharpest pain: the wire protocol is implemented a
+second time in `chelper` ([klippy/chelper/msgblock.c](../../../klippy/chelper/msgblock.c)
+duplicates `src/command.h`'s constants), bound through stringly-typed
+FFI with no versioned header, while firmware-side command registration
+happens in `DECL_*` linker-section metaprogramming expanded by a
+build-time generator. It works; it is also unreadable from outside,
+and every one of those idioms concentrates change in whoever already
+holds the whole system in their head.
+
+Positions this fork takes:
+
+* **All new host components are asyncio-native**: the segment
+  emitter's Python owner, the transport layer for
+  [07-Link_Transport.md](07-Link_Transport.md), the failure-recovery
+  orchestration of [08-Failure_Recovery.md](08-Failure_Recovery.md),
+  and their tests. New code does not extend the greenlet reactor.
+* **The protocol library replaces the duplicated wire code**
+  ([10-Protocol_Library.md](10-Protocol_Library.md)): host transmit
+  machinery becomes a consumer of the same MIT library the firmware
+  uses, through a real versioned C API and a cffi binding — not a
+  parallel implementation.
+* **Honest scope note:** wholesale replacement of klippy's reactor is
+  *not* undertaken up front — the legacy motion path keeps running on
+  it, bridged to the asyncio side at a single documented seam, and the
+  reactor shrinks as subsystems migrate rather than being rewritten in
+  place. Rewriting the reactor first is how forks die; strangling it
+  is how they ship.
+
 ## Buffering policy restated
 
 * `BUFFER_TIME_HIGH` (1.0 s pause wall in toolhead.py) survives as the

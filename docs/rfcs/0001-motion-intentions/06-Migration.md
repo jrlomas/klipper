@@ -62,6 +62,35 @@ mainline.
 * The link-layer work ([07-Link_Transport.md](07-Link_Transport.md))
   is independently negotiated per link and independently landable.
 
+## Development fleet and strategy
+
+Development is anchored to one real machine — the author's
+OpenAMS-equipped printer — so every phase debugs and iterates on
+hardware that is actually in service, not a reference board on a
+desk. The fleet doubles as a deliberately broad sample of the 32-bit
+floor:
+
+| Board | MCU | Role | What it stresses |
+| --- | --- | --- | --- |
+| Octopus v1.1 | STM32F4 (F407/F446-class) | mainboard: XYZ steppers, bed, PSU | the full segment/step load; large-sector flash layout |
+| EBB36 | STM32G0B1 | toolhead: extruder, hotend, probe wiring | toolhead link loss/replug ([08](08-Failure_Recovery.md)); dual-bank bootloader |
+| Filament pressure sensor | STM32G0 (COMP-equipped) | analog trigger source | hardware window comparator ([09](09-Hardware_Triggers.md), from the `rt-comparator` branch) |
+| OpenAMS boards | STM32F072 | filament switching/feed | **the floor**: 48 MHz M0, 16 KB RAM — sizes the protocol library's embedded profile and the solver's CPU budget |
+| ESP32 devkit | ESP32 | proof of concept | UDP transport, HMAC, OTA-mapped bootloader ([07](07-Link_Transport.md), [11](11-Bootloader.md)) |
+
+Two consequences worth stating:
+
+* **The F072 is the design's honesty check.** If the segment executor
+  and library fit the OpenAMS board, they fit anything in the fleet;
+  every budget in [02-Intention_Protocol.md](02-Intention_Protocol.md)
+  and [10-Protocol_Library.md](10-Protocol_Library.md) is validated
+  there first.
+* **Backwards compatibility is the migration lever, not just a
+  courtesy.** Closed third-party devices (a Beacon-class probe, for
+  example) keep working unmodified through the legacy klipper path
+  while the fleet above migrates piece by piece — the machine never
+  stops being a working printer during development.
+
 ## Validation harness (before any real motor moves)
 
 The credibility core of this plan is that Klipper already has the two
@@ -104,7 +133,7 @@ until it is met.
 | Phase | Work | Exit criterion |
 | --- | --- | --- |
 | P1 | This RFC set; review by maintainers | Consensus on protocol + open questions resolved or explicitly deferred |
-| P2 | Linux-MCU segment executor + host segment emitter behind a config flag; the differ | Differ passes acceptance corpus; measured segment bandwidth published |
+| P2 | Protocol library ([10-Protocol_Library.md](10-Protocol_Library.md), seeded from the author's OpenAMS legacy-protocol library) + linux-MCU segment executor + host segment emitter behind a config flag; the differ, using the library as its codec | Differ passes acceptance corpus; measured segment bandwidth published; library builds standalone in embedded (F072-budget) and host profiles |
 | P3 | Traffic classes (Class 1 prompt execution, per-class pools) — **separable and independently valuable**; can proceed in parallel with P2 | An LED/fan flood cannot shut down a linux-MCU print; heater watchdog behavior verified |
 | P4 | Stepper backend on real silicon (STM32F1/F4, RP2040); benchmarks | Meets estimated step-rate ceilings ±25%; prints on a test machine match legacy prints |
 | P5 | Time model: machine-time authority + beacon sync; multi-MCU trajectory machines | ≤ ±10 µs measured inter-MCU sync; multi-board test machine prints |
@@ -112,6 +141,7 @@ until it is met.
 | P7 | Framing v2 (BCH) + UDP transport over WiFi/Ethernet with mandatory HMAC, ESP32 target — separable; can run in parallel from P3 | WiFi toolboard survives scripted 200 ms link stalls with zero shutdowns; underrun/resume demonstrated; unauthenticated datagrams rejected |
 | P8 | Failure recovery ([08-Failure_Recovery.md](08-Failure_Recovery.md)): pause-and-hold states, execution log + reliable dump, heater failsafe hold, reconnect-resume | Scripted cable-pull on a toolhead board mid-print: replug → resume completes the print with the bed never leaving temperature |
 | P9 | Hardware triggers ([09-Hardware_Triggers.md](09-Hardware_Triggers.md)): EXTI trigger sources, comparator integration (building on the `rt-comparator` branch: `src/stm32/comp.c` window comparator), capture timestamps — separable; can run in parallel from P4 | Probe repeatability measurably better than polled endstop path on the same hardware; trigger latency ≤ 10 µs local |
+| P10 | First-class bootloader ([11-Bootloader.md](11-Bootloader.md)) across the fleet targets; in-band update as the normal workflow — separable; valuable from the first flashed board onward | Every fleet board updates in-band over its normal link; interrupted update provably recovers; ESP32 maps onto IDF OTA |
 
 ## Risk register
 
