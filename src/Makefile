@@ -33,3 +33,4 @@ src-$(CONFIG_NEED_SOS_FILTER) += sos_filter.c
 src-$(CONFIG_WANT_TRIGGER_ANALOG) += trigger_analog.c
 src-$(CONFIG_WANT_TRAJECTORY) += trajq.c traj_stepper.c execlog.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += trigger_source.c
+src-$(CONFIG_WANT_HEATER_HOLD) += heater_hold.c
