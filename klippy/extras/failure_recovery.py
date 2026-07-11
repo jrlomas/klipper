@@ -1,0 +1,293 @@
+# Failure recovery orchestration: pause-and-hold host side (RFC 0001
+# doc 08).
+#
+# Three responsibilities:
+#  1. Execution log: configures the per-board execlog ring, keeps a
+#     rolling on-disk window of the live stream (flight recorder),
+#     and reliably drains the retained ring after a shutdown so the
+#     record of what the machine actually executed survives failures.
+#  2. Heater failsafe hold: plumbs the per-heater opt-in policy
+#     ([heater_bed] failure_policy: hold, hold_max_temp,
+#     hold_max_duration) to the MCU's autonomous bang-bang holder,
+#     keeps its liveness ping running, and releases it on resume.
+#     Only heaters explicitly configured hold; everything else keeps
+#     the stock watchdog behavior.
+#  3. Manual controls for testing and recovery workflows
+#     (ENGAGE_HEATER_HOLD / RELEASE_HEATER_HOLD /
+#     FAILURE_RECOVERY_STATUS, EXECLOG_DUMP).
+#
+# Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+
+import logging
+
+PIN_MIN_TIME = 0.100
+EXECLOG_DEFAULT_SIZE = 256
+PING_INTERVAL = 1.0
+HOLD_SAMPLE_TIME = 0.25
+
+
+class HeaterHold:
+    def __init__(self, fr, config, heater_section):
+        self.printer = config.get_printer()
+        self.name = heater_section
+        hconfig = config.getsection(heater_section)
+        self.max_temp_cfg = hconfig.getfloat('max_temp')
+        self.hold_max_temp = hconfig.getfloat(
+            'hold_max_temp', 110., above=0., maxval=self.max_temp_cfg)
+        self.hold_max_duration = hconfig.getfloat(
+            'hold_max_duration', 3600., above=0.)
+        self.hold_ping_timeout = hconfig.getfloat(
+            'hold_ping_timeout', 5.0, above=1.)
+        self.heater_pin = hconfig.get('heater_pin')
+        self.sensor_pin = hconfig.get('sensor_pin')
+        self.sensor_type = hconfig.get('sensor_type')
+        ppins = self.printer.lookup_object('pins')
+        pin_params = ppins.parse_pin(self.heater_pin, True, False)
+        sensor_params = ppins.parse_pin(self.sensor_pin, False, False)
+        if pin_params['chip'] is not sensor_params['chip']:
+            raise config.error(
+                "heater hold: heater and sensor must share an mcu")
+        self.mcu = pin_params['chip']
+        self.pin = pin_params['pin']
+        self.sensor = sensor_params['pin']
+        self.oid = self.mcu.create_oid()
+        self.mcu.register_config_callback(self._build_config)
+        self.ping_cmd = self.setup_cmd = None
+        self.engage_cmd = self.release_cmd = None
+        self.heater = None
+        self.engaged = False
+
+    def _build_config(self):
+        # Thermistor-style dividers read hotter as lower ADC counts
+        self.mcu.add_config_cmd(
+            "config_heater_hold oid=%d heater_pin=%s sensor_pin=%s"
+            " invert_sense=0" % (self.oid, self.pin, self.sensor))
+        cq = self.mcu.alloc_command_queue()
+        self.setup_cmd = self.mcu.lookup_command(
+            "heater_hold_setup oid=%c target=%hu ceiling=%hu band=%hu"
+            " min_valid=%hu max_valid=%hu ping_timeout=%u sample_ticks=%u"
+            " max_samples=%u max_deviation=%c", cq=cq)
+        self.ping_cmd = self.mcu.lookup_command(
+            "heater_hold_ping oid=%c", cq=cq)
+        self.engage_cmd = self.mcu.lookup_command(
+            "heater_hold_engage oid=%c", cq=cq)
+        self.release_cmd = self.mcu.lookup_command(
+            "heater_hold_release oid=%c", cq=cq)
+
+    def _temp_to_adc(self, temp):
+        # The MCU works in raw ADC counts; convert through the
+        # heater's own sensor calibration.
+        pheaters = self.printer.lookup_object('heaters')
+        heater = pheaters.lookup_heater(self.name.split()[-1])
+        sensor = heater.sensor
+        adc_value = sensor.adc_convert.calc_adc(temp)
+        return max(0, min(0xffff, int(adc_value * 65535. + .5)))
+
+    def arm(self, target_temp):
+        if self.setup_cmd is None:
+            return
+        try:
+            target = self._temp_to_adc(min(target_temp, self.hold_max_temp))
+            ceiling = self._temp_to_adc(self.hold_max_temp)
+            band_lo = self._temp_to_adc(max(0., target_temp - 15.))
+            band = abs(band_lo - target)
+            min_valid = self._temp_to_adc(self.max_temp_cfg)
+            max_valid = self._temp_to_adc(0.)
+            if min_valid > max_valid:
+                min_valid, max_valid = max_valid, min_valid
+        except Exception:
+            logging.exception("heater hold: sensor conversion failed")
+            return
+        freq = self.mcu.seconds_to_clock(1.)
+        sample_ticks = self.mcu.seconds_to_clock(HOLD_SAMPLE_TIME)
+        max_samples = int(self.hold_max_duration / HOLD_SAMPLE_TIME)
+        ping_ticks = self.mcu.seconds_to_clock(self.hold_ping_timeout)
+        self.setup_cmd.send([self.oid, target, ceiling, max(1, band),
+                             min_valid, max_valid, ping_ticks, sample_ticks,
+                             max_samples, 8])
+
+    def disarm(self):
+        if self.setup_cmd is not None:
+            # Zero sample_ticks disables the policy
+            self.setup_cmd.send([self.oid, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+    def ping(self):
+        if self.ping_cmd is not None:
+            self.ping_cmd.send([self.oid])
+
+    def engage(self):
+        if self.engage_cmd is not None:
+            self.engage_cmd.send([self.oid])
+            self.engaged = True
+
+    def release(self):
+        if self.release_cmd is not None:
+            self.release_cmd.send([self.oid])
+            self.engaged = False
+
+
+class McuExecLog:
+    def __init__(self, fr, mcu, size):
+        self.mcu = mcu
+        self.size = size
+        self.oid = mcu.create_oid()
+        mcu.register_config_callback(self._build_config)
+        self.query_cmd = self.dump_cmd = None
+        self.records = []
+
+    def _build_config(self):
+        self.mcu.add_config_cmd("config_execlog oid=%d size=%d"
+                                % (self.oid, self.size))
+        cq = self.mcu.alloc_command_queue()
+        self.query_cmd = self.mcu.lookup_query_command(
+            "execlog_query oid=%c",
+            "execlog_status oid=%c next_seq=%u oldest_seq=%u dropped=%u",
+            oid=self.oid, cq=cq)
+        self.dump_cmd = self.mcu.lookup_command(
+            "execlog_dump oid=%c seq=%u count=%c", cq=cq)
+        self.mcu.register_response(self._handle_data, "execlog_data",
+                                   self.oid)
+
+    def _handle_data(self, params):
+        self.records.append(
+            (params['seq'], params['type'], params['src'],
+             params['clock'], params['pos'], params['aux']))
+
+    # Reliable post-failure drain (Class-1 pull)
+    def drain(self):
+        if self.query_cmd is None or self.mcu.is_fileoutput():
+            return []
+        self.records = []
+        try:
+            status = self.query_cmd.send([self.oid])
+        except Exception:
+            logging.exception("execlog drain failed")
+            return []
+        seq = status['oldest_seq']
+        end = status['next_seq']
+        while seq < end:
+            count = min(16, end - seq)
+            self.dump_cmd.send([self.oid, seq, count])
+            seq += count
+        return self.records
+
+
+class FailureRecovery:
+    def __init__(self, config):
+        self.printer = config.get_printer()
+        self.execlog_size = config.getint(
+            'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
+        self.holds = {}
+        # Per-heater opt-in policy
+        pconfig = config.get_printer().lookup_object('configfile')
+        for section in config.get_prefix_sections(''):
+            name = section.get_name()
+            if not (name.startswith('heater_') or name == 'extruder'
+                    or name.startswith('extruder')):
+                continue
+            policy = section.get('failure_policy', 'off')
+            if policy == 'hold':
+                self.holds[name] = HeaterHold(self, config, name)
+            elif policy != 'off':
+                raise config.error("Unknown failure_policy '%s'" % (policy,))
+        self.execlogs = []
+        self.execlog_mcu_names = config.getlist('execlog_mcus', ('mcu',))
+        self.printer.register_event_handler("klippy:mcu_identify",
+                                            self._handle_mcu_identify)
+        self.printer.register_event_handler("klippy:connect",
+                                            self._handle_connect)
+        self.printer.register_event_handler("klippy:shutdown",
+                                            self._handle_shutdown)
+        self.ping_timer = None
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_command("FAILURE_RECOVERY_STATUS",
+                               self.cmd_STATUS,
+                               desc="Report failure recovery state")
+        gcode.register_command("ENGAGE_HEATER_HOLD", self.cmd_ENGAGE,
+                               desc="Engage the heater failsafe hold")
+        gcode.register_command("RELEASE_HEATER_HOLD", self.cmd_RELEASE,
+                               desc="Release the heater failsafe hold")
+        gcode.register_command("EXECLOG_DUMP", self.cmd_EXECLOG_DUMP,
+                               desc="Drain and log MCU execution logs")
+
+    def _handle_mcu_identify(self):
+        # Configure execution logs on the mcus that support them
+        for name in self.execlog_mcu_names:
+            objname = 'mcu' if name == 'mcu' else 'mcu ' + name
+            mcu = self.printer.lookup_object(objname, None)
+            if mcu is None:
+                logging.warning("failure_recovery: no mcu named '%s'", name)
+                continue
+            if mcu.try_lookup_command("execlog_query oid=%c") is None:
+                logging.info("failure_recovery: mcu '%s' lacks execlog",
+                             name)
+                continue
+            self.execlogs.append(McuExecLog(self, mcu, self.execlog_size))
+
+    def _handle_connect(self):
+        # Arm heater holds at their configured targets and start pings
+        reactor = self.printer.get_reactor()
+        if self.holds:
+            for hold in self.holds.values():
+                hold.arm(hold.hold_max_temp)
+            self.ping_timer = reactor.register_timer(
+                self._ping_event, reactor.monotonic() + PING_INTERVAL)
+
+    def _ping_event(self, eventtime):
+        for hold in self.holds.values():
+            try:
+                hold.ping()
+            except Exception:
+                logging.exception("heater hold ping failed")
+        return eventtime + PING_INTERVAL
+
+    def _handle_shutdown(self):
+        # Flight recorder: drain what the boards actually executed
+        for el in self.execlogs:
+            records = el.drain()
+            if records:
+                logging.info("execlog(%s): %d records: %s",
+                             el.mcu.get_status(None).get('mcu', '?'),
+                             len(records), records[-32:])
+
+    def cmd_STATUS(self, gcmd):
+        parts = []
+        for name, hold in sorted(self.holds.items()):
+            parts.append("%s: policy=hold max_temp=%.0f max_duration=%.0fs"
+                         " engaged=%d"
+                         % (name, hold.hold_max_temp,
+                            hold.hold_max_duration, hold.engaged))
+        if not parts:
+            parts.append("no heaters configured with failure_policy: hold")
+        gcmd.respond_info("\n".join(parts))
+
+    def cmd_ENGAGE(self, gcmd):
+        heater = gcmd.get('HEATER', None)
+        for name, hold in self.holds.items():
+            if heater is None or name.endswith(heater):
+                hold.engage()
+                gcmd.respond_info("Engaged hold on %s" % (name,))
+
+    def cmd_RELEASE(self, gcmd):
+        heater = gcmd.get('HEATER', None)
+        for name, hold in self.holds.items():
+            if heater is None or name.endswith(heater):
+                hold.release()
+                gcmd.respond_info("Released hold on %s" % (name,))
+
+    def cmd_EXECLOG_DUMP(self, gcmd):
+        total = 0
+        for el in self.execlogs:
+            records = el.drain()
+            total += len(records)
+            for r in records:
+                logging.info("execlog: seq=%d type=%d src=%d clock=%d"
+                             " pos=%d aux=%d", *r)
+        gcmd.respond_info("Drained %d execution log records (see log)"
+                          % (total,))
+
+
+def load_config(config):
+    return FailureRecovery(config)
