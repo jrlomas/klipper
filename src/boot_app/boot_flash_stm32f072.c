@@ -41,8 +41,8 @@ flash_wait(void)
 {
     while (FLASH->SR & FLASH_SR_BSY)
         ;
-    if (FLASH->SR & (FLASH_SR_PGERR | FLASH_SR_WRPRT)) {
-        FLASH->SR |= FLASH_SR_PGERR | FLASH_SR_WRPRT | FLASH_SR_EOP;
+    if (FLASH->SR & (FLASH_SR_PGERR | FLASH_SR_WRPERR)) {
+        FLASH->SR |= FLASH_SR_PGERR | FLASH_SR_WRPERR | FLASH_SR_EOP;
         return -1;
     }
     FLASH->SR |= FLASH_SR_EOP;

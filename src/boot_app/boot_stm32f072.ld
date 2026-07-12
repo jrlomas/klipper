@@ -33,6 +33,17 @@ SECTIONS
         *(.rodata .rodata*)
     } > rom
 
+    /* C++ static constructors: the KLIPPER_METHOD / KLIPPER_RESPONSE
+     * descriptors register themselves here, so boot_startup.c must run
+     * this array before boot_main(). */
+    .init_array : {
+        . = ALIGN(4);
+        __init_array_start = .;
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.init_array))
+        __init_array_end = .;
+    } > rom
+
     . = ALIGN(4);
     _data_flash = .;
 

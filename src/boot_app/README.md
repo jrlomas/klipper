@@ -52,39 +52,95 @@ validity-record semantics are exercised on the desktop against a
 RAM-backed fake flash by `lib/intentproto/tests/test_flashops.cpp` —
 the same geometry the on-chip drivers use.
 
-## Build status (honest)
+## Build status (combined-image build implemented)
 
-This is delivered as a **staged, compile-checked object set**, *not*
-a wired-in combined-image build. `make check` (this directory) cross-
-compiles every translation unit for cortex-m0 / m0plus / m4 against
-the vendored CMSIS headers and reports per-target object sizes. The
-register drivers are compile-checked, not hardware-tested here.
+The combined "one build, one flash" image is now a real, flashable
+build. A bootable bootloader ELF is linked from the object set here +
+a minimal startup + a polled UART transport + the intentproto protocol
+library, and `scripts/build_combined.py` merges it with the
+application at the app offset into a single artifact.
 
-Reasons it is staged rather than a full `out/klipper+boot.bin` this
-pass: a bootable ELF additionally needs the port startup
-(`src/generic/armcm_boot.c`, whose `ResetHandler` would call
-`boot_main`) and the transport glue (a USB-CDC / UART / CAN
-implementation of the weak `boot_link_read` / `boot_link_write`
-seam), plus a `boot_system_reset` / `boot_jump_to_app` port hook. Those
-are per-board and out of scope for this pass; the seams are marked
-`__attribute__((weak))` so the object set links and compile-checks
-standalone.
+### The three build steps
 
-### How the combined "one build, one flash" image is assembled
+**1. The bootloader image** — `make bootloader` (this directory):
 
-1. Build the bootloader ELF: the object set here + `armcm_boot.c` +
-   the board transport, linked with `boot_stm32<target>.ld`; objcopy
-   to `boot.bin` at `0x08000000`.
-2. Build the application as usual with
-   `CONFIG_FLASH_APPLICATION_ADDRESS` set to the app base above
-   (existing `STM32_FLASH_START_*` choice), producing `klipper.bin`.
-3. Concatenate: `boot.bin` padded to the app base, then `klipper.bin`.
-   The result is a single image flashed once by DFU/programmer; every
-   later update is in-band. `_boot_reqword` in the link script is
-   pinned to the application's `INTENTPROTO_BOOT_REQ_ADDR`
-   (`src/generic/bootentry.h`) so the entry request survives the reset.
+```
+$ make bootloader
+== bootloader f072 ==
+   boot-f072.bin = 11052 bytes (budget 16384)
+== bootloader f4 ==
+   boot-f4.bin = 10892 bytes (budget 32768)
+```
 
-Wiring this into the top-level Makefile (a `WANT_BOOTLOADER`-gated
-combined-image target) is the natural next step and is intentionally
-deferred so the entry command (part 1) could land and be size-verified
-independently.
+It links: the object set here, `boot_startup.c` (a self-contained
+Cortex-M reset vector + C-runtime + `.init_array` runner that calls
+`boot_main`; it does *not* need the firmware's `armcm_boot.c` /
+`compile_time_request` machinery), the polled UART transport
+(`boot_uart_stm32f0.c` for F072/G0B1, `boot_uart_stm32f4.c` for F4),
+and the intentproto library (`proto` + `dict` + `datagram` + `bch` +
+`hmac`), with `boot_stm32<target>.ld`. `boot_startup.c` also supplies
+the real `boot_system_reset` (NVIC reset) and `boot_jump_to_app`
+(VTOR + SP/PC handoff) that `boot_main.cpp` declares weak.
+
+**Transport: a polled UART, not USB.** The F072 budget is 16 KB and the
+protocol library already fills most of it; a full USB-CDC stack does
+not fit alongside it there, and would add an enumeration step before
+the host could request an update. A polled UART needs no interrupts
+(so the bootloader vector table stays trivial), is the same physical
+link Katapult's serial recovery uses, and carries the *identical*
+intentproto framing — a host that speaks the protocol to the
+application speaks it to the bootloader unchanged (doc 11's core
+promise). USART1 on PA9/PA10. USB in the bootloader is deferred to the
+larger-flash / dual-bank targets where the budget allows it.
+
+**2. The application at the app offset** — build the firmware as usual
+with the new Kconfig bootloader-offset selection:
+
+```
+$ make menuconfig     # Bootloader offset ->
+                      #   "16KiB first-class bootloader (intentproto)"  (F072/G0B1)
+                      #   "32KiB first-class bootloader (intentproto)"  (F4)
+$ make
+```
+
+These select `CONFIG_STM32_FLASH_START_IPBOOT_16K` / `_32K`, which set
+`CONFIG_FLASH_APPLICATION_ADDRESS` to `0x08004000` / `0x08008000` and
+(on F0) `CONFIG_ARMCM_RAM_VECTORTABLE=y` so the app's vector table is
+relocated. The application links at the app base and `out/klipper.bin`
+is produced normally.
+
+**3. The combined image** — `scripts/build_combined.py`:
+
+```
+$ make combined TARGET=stm32f072 \
+      BOOT_BIN=build/boot-f072.bin APP_BIN=../../out/klipper.bin \
+      OUT=build/combined-f072.bin
+combined image: build/combined-f072.bin (stm32f072)
+  bootloader :  11052 bytes @ 0x08000000
+  application:  56880 bytes @ 0x08004000 (crc32=0x51ff1e8f)
+  validity   :     16 bytes @ 0x0801f800 (magic=0x50414f42)
+  total      : 129040 bytes
+```
+
+The script (`zlib.crc32`, i.e. `intentproto::crc32`) lays out one raw
+image: bootloader at offset 0, 0xFF pad to the app base, the
+application image, 0xFF pad to the info page, then the 16-byte
+`boot_info_record` `{magic, app_size, crc32, 0}` the bootloader reads
+at boot. Stamping the validity record here means the *first* boot of a
+freshly programmed board finds a valid app and jumps straight to it —
+no in-band update needed to bootstrap. The single `combined.bin` is
+flashed once at `0x08000000` by DFU/programmer; every later update is
+in-band. `_boot_reqword` in the link script is pinned to the
+application's `INTENTPROTO_BOOT_REQ_ADDR` (`src/generic/bootentry.h`)
+so the `enter_bootloader` request survives the reset.
+
+### What remains hardware-gated
+
+The register-level flash drivers (`boot_flash_stm32*.c`) and the UART
+bring-up (`boot_uart_*.c`) are compile/link verified but not
+hardware-tested — there is no board in the build environment. The
+polled UART clock/baud divisor assumes the reset-default kernel clock
+(documented in each `boot_uart_*.c`); a board that runs its USART from
+a different clock adjusts `BOOT_UART_FCK`. On-chip validation (an
+actual `enter_bootloader` -> `flash_*` -> jump cycle over the wire) is
+the remaining step and needs the target silicon.
