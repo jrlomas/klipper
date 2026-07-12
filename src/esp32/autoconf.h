@@ -45,6 +45,8 @@
 #define CONFIG_WANT_HEATER_HOLD 1
 #define CONFIG_WANT_TRIGGER_ANALOG 0
 #define CONFIG_WANT_TRIGGER_SOURCE 0
+// In-band update maps onto ESP-IDF OTA (RFC 0001 doc 11); see ota.c.
+#define CONFIG_WANT_BOOTLOADER 1
 
 // The WiFi/RTOS environment cannot honor tick-exact step pulse
 // timing guarantees (RFC 0001 doc 07's caution); the classic stepper

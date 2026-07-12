@@ -284,6 +284,24 @@ traj_stepper_oid_lookup(uint8_t oid)
     return oid_lookup(oid, command_config_traj_stepper);
 }
 
+#if CONFIG_WANT_BOOTLOADER
+// Strong override of the enter_bootloader activity hook: report the
+// board as "mid-print" while any stepper has a segment executing or a
+// synthesized ramp running, so an unforced enter_bootloader is
+// refused until the host drains the queues (doc 08 / doc 11).
+int
+bootloader_entry_busy(void)
+{
+    uint8_t i;
+    struct traj_stepper *s;
+    foreach_oid(i, s, command_config_traj_stepper) {
+        if (s->tq.flags & (TQF_ACTIVE | TQF_RAMPING))
+            return 1;
+    }
+    return 0;
+}
+#endif
+
 void
 command_queue_traj_segment(uint32_t *args)
 {

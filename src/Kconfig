@@ -209,6 +209,10 @@ config WANT_HEATER_HOLD
     bool
     depends on WANT_ADC
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_BOOTLOADER
+    bool
+    depends on HAVE_BOOTLOADER_REQUEST
+    default y if !HAVE_LIMITED_CODE_SIZE
 menu "Optional features (to reduce code size)"
     depends on HAVE_LIMITED_CODE_SIZE
 config WANT_ADC
@@ -303,6 +307,9 @@ config WANT_TRIGGER_SOURCE
 config WANT_HEATER_HOLD
     bool "Support autonomous heater failsafe hold"
     depends on WANT_ADC
+config WANT_BOOTLOADER
+    bool "Support in-band bootloader entry (enter_bootloader)"
+    depends on HAVE_BOOTLOADER_REQUEST
 endmenu
 
 # Generic configuration options for CANbus

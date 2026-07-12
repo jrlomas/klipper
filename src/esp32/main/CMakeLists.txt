@@ -59,7 +59,9 @@ set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/spi.c
     ${KLIPPER_ROOT}/src/esp32/i2c.c
     ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
-    ${KLIPPER_ROOT}/src/esp32/wifi.c)
+    ${KLIPPER_ROOT}/src/esp32/wifi.c
+    # In-band update mapped onto ESP-IDF OTA (RFC 0001 doc 11)
+    ${KLIPPER_ROOT}/src/esp32/ota.c)
 if(CONFIG_KLIPPER_ARCH_MODEM)
     # "IDF as modem" (RFC 0001 doc 12 stage 3): bare core 1 booted by
     # appcpu_boot.c, console over the shared-memory ring, IDF/lwIP
@@ -92,7 +94,7 @@ idf_component_register(
         ${KLIPPER_ROOT}/lib/intentproto/src/hmac.cpp
     PRIV_INCLUDE_DIRS ${KLIPPER_INCLUDES}
     PRIV_REQUIRES driver esp_adc esp_wifi nvs_flash lwip esp_netif
-        esp_event esp_timer
+        esp_event esp_timer app_update spi_flash
     LDFRAGMENTS linker.lf)
 set_source_files_properties(${GEN_CTR_C} PROPERTIES GENERATED TRUE)
 
@@ -115,7 +117,8 @@ target_compile_options(klipper_core PRIVATE
 foreach(comp freertos esp_common esp_system esp_hw_support esp_rom
         hal soc log heap esp_driver_gpio esp_driver_gptimer esp_adc
         esp_driver_ledc
-        esp_wifi nvs_flash lwip esp_netif esp_event newlib esp_timer)
+        esp_wifi nvs_flash lwip esp_netif esp_event newlib esp_timer
+        app_update spi_flash)
     if(TARGET __idf_${comp})
         target_link_libraries(klipper_core PRIVATE __idf_${comp})
     endif()
