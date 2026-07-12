@@ -208,6 +208,28 @@ class MCU_stepper:
         clock = self._mcu.clock32_to_clock64(params['clock'])
         self._last_traj_readback = (clock, mcu_pos)
         return clock, mcu_pos
+    def read_traj_held_subunits(self):
+        # Sub-unit-exact readback of a trajectory stepper's held
+        # position accumulator for the RFC 0001 doc 08 resume
+        # reconciler.  traj_position reports integer sub-units (1
+        # microstep = 2^16); this held accumulator is the board's
+        # authoritative position when it never rebooted.  Returns
+        # (clock64, pos_subunits) or None outside trajectory mode /
+        # debug output.
+        if self._traj is None or self._mcu.is_fileoutput():
+            return None
+        params = self._get_position_cmd.send([self._oid])
+        clock = self._mcu.clock32_to_clock64(params['clock'])
+        self._last_traj_readback = (clock,
+                                    int(round(params['pos'] / 65536.)))
+        return clock, params['pos']
+    def sync_to_held_position(self, pos_subunits):
+        # Bring the host mcu-position offset into agreement with the
+        # board's authoritative held accumulator on resume (doc 08).
+        if self._traj is None:
+            return
+        self._set_mcu_position(int(round(pos_subunits / 65536.)))
+        self._mcu.get_printer().send_event("stepper:sync_mcu_position", self)
     def get_past_mcu_position(self, print_time):
         if self._traj is not None:
             # Trajectory steppers have no host-side step history to

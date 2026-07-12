@@ -47,6 +47,15 @@ EXECLOG_DEFAULT_SIZE = 256
 PING_INTERVAL = 1.0
 HOLD_SAMPLE_TIME = 0.25
 
+# Execution-log record types (mirror of src/execlog.h)
+EL_SEG_DONE = 1
+EL_TRIGGER = 2
+EL_UNDERRUN = 3
+EL_HOLD = 4
+EL_REBASE = 5
+EL_TRUNCATING = (EL_UNDERRUN, EL_TRIGGER)
+EL_STOP_TYPES = (EL_SEG_DONE, EL_UNDERRUN, EL_HOLD, EL_TRIGGER)
+
 
 class HeaterHold:
     def __init__(self, fr, config, heater_section):
@@ -225,6 +234,8 @@ class FailureRecovery:
         self.execlogs = []
         self.execlog_mcu_names = config.getlist('execlog_mcus', ('mcu',))
         self.link_paused_mcus = set()
+        # Last motion-resume reconciliation result (for status)
+        self.last_recovery = None
         self.printer.register_event_handler("klippy:mcu_identify",
                                             self._handle_mcu_identify)
         self.printer.register_event_handler("klippy:connect",
@@ -249,6 +260,10 @@ class FailureRecovery:
         gcode.register_command("RECONNECT_MCU", self.cmd_RECONNECT_MCU,
                                desc="Re-handshake with an MCU whose link"
                                " was lost (paused-link state)")
+        gcode.register_command("RESUME_MOTION", self.cmd_RESUME_MOTION,
+                               desc="Reconcile intentions-sent against the"
+                               " execution log, rebase every joint at its"
+                               " held position, and resume the print")
 
     def _handle_mcu_identify(self):
         # Configure execution logs on the mcus that support them
@@ -387,6 +402,181 @@ class FailureRecovery:
                      name, "ok" if ok else "failed", msg)
         gcmd.respond_info(msg)
 
+    # ---- Motion resume reconciliation (RFC 0001 doc 08) ----
+    # The intention queue went down; the execution log comes up; resume
+    # is the host reconciling the two.  Per opted-in trajectory stepper:
+    # drain the board's execlog, read its authoritative held
+    # accumulator, diff intentions-sent against executions-logged,
+    # rebase every joint at its held position, restore heater ownership,
+    # and resume the print from the reconciled position.
+    def cmd_RESUME_MOTION(self, gcmd):
+        self._resume_motion(gcmd)
+
+    def _board_state(self, ts):
+        # 'alive'  - board never rebooted; its held accumulator is
+        #            authoritative (the replugged-toolhead case).
+        # 'reset'  - board rebooted / still unreachable / shut down; its
+        #            volatile accumulators are gone or untrusted.
+        mcu = ts.mcu
+        if mcu.is_fileoutput():
+            return 'alive'
+        if mcu.get_name() in self.link_paused_mcus:
+            return 'reset'
+        try:
+            if mcu.is_shutdown():
+                return 'reset'
+        except Exception:
+            pass
+        return 'alive'
+
+    def _reconcile_oid(self, ts, records, held_su):
+        # Diff the persisted intention twin against what the board
+        # logged.  The held accumulator is authoritative; the log tells
+        # the story (last completed segment vs. an underrun/trigger that
+        # truncated the stream, and at what clock).
+        last = None
+        truncated = False
+        for rec in records:
+            seq, rtype, src, clock, pos, aux = rec
+            if src != ts.oid:
+                continue
+            if rtype in EL_STOP_TYPES:
+                last = (rtype, clock, pos)
+            if rtype in EL_TRUNCATING:
+                truncated = True
+        intended = ts.last_intention()
+        intended_pos = intended[2] if intended else None
+        gap = (intended_pos - held_su) if intended_pos is not None else None
+        return {'last': last, 'truncated': truncated,
+                'intended_pos': intended_pos, 'held_pos': held_su,
+                'gap': gap}
+
+    def _resume_motion(self, gcmd=None):
+        def info(msg):
+            logging.info("failure_recovery: %s", msg)
+            if gcmd is not None:
+                gcmd.respond_info(msg)
+        tq = self.printer.lookup_object('trajectory_queuing', None)
+        steppers = tq.get_trajectory_steppers() if tq is not None else []
+        # (a) Drain each board's execution log once (reliable Class-1
+        # pull); recovery never depends on droppable live records.
+        drained = {}
+        for el in self.execlogs:
+            try:
+                drained[el.mcu.get_name()] = el.drain()
+            except Exception:
+                logging.exception("failure_recovery: execlog drain failed"
+                                  " during resume")
+                drained[el.mcu.get_name()] = []
+        reconciled = []
+        reset = []
+        blocking = False
+        for ts in steppers:
+            state = self._board_state(ts)
+            recs = drained.get(ts.mcu.get_name(), [])
+            if state == 'alive':
+                held = None
+                try:
+                    held = ts.read_held()
+                except Exception:
+                    logging.exception("failure_recovery: held-position"
+                                      " readback failed on %s", ts.name)
+                if held is not None:
+                    clock, pos_su = held
+                    story = self._reconcile_oid(ts, recs, pos_su)
+                    # (c) rebase this joint at its held position
+                    ts.resume_reconcile(clock, pos_su)
+                    reconciled.append((ts.name, int(pos_su), story))
+                    continue
+                # Unreadable board: fall through to reset handling.
+                state = 'reset'
+            # (per-axis recovery after a board RESET)
+            cls = ts.recovery_class
+            entry = {'joint': ts.name, 'class': cls,
+                     'last_intention': ts.last_intention(), 'action': ''}
+            if cls == 'extruder':
+                ts.note_reprime()
+                entry['action'] = ("relative axis - re-prime and continue"
+                                   " (auto-resumable)")
+            elif cls == 'reference':
+                blocking = True
+                entry['action'] = ("has independent reference - re-home /"
+                                   " re-qualify away from the part, then"
+                                   " RESUME_MOTION (index re-qualification"
+                                   " is out of scope in v1)")
+            else:
+                blocking = True
+                entry['action'] = ("no independent reference - operator"
+                                   " judgment required; last known intention"
+                                   " is shown, no position is faked")
+            reset.append(entry)
+        self.last_recovery = {'reconciled': reconciled, 'reset': reset,
+                              'blocked': blocking}
+        # (d) restore heater ownership (release holds back to the host)
+        for name, hold in sorted(self.holds.items()):
+            try:
+                hold.release()
+                info("released heater hold on %s (host control restored)"
+                     % (name,))
+            except Exception:
+                logging.exception("failure_recovery: releasing hold on %s"
+                                  " failed", name)
+        # Report
+        for jname, pos_su, story in reconciled:
+            note = ""
+            if story['truncated']:
+                note = " (stream truncated by underrun/trigger)"
+            if story['gap']:
+                note += " [%d su short of intended]" % (story['gap'],)
+            info("joint %s: rebased at held position %d su%s"
+                 % (jname, pos_su, note))
+        for e in reset:
+            li = e['last_intention']
+            info("joint %s RESET (class=%s): %s%s"
+                 % (e['joint'], e['class'], e['action'],
+                    (" last intended pos=%d su" % (li[2],)) if li else ""))
+        if reconciled:
+            # Doc 08 print-quality honesty - log it, do not try to solve
+            # blemish-free resume in v1.
+            info("v1 resume is mechanically exact but not cosmetically"
+                 " invisible - a blemish is likely (RFC 0001 doc 08)")
+        if blocking:
+            info("resume BLOCKED: joint(s) need re-qualification or operator"
+                 " judgment; the print was NOT resumed")
+            return
+        # (e) resume the print from the reconciled position
+        self._do_resume(info)
+
+    def _do_resume(self, info):
+        pause_resume = self.printer.lookup_object('pause_resume', None)
+        if pause_resume is None:
+            info("[pause_resume] not configured - motion reconciled but the"
+                 " print was not auto-resumed")
+            return
+        eventtime = self.printer.get_reactor().monotonic()
+        if not pause_resume.get_status(eventtime)['is_paused']:
+            info("print is not paused - motion reconciled, nothing to resume")
+            return
+        try:
+            self.printer.lookup_object('gcode').run_script("RESUME")
+            info("print resumed from the reconciled position")
+        except Exception:
+            logging.exception("failure_recovery: error running RESUME after"
+                              " motion reconciliation")
+
+    def get_status(self, eventtime=None):
+        holds = dict((name, {'engaged': h.engaged})
+                     for name, h in self.holds.items())
+        classes = {}
+        tq = self.printer.lookup_object('trajectory_queuing', None)
+        if tq is not None:
+            classes = dict((ts.name, ts.recovery_class)
+                           for ts in tq.get_trajectory_steppers())
+        return {'paused_link_mcus': sorted(self.link_paused_mcus),
+                'heater_holds': holds,
+                'recovery_classes': classes,
+                'last_recovery': self.last_recovery}
+
     def cmd_STATUS(self, gcmd):
         parts = []
         for name, hold in sorted(self.holds.items()):
@@ -398,8 +588,21 @@ class FailureRecovery:
             parts.append("no heaters configured with failure_policy: hold")
         if self.link_paused_mcus:
             parts.append("paused-link mcus: %s (run RECONNECT_MCU MCU=<name>"
-                         " once reconnected)"
+                         " once reconnected, then RESUME_MOTION)"
                          % (", ".join(sorted(self.link_paused_mcus)),))
+        tq = self.printer.lookup_object('trajectory_queuing', None)
+        if tq is not None:
+            for ts in tq.get_trajectory_steppers():
+                parts.append("joint %s: reset-recovery class=%s"
+                             % (ts.name, ts.recovery_class))
+        if self.last_recovery is not None:
+            lr = self.last_recovery
+            parts.append("last RESUME_MOTION: %d joint(s) rebased, %d reset,"
+                         " %s" % (len(lr['reconciled']), len(lr['reset']),
+                                  "BLOCKED" if lr['blocked'] else "resumed"))
+            for e in lr['reset']:
+                parts.append("  RESET %s (class=%s): %s"
+                             % (e['joint'], e['class'], e['action']))
         gcmd.respond_info("\n".join(parts))
 
     def cmd_ENGAGE(self, gcmd):

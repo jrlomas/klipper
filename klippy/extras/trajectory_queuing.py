@@ -25,7 +25,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging
+import logging, collections
 import chelper
 
 SUBUNITS = 65536.
@@ -34,6 +34,9 @@ SUBUNITS = 65536.
 DEFAULT_TOLERANCE_SU = SUBUNITS / 2.
 DEFAULT_SAMPLE_TIME = 0.001
 DEFAULT_UNDERRUN_DECEL = 5000.  # mm/s^2
+# Rolling intention record depth (the host twin of the MCU execlog
+# window - RFC 0001 doc 08); sized like the execlog ring by default.
+DEFAULT_INTENTION_RECORD = 256
 
 
 class TrajectoryStepper:
@@ -56,6 +59,34 @@ class TrajectoryStepper:
         self.anchored = False
         self.need_rebase = True
         self.su_per_mm = 1.
+        # Rolling record of intentions SENT: the host twin the resume
+        # reconciler (RFC 0001 doc 08) diffs against what the board
+        # actually executed.  Each entry is
+        # (start_clock, end_clock, end_pos_subunits) taken from the
+        # exact chained anchor the fitter maintains (segfit_get_anchor
+        # is the Q32.32 accumulator).  Bounded like the execlog ring.
+        record_size = config.getint('motion_intention_record',
+                                    DEFAULT_INTENTION_RECORD, minval=16)
+        self.intentions = collections.deque(maxlen=record_size)
+        # Per-axis recovery class after a board RESET (doc 08):
+        #  extruder  - relative, trivially resumable (re-prime, continue)
+        #  reference - has an independent reference (endstop/encoder):
+        #              re-qualify away from the part, then resume
+        #  none      - neither: present the persisted record, require
+        #              operator judgment (do not fake a position)
+        explicit = config.get('motion_recovery_class', None)
+        if explicit is not None:
+            if explicit not in ('extruder', 'reference', 'none'):
+                raise config.error(
+                    "motion_recovery_class in '%s' must be extruder,"
+                    " reference or none" % (config.get_name(),))
+            self.recovery_class = explicit
+        elif self.name.startswith('extruder'):
+            self.recovery_class = 'extruder'
+        elif config.get('endstop_pin', None) is not None:
+            self.recovery_class = 'reference'
+        else:
+            self.recovery_class = 'none'
 
     # Called from MCU_stepper._build_config
     def build_config(self, step_pin, dir_pin, invert_step, invert_dir,
@@ -102,6 +133,8 @@ class TrajectoryStepper:
         self.ffi_lib.segfit_set_anchor(self.segfit, print_time, acc)
         self.anchored = True
         self.need_rebase = False
+        # Record the (re-)anchor point in the host intention twin.
+        self.intentions.append((int(clock), int(clock), int(pos_su)))
 
     def flush(self, flush_time, step_gen_time):
         sk = self.mcu_stepper.get_stepper_kinematics()
@@ -114,19 +147,84 @@ class TrajectoryStepper:
             # Anchor slightly before the first activity in the window
             anchor_time = max(active_time - 0.001, 0.)
             self._anchor(anchor_time)
+        prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
         n = self.ffi_lib.segfit_generate(self.segfit, flush_time)
         if n < 0:
             logging.warning("segfit overflow on %s", self.name)
             n = 0
         self._send_segs(n)
+        self._record_intention(prev_acc, prev_time)
         if not active_time:
             # Motion has ended: flush the partial span so the joint
             # lands exactly on target, then drop the anchor (the next
             # motion re-anchors with a fresh rebase).
+            prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+            prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
             n = self.ffi_lib.segfit_finalize(self.segfit)
             if n > 0:
                 self._send_segs(n)
+            self._record_intention(prev_acc, prev_time)
             self.anchored = False
+
+    def _record_intention(self, prev_acc, prev_time):
+        # Append (start_clock, end_clock, end_pos_subunits) for the span
+        # just emitted, straight off the fitter's exact chained anchor.
+        acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        if acc == prev_acc:
+            return  # nothing emitted / anchor unchanged
+        end_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+        try:
+            start_clock = int(self.mcu.print_time_to_clock(prev_time))
+            end_clock = int(self.mcu.print_time_to_clock(end_time))
+        except Exception:
+            return
+        self.intentions.append((start_clock, end_clock, int(acc >> 32)))
+
+    # ---- resume reconciliation (RFC 0001 doc 08) ----
+    def get_intention_record(self):
+        return list(self.intentions)
+
+    def last_intention(self):
+        # (start_clock, end_clock, end_pos_subunits) of the last span the
+        # host emitted, or None.  This is what the host INTENDED - the
+        # persisted twin used to report a reset joint whose board no
+        # longer holds an authoritative accumulator.
+        return self.intentions[-1] if self.intentions else None
+
+    def read_held(self):
+        # Authoritative board-held accumulator (sub-unit exact) when the
+        # board never rebooted.  Returns (clock64, pos_subunits) or None.
+        return self.mcu_stepper.read_traj_held_subunits()
+
+    def resume_reconcile(self, clock, pos_su):
+        # Re-anchor the board's segment executor at its authoritative
+        # held accumulator and bring the host fitter + mcu-position
+        # offset back into agreement, so the firmware is in a valid
+        # anchored state and the next flush generates from ground truth
+        # rather than teleporting to a stale commanded position.
+        if self.rebase_cmd is None:
+            return
+        clock = int(clock)
+        pos_su = int(pos_su)
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
+        try:
+            print_time = self.mcu.clock_to_print_time(clock)
+            self.ffi_lib.segfit_set_anchor(self.segfit, print_time,
+                                           pos_su << 32)
+            self.anchored = True
+            self.need_rebase = False
+        except Exception:
+            # Fall back to a lazy re-anchor on the next motion.
+            self.note_rebase_needed()
+        self.mcu_stepper.sync_to_held_position(pos_su)
+        self.intentions.append((clock, clock, pos_su))
+
+    def note_reprime(self):
+        # Extruder (relative) after a board RESET: its accumulator is
+        # gone, but E is relative - re-anchor at the host's current
+        # commanded position on the next motion and continue.
+        self.note_rebase_needed()
 
     def _send_segs(self, n):
         segs = self.ffi_lib.segfit_get_segs(self.segfit)
@@ -155,6 +253,9 @@ class TrajectoryQueuing:
         mcu.register_response(self._handle_underrun, "traj_underrun",
                               mcu_stepper.get_oid())
         return ts
+
+    def get_trajectory_steppers(self):
+        return list(self.steppers)
 
     def _handle_connect(self):
         for ts in self.steppers:
