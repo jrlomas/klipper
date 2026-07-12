@@ -3,6 +3,7 @@
 // libc dependencies are memcpy-class functions.
 
 #include "intentproto/proto.hpp"
+#include "intentproto/datagram.hpp"
 
 namespace intentproto {
 
@@ -157,6 +158,7 @@ namespace {
 struct Link {
     Config cfg;
     uint8_t last_rx_seq;
+    bool v2;                // latched to framing v2 (never downgrades)
     LinkStats stats;
     // frame receive state machine
     enum class RxState : uint8_t { Sync, Length, Body } state;
@@ -176,8 +178,22 @@ uint8_t reply_seq_byte() {
                      | MESSAGE_DEST);
 }
 
-// Wrap a payload already placed at frame+HEADER_SIZE and transmit.
+// Largest payload the current tx framing fits in a MESSAGE_MAX frame
+// (framing v2 spends FRAME_V2_OVERHEAD instead of MESSAGE_MIN).
+size_t payload_cap() {
+    return g_link.v2 ? MESSAGE_MAX - FRAME_V2_OVERHEAD : PAYLOAD_MAX;
+}
+
+// Wrap a payload already placed at frame+HEADER_SIZE and transmit in
+// the link's latched framing.
 void tx_frame(uint8_t* frame, size_t payload_len, uint8_t seq_byte) {
+    if (g_link.v2) {
+        uint8_t out[MESSAGE_MAX];
+        size_t total = frame_v2_encode(out, frame + HEADER_SIZE,
+                                       payload_len, seq_byte);
+        tx(out, total);
+        return;
+    }
     size_t total = payload_len + MESSAGE_MIN;
     frame[0] = (uint8_t)total;
     frame[1] = seq_byte;
@@ -210,11 +226,11 @@ void handle_identify(uint32_t offset, uint32_t count) {
         n = (uint32_t)(blob_len - offset);
         if (n > count)
             n = count;
-        if (n > PAYLOAD_MAX - 10)   // msgid + offset vlq + length byte
-            n = PAYLOAD_MAX - 10;
+        if (n > payload_cap() - 10) // msgid + offset vlq + length byte
+            n = (uint32_t)(payload_cap() - 10);
     }
     uint8_t frame[MESSAGE_MAX];
-    Writer w(frame + HEADER_SIZE, PAYLOAD_MAX);
+    Writer w(frame + HEADER_SIZE, payload_cap());
     w.put_u32(MSGID_IDENTIFY_RESPONSE);
     w.put_u32(offset);
     w.put_bytes(blob ? blob + offset : (const uint8_t*)"", n);
@@ -268,10 +284,10 @@ bool dispatch_one(const uint8_t** pp, const uint8_t* end) {
     return true;
 }
 
-void process_block(const uint8_t* frame, size_t total) {
-    g_link.last_rx_seq = frame[1] & MESSAGE_SEQ_MASK;
-    const uint8_t* p = frame + HEADER_SIZE;
-    const uint8_t* end = frame + total - TRAILER_SIZE;
+void process_block(uint8_t seq, const uint8_t* payload, size_t len) {
+    g_link.last_rx_seq = seq;
+    const uint8_t* p = payload;
+    const uint8_t* end = payload + len;
     while (p < end)
         if (!dispatch_one(&p, end))
             break;
@@ -283,6 +299,10 @@ void process_block(const uint8_t* frame, size_t total) {
 
 void init(const Config& cfg) {
     if (!g_finalized) {
+        // Library-owned capability advertisement: framing v2 lands
+        // in every dictionary this registry serves (RFC 0001 doc 07
+        // negotiation step 1) without a user-level declaration.
+        static Constant framing_v2("FRAMING_V2", 1);
         g_commands = reverse_list(g_commands);
         g_responses = reverse_list(g_responses);
         g_constants = reverse_list(g_constants);
@@ -296,6 +316,7 @@ void init(const Config& cfg) {
     }
     g_link.cfg = cfg;
     g_link.last_rx_seq = 0;
+    g_link.v2 = false;
     g_link.stats = LinkStats{};
     // The sync byte is a frame *trailer*; a fresh link starts ready
     // to accept a length byte. Garbage resyncs via the error path.
@@ -332,6 +353,24 @@ void rx(const uint8_t* data, size_t len) {
             if (g_link.buf[total - 1] != MESSAGE_SYNC) {
                 g_link.stats.framing_errors++;
                 g_link.state = Link::RxState::Sync;
+            } else if (g_link.buf[1] & FRAME_V2_FLAG) {
+                // Framing v2: BCH decode (and correct) in place.
+                const uint8_t* payload;
+                uint8_t seq;
+                int fixed = 0;
+                int plen = frame_v2_decode(g_link.buf, total, &payload,
+                                           &seq, &fixed);
+                if (plen < 0) {
+                    g_link.stats.bch_errors++;
+                    g_link.last_rx_seq = g_link.buf[1] & MESSAGE_SEQ_MASK;
+                    send_nack();
+                } else {
+                    // First valid v2 frame latches all tx to v2.
+                    g_link.v2 = true;
+                    g_link.stats.bch_corrected += (uint32_t)fixed;
+                    process_block(seq, payload, (size_t)plen);
+                }
+                g_link.state = Link::RxState::Length;
             } else {
                 uint16_t want = (uint16_t)((g_link.buf[total - 3] << 8)
                                            | g_link.buf[total - 2]);
@@ -341,7 +380,9 @@ void rx(const uint8_t* data, size_t len) {
                     g_link.last_rx_seq = g_link.buf[1] & MESSAGE_SEQ_MASK;
                     send_nack();
                 } else {
-                    process_block(g_link.buf, total);
+                    process_block(g_link.buf[1] & MESSAGE_SEQ_MASK,
+                                  g_link.buf + HEADER_SIZE,
+                                  total - MESSAGE_MIN);
                 }
                 g_link.state = Link::RxState::Length;
             }
@@ -354,13 +395,15 @@ void rx(const uint8_t* data, size_t len) {
 
 const LinkStats& link_stats() { return g_link.stats; }
 
+bool link_framing_v2() { return g_link.v2; }
+
 const Config& current_config() { return g_link.cfg; }
 
 namespace detail {
 
 void send_response(const Response& r, const void* value) {
     uint8_t frame[MESSAGE_MAX];
-    Writer w(frame + HEADER_SIZE, PAYLOAD_MAX);
+    Writer w(frame + HEADER_SIZE, payload_cap());
     w.put_u32(r.id);
     r.pack(w, value);
     if (!w.overflow)

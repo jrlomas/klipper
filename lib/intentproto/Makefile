@@ -14,7 +14,7 @@ SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
 	src/datagram.cpp boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp)
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
-	test_bootcore
+	test_negotiate test_bootcore
 
 .PHONY: all test embedded dict clean
 

@@ -26,18 +26,20 @@ frame_v2_encode(uint8_t* out, const uint8_t* payload, size_t payload_len,
 
 int
 frame_v2_decode(uint8_t* frame, size_t frame_len, const uint8_t** payload,
-                uint8_t* seq)
+                uint8_t* seq, int* corrected)
 {
     if (frame_len < FRAME_V2_OVERHEAD || frame_len > MESSAGE_MAX + 2)
         return -1;
     if (frame[frame_len - 1] != MESSAGE_SYNC)
         return -1;
     size_t data_len = frame_len - 5; // len+seq+payload
-    int corrected = bch_decode(frame, data_len, frame + data_len);
-    if (corrected < 0)
+    int fixed = bch_decode(frame, data_len, frame + data_len);
+    if (fixed < 0)
         return -1;
     if (frame[0] != frame_len || !(frame[1] & FRAME_V2_FLAG))
         return -1;
+    if (corrected)
+        *corrected = fixed;
     *seq = frame[1] & MESSAGE_SEQ_MASK;
     *payload = frame + 2;
     return (int)(data_len - 2);

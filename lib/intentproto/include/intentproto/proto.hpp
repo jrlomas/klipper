@@ -175,11 +175,23 @@ struct Config {
 // state. Call once after static initialization, before rx().
 void init(const Config& cfg);
 
-// Feed raw link bytes in any chunking. Complete frames are CRC
-// checked, acked/nacked, and their messages dispatched to registered
-// command handlers from inside this call. `identify` is handled by
-// the library.
+// Feed raw link bytes in any chunking. Both framings are accepted at
+// all times: legacy frames are CRC checked; frames whose seq byte
+// sets FRAME_V2_FLAG are BCH decoded (framing v2, RFC 0001 doc 07).
+// Valid frames are acked, damaged ones nacked, and their messages
+// dispatched to registered command handlers from inside this call.
+// `identify` is handled by the library.
+//
+// Negotiation, device side: the first VALID v2 frame latches the
+// link to framing v2 — every transmit (acks, naks, responses,
+// identify) switches to the BCH trailer and stays there; the link
+// never auto-downgrades (only init() resets it). The capability is
+// advertised as the dictionary constant FRAMING_V2=1, registered by
+// init() itself.
 void rx(const uint8_t* data, size_t len);
+
+// True once the link has latched to framing v2 (see rx() above).
+bool link_framing_v2();
 
 // The configuration passed to the most recent init().
 const Config& current_config();
@@ -197,6 +209,8 @@ struct LinkStats {
     uint32_t crc_errors;
     uint32_t framing_errors;
     uint32_t unknown_msgids;
+    uint32_t bch_errors;      // uncorrectable v2 frames (nacked)
+    uint32_t bch_corrected;   // bit errors repaired in accepted frames
 };
 const LinkStats& link_stats();
 

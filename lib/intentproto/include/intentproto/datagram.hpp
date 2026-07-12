@@ -27,9 +27,11 @@ size_t frame_v2_encode(uint8_t* out, const uint8_t* payload,
                        size_t payload_len, uint8_t seq);
 // Decode (and correct) a frame in place. Returns payload length and
 // sets *payload / *seq, or -1 if uncorrectable (caller naks; ARQ is
-// retained, FEC only reduces its use).
+// retained, FEC only reduces its use). When corrected is non-null it
+// receives the number of bit errors repaired (0..BCH_T).
 int frame_v2_decode(uint8_t* frame, size_t frame_len,
-                    const uint8_t** payload, uint8_t* seq);
+                    const uint8_t** payload, uint8_t* seq,
+                    int* corrected = nullptr);
 
 // ---- traffic classes (RFC 0001 doc 03) ----
 enum class TrafficClass : uint8_t { Scheduled = 0, Prompt = 1,

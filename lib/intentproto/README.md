@@ -12,6 +12,14 @@ library's two load-bearing decisions on real code:
    machine, ack/nack, block dispatch, identify serving, the
    dictionary builder, and the host-side retransmit-window session
    (`host.hpp` — sequence assignment, in-flight window, go-back-N).
+   Both sessions negotiate framing v2 (BCH t=3 FEC trailer) per
+   [RFC 0001 doc 07](../../docs/rfcs/0001-motion-intentions/07-Link_Transport.md):
+   the device advertises `FRAMING_V2` in its dictionary and latches
+   on the first valid v2 frame; the host probes after
+   `session_enable_v2()` and falls back to legacy automatically
+   (`v2_rejected`) when a legacy peer keeps nak'ing the probe.
+   `send_command()` records a traffic class per in-flight frame for
+   the datagram transport binding, with per-class `ClassStats`.
 2. **Annotation-style static registration** instead of code
    generation. Declaring a command is one macro plus the body — no
    table, no registration call, no build step, and nothing ever
@@ -77,10 +85,10 @@ working example.
 * Segment payload codecs (`queue_traj_segment` coefficient
   quantization, chained-position bookkeeping) per
   [02](../../docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md).
-* Wiring the v2 link layer — BCH framing, traffic classes,
-  datagram/HMAC transport exist standalone (`datagram.hpp`) — into
-  the session's negotiation path per
-  [07](../../docs/rfcs/0001-motion-intentions/07-Link_Transport.md).
+* Binding the datagram/HMAC transport (`datagram.hpp`) to the
+  sessions' framed byte streams (framing v2 and traffic classes are
+  wired into the negotiation path; the UDP datagram layer still
+  rides standalone).
 * v2 extension self-description (the >= 0x80 id space of
   `core_ids.hpp`) and the connect-time host binding.
 * `extern "C"` API surface for C consumers and the host cffi binding.
