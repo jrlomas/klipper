@@ -1,0 +1,59 @@
+# Generic / reference boards — for chips not matched to a specific
+# vendor entry. CAN pins and offsets vary per board; confirm per unit.
+
+- id: generic-rp2040
+  name: Generic RP2040 board (USB)
+  mcu: rp2040
+  flash_method: rp2040-usb
+  canbus: false
+  constrained: false
+  usb_ids: ["2e8a:0003"]
+  kconfig:
+    CONFIG_MACH_RP2040: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Hold BOOTSEL to expose RPI-RP2, copy out/klipper.uf2."
+
+- id: generic-stm32g0b1-can-toolhead
+  name: Generic STM32G0B1 CAN toolhead
+  mcu: stm32g0b1
+  flash_method: katapult-can
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB Katapult
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+  notes: "Covers the EBB/SB2209/SB2240 G0B1 family; CAN pins vary (often PB0/PB1)."
+
+- id: generic-stm32f072-can-toolhead
+  name: Generic STM32F072 CAN toolhead — constrained
+  mcu: stm32f072
+  flash_method: katapult-can
+  canbus: true
+  constrained: true
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32F072: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB Katapult (F0x2 offers _2000)
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+  notes: >
+    16 KB RAM, constrained: the OAMS/HermitCrab/SB-CAN F072 class. This is
+    the trace plane's target — the firmware side stays cheap and must fit.
+
+- id: generic-lpc176x
+  name: Generic LPC176x board
+  mcu: lpc176x
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_LPC176X: "y"
+    CONFIG_MACH_LPC1768: "y"             # 100 MHz (LPC1769 = 120 MHz Turbo)
+    CONFIG_LPC_FLASH_START_4000: "y"     # 16 KiB smoothie bootloader
+    CONFIG_USBSERIAL: "y"
+  notes: "No CONFIG_STM32_* offsets apply; SD-card flash."

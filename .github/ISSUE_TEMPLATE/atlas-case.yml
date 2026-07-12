@@ -1,0 +1,73 @@
+name: Atlas knowledge-base case
+description: >
+  Submit an opt-in, redacted blackbox bundle from Atlas so a failure can
+  become shared knowledge. This runs the public KB lifecycle (FD-0002
+  §6a): every case is triaged, analysed, verified, and accepted or
+  rejected with a written rationale in the open.
+title: "Atlas case: <one-line symptom>"
+labels: ["case/new"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        **Before you submit:** Atlas redacts bundles by default (numeric
+        diagnostics only; strings transformed; secrets never shared).
+        Review the payload it showed you — nothing here should contain a
+        hostname, key, serial, or file path. Submission is your consent to
+        share this redacted bundle publicly.
+  - type: input
+    id: symptom
+    attributes:
+      label: Symptom (one line)
+      description: What went wrong, in plain language.
+    validations:
+      required: true
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Redacted blackbox bundle
+      description: Paste the bundle JSON Atlas produced (already redacted).
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Merged-timeline excerpt
+      description: The machine-time-ordered events around the fault.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: diagnosis
+    attributes:
+      label: Atlas diagnosis
+      options:
+        - "No known pattern matched (case captured)"
+        - "Matched a pattern (include which, and whether it was right)"
+    validations:
+      required: true
+  - type: input
+    id: content_hash
+    attributes:
+      label: Content hash
+      description: The bundle content hash (used to deduplicate cases).
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Firmware / host / library versions
+      description: Reported by HELIX_STATUS (safe to share).
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_rule
+    attributes:
+      label: Proposed rule (optional)
+      description: >
+        If Atlas or you drafted a candidate signature -> cause -> fix,
+        include it. It becomes a reviewable PR against the catalog; only a
+        reviewed, merged, signed change ever reaches the fleet.
+    validations:
+      required: false

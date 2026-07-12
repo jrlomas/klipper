@@ -1,0 +1,38 @@
+# LDO Motors boards. Offsets and clock refs confirmed against LDO docs,
+# Dr.Klipper flash guides, and the Klipper generic config headers.
+
+- id: ldo-nitehawk-sb
+  name: LDO Nitehawk-SB toolboard (RP2040)
+  mcu: rp2040
+  flash_method: rp2040-usb
+  canbus: false
+  constrained: false
+  usb_ids: ["2e8a:0003", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_RP2040: "y"
+    CONFIG_RP2040_FLASH_START_4000: "y"   # 16 KiB Katapult bootloader offset
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: >
+    RP2040 USB toolboard (264 KB RAM, not constrained). Initial Katapult
+    via the RP2040 boot ROM (2e8a:0003 / UF2 to RPI-RP2), then Klipper over
+    USB through Katapult. CAN is handled upstream by a separate bridge.
+
+- id: ldo-leviathan-v1.2
+  name: LDO Leviathan V1.2 (STM32F446, USB-to-CAN bridge)
+  mcu: stm32f446
+  flash_method: katapult-usb
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32F446: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB Katapult bootloader
+    CONFIG_STM32_CLOCK_REF_12M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+    CONFIG_USBCANBUS: "y"                  # USB-to-CAN bridge, CAN on PB5/PB6
+  notes: >
+    Katapult built with USB comms (not CAN) and DFU-flashed first; then
+    Klipper as a USB-to-CAN bridge (USB PA11/PA12, CAN PB5/PB6 @ 1 Mbit).
+    Can also run plain USB if CAN is not needed.

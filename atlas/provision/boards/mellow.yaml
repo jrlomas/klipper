@@ -1,0 +1,58 @@
+# Mellow / FLY mainboards (SD-card flashed F407/F405 line). See
+# mellow-extra.yaml for the Super8 line and the SHT CAN toolheads.
+
+- id: mellow-fly-e3-v2
+  name: Mellow Fly-E3 v2 (STM32F407)
+  mcu: stm32f407
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_STM32F407: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: mellow-fly-gemini-v2
+  name: Mellow Fly-Gemini v2 (STM32F405)
+  mcu: stm32f405
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_STM32F405: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB bootloader (header-confirmed)
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: mellow-fly-cdy-v3
+  name: Mellow Fly-CDY v3 (STM32F407)
+  mcu: stm32f407
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_STM32F407: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: mellow-fly-d8
+  name: Mellow Fly-D8 (STM32F407)
+  mcu: stm32f407
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_STM32F407: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"

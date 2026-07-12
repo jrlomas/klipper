@@ -1,0 +1,106 @@
+# Fysetc boards. Verified against Klipper config/*.cfg headers and
+# src/stm32/Kconfig. Boards where Fysetc's own sources disagree on the
+# MCU/offset are marked UNCONFIRMED (the planner blocks until confirmed).
+
+- id: fysetc-spider-v1-v2
+  name: Fysetc Spider v1.x / v2.x (STM32F446)
+  mcu: stm32f446
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F446: "y"
+    CONFIG_STM32_CLOCK_REF_12M: "y"       # no bootloader -> flash at 0x08000000
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: >
+    Canonical Klipper config = No bootloader (0x08000000). Some later revs
+    (v2.2/v3.0) ship a 32 KiB SD bootloader (_8000) — verify your unit.
+
+- id: fysetc-s6-v1.2
+  name: Fysetc S6 v1.2 (STM32F446)
+  mcu: stm32f446
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F446: "y"
+    CONFIG_STM32_FLASH_START_10000: "y"   # 64 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_12M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: fysetc-s6-v2.0
+  name: Fysetc S6 v2.0 (STM32F446)
+  mcu: stm32f446
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F446: "y"
+    CONFIG_STM32_FLASH_START_10000: "y"   # 64 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_12M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: fysetc-cheetah-v1.1-v1.2
+  name: Fysetc Cheetah v1.1 / v1.2b (STM32F103)
+  mcu: stm32f103
+  flash_method: serial
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_STM32F103: "y"
+    CONFIG_STM32_CLOCK_REF_8M: "y"        # no bootloader -> flash at 0x08000000
+    CONFIG_SERIAL: "y"                    # stm32flash over USART1 (PA10/PA9)
+  notes: "Flash: stm32flash -w out/klipper.bin -i rts,-dtr,dtr /dev/ttyUSB0"
+
+- id: fysetc-cheetah-v2.0
+  name: Fysetc Cheetah v2.0 (STM32F401)
+  mcu: stm32f401
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F401: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"    # 32 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: fysetc-catalyst-kit-f401
+  name: Fysetc Catalyst Kit (STM32F401RCT6, Voron 0)
+  mcu: stm32f401
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F401: "y"
+    CONFIG_STM32_FLASH_START_0000: "UNCONFIRMED"  # DFU-direct implies 0x08000000; vendor doesn't state
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: >
+    Distinct from the "Catalyst.K" A55+H723 SBC board. Flash offset not
+    stated by the vendor — confirm before flashing.
+
+- id: fysetc-spider-king
+  name: Fysetc Spider King (MCU varies — verify chip)
+  mcu: unknown
+  flash_method: custom
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig: {}
+  notes: >
+    UNCONFIRMED: Fysetc's own sources disagree on the MCU across revisions
+    (F407 / F446 / H723), and the flash offset depends entirely on which
+    chip is physically present (F4 -> 32 KiB _8000; H723 -> 128 KiB
+    _20000). Treated as Custom until the chip is confirmed — a wrong
+    offset bricks the board.

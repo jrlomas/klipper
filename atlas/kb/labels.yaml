@@ -1,0 +1,55 @@
+# Atlas KB lifecycle labels (FD-0002 §6a). The label IS the audit trail;
+# every accept/reject carries a written rationale from this fixed, public
+# vocabulary so reasons are consistent and searchable. Sync to a repo
+# with `gh label create` (kept in sync with atlas/kb/issue.py).
+
+# --- state machine ---
+- name: case/new
+  color: "0e8a16"
+  description: Opt-in redacted bundle arrived from the case template.
+- name: case/triage
+  color: "1d76db"
+  description: Deduplicated against existing cases and open patterns.
+- name: case/analysis
+  color: "5319e7"
+  description: Candidate pattern drafted as a catalog PR linked to the case.
+- name: case/verify
+  color: "fbca04"
+  description: Reproduced, non-conflicting, and corroborated by field feedback.
+- name: accepted
+  color: "0e8a16"
+  description: PR merged into the Ed25519-signed catalog; reaches the fleet.
+
+# --- accept rationale (on the merged PR / closing comment) ---
+- name: reproduced
+  color: "c2e0c6"
+  description: The fault was reproduced.
+- name: multi-machine-confirmed
+  color: "c2e0c6"
+  description: Confirmed independently on more than one machine.
+- name: root-cause-clear
+  color: "c2e0c6"
+  description: The underlying cause is understood, not just the symptom.
+- name: fix-verified
+  color: "c2e0c6"
+  description: The suggested fix was verified to work.
+
+# --- reject rationale (on the closing comment) ---
+- name: rejected/not-reproducible
+  color: "e11d21"
+  description: Could not be reproduced.
+- name: rejected/machine-specific
+  color: "e11d21"
+  description: A local quirk, not general knowledge.
+- name: rejected/duplicate
+  color: "e11d21"
+  description: Already covered by an existing case or pattern.
+- name: rejected/insufficient-data
+  color: "e11d21"
+  description: Not enough information to analyse.
+- name: rejected/unsafe-fix
+  color: "e11d21"
+  description: The proposed fix would be unsafe.
+- name: rejected/superseded
+  color: "e11d21"
+  description: A HELIX/Atlas release removed the underlying cause.

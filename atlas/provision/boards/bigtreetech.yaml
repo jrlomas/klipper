@@ -1,0 +1,321 @@
+# BigTreeTech boards. Flash offsets verified against Klipper's
+# config/*.cfg headers and src/stm32/Kconfig (the offset->symbol map:
+# _2000=8KiB, _7000=28KiB, _8000=32KiB, _C000=48KiB, _10000=64KiB,
+# _20000=128KiB[H7], _0000=none). A wrong offset bricks a flash; any
+# value that could not be verified is UNCONFIRMED and the planner blocks.
+
+# ---- mainboards ----
+- id: btt-octopus-v1.1
+  name: BigTreeTech Octopus v1.1 (STM32F446)
+  mcu: stm32f446
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F446: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"   # 32 KiB bootloader
+    CONFIG_STM32_CLOCK_REF_12M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: >
+    Same PCB also ships as F429 (CONFIG_MACH_STM32F429 + 8 MHz clock).
+
+- id: btt-octopus-pro-v1.1-h723
+  name: BigTreeTech Octopus Pro v1.1 (STM32H723)
+  mcu: stm32h723
+  flash_method: dfu
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32H723: "y"
+    CONFIG_STM32_FLASH_START_20000: "y"  # 128 KiB bootloader (H7)
+    CONFIG_STM32_CLOCK_REF_25M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-skr-3-h743
+  name: BigTreeTech SKR 3 (STM32H743)
+  mcu: stm32h743
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32H743: "y"
+    CONFIG_STM32_FLASH_START_20000: "y"  # 128 KiB (H7)
+    CONFIG_STM32_CLOCK_REF_25M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Check the chip silk to pick H743 vs H723 (btt-skr-3-h723)."
+
+- id: btt-skr-3-h723
+  name: BigTreeTech SKR 3 (STM32H723)
+  mcu: stm32h723
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32H723: "y"
+    CONFIG_STM32_FLASH_START_20000: "y"  # 128 KiB (H7)
+    CONFIG_STM32_CLOCK_REF_25M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-skr-2-f407
+  name: BigTreeTech SKR 2 (STM32F407)
+  mcu: stm32f407
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F407: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"   # 32 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Late-2021+ boards are F429 (CONFIG_MACH_STM32F429); same 32 KiB offset."
+
+- id: btt-skr-pico-v1.0
+  name: BigTreeTech SKR Pico v1.0 (RP2040)
+  mcu: rp2040
+  flash_method: rp2040-usb
+  canbus: false
+  constrained: false
+  usb_ids: ["2e8a:0003"]
+  kconfig:
+    CONFIG_MACH_RP2040: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-manta-m4p
+  name: BigTreeTech Manta M4P (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-usb
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-manta-m5p
+  name: BigTreeTech Manta M5P (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-usb
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Optional CAN on PD0/PD1 (CONFIG_CANBUS)."
+
+- id: btt-manta-m8p-v1.1
+  name: BigTreeTech Manta M8P v1.1 (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-usb
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Optional CAN on PD12/PD13. v2.0 is a different MCU (H723)."
+
+- id: btt-manta-m8p-v2-h723
+  name: BigTreeTech Manta M8P v2.0 (STM32H723)
+  mcu: stm32h723
+  flash_method: sdcard
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32H723: "y"
+    CONFIG_STM32_FLASH_START_20000: "y"  # 128 KiB (H7) — do NOT reuse v1.x 8 KiB
+    CONFIG_STM32_CLOCK_REF_25M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-manta-e3ez
+  name: BigTreeTech Manta E3EZ (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-usb
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Optional CAN on PB12/PB13."
+
+- id: btt-kraken-h723
+  name: BigTreeTech Kraken v1.0 (STM32H723)
+  mcu: stm32h723
+  flash_method: sdcard
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32H723: "y"
+    CONFIG_STM32_FLASH_START_20000: "y"  # 128 KiB (H7)
+    CONFIG_STM32_CLOCK_REF_25M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-gtr-v1.0
+  name: BigTreeTech GTR v1.0 (STM32F407)
+  mcu: stm32f407
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F407: "y"
+    CONFIG_STM32_FLASH_START_8000: "y"   # 32 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-skr-mini-e3-v1.2
+  name: BigTreeTech SKR Mini E3 v1.2 (STM32F103)
+  mcu: stm32f103
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F103: "y"
+    CONFIG_STM32_FLASH_START_7000: "y"   # 28 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Startup GPIO !PC13 required."
+
+- id: btt-skr-mini-e3-v2.0
+  name: BigTreeTech SKR Mini E3 v2.0 (STM32F103)
+  mcu: stm32f103
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32F103: "y"
+    CONFIG_STM32_FLASH_START_7000: "y"   # 28 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+  notes: "Startup GPIO !PA14 required."
+
+- id: btt-skr-mini-e3-v3.0
+  name: BigTreeTech SKR Mini E3 v3.0 (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: ["0483:df11"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_USB: "y"
+    CONFIG_USBSERIAL: "y"
+
+- id: btt-skr-1.4-turbo
+  name: BigTreeTech SKR 1.4 Turbo (LPC1769)
+  mcu: lpc176x
+  flash_method: sdcard
+  canbus: false
+  constrained: false
+  usb_ids: []
+  kconfig:
+    CONFIG_MACH_LPC176X: "y"
+    CONFIG_MACH_LPC1769: "y"             # 120 MHz (non-Turbo = LPC1768, 100 MHz)
+    CONFIG_LPC_FLASH_START_4000: "y"     # 16 KiB smoothie bootloader (not an STM32 offset)
+    CONFIG_USBSERIAL: "y"
+
+# ---- CAN toolheads ----
+- id: btt-ebb36-42-v1.0-f072
+  name: BigTreeTech EBB36/EBB42 CAN v1.0 (STM32F072) — constrained
+  mcu: stm32f072
+  flash_method: katapult-can
+  canbus: true
+  constrained: true
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32F072: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB Katapult (F0x2 offers _2000; verified in Kconfig)
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+    CONFIG_STM32_CANBUS_PB8_PB9: "y"
+  notes: "F072 = 16 KB RAM, constrained: features that don't fit aren't built here."
+
+- id: btt-ebb36-42-v1.1-g0b1
+  name: BigTreeTech EBB36/EBB42 CAN v1.1 (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-can
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+    CONFIG_STM32_CANBUS_PB0_PB1: "y"
+
+- id: btt-ebb36-42-v1.2-g0b1
+  name: BigTreeTech EBB36/EBB42 CAN v1.2 (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-can
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+    CONFIG_STM32_CANBUS_PB0_PB1: "y"
+
+- id: btt-sb2209-can-g0b1
+  name: BigTreeTech SB2209 / SB2240 CAN (STM32G0B1)
+  mcu: stm32g0b1
+  flash_method: katapult-can
+  canbus: true
+  constrained: false
+  usb_ids: ["0483:df11", "1d50:6177"]
+  kconfig:
+    CONFIG_MACH_STM32G0B1: "y"
+    CONFIG_STM32_FLASH_START_2000: "y"   # 8 KiB
+    CONFIG_STM32_CLOCK_REF_8M: "y"
+    CONFIG_CANBUS: "y"
+    CONFIG_STM32_CANBUS_PB0_PB1: "y"
+
+- id: btt-sb2209-can-rp2040
+  name: BigTreeTech SB2209 CAN (RP2040)
+  mcu: rp2040
+  flash_method: katapult-can
+  canbus: true
+  constrained: false
+  usb_ids: ["2e8a:0003"]
+  kconfig:
+    CONFIG_MACH_RP2040: "y"
+    CONFIG_RP2040_FLASH_START_4000: "y"  # 16 KiB Katapult (RP2040, not STM32)
+    CONFIG_CANBUS: "y"
+  notes: "RP2040 uses BOOTSEL/UF2, not DFU. CAN pins gpio4/gpio5."
