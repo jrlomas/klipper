@@ -5,9 +5,11 @@ hide:
 title: HELIX
 ---
 
-![HELIX](img/helix-logo.svg){ .center-image width="420" }
+![HELIX](img/helix-logo.svg){ .center-image width="360" }
 
-<p style="text-align:center; font-size:1.2em; color:var(--md-default-fg-color--light); margin:0.6em 0 1.6em;">
+<h1 style="text-align:center; font-size:3.4em; letter-spacing:0.32em; font-weight:800; margin:0.1em 0 0; padding-left:0.32em;">HELIX</h1>
+
+<p style="text-align:center; font-size:1.2em; color:var(--md-default-fg-color--light); margin:0.4em 0 1.6em;">
 Motion firmware that trusts its micro-controllers.
 </p>
 
