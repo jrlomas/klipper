@@ -423,6 +423,16 @@ base vs the intelligence tier.
 3. **ASR engine** — Whisper variant/size for the voice tier, and whether
    the Hailo-8/8L ASR-accel tier is worth first-class support or just
    "works on CPU."
+4. **Model runtime, eval, and Hailo-budget discipline** — the deployable
+   backend (llama.cpp vs Ollama vs vLLM), the quality **eval harness**
+   (diagnosis accuracy, config-edit correctness, safety-tier refusal), and
+   how development on a large GPU stays honest to the ~8 GB / Qwen3-4B
+   *deploy* budget. Raised because development now happens on GPU hardware
+   while deployment targets the Hailo-10H — see the
+   [Development Handoff](HANDOFF.md).
 
-*When the three open items are settled, FD-0002 splits into the numbered
-series and Milestone A (Observe + Provision) begins.*
+*When the open items are settled, FD-0002 splits into the numbered series
+and Milestone A (Observe + Provision) begins. Development starts from the
+[Atlas Development Handoff](HANDOFF.md), which carries everything a fresh
+instance needs to begin work — including the crucial **dev-target
+(NVIDIA/AMD GPU) ≠ deploy-target (Hailo-10H)** distinction.*

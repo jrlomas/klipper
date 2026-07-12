@@ -154,6 +154,7 @@ nav:
       - founding/0001-motion-intentions/13-Syscall_API.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
+      - founding/0002-companion-system/HANDOFF.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md
