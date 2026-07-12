@@ -57,10 +57,40 @@ command_config_trigger_gpio(uint32_t *args)
     int ret = board_edge_trigger_setup(tsrc);
     if (ret)
         shutdown("Pin unavailable as edge trigger");
+    // Optionally route the same edge to a timer input-capture channel
+    // for a hardware-exact timestamp (RFC doc 09 sec 3). Availability
+    // is per-pin/per-port; if unwired the ISR-entry read is used.
+    if (board_timer_capture_setup(tsrc))
+        tsrc->flags |= TSRC_CAN_CAPTURE;
 }
 DECL_COMMAND(command_config_trigger_gpio,
              "config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c"
              " qualify_ticks=%u qualify_count=%c");
+
+// Analog watchdog trigger source (RFC doc 09 sec 2): the ADC
+// free-runs on one channel and hardware auto-compares each sample
+// against high/low thresholds, raising an event with no ADC polling.
+// This is the event-not-poll fallback on families without COMP.
+void
+command_config_trigger_adc_watchdog(uint32_t *args)
+{
+    struct trigger_source *tsrc = trigger_source_alloc(
+        args[0], TS_KIND_ADC_WATCHDOG);
+    tsrc->pin = args[1];
+    tsrc->hw[0] = args[2];      // high threshold (ADC counts)
+    tsrc->hw[1] = args[3];      // low threshold (ADC counts)
+    // No gpio-style qualify: the confirmation "re-read" for an analog
+    // source is the ADC's own next hardware compare against the same
+    // thresholds (plus the AWD's inherent threshold band), so
+    // TSRC_CAN_QUALIFY stays clear and the digital pin_in re-read in
+    // trigger_source_notify is skipped for this kind.
+    tsrc->hw_arm = board_adc_watchdog_arm;
+    int ret = board_adc_watchdog_setup(tsrc);
+    if (ret)
+        shutdown("ADC watchdog unavailable for pin");
+}
+DECL_COMMAND(command_config_trigger_adc_watchdog,
+             "config_trigger_adc_watchdog oid=%c pin=%u high=%hu low=%hu");
 
 static struct trigger_source *
 trigger_gpio_oid_lookup(uint8_t oid)
@@ -78,14 +108,18 @@ command_trigger_source_arm(uint32_t *args)
     irq_disable();
     tsrc->ts = ts;
     tsrc->reason = args[2];
-    tsrc->flags &= ~TSRC_TRIGGERED;
+    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON);
+    // Use the hardware-captured edge tick when the host requests it
+    // and the board actually wired a capture channel for this source.
+    if (args[3] && (tsrc->flags & TSRC_CAN_CAPTURE))
+        tsrc->flags |= TSRC_CAPTURE_ON;
     tsrc->flags |= TSRC_ARMED;
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 1);
     irq_enable();
 }
 DECL_COMMAND(command_trigger_source_arm,
-             "trigger_source_arm oid=%c trsync_oid=%c reason=%c");
+             "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c");
 
 void
 command_trigger_source_disarm(uint32_t *args)

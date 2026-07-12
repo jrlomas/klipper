@@ -80,7 +80,9 @@ exti_read_pending(void)
 static void
 exti_dispatch(uint32_t lines)
 {
-    uint32_t clock = timer_read_time();
+    // ISR-entry read: the moment this handler ran, later than the
+    // physical edge by interrupt latency + ISR jitter.
+    uint32_t isr_clock = timer_read_time();
     uint32_t pending = exti_read_pending() & lines;
     if (!pending)
         return;
@@ -89,8 +91,16 @@ exti_dispatch(uint32_t lines)
         uint32_t line = __builtin_ctz(pending);
         pending &= pending - 1;
         struct trigger_source *tsrc = exti_owner[line];
-        if (tsrc)
-            trigger_source_notify(tsrc, clock);
+        if (!tsrc)
+            continue;
+        // Prefer the timer's latched capture value (hardware-exact
+        // edge tick, immune to ISR latency) when armed with capture;
+        // otherwise use the ISR-entry read. See timer_capture.c for
+        // the exact-timestamp-vs-ISR-latency distinction (doc 09).
+        uint32_t clock = isr_clock;
+        if (tsrc->flags & TSRC_CAPTURE_ON)
+            clock = board_timer_capture_read(tsrc);
+        trigger_source_notify(tsrc, clock);
     }
 }
 

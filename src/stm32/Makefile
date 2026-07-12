@@ -91,6 +91,7 @@ src-$(CONFIG_WANT_HARD_PWM) += stm32/hard_pwm.c
 src-$(CONFIG_HAVE_GPIO_SDIO) += stm32/sdio.c
 src-$(CONFIG_MACH_STM32G0) += stm32/comp.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/gpio_exti.c
+src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/adc_watchdog.c stm32/timer_capture.c
 
 # Binary output file rules
 target-y += $(OUT)klipper.bin
