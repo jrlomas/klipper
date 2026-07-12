@@ -82,7 +82,9 @@ def test_feature_detection():
     # mainboard: full trajectory + higher order + triggers + framing v2
     main = FakeMcu('mcu', [
         FMT['trajectory motion'], FMT['cubic/quintic segments'],
-        FMT['hardware trigger sources']], constants={'FRAMING_V2': 1})
+        FMT['hardware trigger sources']],
+        constants={'FRAMING_V2': 1, 'BOARD_SYSCALL_ABI': 0x10000,
+                   'BOARD_SYSCALL_CAPS': 0xff})
     # a toolhead with only heater hold + execlog, no framing v2
     tool = FakeMcu('toolhead', [FMT['heater failsafe hold'],
                                 FMT['execution log']])

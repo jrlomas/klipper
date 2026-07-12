@@ -58,6 +58,11 @@ class HelixStatus:
             consts = {}
         if consts.get('FRAMING_V2'):
             feats.append('framing v2 (FEC)')
+        abi = consts.get('BOARD_SYSCALL_ABI')
+        if abi:
+            caps = consts.get('BOARD_SYSCALL_CAPS', 0)
+            feats.append('unified syscall API v%d.%d (caps 0x%02x)'
+                         % (abi >> 16, abi & 0xffff, caps))
         return feats
 
     cmd_HELIX_STATUS_help = ("Report which HELIX capabilities each MCU and the"

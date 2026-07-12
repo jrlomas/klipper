@@ -216,6 +216,13 @@ config WANT_TRAJECTORY_HIGHER_ORDER
     bool
     depends on WANT_TRAJECTORY
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_SYSCALL_API
+    # Unified cross-family board syscall table (RFC 0001 doc 13): one
+    # versioned function-pointer surface, wrapping the existing board.h
+    # primitives, that every port exposes identically. Additive and small.
+    bool
+    depends on HAVE_GPIO
+    default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_TRIGGER_SOURCE
     bool
     depends on HAVE_GPIO_EDGE_TRIGGER
@@ -423,6 +430,9 @@ config WANT_TRAJECTORY
 config WANT_TRAJECTORY_HIGHER_ORDER
     bool "Support cubic/quintic (jerk-limited) trajectory segments"
     depends on WANT_TRAJECTORY
+config WANT_SYSCALL_API
+    bool "Support the unified cross-family board syscall table"
+    depends on HAVE_GPIO
 config WANT_TRIGGER_SOURCE
     bool "Support hardware event trigger sources"
     depends on HAVE_GPIO_EDGE_TRIGGER

@@ -446,3 +446,16 @@ without host polling (RFC 0001
 
 * `trigger_source_query oid=%c` : Generates a "trigger_source_state
   oid=%c flags=%c clock=%u" response with the latest event state.
+
+### Board syscall API commands
+
+The unified cross-family board syscall table (RFC 0001
+[doc 13](rfcs/0001-motion-intentions/13-Syscall_API.md)) is a versioned
+function-pointer surface every port exposes identically. The firmware
+also advertises it to the host.
+
+* `query_board_syscalls` : Generates a "board_syscalls_state abi=%u
+  caps=%u" response reporting the syscall ABI version and the capability
+  bitmap (which of GPIO/ADC/PWM/SPI/I2C/timer/scheduler/irq this board
+  provides). The same values are emitted as the static dictionary
+  constants `BOARD_SYSCALL_ABI` and `BOARD_SYSCALL_CAPS`.
