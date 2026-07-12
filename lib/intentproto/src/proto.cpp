@@ -22,13 +22,15 @@ const char* format_of(ParamType t) {
     return "%u";
 }
 
+// Reflected CRC-16/MCRF4XX (poly 0x8408, init 0xffff): the variant
+// the legacy Klipper wire actually uses. Check("123456789") = 0x6f91.
 uint16_t crc16_ccitt(const uint8_t* buf, size_t len) {
     uint16_t crc = 0xffff;
     while (len--) {
-        crc ^= (uint16_t)(*buf++) << 8;
+        crc ^= *buf++;
         for (int i = 0; i < 8; i++)
-            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
-                                 : (uint16_t)(crc << 1);
+            crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0x8408)
+                            : (uint16_t)(crc >> 1);
     }
     return crc;
 }

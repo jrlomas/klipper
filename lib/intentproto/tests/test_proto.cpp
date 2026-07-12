@@ -176,7 +176,7 @@ static uint32_t take_u32(const uint8_t** pp, const uint8_t* end) {
 
 static void test_crc16() {
     const uint8_t vec[] = "123456789";
-    CHECK(intentproto::crc16_ccitt(vec, 9) == 0x29b1);
+    CHECK(intentproto::crc16_ccitt(vec, 9) == 0x6f91);
 }
 
 static void test_vlq_roundtrip() {
