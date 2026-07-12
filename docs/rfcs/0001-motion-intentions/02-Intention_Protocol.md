@@ -67,6 +67,10 @@ New commands (encodings follow the existing VLQ argument scheme of
 config_trajectory oid=%c backend=%c underrun_decel=%u
 trajectory_rebase oid=%c clock=%u pos=%i
 queue_traj_segment oid=%c flags=%c duration=%u velocity=%i accel=%i
+queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i accel=%i \
+    jerk=%i                                       (Kconfig-gated)
+queue_traj_segment_quintic oid=%c flags=%c duration=%u velocity=%i \
+    accel=%i jerk=%i snap=%i crackle=%i           (Kconfig-gated)
 traj_hold oid=%c duration=%u
 traj_get_position oid=%c
 ```
@@ -95,12 +99,14 @@ Field definitions:
   units; at a typical 1280 microsteps/mm that is ±25 m of travel).
 * `flags` — bit 0 proposed: *hold-at-end* hint — prefer position hold
   over underrun ramp if the queue empties after this segment (see
-  underrun policy). Bits 6–7 are **reserved for segment polynomial
-  order** (00 = quadratic): if a jerk-limited cubic extension is ever
-  wanted, it becomes a negotiated capability using these bits rather
-  than a protocol redesign. Reserving them costs nothing now and is
-  cheap insurance — the extruder under pressure advance is the most
-  likely customer (see the fitter discussion in
+  underrun policy). Bits 6–7 carry the **segment polynomial order**
+  (`00` = quadratic, `01` = cubic, `10` = quintic). The cubic/quintic
+  orders are the Kconfig-gated higher-order extension described under
+  "Higher-order segments" above; they are carried on the dedicated
+  `queue_traj_segment_cubic` / `queue_traj_segment_quintic` commands
+  (which set these bits), while the base `queue_traj_segment` continues
+  to reject any non-zero order bits. The extruder under pressure
+  advance is the most likely customer (see the fitter discussion in
   [05-Host_Architecture.md](05-Host_Architecture.md)).
 * `underrun_decel` — emergency deceleration magnitude in `accel` wire
   units.
@@ -157,6 +163,93 @@ same altitude as today's 25 µs step-compression tolerance
 (`MAX_STEPCOMPRESS_ERROR` in
 [klippy/stepper.py](../../../klippy/stepper.py)). The exact default is
 an open question for review.
+
+### Higher-order segments (cubic, quintic)
+
+The quadratic segment is the floor. A **Kconfig-gated** extension
+(`CONFIG_WANT_TRAJECTORY_HIGHER_ORDER`, `default y` unless the board is
+flash-limited) adds two higher polynomial orders so the host can send
+jerk-limited motion directly instead of approximating it with many
+short quadratics. Using the reserved `flags` bits 6–7:
+
+* **cubic** (bits = `01`) adds jerk `j`:
+  q(t) = q₀ + v·t + ½·a·t² + (1/6)·j·t³
+* **quintic** (bits = `10`) additionally adds snap `s` and crackle `c`:
+  q(t) = … + (1/24)·s·t⁴ + (1/120)·c·t⁵
+
+`v, a, j, s, c` are the *true derivatives at t = 0*. A quadratic-only
+firmware build is byte-identical to today: the coefficient fields and
+all higher-order code compile out under the Kconfig gate, and a segment
+with `j = s = c = 0` evaluates bit-for-bit the same whether or not the
+feature is compiled in.
+
+**Bézier control-point interpretation.** The host expresses each
+higher-order span as a Bézier curve in *position* — 4 control points
+P₀…P₃ (cubic) or 6 control points P₀…P₅ (quintic) over the segment
+duration D — and converts to the power-basis derivatives above. The
+curve passes through P₀ (the chained anchor) and Pₙ (the endpoint), and
+the intermediate control points set the velocity/accel/jerk profile.
+The conversion is the standard Bézier→power-basis map: with
+bₖ = C(n,k)·Σᵢ (−1)^(k−i)·C(k,i)·Pᵢ the k-th derivative at the start is
+k!·bₖ/Dᵏ (host code: `bezier_to_wire()` in
+[trajectory_queuing.py](../../../klippy/extras/trajectory_queuing.py)).
+Because velocity may not reverse inside a segment, the host emits only
+monotonic spans (motion planners keep the velocity sign constant along
+a move); the stepper solver additionally tolerates a transient v≈0
+touch by re-polling forward, exactly as it already does for a
+quadratic accelerating from rest.
+
+**Fixed-point scaling.** Each higher derivative multiplies t once more,
+so it carries 16 more fractional bits than the one below it — extending
+the existing v = Q16.16, a = Q0.32 ladder:
+
+| coeff | stored int32 = true × | units |
+|-------|-----------------------|-------|
+| v | 2¹⁶ | sub-units/tick |
+| a | 2³² | sub-units/tick² |
+| j | 2⁴⁸ | sub-units/tick³ |
+| s | 2⁶⁴ | sub-units/tick⁴ |
+| c | 2⁸⁰ | sub-units/tick⁵ |
+
+*Range analysis (why int32 wire fields suffice).* Take the most
+aggressive physically reachable move and the worst-case (largest
+per-tick) parameters a trajectory MCU runs at: J ≤ 1e6 mm/s³,
+S ≤ 1e8 mm/s⁴, C ≤ 1e10 mm/s⁵, ≤ ~1e7 sub-units/mm (fine
+microstepping), CLOCK_FREQ ≥ 64 MHz. Per-tick true values scale as
+`rate · su_per_mm / F^order`:
+
+    j_true ≤ 1e6 ·1e7 / (64e6)³ = 3.8e-11 su/tick³
+    s_true ≤ 1e8 ·1e7 / (64e6)⁴ = 6.0e-17 su/tick⁴
+    c_true ≤ 1e10·1e7 / (64e6)⁵ = 9.3e-23 su/tick⁵
+
+so the stored integers are |j| ≤ 3.8e-11·2⁴⁸ ≈ 1.1e4,
+|s| ≤ 6.0e-17·2⁶⁴ ≈ 1.1e3, |c| ≤ 9.3e-23·2⁸⁰ ≈ 1.1e2 — all far inside
+int32 (±2.1e9), with ≥ 17 bits of headroom on jerk. **No int64 wire
+field is required.** (At very high CLOCK_FREQ the small higher-order
+corrections quantize to a few LSB; that is a resolution, not a range,
+limit, and is harmless — the host fitter keeps the *quantized*
+polynomial inside its deviation tolerance regardless, so a
+poorly-resolved coefficient just yields a shorter or lower-order
+segment.)
+
+**Exact chained integration.** The per-segment end delta is computed in
+int64 with staged 96-bit multiply-shifts using the same
+truncate-toward-zero convention as the quadratic `mul64x32_half`, with
+an explicit overflow guard (`shutdown`) so any unphysical
+coefficient/duration product is rejected rather than silently wrapped.
+The order-k term of the Q32.32 end delta is
+`coeff · Dᵏ / (k! · 2^{16(k−2)})`, evaluated as k multiplies by D with
+(k−2) interleaved `>>16` shifts and a final divide by k!. The
+**non-negotiable invariant** holds unchanged: the MCU's exact end delta
+equals, bit-for-bit, the host reference computation
+(`src/trajq.c:trajq_end_delta_seg` ≡
+`klippy/chelper/segfit.c:segfit_end_delta_ho` ≡
+`trajectory_queuing.py:py_end_delta_ho`), so chaining N higher-order
+segments accumulates zero drift. This is exercised by
+[test/traj_higher_order_test.py](../../../test/traj_higher_order_test.py).
+Endpoint fidelity to the analytic Bézier is dominated by coefficient
+quantization and stays far below one microstep (≈1e-4–4e-3 native units
+for realistic ~8 ms moves).
 
 ## Stepper realization without an FPU
 

@@ -75,8 +75,7 @@ traj_pwm_event(struct timer *t)
         uint32_t elapsed = p->time.waketime - tq->seg_start_clock;
         if (elapsed < tq->duration) {
             // Sample q(dt) directly and write the mapped output level
-            int64_t acc = tq->acc
-                + (trajq_pos_at(tq->velocity, tq->accel, elapsed) << 16);
+            int64_t acc = tq->acc + (trajq_pos_at_seg(tq, elapsed) << 16);
             traj_pwm_write(p, acc);
             p->time.waketime += p->sample_ticks;
             return SF_RESCHEDULE;
@@ -120,7 +119,7 @@ traj_pwm_stop(struct trajq *tq)
         uint32_t t = timer_read_time() - tq->seg_start_clock;
         if (t > tq->duration)
             t = tq->duration;
-        tq->acc += trajq_pos_at(tq->velocity, tq->accel, t) << 16;
+        tq->acc += trajq_pos_at_seg(tq, t) << 16;
         tq->seg_start_clock += t;
     }
 }
@@ -166,6 +165,30 @@ DECL_COMMAND(command_queue_traj_pwm_segment,
              "queue_traj_pwm_segment oid=%c flags=%c duration=%u"
              " velocity=%i accel=%i");
 
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+void
+command_queue_traj_pwm_segment_cubic(uint32_t *args)
+{
+    struct traj_pwm *p = traj_pwm_oid_lookup(args[0]);
+    trajq_queue_segment_ho(&p->tq, args[1] | TSEG_POLY_CUBIC, args[2]
+                           , args[3], args[4], args[5], 0, 0);
+}
+DECL_COMMAND(command_queue_traj_pwm_segment_cubic,
+             "queue_traj_pwm_segment_cubic oid=%c flags=%c duration=%u"
+             " velocity=%i accel=%i jerk=%i");
+
+void
+command_queue_traj_pwm_segment_quintic(uint32_t *args)
+{
+    struct traj_pwm *p = traj_pwm_oid_lookup(args[0]);
+    trajq_queue_segment_ho(&p->tq, args[1] | TSEG_POLY_QUINTIC, args[2]
+                           , args[3], args[4], args[5], args[6], args[7]);
+}
+DECL_COMMAND(command_queue_traj_pwm_segment_quintic,
+             "queue_traj_pwm_segment_quintic oid=%c flags=%c duration=%u"
+             " velocity=%i accel=%i jerk=%i snap=%i crackle=%i");
+#endif
+
 void
 command_traj_pwm_hold(uint32_t *args)
 {
@@ -197,7 +220,7 @@ command_traj_pwm_get_position(uint32_t *args)
         if (!timer_is_before(now, tq->seg_start_clock)) {
             if (t > tq->duration)
                 t = tq->duration;
-            acc += trajq_pos_at(tq->velocity, tq->accel, t) << 16;
+            acc += trajq_pos_at_seg(tq, t) << 16;
         }
     }
     irq_enable();

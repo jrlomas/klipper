@@ -73,6 +73,139 @@ trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
     return delta;
 }
 
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+// ---- higher-order (cubic / quintic) segment evaluation ----
+//
+// The polynomial (true derivatives at t=0, sub-units vs ticks):
+//   q(t) = q0 + v*t + (1/2)a*t^2 + (1/6)j*t^3 + (1/24)s*t^4 + (1/120)c*t^5
+//
+// FIXED-POINT SCALING (extends the existing v=Q16.16, a=Q0.32 ladder:
+// each higher derivative multiplies t once more, so it carries 16 more
+// fractional bits than the one below it):
+//   jerk    j : stored int32 = j_true * 2^48   (sub-units/tick^3)
+//   snap    s : stored int32 = s_true * 2^64   (sub-units/tick^4)
+//   crackle c : stored int32 = c_true * 2^80   (sub-units/tick^5)
+//
+// RANGE ANALYSIS (proving int32 storage suffices with headroom).
+// Take the most aggressive physically reachable move and the worst
+// (largest per-tick) parameters a trajectory MCU runs at:
+//   J<=1e6 mm/s^3, S<=1e8 mm/s^4, C<=1e10 mm/s^5 (extreme S-curve),
+//   sub-units/mm <= ~1e7 (fine microstepping), CLOCK_FREQ >= 64 MHz.
+// Per-tick true values scale as (rate * su_per_mm / F^order):
+//   j_true <= 1e6 *1e7 / (64e6)^3 = 3.8e-11 su/tick^3
+//   s_true <= 1e8 *1e7 / (64e6)^4 = 6.0e-17 su/tick^4
+//   c_true <= 1e10*1e7 / (64e6)^5 = 9.3e-23 su/tick^5
+// Stored integers:
+//   |j| <= 3.8e-11 * 2^48 ~= 1.1e4
+//   |s| <= 6.0e-17 * 2^64 ~= 1.1e3
+//   |c| <= 9.3e-23 * 2^80 ~= 1.1e2
+// all far inside int32 (+-2.1e9): >=17 bits of headroom on jerk. No
+// int32 wire field is needed. (At very high F the small higher-order
+// corrections quantize to a few LSB; that is a resolution, not a range,
+// limit and is harmless because the host fitter keeps the *quantized*
+// polynomial inside its deviation tolerance regardless.)
+//
+// Evaluation stays in int64 using staged 96-bit multiply-shifts with an
+// explicit overflow guard (shutdown), the same truncate-toward-zero
+// convention as mul64x32_half. Any unphysical coeff/duration product
+// that would exceed int64 is rejected rather than silently wrapped.
+// The quadratic (v, a) terms are left byte-identical to the code above;
+// only the j/s/c corrections use these helpers, so a segment with
+// j=s=c=0 evaluates bit-for-bit the same whether or not this feature is
+// compiled in.
+
+// trunc_toward_zero(a * t) >> sh, with a 96-bit intermediate.
+static int64_t
+smul_shr(int64_t a, uint32_t t, unsigned sh)
+{
+    int neg = a < 0;
+    uint64_t ua = neg ? -(uint64_t)a : (uint64_t)a;
+    uint64_t lo = (ua & 0xffffffff) * t;
+    uint64_t hi = (ua >> 32) * t;
+    hi += lo >> 32;
+    lo &= 0xffffffff;
+    if (hi >> (31 + sh))
+        shutdown("traj segment overflow");
+    uint64_t r = sh ? ((hi << (32 - sh)) | (lo >> sh)) : ((hi << 32) | lo);
+    return neg ? -(int64_t)r : (int64_t)r;
+}
+
+// coeff * t^nmul, with a >>16 after the first nsh multiplies, then a
+// truncate-toward-zero divide by fact. Shifts are applied early so the
+// running magnitude tracks the (small) true term value.
+static int64_t
+poly_term(int64_t coeff, uint32_t t, int nmul, int nsh, uint32_t fact)
+{
+    int64_t p = coeff;
+    int i;
+    for (i = 0; i < nmul; i++)
+        p = smul_shr(p, t, i < nsh ? 16 : 0);
+    if (fact > 1) {
+        int neg = p < 0;
+        uint64_t up = neg ? -(uint64_t)p : (uint64_t)p;
+        up /= fact;
+        p = neg ? -(int64_t)up : (int64_t)up;
+    }
+    return p;
+}
+#endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+
+// Instantaneous velocity (Q16.16) at tick t including j/s/c terms.
+int32_t
+trajq_velocity_at_seg(struct trajq *tq, uint32_t t)
+{
+    int32_t v = trajq_velocity_at(tq->velocity, tq->accel, t);
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    uint8_t order = tq->seg_flags & TSEG_POLY_MASK;
+    if (order) {
+        // d/dt of (1/6)j t^3 = (1/2)j t^2, etc.
+        v += (int32_t)poly_term(tq->jerk, t, 2, 2, 2);
+        if (order == TSEG_POLY_QUINTIC) {
+            v += (int32_t)poly_term(tq->snap, t, 3, 3, 6);
+            v += (int32_t)poly_term(tq->crackle, t, 4, 4, 24);
+        }
+    }
+#endif
+    return v;
+}
+
+// Relative position (Q16.16) at tick t including j/s/c terms.
+int64_t
+trajq_pos_at_seg(struct trajq *tq, uint32_t t)
+{
+    int64_t p = trajq_pos_at(tq->velocity, tq->accel, t);
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    uint8_t order = tq->seg_flags & TSEG_POLY_MASK;
+    if (order) {
+        p += poly_term(tq->jerk, t, 3, 2, 6);
+        if (order == TSEG_POLY_QUINTIC) {
+            p += poly_term(tq->snap, t, 4, 3, 24);
+            p += poly_term(tq->crackle, t, 5, 4, 120);
+        }
+    }
+#endif
+    return p;
+}
+
+// Exact Q32.32 end-of-segment delta including j/s/c terms.
+int64_t
+trajq_end_delta_seg(struct trajq *tq)
+{
+    int64_t d = trajq_end_delta(tq->duration, tq->velocity, tq->accel);
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    uint8_t order = tq->seg_flags & TSEG_POLY_MASK;
+    if (order) {
+        uint32_t D = tq->duration;
+        d += poly_term(tq->jerk, D, 3, 1, 6);
+        if (order == TSEG_POLY_QUINTIC) {
+            d += poly_term(tq->snap, D, 4, 2, 24);
+            d += poly_term(tq->crackle, D, 5, 3, 120);
+        }
+    }
+#endif
+    return d;
+}
+
 void
 trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
             , uint32_t underrun_decel)
@@ -84,7 +217,9 @@ trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
     move_queue_setup(&tq->mq, sizeof(struct traj_segment));
 }
 
-// Load the given coefficients as the active segment
+// Load the given coefficients as the active segment. Higher-order
+// coefficients default to zero (a plain quadratic / ramp); the
+// higher-order load path fills them in afterwards.
 static void
 trajq_load(struct trajq *tq, uint8_t flags, uint32_t duration
            , int32_t velocity, int32_t accel)
@@ -93,6 +228,9 @@ trajq_load(struct trajq *tq, uint8_t flags, uint32_t duration
     tq->duration = duration;
     tq->velocity = velocity;
     tq->accel = accel;
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    tq->jerk = tq->snap = tq->crackle = 0;
+#endif
 }
 
 // Synthesize a deceleration-to-zero ramp from velocity v_end.
@@ -130,9 +268,9 @@ int
 trajq_advance(struct trajq *tq)
 {
     // Chain: advance the exact anchor across the finished segment
-    tq->acc += trajq_end_delta(tq->duration, tq->velocity, tq->accel);
+    tq->acc += trajq_end_delta_seg(tq);
     tq->seg_start_clock += tq->duration;
-    int32_t v_end = trajq_velocity_at(tq->velocity, tq->accel, tq->duration);
+    int32_t v_end = trajq_velocity_at_seg(tq, tq->duration);
     execlog_append(EL_SEG_DONE, tq->oid, tq->seg_start_clock
                    , (int32_t)(tq->acc >> 32), 0);
 
@@ -157,6 +295,11 @@ trajq_advance(struct trajq *tq)
         struct traj_segment *seg = container_of(
             mn, struct traj_segment, node);
         trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+        tq->jerk = seg->jerk;
+        tq->snap = seg->snap;
+        tq->crackle = seg->crackle;
+#endif
         move_free(seg);
         tq->queued--;
         return TQ_ADV_SEG;
@@ -234,6 +377,82 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
     irq_enable();
     move_free(seg);
 }
+
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+// Ingest a cubic (jerk) or quintic (jerk/snap/crackle) segment. The
+// caller has set the polynomial-order bits in flags. Unused higher
+// coefficients must be zero. Mirrors trajq_queue_segment plus the
+// higher-order coefficient plumbing and range validation.
+void
+trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
+                       , int32_t velocity, int32_t accel, int32_t jerk
+                       , int32_t snap, int32_t crackle)
+{
+    if (!timesync_class0_ok()) {
+        tq->dropped++;
+        return;
+    }
+    duration = timesync_ticks_to_local(duration);
+    if (!duration)
+        shutdown("Invalid traj segment");
+    if (duration > TRAJ_MAX_DURATION)
+        // Higher-order segments never use the extended (hold) range
+        shutdown("Invalid traj segment");
+    uint8_t order = flags & TSEG_POLY_MASK;
+    if (order != TSEG_POLY_CUBIC && order != TSEG_POLY_QUINTIC)
+        shutdown("Invalid traj segment");
+    if (order == TSEG_POLY_CUBIC && (snap || crackle))
+        shutdown("Invalid traj segment");
+
+    struct traj_segment *seg = move_alloc();
+    seg->flags = flags;
+    seg->duration = duration;
+    seg->velocity = velocity;
+    seg->accel = accel;
+    seg->jerk = jerk;
+    seg->snap = snap;
+    seg->crackle = crackle;
+
+    irq_disable();
+    if (tq->flags & (TQF_NEED_REBASE | TQF_UNDERRUN)) {
+        tq->dropped++;
+        irq_enable();
+        move_free(seg);
+        return;
+    }
+    // Validate coefficient ranges up front (also computed on advance);
+    // trajq_end_delta_seg() shuts down on any int64 overflow. Load into
+    // the (idle) active slot so the shared evaluator sees the coeffs.
+    if (!(tq->flags & TQF_ACTIVE)) {
+        trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
+        tq->jerk = jerk;
+        tq->snap = snap;
+        tq->crackle = crackle;
+        tq->horizon_clock += duration;
+        trajq_end_delta_seg(tq);
+        tq->flags |= TQF_ACTIVE;
+        tq->ops->start(tq);
+        irq_enable();
+        move_free(seg);
+        return;
+    }
+    // Active: validate against a scratch load without disturbing the
+    // executing segment, then queue.
+    struct trajq scratch;
+    scratch.seg_flags = seg->flags;
+    scratch.duration = seg->duration;
+    scratch.velocity = seg->velocity;
+    scratch.accel = seg->accel;
+    scratch.jerk = jerk;
+    scratch.snap = snap;
+    scratch.crackle = crackle;
+    trajq_end_delta_seg(&scratch);
+    tq->horizon_clock += duration;
+    move_queue_push(&seg->node, &tq->mq);
+    tq->queued++;
+    irq_enable();
+}
+#endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 
 void
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)

@@ -253,6 +253,8 @@ defs_segfit = """
     int segfit_generate(struct segfit *sf, double flush_time);
     int segfit_finalize(struct segfit *sf);
     struct segfit_seg *segfit_get_segs(struct segfit *sf);
+    int64_t segfit_end_delta_ho(uint32_t duration, int32_t velocity
+        , int32_t accel, int32_t jerk, int32_t snap, int32_t crackle);
 """
 
 defs_all = [

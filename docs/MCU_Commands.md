@@ -308,9 +308,26 @@ and coexist with the legacy queue_step path.
   the segment queue underruns.
 
 * `queue_traj_segment oid=%c flags=%c duration=%u velocity=%i
-  accel=%i` : Appends a constant-acceleration motion segment lasting
-  'duration' clock ticks with the given starting 'velocity' and
-  'accel'. 'flags' carries per-segment options.
+  accel=%i` : Appends a constant-acceleration (quadratic) motion
+  segment lasting 'duration' clock ticks with the given starting
+  'velocity' and 'accel'. 'flags' carries per-segment options; the
+  polynomial-order bits (6-7) must be zero on this command.
+
+* `queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i
+  accel=%i jerk=%i` : Appends a jerk-limited cubic segment
+  q(t) = q0 + v*t + 1/2*a*t^2 + 1/6*j*t^3. 'jerk' is a signed 32-bit
+  coefficient in sub-units/tick^3 with 48 fractional bits. Only
+  available when the firmware is built with
+  CONFIG_WANT_TRAJECTORY_HIGHER_ORDER (RFC 0001 doc 02 "Higher-order
+  segments"). The command sets polynomial-order bits 6-7 = 01.
+
+* `queue_traj_segment_quintic oid=%c flags=%c duration=%u velocity=%i
+  accel=%i jerk=%i snap=%i crackle=%i` : Appends a quintic segment
+  q(t) = q0 + v*t + 1/2*a*t^2 + 1/6*j*t^3 + 1/24*s*t^4 + 1/120*c*t^5.
+  'snap' and 'crackle' are signed 32-bit coefficients in
+  sub-units/tick^4 (64 fractional bits) and sub-units/tick^5 (80
+  fractional bits). Same Kconfig gate as the cubic command; sets
+  polynomial-order bits 6-7 = 10.
 
 * `traj_hold oid=%c duration=%u` : Appends a stationary (hold) segment
   of the given 'duration'.

@@ -25,10 +25,117 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging, collections
+import logging, collections, math
 import chelper
 
 SUBUNITS = 65536.
+
+# Segment polynomial-order flag bits (mirror TSEG_POLY_* in src/trajq.h).
+TSEG_POLY_CUBIC = 1 << 6
+TSEG_POLY_QUINTIC = 2 << 6
+
+# ---- Higher-order (cubic / quintic) Bezier segments (RFC 0001 doc 02) ----
+#
+# Fixed-point scaling (extends v=Q16.16, a=Q0.32): each higher derivative
+# carries 16 more fractional bits - jerk *2^48, snap *2^64, crackle *2^80.
+# See the range-analysis block in src/trajq.c. These pure-Python integer
+# routines mirror smul_shr / poly_term / trajq_end_delta_seg in
+# src/trajq.c (and segfit.c) BIT FOR BIT, so the host reference endpoint
+# equals the MCU's exact chained accumulator.
+HO_COEFF_SHIFT = {'v': 16, 'a': 32, 'j': 48, 's': 64, 'c': 80}
+
+
+def traj_round(x):
+    # Round half away from zero, matching C round() used by the fitter.
+    return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
+
+
+def _clamp_i32(x):
+    if x > 2147483647:
+        return 2147483647
+    if x < -2147483648:
+        return -2147483648
+    return int(x)
+
+
+def _smul_shr(a, t, sh):
+    # trunc_toward_zero(a * t) >> sh
+    neg = a < 0
+    r = (abs(a) * t) >> sh
+    return -r if neg else r
+
+
+def _poly_term(coeff, t, nmul, nsh, fact):
+    p = coeff
+    for i in range(nmul):
+        p = _smul_shr(p, t, 16 if i < nsh else 0)
+    if fact > 1:
+        neg = p < 0
+        p = abs(p) // fact
+        p = -p if neg else p
+    return p
+
+
+def _mul64x32_half(a, b):
+    neg = a < 0
+    r = (abs(a) * b) >> 1
+    return -r if neg else r
+
+
+def py_end_delta_ho(duration, velocity, accel, jerk=0, snap=0, crackle=0):
+    # Exact Q32.32 end-of-segment delta, integer-identical to the C
+    # trajq_end_delta_seg()/segfit_end_delta_ho().
+    delta = (velocity * duration) << 16
+    if accel:
+        delta += _mul64x32_half(accel * duration, duration)
+    delta += _poly_term(jerk, duration, 3, 1, 6)
+    delta += _poly_term(snap, duration, 4, 2, 24)
+    delta += _poly_term(crackle, duration, 5, 3, 120)
+    return delta
+
+
+def bezier_power_derivatives(ctrl):
+    # Given Bezier control points ctrl[0..n] (position, any linear unit)
+    # over parameter u in [0,1], return the true time-normalized
+    # derivatives-at-start [d1, d2, ... dn] where dk = q^(k)(0) for the
+    # curve reparameterized so u = t and duration = 1 (callers divide by
+    # D^k). dk = k! * b_k, with b_k the power-basis coefficient of u^k.
+    n = len(ctrl) - 1
+    derivs = []
+    for k in range(1, n + 1):
+        # b_k = C(n,k) * sum_{i=0}^{k} (-1)^(k-i) C(k,i) P_i
+        bk = 0.
+        for i in range(k + 1):
+            bk += ((-1) ** (k - i)) * math.comb(k, i) * ctrl[i]
+        bk *= math.comb(n, k)
+        derivs.append(math.factorial(k) * bk)  # dk = k! * b_k
+    return derivs
+
+
+def bezier_to_wire(ctrl_su, duration):
+    # Convert Bezier control points (in sub-units) spanning 'duration'
+    # ticks to quantized wire coefficients. 4 control points -> cubic
+    # (v,a,j); 6 -> quintic (v,a,j,s,c). Returns (order_flag, coeffs)
+    # with coeffs a dict of wire ints. Quantization matches the fitter's
+    # round-half-away and the 2^(16k) scalings.
+    n = len(ctrl_su) - 1
+    if n == 3:
+        order = TSEG_POLY_CUBIC
+        keys = ['v', 'a', 'j']
+    elif n == 5:
+        order = TSEG_POLY_QUINTIC
+        keys = ['v', 'a', 'j', 's', 'c']
+    else:
+        raise ValueError("Bezier segment needs 4 (cubic) or 6 (quintic)"
+                         " control points, got %d" % (len(ctrl_su),))
+    derivs = bezier_power_derivatives(ctrl_su)  # d1..dn (u-domain)
+    coeffs = {}
+    D = float(duration)
+    for k, key in enumerate(keys, start=1):
+        # true per-tick derivative = dk / D^k ; wire = round(* 2^(16k))
+        true_k = derivs[k - 1] / (D ** k)
+        coeffs[key] = _clamp_i32(traj_round(true_k * (2. ** (16 * k))))
+    return order, coeffs
 # Default deviation tolerance: max(half a microstep, ~5um) is decided
 # host-side in sub-units; see RFC 0001 doc 02.
 DEFAULT_TOLERANCE_SU = SUBUNITS / 2.
@@ -56,6 +163,7 @@ class TrajectoryStepper:
         self.segfit = ffi_main.gc(self.ffi_lib.segfit_alloc(),
                                   self.ffi_lib.segfit_free)
         self.queue_cmd = self.hold_cmd = self.rebase_cmd = None
+        self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
         self.su_per_mm = 1.
@@ -133,6 +241,14 @@ class TrajectoryStepper:
             "traj_hold oid=%c duration=%u", cq=cmd_queue)
         self.rebase_cmd = self.mcu.lookup_command(
             "trajectory_rebase oid=%c clock=%u pos=%i", cq=cmd_queue)
+        # Higher-order commands exist only if the firmware was built with
+        # CONFIG_WANT_TRAJECTORY_HIGHER_ORDER; look them up optionally.
+        self.cubic_cmd = self.mcu.try_lookup_command(
+            "queue_traj_segment_cubic oid=%c flags=%c duration=%u"
+            " velocity=%i accel=%i jerk=%i")
+        self.quintic_cmd = self.mcu.try_lookup_command(
+            "queue_traj_segment_quintic oid=%c flags=%c duration=%u"
+            " velocity=%i accel=%i jerk=%i snap=%i crackle=%i")
 
     def connect(self):
         sk = self.mcu_stepper.get_stepper_kinematics()
@@ -264,6 +380,33 @@ class TrajectoryStepper:
             else:
                 self.queue_cmd.send([self.oid, s.flags, s.duration,
                                      s.velocity, s.accel])
+
+    def queue_bezier_segment(self, duration, ctrl_su):
+        # Emit one cubic (4 control points) or quintic (6 control points)
+        # Bezier segment. ctrl_su are positions in sub-units spanning
+        # 'duration' ticks; the chained encoding means ctrl_su[0] must be
+        # the current anchor position (only the relative shape is sent).
+        # Returns the exact Q32.32 end delta (mirrors the MCU accumulator)
+        # so the caller can advance its anchor without any drift.
+        duration = int(duration)
+        order, c = bezier_to_wire(ctrl_su, duration)
+        base_flags = 0
+        if order == TSEG_POLY_CUBIC:
+            if self.cubic_cmd is None:
+                raise self.mcu.error(
+                    "Firmware for %s lacks higher-order trajectory support"
+                    % (self.name,))
+            self.cubic_cmd.send([self.oid, base_flags, duration,
+                                 c['v'], c['a'], c['j']])
+            return py_end_delta_ho(duration, c['v'], c['a'], c['j'])
+        if self.quintic_cmd is None:
+            raise self.mcu.error(
+                "Firmware for %s lacks higher-order trajectory support"
+                % (self.name,))
+        self.quintic_cmd.send([self.oid, base_flags, duration,
+                               c['v'], c['a'], c['j'], c['s'], c['c']])
+        return py_end_delta_ho(duration, c['v'], c['a'], c['j'],
+                               c['s'], c['c'])
 
 
 class TrajectoryQueuing:

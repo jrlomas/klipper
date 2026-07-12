@@ -207,6 +207,15 @@ config WANT_TRAJECTORY_PWM
     bool
     depends on WANT_TRAJECTORY && WANT_HARD_PWM
     default y
+config WANT_TRAJECTORY_HIGHER_ORDER
+    # Cubic (jerk) and quintic (jerk/snap/crackle) Bezier segments on
+    # top of the quadratic core (RFC 0001 doc 02 "Higher-order
+    # segments"). Adds j/s/c coefficient fields and the exact chained
+    # integration for them; a quadratic-only build is byte-identical
+    # with this off.
+    bool
+    depends on WANT_TRAJECTORY
+    default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_TRIGGER_SOURCE
     bool
     depends on HAVE_GPIO_EDGE_TRIGGER
@@ -388,6 +397,9 @@ config WANT_TRAFFIC_CLASSES
 config WANT_TRAJECTORY
     bool "Support trajectory intention segments"
     depends on HAVE_GPIO && !MACH_AVR
+config WANT_TRAJECTORY_HIGHER_ORDER
+    bool "Support cubic/quintic (jerk-limited) trajectory segments"
+    depends on WANT_TRAJECTORY
 config WANT_TRIGGER_SOURCE
     bool "Support hardware event trigger sources"
     depends on HAVE_GPIO_EDGE_TRIGGER

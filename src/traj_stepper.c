@@ -65,7 +65,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
     uint32_t tmax = tq->duration;
     int i;
     for (i = 0; i < 8; i++) {
-        int32_t v = trajq_velocity_at(tq->velocity, tq->accel, t);
+        int32_t v = trajq_velocity_at_seg(tq, t);
         if (dir > 0 ? v <= 0 : v >= 0) {
             // Not approaching at this tick (v ~= 0 while accelerating
             // from rest): step forward and retry.
@@ -76,7 +76,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
             }
             continue;
         }
-        int64_t err = trajq_pos_at(tq->velocity, tq->accel, t) - s->target16;
+        int64_t err = trajq_pos_at_seg(tq, t) - s->target16;
         int64_t dt = -err / v; // ticks (err Q16.16 / v Q16.16)
         if (dt > (int64_t)tmax)
             dt = tmax;
@@ -98,7 +98,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
         t = s->t_prev + 1;
     // Walk forward over any residual undershoot (bounded)
     for (i = 0; i < 4 && t < tmax; i++) {
-        int64_t q = trajq_pos_at(tq->velocity, tq->accel, t);
+        int64_t q = trajq_pos_at_seg(tq, t);
         if (dir > 0 ? q >= s->target16 : q <= s->target16)
             break;
         t++;
@@ -115,12 +115,12 @@ traj_stepper_load(struct traj_stepper *s)
 {
     struct trajq *tq = &s->tq;
     int32_t v0 = tq->velocity;
-    int32_t vend = trajq_velocity_at(v0, tq->accel, tq->duration);
+    int32_t vend = trajq_velocity_at_seg(tq, tq->duration);
     int8_t dir = v0 ? (v0 > 0 ? 1 : -1)
         : (tq->accel ? (tq->accel > 0 ? 1 : -1) : (vend > 0 ? 1 : -1));
     s->dir = dir;
     s->t_prev = 0;
-    s->q16_end = trajq_end_delta(tq->duration, tq->velocity, tq->accel) >> 16;
+    s->q16_end = trajq_end_delta_seg(tq) >> 16;
     // Next microstep boundary in the direction of travel, relative
     // to the exact chained anchor.
     int64_t boundary = dir > 0 ? ((int64_t)(s->mpos + 1) << 48)
@@ -244,7 +244,7 @@ traj_stepper_stop(struct trajq *tq)
         uint32_t t = timer_read_time() - tq->seg_start_clock;
         if (t > tq->duration)
             t = tq->duration;
-        tq->acc += trajq_pos_at(tq->velocity, tq->accel, t) << 16;
+        tq->acc += trajq_pos_at_seg(tq, t) << 16;
         tq->seg_start_clock += t;
     }
 }
@@ -312,6 +312,30 @@ DECL_COMMAND(command_queue_traj_segment,
              "queue_traj_segment oid=%c flags=%c duration=%u"
              " velocity=%i accel=%i");
 
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+void
+command_queue_traj_segment_cubic(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    trajq_queue_segment_ho(&s->tq, args[1] | TSEG_POLY_CUBIC, args[2]
+                           , args[3], args[4], args[5], 0, 0);
+}
+DECL_COMMAND(command_queue_traj_segment_cubic,
+             "queue_traj_segment_cubic oid=%c flags=%c duration=%u"
+             " velocity=%i accel=%i jerk=%i");
+
+void
+command_queue_traj_segment_quintic(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    trajq_queue_segment_ho(&s->tq, args[1] | TSEG_POLY_QUINTIC, args[2]
+                           , args[3], args[4], args[5], args[6], args[7]);
+}
+DECL_COMMAND(command_queue_traj_segment_quintic,
+             "queue_traj_segment_quintic oid=%c flags=%c duration=%u"
+             " velocity=%i accel=%i jerk=%i snap=%i crackle=%i");
+#endif
+
 void
 command_traj_hold(uint32_t *args)
 {
@@ -343,7 +367,7 @@ command_traj_get_position(uint32_t *args)
         if (!timer_is_before(now, tq->seg_start_clock)) {
             if (t > tq->duration)
                 t = tq->duration;
-            acc += trajq_pos_at(tq->velocity, tq->accel, t) << 16;
+            acc += trajq_pos_at_seg(tq, t) << 16;
         }
     }
     irq_enable();

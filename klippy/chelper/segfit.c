@@ -134,6 +134,56 @@ traj_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
     return delta;
 }
 
+// ---- higher-order (cubic/quintic) exact chaining ----
+// These MUST stay bit-for-bit identical to src/trajq.c (smul_shr,
+// poly_term, trajq_end_delta_seg). See the range-analysis comment block
+// there and RFC 0001 doc 02 for the fixed-point scaling. jerk is stored
+// * 2^48, snap * 2^64, crackle * 2^80.
+
+static int64_t
+smul_shr(int64_t a, uint32_t t, unsigned sh)
+{
+    int neg = a < 0;
+    uint64_t ua = neg ? -(uint64_t)a : (uint64_t)a;
+    uint64_t lo = (ua & 0xffffffff) * t;
+    uint64_t hi = (ua >> 32) * t;
+    hi += lo >> 32;
+    lo &= 0xffffffff;
+    // host mirror: physical coefficients never trip the MCU overflow
+    // guard, so no shutdown() here - the arithmetic below is identical.
+    uint64_t r = sh ? ((hi << (32 - sh)) | (lo >> sh)) : ((hi << 32) | lo);
+    return neg ? -(int64_t)r : (int64_t)r;
+}
+
+static int64_t
+poly_term(int64_t coeff, uint32_t t, int nmul, int nsh, uint32_t fact)
+{
+    int64_t p = coeff;
+    int i;
+    for (i = 0; i < nmul; i++)
+        p = smul_shr(p, t, i < nsh ? 16 : 0);
+    if (fact > 1) {
+        int neg = p < 0;
+        uint64_t up = neg ? -(uint64_t)p : (uint64_t)p;
+        up /= fact;
+        p = neg ? -(int64_t)up : (int64_t)up;
+    }
+    return p;
+}
+
+// Exact Q32.32 end-of-segment delta for a cubic (snap=crackle=0) or
+// quintic segment. Unused coefficients pass as zero.
+int64_t __visible
+segfit_end_delta_ho(uint32_t duration, int32_t velocity, int32_t accel
+                    , int32_t jerk, int32_t snap, int32_t crackle)
+{
+    int64_t d = traj_end_delta(duration, velocity, accel);
+    d += poly_term(jerk, duration, 3, 1, 6);
+    d += poly_term(snap, duration, 4, 2, 24);
+    d += poly_term(crackle, duration, 5, 3, 120);
+    return d;
+}
+
 // ---- trajectory sampling ----
 
 // Position (in mm) of the joint at an absolute print time, walking

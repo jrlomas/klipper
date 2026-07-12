@@ -2,6 +2,7 @@
 #define __TRAJQ_H
 
 #include <stdint.h>
+#include "autoconf.h" // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 #include "basecmd.h" // struct move_queue_head
 
 // Trajectory intention protocol (RFC 0001): positions are in
@@ -18,13 +19,23 @@ struct traj_segment {
     uint32_t duration;
     int32_t velocity;
     int32_t accel;
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    // Higher-order power-basis coefficients (RFC 0001 doc 02
+    // "Higher-order segments"). jerk is Q sub-units/tick^3 with 48
+    // fractional bits, snap Q .tick^4 with 64, crackle Q .tick^5 with
+    // 80 - each derivative adds one power of t and 16 fractional bits.
+    int32_t jerk, snap, crackle;
+#endif
     uint8_t flags;
 };
 
 enum {
     TSEG_HOLD_AT_END = 1 << 0,
-    // bits 6-7 reserved for segment polynomial order (00 = quadratic)
+    // bits 6-7 carry the segment polynomial order (00 = quadratic)
     TSEG_POLY_MASK = 3 << 6,
+    TSEG_POLY_QUADRATIC = 0 << 6,
+    TSEG_POLY_CUBIC = 1 << 6,
+    TSEG_POLY_QUINTIC = 2 << 6,
 };
 
 struct trajq;
@@ -63,6 +74,9 @@ struct trajq {
     uint32_t duration;
     int32_t velocity;
     int32_t accel;
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    int32_t jerk, snap, crackle;
+#endif
     uint8_t seg_flags;
     uint8_t flags;
     uint8_t oid;
@@ -80,12 +94,22 @@ void trajq_setup(struct trajq *tq, uint8_t oid
                  , uint32_t underrun_decel);
 void trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
                          , int32_t velocity, int32_t accel);
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+void trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
+                            , int32_t velocity, int32_t accel, int32_t jerk
+                            , int32_t snap, int32_t crackle);
+#endif
 void trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos);
 int trajq_advance(struct trajq *tq);
 void trajq_halt(struct trajq *tq, uint8_t set_flags);
 int64_t trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel);
 int32_t trajq_velocity_at(int32_t velocity, int32_t accel, uint32_t t);
 int64_t trajq_pos_at(int32_t velocity, int32_t accel, uint32_t t);
+// Coefficient-aware evaluation of the active segment. When higher-order
+// support is compiled out these reduce exactly to the quadratic form.
+int64_t trajq_pos_at_seg(struct trajq *tq, uint32_t t);
+int32_t trajq_velocity_at_seg(struct trajq *tq, uint32_t t);
+int64_t trajq_end_delta_seg(struct trajq *tq);
 void trajq_note_underrun_wake(void);
 int trajq_check_event_wake(void);
 
