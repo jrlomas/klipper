@@ -4,9 +4,9 @@
 # layout.  See that script and the README file for more details.
 
 # Site and directory configuration
-site_name: Klipper documentation
-repo_url: https://github.com/Klipper3d/klipper
-repo_name: Klipper3d/klipper
+site_name: HELIX documentation
+repo_url: https://github.com/jrlomas/klipper
+repo_name: HELIX
 edit_uri: blob/master/docs/
 use_directory_urls: False
 docs_dir: '../'
@@ -81,6 +81,10 @@ extra:
 
 # Navigation hierarchy (this should mimic the layout of Overview.md)
 nav:
+  - HELIX:
+    - HELIX.md
+    - Helix_User_Guide.md
+    - Helix_Developer_Guide.md
   - Overview.md
   - Features.md
   - FAQ.md
@@ -144,6 +148,7 @@ nav:
     - rfcs/0001-motion-intentions/10-Protocol_Library.md
     - rfcs/0001-motion-intentions/11-Bootloader.md
     - rfcs/0001-motion-intentions/12-ESP32_Architecture.md
+    - rfcs/0001-motion-intentions/13-Syscall_API.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md
