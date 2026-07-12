@@ -533,6 +533,17 @@ rebooted or its config CRC differs a full `RESTART` is required
 instead. Heater holds are not auto-released - restore heater targets or
 resume the print to return heaters to host control.
 
+#### RESUME_MOTION
+`RESUME_MOTION`: Reconciles every trajectory actuator after a
+pause-and-hold and resumes the print. It drains each board's execution
+log, rebases each joint at its authoritative held position (or, after a
+board reset, at the last commanded position when the homing is retained),
+releases the heater holds back to host control, and runs `RESUME`. If any
+joint's homing was genuinely lost (`motion_homing_volatile`), the resume
+is blocked and the affected axis is reported for re-homing rather than
+having a position faked. Normally invoked automatically at the end of the
+recovery flow; available manually for testing and recovery workflows.
+
 ### [fan_generic]
 
 The following command is available when a

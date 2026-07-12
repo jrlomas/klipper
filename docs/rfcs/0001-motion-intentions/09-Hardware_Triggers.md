@@ -107,6 +107,47 @@ timestamp where available — to the execution log
 The polled `endstop.c` path remains as the portability fallback and
 for genuinely slow signals, but it stops being the design center.
 
+## The unlock: what polling made *impossible*
+
+Microsecond latency is the headline, but it undersells the change. The
+deeper point is that moving sensing off the timer list and onto the
+peripherals — interrupts, comparators, and especially **DMA** —
+converts a whole class of things from *impossible in a real-time motion
+loop* to *routine*. Polling didn't just do these slowly; it could not do
+them at all without starving step generation, because every sample is an
+entry in the same hard timer list the steppers run from.
+
+* **Catch an overrun or fault the instant it happens.** An overcurrent
+  comparator, a driver `DIAG`/stall flag, a crash/collision input, a
+  thermal cutoff — as an interrupt, these fire and stop motion within a
+  microsecond of the physical event. Polled, the machine keeps driving
+  into the fault until the next sample lands, which in a motion system is
+  the difference between a clean abort and a broken part or a ground
+  toolhead. Events make the fault path *pre-emptive*, not *periodic*.
+
+* **DMA-driven ADC oversampling.** A DMA controller can stream an ADC at
+  tens to hundreds of kHz into a ring buffer with **zero CPU cost per
+  sample**, and the CPU processes a block only when DMA raises a
+  half/full-transfer interrupt. That buys oversampling-and-decimation for
+  extra effective bits, hardware-timed load-cell and pressure capture,
+  and analog trigger detection at rates a scheduled `analog_in` poll
+  could never reach without consuming the very cycles stepping needs.
+  The polled model tops out at a handful of kHz precisely because each
+  sample competes with motion; the DMA model does not compete at all.
+
+* **Hardware-exact timestamps and windows.** A timer input-capture unit
+  latches the edge tick in silicon, and a comparator + DAC forms an
+  analog window that raises an event only on a real threshold crossing —
+  detection whose precision is set by the hardware, not by how lucky a
+  sample was.
+
+None of these need to be *built* for the architecture to matter: the
+value is that the event-and-DMA substrate makes them *reachable*, where
+the polled timer list made them structurally out of the question. This
+document lays that substrate (`trigger_source`, the comparator and ADC
+watchdog backends, input capture); the higher-order uses of it are now
+ordinary follow-on work rather than a fight with the scheduler.
+
 ## The trigger-locality rule
 
 Hardware triggers make an existing truth sharper, so this RFC states

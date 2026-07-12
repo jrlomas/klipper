@@ -4,8 +4,10 @@
 > *intentions*, machine time, and networks. New here? Start with the
 > **[HELIX overview](HELIX.md)** for the story, the
 > **[User Guide](Helix_User_Guide.md)** to run it, or the
-> **[Developer Guide](Helix_Developer_Guide.md)** to build it. The pages
-> below are the inherited Klipper documentation, which HELIX builds on.
+> **[Developer Guide](Helix_Developer_Guide.md)** to build it. The
+> **[HELIX command &amp; feature reference](Helix_Commands.md)** lists
+> everything new in one place. The pages below are the inherited Klipper
+> documentation, which HELIX builds on.
 
 Welcome to the Klipper documentation. If new to Klipper, start with
 the [features](Features.md) and [installation](Installation.md)

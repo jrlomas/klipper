@@ -1,178 +1,173 @@
 # Features
 
-Klipper has several compelling features:
+HELIX inherits Klipper's entire feature set — the high-precision motion,
+the kinematics, the tuning tools, the ecosystem — and adds a new
+architectural layer beneath it. This page lists both: first what HELIX
+adds, then the inherited Klipper capabilities it is built on. For the
+*why* behind the new layer, read the [HELIX overview](HELIX.md); for the
+rigorous version, the [RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md).
 
-* High precision stepper movement. Klipper utilizes an application
-  processor (such as a low-cost Raspberry Pi) when calculating printer
-  movements. The application processor determines when to step each
-  stepper motor, it compresses those events, transmits them to the
-  micro-controller, and then the micro-controller executes each event
-  at the requested time. Each stepper event is scheduled with a
-  precision of 25 micro-seconds or better. The software does not use
-  kinematic estimations (such as the Bresenham algorithm) - instead it
-  calculates precise step times based on the physics of acceleration
-  and the physics of the machine kinematics. More precise stepper
-  movement provides quieter and more stable printer operation.
+Every HELIX capability is **opt-in**. A configuration that doesn't ask
+for them behaves exactly like the Klipper it grew from.
 
-* Best in class performance. Klipper is able to achieve high stepping
-  rates on both new and old micro-controllers. Even old 8-bit
-  micro-controllers can obtain rates over 175K steps per second. On
-  more recent micro-controllers, several million steps per second are
-  possible. Higher stepper rates enable higher print velocities. The
-  stepper event timing remains precise even at high speeds which
-  improves overall stability.
+## What HELIX adds
 
-* Klipper supports printers with multiple micro-controllers. For
-  example, one micro-controller could be used to control an extruder,
-  while another controls the printer's heaters, while a third controls
-  the rest of the printer. The Klipper host software implements clock
-  synchronization to account for clock drift between
-  micro-controllers. No special code is needed to enable multiple
-  micro-controllers - it just requires a few extra lines in the config
-  file.
+* **Motion intentions — and the end of stepper-only.** The host sends
+  short per-joint polynomial *segments* — where a joint should be and how
+  it's moving — and the micro-controller owns a deep queue of them,
+  integrates them against its own clock, and synthesizes the output. The
+  deeper point is that a segment describes *motion*, not *step pulses*:
+  the actuator becomes a swappable backend behind one protocol. Classic
+  step/dir steppers and sampled **PWM/DAC** actuators are supported
+  today, and the architecture is built so a **closed-loop BLDC/FOC**
+  servo joint is just another backend on the same queue tomorrow — a
+  door that the pre-computed step stream held permanently shut. *(RFC
+  [02](rfcs/0001-motion-intentions/02-Intention_Protocol.md),
+  [04](rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
 
-* Configuration via simple config file. There's no need to reflash the
-  micro-controller to change a setting. All of Klipper's configuration
-  is stored in a standard config file which can be easily edited. This
-  makes it easier to setup and maintain the hardware.
+* **Higher-order motion.** Segments run up to **cubic and quintic
+  (jerk- and snap-limited) Bézier** curves, chained with drift-free
+  fixed-point integration proven bit-exact across the host and the MCU,
+  so thousands of segments accumulate zero positional drift.
 
-* Klipper supports "Smooth Pressure Advance" - a mechanism to account
-  for the effects of pressure within an extruder. This reduces
-  extruder "ooze" and improves the quality of print corners. Klipper's
-  implementation does not introduce instantaneous extruder speed
-  changes, which improves overall stability and robustness.
+* **Pause-and-hold failure recovery.** A recoverable failure — a lost
+  link, a loose connector, a rebooted board — no longer means
+  `shutdown()`. The affected board finishes or ramps out its motion,
+  holds position with the motors energized, keeps the heaters on a
+  per-heater **failsafe policy** (the bed stays hot, the part stays
+  stuck), and keeps a rolling **execution log**. On resume the host
+  reconciles the exact stopping point from that log. *(RFC
+  [08](rfcs/0001-motion-intentions/08-Failure_Recovery.md).)*
 
-* Klipper supports "Input Shaping" to reduce the impact of vibrations
-  on print quality. This can reduce or eliminate "ringing" (also known
-  as "ghosting", "echoing", or "rippling") in prints. It may also
-  allow one to obtain faster printing speeds while still maintaining
-  high print quality.
+* **Machine time.** Every board disciplines its clock to a shared
+  machine time via a beacon and a control loop, so "do this at T" means
+  the same instant across a mainboard, a CAN toolhead, and a WiFi
+  accessory. *(RFC [01](rfcs/0001-motion-intentions/01-Time_Model.md).)*
 
-* Klipper uses an "iterative solver" to calculate precise step times
-  from simple kinematic equations. This makes porting Klipper to new
-  types of robots easier and it keeps timing precise even with complex
-  kinematics (no "line segmentation" is needed).
+* **Networks as first-class transports.** The same protocol runs over
+  UDP (Ethernet/WiFi), CAN, USB, and UART, because deep intention queues
+  absorb link jitter. It is authenticated by default (truncated HMAC over
+  a static PSK), with an optional **DTLS-class secure session** (rotating
+  keys, per-board identity), a negotiable **forward-error-correction**
+  framing trailer for lossy links, and **Ed25519-signed firmware images**
+  the bootloader verifies before running. *(RFC
+  [07](rfcs/0001-motion-intentions/07-Link_Transport.md),
+  [11](rfcs/0001-motion-intentions/11-Bootloader.md).)*
 
-* Klipper is hardware agnostic. One should get the same precise timing
-  independent of the low-level electronics hardware. The Klipper
-  micro-controller code is designed to faithfully follow the schedule
-  provided by the Klipper host software (or prominently alert the user
-  if it is unable to). This makes it easier to use available hardware,
-  to upgrade to new hardware, and to have confidence in the hardware.
+* **Hardware events instead of polling — a capability unlock.** Endstop
+  and probe detection moves off a polled software timer onto on-chip
+  **edge interrupts, analog comparators, and ADC watchdogs**. The
+  microsecond stop latency is only the surface. Event-driven detection
+  paired with DMA makes a whole class of things *possible that polling
+  made impossible* in a real-time motion loop: catching an **overrun or
+  fault the instant it occurs** rather than at the next sample,
+  **DMA-driven ADC oversampling**, comparator-based analog triggers, and
+  hardware input-capture timestamps. Homing and probing use this today
+  (with automatic fall back to polling where the silicon can't); the
+  broader capabilities it opens are now architecturally within reach.
+  *(RFC [09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md).)*
 
-* Portable code. Klipper works on ARM, AVR, PRU, and other
-  micro-controllers. Existing "reprap" style printers can run Klipper
-  without hardware modification - just add a Raspberry Pi. Klipper's
-  internal code layout makes it easier to support other
-  micro-controller architectures as well.
+* **One protocol library, declared not generated.** The wire protocol is
+  implemented once as a freestanding C++ library (`lib/intentproto`).
+  Commands are declared with an annotation macro beside the handler and
+  register themselves before `main()` — no code generator, no build step
+  that parses source, and the data dictionary is a serialization of the
+  live registry, served not scraped. *(RFC
+  [10](rfcs/0001-motion-intentions/10-Protocol_Library.md).)*
 
-* Simpler code. Klipper uses a very high level language (Python) for
-  most code. The kinematics algorithms, the G-code parsing, the
-  heating and thermistor algorithms, etc. are all written in Python.
-  This makes it easier to develop new functionality.
+* **One firmware across families.** STM32 and ESP32 speak the same
+  protocol and expose the same **versioned board syscall table**, so a
+  module is written once against the API, not once per chip. *(RFC
+  [13](rfcs/0001-motion-intentions/13-Syscall_API.md).)*
 
-* Custom programmable macros. New G-Code commands can be defined in
-  the printer config file (no code changes are necessary). Those
-  commands are programmable - allowing them to produce different
-  actions depending on the state of the printer.
+* **ESP32 as a network-native target.** A dual-core ESP32 runs bare-metal
+  motion on one core with the radio stack quarantined on the other,
+  making a WiFi toolhead a real, first-class target. *(RFC
+  [12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md).)*
 
-* Builtin API server. In addition to the standard G-Code interface,
-  Klipper supports a rich JSON based application interface. This
-  enables programmers to build external applications with detailed
-  control of the printer.
+* **New console surface.** `HELIX_STATUS` reports exactly which
+  capabilities each board's firmware was built with and which host
+  subsystems are loaded; `TRAJECTORY_STATUS`, `FAILURE_RECOVERY_STATUS`,
+  `RESUME_MOTION`, `RECONNECT_MCU`, `TIMESYNC_STATUS`, and more expose the
+  new subsystems. See the [command reference](G-Codes.md) and the
+  consolidated [HELIX command list](Helix_Commands.md).
 
-## Additional features
+## Inherited from Klipper
 
-Klipper supports many standard 3d printer features:
+HELIX is built on Klipper and keeps all of its strengths:
 
-* Several web interfaces available. Works with Mainsail, Fluidd,
-  OctoPrint and others. This allows the printer to be controlled using
-  a regular web-browser. The same Raspberry Pi that runs Klipper can
-  also run the web interface.
+* High precision stepper movement. An application processor calculates
+  precise step times from the physics of acceleration and the machine
+  kinematics (no Bresenham-style estimation), schedules each stepper
+  event to 25 microseconds or better, and the micro-controller executes
+  them at the requested time — quieter, more stable motion.
 
-* Standard G-Code support. Common g-code commands that are produced by
-  typical "slicers" (SuperSlicer, Cura, PrusaSlicer, etc.) are
-  supported.
+* Best in class performance. High stepping rates on both new and old
+  micro-controllers — over 175K steps/s even on 8-bit parts, several
+  million per second on recent ones — with timing that stays precise at
+  speed. (See the [benchmarks](#step-benchmarks) below.)
 
-* Support for multiple extruders. Extruders with shared heaters and
-  extruders on independent carriages (IDEX) are also supported.
+* Multiple micro-controllers per printer, with host-side clock
+  synchronization for drift between them — enabled with a few config
+  lines, no special code.
 
-* Support for cartesian, delta, corexy, corexz, hybrid-corexy,
-  hybrid-corexz, deltesian, rotary delta, polar, and cable winch style
-  printers.
+* Configuration via a simple config file — no reflashing to change a
+  setting.
 
-* Automatic bed leveling support. Klipper can be configured for basic
-  bed tilt detection or full mesh bed leveling. The bed mesh can be
-  customized to the print size (adaptive bed mesh). If the bed uses
-  multiple Z steppers then Klipper can also level by independently
-  manipulating the Z steppers. Most Z height probes are supported,
-  including BL-Touch probes and servo activated probes. Probes may be
-  calibrated for axis twist compensation. If using an "eddy current
-  probe" then one can utilize fast bed mesh scanning,
+* "Smooth Pressure Advance" to reduce extruder ooze and improve corners
+  without instantaneous extruder speed changes.
 
-* Automatic delta calibration support. The calibration tool can
-  perform basic height calibration as well as an enhanced X and Y
-  dimension calibration. The calibration can be done with a Z height
-  probe or via manual probing.
+* "Input Shaping" to reduce ringing/ghosting and enable faster printing
+  at high quality.
 
-* Run-time "exclude object" support. When configured, this module may
-  facilitate canceling of just one object in a multi-part print.
+* An "iterative solver" that computes step times from simple kinematic
+  equations — easier porting to new robots, precise timing even with
+  complex kinematics, no line segmentation.
 
-* Support for common temperature sensors (eg, common thermistors,
-  AD595, AD597, AD849x, PT100, PT1000, MAX6675, MAX31855, MAX31856,
-  MAX31865, BME280, HTU21D, DS18B20, AHT1X, AHT2X, AHT3X, SHT3x, and LM75). Custom
-  thermistors and custom analog temperature sensors can also be
-  configured. One can monitor the internal micro-controller
-  temperature sensor and the internal temperature sensor of a
-  Raspberry Pi.
+* Hardware-agnostic timing, portable code (ARM, AVR, PRU and more),
+  high-level Python for kinematics/G-code/thermal logic, custom
+  programmable G-code macros, and a builtin JSON API server.
 
-* Basic thermal heater protection enabled by default.
+### Standard 3D-printer features (inherited)
 
-* Support for standard fans, nozzle fans, and temperature controlled
-  fans. No need to keep fans running when the printer is idle. Fan
-  speed can be monitored on fans that have a tachometer. One can
-  assign a "math formula" to a fan for automatic fan speed updating.
+* Works with Mainsail, Fluidd, OctoPrint, and other web interfaces.
+* Standard slicer G-code support (SuperSlicer, Cura, PrusaSlicer, …).
+* Multiple extruders, shared-heater and IDEX setups.
+* Cartesian, delta, corexy, corexz, hybrid-corexy, hybrid-corexz,
+  deltesian, rotary delta, polar, and cable-winch kinematics.
+* Automatic bed leveling — tilt detection or full mesh, adaptive mesh,
+  multi-Z leveling, most probes (including BL-Touch, servo, and eddy
+  current), and axis-twist compensation.
+* Automatic delta calibration (probe or manual).
+* Run-time "exclude object" for multi-part prints.
+* A broad range of temperature sensors (thermistors, AD595/597/849x,
+  PT100/PT1000, MAX6675/31855/31856/31865, BME280, HTU21D, DS18B20,
+  AHT1X/2X/3X, SHT3x, LM75, and custom), plus MCU/RPi internal sensors.
+* Thermal heater protection enabled by default.
+* Standard, nozzle, and temperature-controlled fans, tachometer
+  monitoring, and math-formula fan control.
+* Run-time TMC driver configuration (TMC2130, 2208/2224, 2209, 2240,
+  2660, 5160) and current control for traditional drivers (AD5206,
+  DAC084S085, MCP4451/4728/4018, PWM).
+* Common LCD displays with a customizable default menu.
+* Constant acceleration with look-ahead.
+* Stepper-phase endstop for improved endstop accuracy.
+* Filament presence, motion, and width sensors.
+* Acceleration measurement (adxl345, mpu9250, mpu6050, lis2dw12,
+  lis3dh, icm20948).
+* Top-speed limiting for short zigzag moves.
+* Sample configs for many common printers (see the
+  [config directory](../config/)).
 
-* Support for run-time configuration of TMC2130, TMC2208/TMC2224,
-  TMC2209, TMC2240, TMC2660, and TMC5160 stepper motor drivers. There
-  is also support for current control of traditional stepper drivers
-  via AD5206, DAC084S085, MCP4451, MCP4728, MCP4018, and PWM pins.
-
-* Support for common LCD displays attached directly to the printer. A
-  default menu is also available. The contents of the display and menu
-  can be fully customized via the config file.
-
-* Constant acceleration and "look-ahead" support. All printer moves
-  will gradually accelerate from standstill to cruising speed and then
-  decelerate back to a standstill. The incoming stream of G-Code
-  movement commands are queued and analyzed - the acceleration between
-  movements in a similar direction will be optimized to reduce print
-  stalls and improve overall print time.
-
-* Klipper implements a "stepper phase endstop" algorithm that can
-  improve the accuracy of typical endstop switches. When properly
-  tuned it can improve a print's first layer bed adhesion.
-
-* Support for filament presence sensors, filament motion sensors, and
-  filament width sensors.
-
-* Support for measuring and recording acceleration using adxl345,
-  mpu9250, mpu6050, lis2dw12, lis3dh, and icm20948 accelerometers.
-
-* Support for limiting the top speed of short "zigzag" moves to reduce
-  printer vibration and noise. See the [kinematics](Kinematics.md)
-  document for more information.
-
-* Sample configuration files are available for many common printers.
-  Check the [config directory](../config/) for a list.
-
-To get started with Klipper, read the [installation](Installation.md)
-guide.
+To get started, read the [installation](Installation.md) guide and the
+[HELIX User Guide](Helix_User_Guide.md).
 
 ## Step Benchmarks
 
-Below are the results of stepper performance tests. The numbers shown
-represent total number of steps per second on the micro-controller.
+Stepper performance tests — total steps per second on the
+micro-controller. HELIX's trajectory path changes *how* motion is
+delivered, not the raw stepping ceiling below, which the classic path
+still achieves.
 
 | Micro-controller                | 1 stepper active  | 3 steppers active |
 | ------------------------------- | ----------------- | ----------------- |
@@ -199,8 +194,6 @@ represent total number of steps per second on the micro-controller.
 | STM32H723                       | 7429K             | 8619K             |
 
 If unsure of the micro-controller on a particular board, find the
-appropriate [config file](../config/), and look for the
-micro-controller name in the comments at the top of that file.
-
-Further details on the benchmarks are available in the
+appropriate [config file](../config/) and look for the micro-controller
+name in the comments at the top. Further details are in the
 [Benchmarks document](Benchmarks.md).

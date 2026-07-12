@@ -130,7 +130,9 @@ what's turned on?"
   idle machine for testing. It leaves the toolhead position stale —
   follow with `SET_KINEMATIC_POSITION`.
 
-All HELIX commands are documented in the
+Every HELIX command, config option, and firmware capability is collected
+in one place in the [HELIX command &amp; feature reference](Helix_Commands.md).
+The full per-command detail lives in the
 [G-Code reference](G-Codes.md) (see the `[failure_recovery]`,
 `[timesync]`, `[trajectory_queuing]`, and `[helix_status]` sections);
 all config options in the [Config Reference](Config_Reference.md).

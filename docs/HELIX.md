@@ -59,12 +59,26 @@ microseconds to milliseconds of motion already in hand. Position is now
 something the board *knows*, exactly, in a drift-free fixed-point
 accumulator — not something the host is guessing on its behalf.
 
+**And it stops being stepper-only.** This is the part that's easy to
+miss and matters most. A pre-computed step stream can only speak to a
+thing that takes step pulses — a step/dir stepper, full stop. A segment
+speaks a level up: *where the joint should be and how it's moving*. What
+turns that into motion is a **backend**, and the backend is swappable.
+The segment core drives classic steppers today, drives a sampled
+**PWM/DAC** actuator today, and is built so a **closed-loop BLDC/FOC**
+servo joint — a brushless extruder, a servo axis — is just another
+backend on the exact same queue tomorrow. The step firehose held that
+door shut by construction; intentions open it. *(The backend contract and
+the FOC/BLDC case are specified in
+[doc 04](rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
+
 **What it buys you.** Smoother motion, tolerance to imperfect links,
-and — for the first time — a board that can answer the question "where
-are you?" without the host. HELIX carries segments all the way up to
-**cubic and quintic Bézier** curves for jerk- and snap-limited motion,
-chained so exactly that thousands of them in a row accumulate zero
-positional drift. → [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)
+a board that can answer "where are you?" without the host — and an
+actuator model that isn't nailed to stepper motors. HELIX carries
+segments all the way up to **cubic and quintic Bézier** curves for jerk-
+and snap-limited motion, chained so exactly that thousands of them in a
+row accumulate zero positional drift.
+→ [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)
 
 ## A machine that agrees on the time
 
@@ -142,8 +156,16 @@ changes and latches the exact trigger time in hardware — falling back to
 polling only where the silicon can't do it.
 
 **What it buys you.** Microsecond stop latency and a hardware-exact
-trigger position, which means more repeatable homing and probing — with
-zero configuration change and automatic graceful degradation.
+trigger position — more repeatable homing and probing, with zero config
+change and automatic graceful degradation. But the latency is the
+*surface*. Moving sensing off the timer list and onto interrupts,
+comparators, and **DMA** unlocks a class of things polling made
+structurally impossible in a real-time motion loop: catching an
+**overrun or fault the instant it occurs** instead of at the next
+sample, **DMA-driven ADC oversampling** at rates a scheduled poll could
+never reach without starving step generation, and analog window
+triggers. Those uses aren't all built yet — the point is the substrate
+now makes them *reachable* rather than a fight with the scheduler.
 → [doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)
 
 ## One protocol, one library, every board the same
