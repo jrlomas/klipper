@@ -38,20 +38,21 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: white
-      accent: blue
+      primary: black
+      accent: teal
       toggle:
-        icon: material/lightbulb
+        icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: grey
-      accent: light blue
+      primary: black
+      accent: teal
       toggle:
-        icon: material/lightbulb-outline
+        icon: material/weather-sunny
         name: Switch to light mode
-  logo: img/klipper.svg
-  favicon: img/favicon.ico
+  font: false
+  logo: img/helix-mark.svg
+  favicon: img/helix-favicon.svg
   icon:
     repo: fontawesome/brands/github
     alternate: material/web
@@ -68,12 +69,8 @@ theme:
 extra_css:
   - _klipper3d/css/extra.css
 
-# Site usage statistics
 extra:
-  # https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-analytics/#site-search-tracking
-  analytics:
-    provider: google
-    property: G-VEN1PGNQL4
+  # No third-party analytics: HELIX does not phone home.
   # Language Selection
   alternate:
     - name: English

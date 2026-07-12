@@ -1,16 +1,119 @@
-/* Customization of mkdocs generated site */
+/* ============================================================
+   HELIX documentation theme
+   Instrument / phosphor identity over mkdocs-material.
+   Teal accent, deep-ink dark scheme, system typography.
+   ============================================================ */
+
+:root {
+  --hx-teal: #12a794;          /* accent on light grounds */
+  --hx-teal-bright: #3ae0c9;   /* accent on dark grounds  */
+  --hx-teal-2: #7df3e0;
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                  Helvetica, Arial, sans-serif;
+  --md-code-font: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code",
+                  Menlo, Consolas, monospace;
+}
+
+/* ---- light scheme ---- */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0a0e14;
+  --md-primary-fg-color--dark: #05070a;
+  --md-accent-fg-color: var(--hx-teal);
+  --md-typeset-a-color: var(--hx-teal);
+}
+
+/* ---- dark (slate) scheme ---- */
 [data-md-color-scheme="slate"] {
-    --md-primary-fg-color: hsla(var(--md-hue),15%,12%,1);
-    --md-default-bg-color: hsla(var(--md-hue),17%,17%,1);
-    --md-typeset-a-color:  steelblue;
-    --md-accent-fg-color:  lightblue;
+  --md-hue: 205;
+  --md-default-bg-color: #0a0e14;
+  --md-default-fg-color: #c9d6e4;
+  --md-default-fg-color--light: #a7b6c7;
+  --md-default-fg-color--lighter: #66788c;
+  --md-primary-fg-color: #0c1119;
+  --md-primary-fg-color--dark: #070a0f;
+  --md-accent-fg-color: var(--hx-teal-bright);
+  --md-typeset-a-color: var(--hx-teal-bright);
+  --md-code-bg-color: #0e1622;
+  --md-code-fg-color: #cdd9e6;
 }
 
-img {
-    background-color: white;
+/* ---- header: a hairline phosphor underline, tighter brand ---- */
+.md-header {
+  border-bottom: 1px solid rgba(58, 224, 201, 0.16);
+  box-shadow: none;
+}
+.md-header__title { font-weight: 600; letter-spacing: 0.01em; }
+.md-tabs { border-bottom: 1px solid rgba(58, 224, 201, 0.10); }
+
+/* Content diagrams/screenshots keep a readable white matte on dark... */
+.md-typeset img {
+  background-color: white;
+  border-radius: 4px;
+}
+/* ...but brand marks (logo, favicon, our SVGs) must stay transparent. */
+.md-header img,
+.md-footer img,
+.md-nav img,
+.md-typeset img[src*="helix-"],
+.md-typeset img[src$=".svg"] {
+  background-color: transparent !important;
+  border-radius: 0;
+}
+.md-logo img { height: 1.5rem; width: auto; }
+
+.center-image { margin: 0 auto; display: block; }
+
+/* ---- typography polish ---- */
+.md-typeset { line-height: 1.7; }
+.md-typeset h1 {
+  font-weight: 700; letter-spacing: -0.015em; line-height: 1.12;
+}
+.md-typeset h2 {
+  font-weight: 650; letter-spacing: -0.01em; margin-top: 2.2em;
+  padding-bottom: 0.25em; border-bottom: 1px solid var(--md-default-fg-color--lightest, rgba(128,128,128,.15));
+}
+.md-typeset h3 { font-weight: 640; }
+
+/* Links: subtle, confident, underline on hover only */
+.md-typeset a { text-decoration: none; border-bottom: 1px solid transparent;
+  transition: border-color .15s, color .15s; }
+.md-typeset a:hover { border-bottom-color: currentColor; }
+
+/* Inline code + fences: teal-tinted, quiet border */
+.md-typeset code { border-radius: 4px; }
+[data-md-color-scheme="slate"] .md-typeset code {
+  background-color: rgba(58, 224, 201, 0.08);
+}
+.md-typeset pre > code { border-radius: 8px; }
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+  border: 1px solid rgba(58, 224, 201, 0.12);
 }
 
-.center-image {
-    margin: 0 auto;
-    display: block;
+/* Tables: instrument-panel hairlines + monospaced numerics */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--md-default-fg-color--lightest, rgba(128,128,128,.16));
+  font-variant-numeric: tabular-nums;
+}
+.md-typeset table:not([class]) th {
+  font-family: var(--md-code-font); font-size: 0.72rem;
+  letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+}
+
+/* Blockquotes as "callouts" with a teal rail */
+.md-typeset blockquote {
+  border-left: 3px solid var(--md-accent-fg-color);
+  color: var(--md-default-fg-color--light);
+}
+
+/* Buttons / admonition accent inherit the teal accent automatically */
+.md-typeset .md-button:focus,
+.md-typeset .md-button:hover {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: #04120f;
+}
+
+/* Search + nav active state in teal */
+.md-nav__link--active, .md-nav__link:focus, .md-nav__link:hover {
+  color: var(--md-accent-fg-color);
 }

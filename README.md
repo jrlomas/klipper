@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/img/helix-mark.svg" width="104" height="104" alt="HELIX">
+</p>
+
 <h1 align="center">HELIX</h1>
 
 <p align="center"><em>Motion firmware that trusts its micro-controllers.</em></p>
@@ -58,17 +62,27 @@ A network-native ESP32 toolhead is a real target, not a curiosity.
 *(Docs [07](docs/rfcs/0001-motion-intentions/07-Link_Transport.md),
 [12](docs/rfcs/0001-motion-intentions/12-ESP32_Architecture.md).)*
 
-**Motion is smoother by construction.** Segments are per-joint
-polynomials, and HELIX carries them up to **quintic (jerk- and
-snap-limited) Bézier** curves — chained with drift-free fixed-point
-integration so a thousand segments in a row still land exactly on
-target. *(Doc [02](docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md).)*
+**It stops being stepper-only.** This is the deeper point of intentions:
+a segment says *where the joint should be*, not which step pulses to
+send. The actuator is a swappable backend behind one protocol —
+classic step/dir steppers, sampled **PWM/DAC** actuators today, and a
+future **closed-loop BLDC/FOC** servo joint tomorrow, all driven by the
+same trajectory queue. HELIX carries segments up to **quintic (jerk- and
+snap-limited) Bézier** curves, chained with drift-free fixed-point
+integration so a thousand in a row still land exactly on target. *(Docs
+[02](docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md),
+[04](docs/rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
 
-**Homing that stops in microseconds.** Endstop and probe detection moves
-off a polled software timer onto an on-chip **edge interrupt** that
-fires the coordinated stop directly and latches the exact trigger tick
-in hardware — with an automatic fall back to polling where the silicon
-can't. *(Doc [09](docs/rfcs/0001-motion-intentions/09-Hardware_Triggers.md).)*
+**Hardware events, not polling — a capability unlock.** Endstop and
+probe detection moves off a polled software timer onto on-chip **edge
+interrupts, analog comparators, and ADC watchdogs**, firing the
+coordinated stop the instant the pin changes and latching the exact
+trigger tick in hardware. The µs stop latency is only the surface of it:
+event-driven detection with DMA makes a class of things *possible that
+polling made impossible* — catching an overrun or fault the moment it
+happens, DMA-driven ADC oversampling, comparator-based analog triggers —
+with automatic fall back to polling where the silicon can't. *(Doc
+[09](docs/rfcs/0001-motion-intentions/09-Hardware_Triggers.md).)*
 
 **A machine that agrees on the time.** Every board disciplines its clock
 to a shared **machine time**, so "do this at T" means the same instant
