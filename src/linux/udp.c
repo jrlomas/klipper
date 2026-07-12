@@ -98,7 +98,8 @@ read_psk(const char *fname, uint8_t *psk, uint32_t cap)
 static uint8_t psk_buf[64];
 
 int
-udp_console_setup(int port, const char *psk_file, int trust_network)
+udp_console_setup(int port, const char *psk_file, int trust_network
+                  , int fec_k)
 {
     int psk_len = 0;
     if (psk_file) {
@@ -138,6 +139,8 @@ udp_console_setup(int port, const char *psk_file, int trust_network)
     if (ret)
         return -1;
 
+    if (fec_k > 0)
+        udp_console_set_fec_k((uint8_t)fec_k);
     udp_console_init(&linux_udp_ops, NULL, psk_buf, psk_len);
     console_use_udp(udp_fd);
     return 0;

@@ -12,6 +12,21 @@
 //    overhead, mirroring udp_bridge.py's host-side batching), then
 //    wrapped and sealed into one datagram
 //
+// Erasure FEC (RFC 0001 doc 07, "two layers"): when a port selects a
+// non-zero fec_k (udp_console_set_fec_k), the tx side emits a parity
+// datagram after every k data datagrams and the rx side reconstructs a
+// single datagram lost inside a protected block the moment that block's
+// parity arrives - no retransmit-timeout wait.  Reassembly is in-order
+// and single-loss: the reconstructed datagram's frames are unwrapped
+// and fed to the SAME command_find_and_dispatch() path as a normally
+// received datagram, so recovery is transparent to the console.  Two
+// or more losses in one block (or a lost parity) fall through to the
+// frame layer's ARQ exactly as before.  The recovered bytes are the
+// XOR of already-authenticated survivors and parity, so they inherit
+// the block's authentication and are not re-verified (there is no
+// per-datagram tag on a reconstruction).  fec_k defaults to 0, which
+// disables the erasure layer and preserves the pure-ARQ behaviour.
+//
 // The module is transport independent: socket send/recv lives behind
 // a small per-port ops struct (struct udp_console_ops), so the same
 // code serves an ESP32 WiFi lwIP socket, an ESP32 RMII-Ethernet lwIP
@@ -35,12 +50,16 @@
 static const struct udp_console_ops *udp_ops;
 static void *udp_ops_ctx;
 static struct task_wake udp_wake;
+// XOR erasure block size; 0 = erasure layer off (set before init)
+static uint8_t udp_fec_k;
 
 // Reassembled receive stream (frame bytes unwrapped from datagrams)
 static uint8_t receive_buf[2 * UDPDG_FRAMES_MAX];
 static uint32_t receive_pos;
 // Scratch space for one inbound datagram
 static uint8_t rx_dgram[UDPDG_DATAGRAM_MAX];
+// Scratch space for a parity-reconstructed datagram (hdr + frames)
+static uint8_t rx_recovered[UDPDG_DATAGRAM_MAX];
 
 // Outbound frames pending batching (guarded by irq_save)
 static uint8_t transmit_buf[UDPDG_FRAMES_MAX];
@@ -122,6 +141,12 @@ udp_console_flush(void)
     uint32_t dlen = udpdg_encode(tx_dgram, tx_stage, len);
     if (dlen)
         udp_ops->send(udp_ops_ctx, tx_dgram, dlen);
+    // If FEC is on and this datagram completed a protected block, emit
+    // its parity datagram.  Reuse tx_dgram: ops->send has already
+    // copied the data datagram into the socket.
+    uint32_t plen = udpdg_parity_flush(tx_dgram);
+    if (plen)
+        udp_ops->send(udp_ops_ctx, tx_dgram, plen);
 }
 
 // Append unwrapped frame bytes to the receive stream
@@ -159,8 +184,19 @@ udp_console_task(void)
             continue;
         if (udp_ops->rx_accepted)
             udp_ops->rx_accepted(udp_ops_ctx);
-        if (flen > 0)
+        if (flen > 0) {
             rx_append(frames, flen);
+        } else {
+            // A consumed (flen==0) datagram may have been a parity that
+            // reconstructed a single lost datagram of its block.  Feed
+            // the recovered datagram's frames (past its header) into the
+            // same dispatch stream, in block order, so the lost command
+            // takes effect without waiting out an ARQ retransmit.
+            uint32_t rlen = udpdg_take_recovered(rx_recovered
+                                                 , sizeof(rx_recovered));
+            if (rlen > UDPDG_HEADER)
+                rx_append(rx_recovered + UDPDG_HEADER, rlen - UDPDG_HEADER);
+        }
     }
 
     // Find and dispatch message blocks in the receive stream
@@ -196,10 +232,16 @@ udp_console_shutdown(void)
 DECL_SHUTDOWN(udp_console_shutdown);
 
 void
+udp_console_set_fec_k(uint8_t fec_k)
+{
+    udp_fec_k = fec_k;
+}
+
+void
 udp_console_init(const struct udp_console_ops *ops, void *ctx
                  , const uint8_t *psk, uint32_t psk_len)
 {
-    udpdg_init(psk, psk_len);
+    udpdg_init(psk, psk_len, udp_fec_k);
     udp_ops_ctx = ctx;
     udp_ops = ops;
 }

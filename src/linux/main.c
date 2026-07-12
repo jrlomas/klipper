@@ -70,8 +70,9 @@ main(int argc, char **argv)
     // Parse program args
     orig_argv = argv;
     int opt, watchdog = 0, realtime = 0, udp_port = 0, trust_network = 0;
+    int fec_k = 0;
     char *serial = "/tmp/klipper_host_mcu", *psk_file = NULL;
-    while ((opt = getopt(argc, argv, "wrtI:u:k:")) != -1) {
+    while ((opt = getopt(argc, argv, "wrtI:u:k:f:")) != -1) {
         switch (opt) {
         case 'w':
             watchdog = 1;
@@ -91,9 +92,12 @@ main(int argc, char **argv)
         case 't':
             trust_network = 1;
             break;
+        case 'f':
+            fec_k = atoi(optarg);
+            break;
         default:
             fprintf(stderr, "Usage: %s [-w] [-r] [-I path]"
-                    " [-u udp_port [-k psk_file | -t]]\n", argv[0]);
+                    " [-u udp_port [-k psk_file | -t] [-f fec_k]]\n", argv[0]);
             return -1;
         }
     }
@@ -104,7 +108,8 @@ main(int argc, char **argv)
         if (ret)
             return ret;
     }
-    int ret = udp_port ? udp_console_setup(udp_port, psk_file, trust_network)
+    int ret = udp_port
+        ? udp_console_setup(udp_port, psk_file, trust_network, fec_k)
         : console_setup(serial);
     if (ret)
         return -1;

@@ -23,7 +23,8 @@ void console_use_udp(int fd);
 void console_sleep(sigset_t *sigset);
 
 // udp.c
-int udp_console_setup(int port, const char *psk_file, int trust_network);
+int udp_console_setup(int port, const char *psk_file, int trust_network
+                      , int fec_k);
 
 // timer.c
 int timer_check_periodic(uint32_t *ts);

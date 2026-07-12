@@ -46,12 +46,36 @@ def make_tag(psk, data):
     return hmac_mod.new(psk, data, hashlib.sha256).digest()[:DATAGRAM_TAG]
 
 
+def _xor_into(acc, src):
+    # acc (bytearray) ^= src, zero-extending acc to len(src) - mirrors
+    # the C library's xor_into (max-length XOR fold).
+    if len(src) > len(acc):
+        acc.extend(b"\x00" * (len(src) - len(acc)))
+    for i in range(len(src)):
+        acc[i] ^= src[i]
+
+
 class DatagramCodec:
-    def __init__(self, psk):
+    # Wire-identical to lib/intentproto's C datagram layer, including
+    # the XOR erasure layer: on tx a parity datagram is emitted after
+    # every k data datagrams (parity_flush), on rx a single datagram
+    # lost inside a protected block is reconstructed from the block's
+    # survivors and parity. fec_k == 0 leaves the erasure layer off.
+    def __init__(self, psk, fec_k=0):
         self.psk = psk
         self.tx_seq = 0
-        self.rx_seq = None
+        self.expect_seq = None
         self.rx_lost = self.rx_reordered = self.auth_failures = 0
+        self.k = fec_k
+        # tx parity accumulator: XOR of the current block's datagrams
+        # (each folded as [seq, flags, payload], pre-auth), and how many
+        # data datagrams have been folded since the last parity flush.
+        self.tx_parity = bytearray()
+        self.sent_since_parity = 0
+        # rx survivors accumulator: XOR of the datagrams received since
+        # the last parity, plus whether a block is currently open.
+        self.rx_held = bytearray()
+        self.holding = False
 
     def encode(self, payload, cls=0):
         seq = self.tx_seq & 0xffff
@@ -61,42 +85,91 @@ class DatagramCodec:
             flags |= DGF_AUTH
         head = bytes([(seq >> 8) & 0xff, seq & 0xff, flags])
         body = head + payload
+        if self.k:
+            # Fold [seq, flags, payload] (pre-auth) into the block
+            if self.sent_since_parity == 0:
+                self.tx_parity = bytearray()
+            _xor_into(self.tx_parity, body)
+            self.sent_since_parity += 1
+        if self.psk:
+            body += make_tag(self.psk, body)
+        return body
+
+    def parity_flush(self):
+        # Emit the block's parity datagram once k data datagrams have
+        # been folded, else None. Call once after every encode().
+        if not self.k or self.sent_since_parity < self.k:
+            return None
+        seq = self.tx_seq & 0xffff
+        self.tx_seq += 1
+        flags = DGF_PARITY | (self.sent_since_parity & DGF_CLASS_MASK)
+        if self.psk:
+            # Match the C seal(): the authenticated bit covers the
+            # parity datagram too, and the tag spans it.
+            flags |= DGF_AUTH
+        plen = min(len(self.tx_parity),
+                   DATAGRAM_MAX - DATAGRAM_HEADER - DATAGRAM_TAG)
+        head = bytes([(seq >> 8) & 0xff, seq & 0xff, flags])
+        body = head + bytes(self.tx_parity[:plen])
+        self.sent_since_parity = 0
         if self.psk:
             body += make_tag(self.psk, body)
         return body
 
     def decode(self, data):
+        # Returns a list of frame payloads to deliver (0, 1, or - when a
+        # parity reconstructs a lost datagram - 1 recovered payload).
         if len(data) < DATAGRAM_HEADER:
-            return None
+            return []
         flags = data[2]
         if self.psk:
             if not (flags & DGF_AUTH) \
                or len(data) < DATAGRAM_HEADER + DATAGRAM_TAG:
                 self.auth_failures += 1
-                return None
+                return []
             body, tag = data[:-DATAGRAM_TAG], data[-DATAGRAM_TAG:]
             if not hmac_mod.compare_digest(make_tag(self.psk, body), tag):
                 self.auth_failures += 1
-                return None
+                return []
             data = body
         seq = (data[0] << 8) | data[1]
-        if self.rx_seq is not None:
-            delta = (seq - self.rx_seq) & 0xffff
-            if delta == 0 or delta > 0x8000:
-                self.rx_reordered += 1
-                return None
-            if delta > 1:
-                self.rx_lost += delta - 1
-        self.rx_seq = seq
+        if self.expect_seq is None:
+            self.expect_seq = seq
+        delta = (seq - self.expect_seq) & 0xffff
+        if delta > 0x8000:
+            self.rx_reordered += 1  # stale duplicate / reorder
+            return []
+        if delta > 0:
+            self.rx_lost += delta
+        self.expect_seq = (seq + 1) & 0xffff
+
         if flags & DGF_PARITY:
-            return None  # parity handling is a future refinement
-        return data[DATAGRAM_HEADER:]
+            out = []
+            # Single-loss recovery: exactly one datagram of the block
+            # was lost (the one right before this parity) iff a block is
+            # open and this parity is the immediate successor (delta==1).
+            if self.holding and delta == 1:
+                _xor_into(self.rx_held, data[DATAGRAM_HEADER:])
+                # rx_held now holds the missing datagram [seq,flags,pay]
+                recovered = bytes(self.rx_held[DATAGRAM_HEADER:])
+                if recovered:
+                    out.append(recovered)
+            self.holding = False
+            self.rx_held = bytearray()
+            return out
+
+        # Data datagram: fold [seq, flags, payload] into the survivors
+        if not self.holding:
+            self.rx_held = bytearray()
+            self.holding = True
+        _xor_into(self.rx_held, data)
+        return [data[DATAGRAM_HEADER:]]
 
 
 class Bridge:
-    def __init__(self, board_addr, psk, pty_link):
+    def __init__(self, board_addr, psk, pty_link, fec_k=0):
         self.board_addr = board_addr
-        self.codec = DatagramCodec(psk)
+        self.codec = DatagramCodec(psk, fec_k)
         self.pty_link = pty_link
         self.transport = None
         self.master_fd = None
@@ -138,11 +211,19 @@ class Bridge:
             if self.transport is not None:
                 self.transport.sendto(self.codec.encode(chunk),
                                       self.board_addr)
+                # Emit this block's parity datagram when it just filled
+                parity = self.codec.parity_flush()
+                if parity is not None:
+                    self.transport.sendto(parity, self.board_addr)
 
     # UDP -> serial
     def datagram_received(self, data, addr):
-        payload = self.codec.decode(data)
-        if payload:
+        # decode() yields the datagram's frames plus, when a parity
+        # reconstructs a lost datagram, the recovered frames - all fed
+        # onward to klippy in block order.
+        for payload in self.codec.decode(data):
+            if not payload:
+                continue
             try:
                 os.write(self.master_fd, payload)
             except OSError:
@@ -169,7 +250,7 @@ async def amain(args):
     elif not args.trust_network:
         raise SystemExit("authentication is mandatory: give --psk-file, or"
                          " confess --trust-network for an isolated segment")
-    bridge = Bridge((host, int(port)), psk, args.pty)
+    bridge = Bridge((host, int(port)), psk, args.pty, args.fec_k)
     bridge.open_pty()
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(
@@ -189,6 +270,10 @@ def main():
                    " unless --trust-network)")
     p.add_argument("--trust-network", action="store_true",
                    help="explicitly run unauthenticated")
+    p.add_argument("--fec-k", type=int, default=0, help="XOR erasure block"
+                   " size: send a parity datagram every k data datagrams and"
+                   " reconstruct a single lost datagram per block (0 = off,"
+                   " must match the board's -f)")
     p.add_argument("--listen-port", type=int, default=41414)
     p.add_argument("-v", action="store_true", help="verbose")
     args = p.parse_args()

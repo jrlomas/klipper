@@ -18,17 +18,31 @@ struct udpdg_stats {
 
 // Initialize the datagram codec.  psk_len==0 selects the explicitly
 // unauthenticated trust_network mode; the psk buffer must remain
-// valid for the life of the link (it is not copied).
-void udpdg_init(const uint8_t *psk, uint32_t psk_len);
+// valid for the life of the link (it is not copied).  fec_k selects
+// the XOR erasure block size (a parity datagram every k data
+// datagrams); 0 disables the erasure layer entirely.
+void udpdg_init(const uint8_t *psk, uint32_t psk_len, uint8_t fec_k);
 // Wrap whole klipper frames into a sealed datagram written to 'out'
 // (which must hold len + UDPDG_OVERHEAD bytes).  Returns datagram
 // size (0 on overflow).
 uint32_t udpdg_encode(uint8_t *out, const uint8_t *frames, uint32_t len);
+// When FEC is on and a block has just filled, emit its parity
+// datagram into 'out' and return its size, else 0.  Call once after
+// every udpdg_encode.
+uint32_t udpdg_parity_flush(uint8_t *out);
 // Authenticate and sequence-check a received datagram (in place).
 // Returns the frames' length and sets *frames pointing into 'data';
 // 0 if the datagram was consumed internally (duplicate/parity);
 // <0 if rejected (auth failure or malformed).
 int32_t udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
+// When the just-decoded datagram was a parity that reconstructed a
+// single lost datagram of its block, copy the recovered datagram
+// (whole: UDPDG_HEADER header + frames) into 'out' and return its
+// length, else 0.  Call once after every udpdg_decode that returns 0.
+// The recovered bytes are XOR-derived from already-authenticated
+// survivors and parity, so they are post-auth trusted (there is no
+// per-datagram tag to re-check on a reconstruction).
+uint32_t udpdg_take_recovered(uint8_t *out, uint32_t cap);
 void udpdg_get_stats(struct udpdg_stats *st);
 
 #endif // udp_datagram.h
