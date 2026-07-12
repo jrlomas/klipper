@@ -2,6 +2,10 @@
 #define __ESP32_AUTOCONF_H
 // Hand-written static autoconf.h for the ESP32 target.
 //
+// sdkconfig.h carries the menuconfig choices (architecture, and the
+// optional CONFIG_KLIPPER_RMT_STEP step backend selector below).
+#include "sdkconfig.h"
+//
 // The ESP32 port is built by ESP-IDF (idf.py) rather than klipper's
 // Kconfig/Makefile flow, so the usual generated out/autoconf.h does
 // not exist; this file provides the CONFIG_* symbols the compiled
@@ -54,6 +58,19 @@
 #define CONFIG_INLINE_STEPPER_HACK 1
 #define CONFIG_HAVE_STEPPER_OPTIMIZED_BOTH_EDGE 0
 #define CONFIG_WANT_STEPPER_OPTIMIZED_BOTH_EDGE 0
+
+// RMT-backed step generation (RFC 0001 doc 12: the "RMT escape hatch").
+// When set (menuconfig CONFIG_KLIPPER_RMT_STEP), the esp32 CMake
+// compiles src/esp32/rmt_stepper.c *instead of* the portable
+// src/stepper.c: the same config_stepper/queue_step/... command
+// surface drives the RMT peripheral (src/esp32/rmt_step.c) so step
+// edges are hardware-timed and immune to timer-IRQ jitter.  Requires
+// the component architecture (rmt_step needs esp_intr_alloc).
+#ifdef CONFIG_KLIPPER_RMT_STEP
+#define CONFIG_WANT_ESP32_RMT_STEP 1
+#else
+#define CONFIG_WANT_ESP32_RMT_STEP 0
+#endif
 
 #define CONFIG_INITIAL_PINS ""
 

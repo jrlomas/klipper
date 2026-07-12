@@ -13,15 +13,13 @@
 // transmits.  Emitted edges are hardware timed - WiFi and flash
 // stalls cannot jitter them.
 //
-// What this module is NOT (yet): a stepper backend.  Klipper's
-// stepper.c toggles the step gpio inside the sched-timer ISR per
-// event, which cannot be retargeted at RMT without restructuring;
-// see docs/ESP32.md ("RMT step generation") for the integration
-// design and its open problems (dir changes fence the stream, queue
-// underrun silently ends - or in wrap mode could repeat - a train,
-// and the RMT timeline needs anchoring to the klipper clock).  The
-// module is compiled into the build but deliberately has no
-// command-layer consumers.
+// The stepper backend that consumes this emitter is
+// src/esp32/rmt_stepper.c (built in place of the portable stepper.c
+// when CONFIG_WANT_ESP32_RMT_STEP is set): it owns the pulse stream,
+// fences the dir GPIO across trains, anchors the first pulse to the
+// klipper clock, and wires the wrap-underrun latch below to the
+// shutdown path.  See docs/ESP32.md ("RMT step generation") for the
+// integration design and residual-error accounting.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //
@@ -50,6 +48,13 @@ extern volatile uint32_t RMTMEM[];
 #define RMT_REFILL 32     // items per threshold refill (half the ring)
 #define RMT_MAX_HALF 32767u
 #define MOVE_RING 16
+// Wrap-underrun watermark: at a threshold event the read cursor
+// should trail the write cursor by ~RMT_REFILL items (we keep one
+// half ahead of the other).  If the lead has collapsed below this
+// margin the refill arrived too late and the transmitter is about to
+// re-read stale ring items - treat it as an underrun stop.  The exact
+// value wants scope calibration on first silicon (see docs/ESP32.md).
+#define RMT_WRAP_MARGIN 6
 
 extern portMUX_TYPE klipper_mux; // irq.c
 
@@ -61,6 +66,7 @@ struct rmt_move {
 
 struct rmt_step_chan {
     uint8_t chan, in_use, running, done;
+    uint8_t underrun;       // wrap-mode underrun latch (see ISR)
     uint16_t high_ticks;
     uint8_t wr;             // next ring write index
     // Current move being expanded into items
@@ -162,6 +168,73 @@ rmt_step_fill(struct rmt_step_chan *sc, uint_fast8_t n)
 }
 
 /****************************************************************
+ * Pure pulse-planning helpers (no hardware access - unit tested on
+ * the host, see rmt_plan_test.c / the esp32 hostcheck harness)
+ ****************************************************************/
+
+// Ticks spanned by a whole (interval, count, add) move.  64-bit
+// accumulation, truncated to the 32-bit klipper clock.
+uint32_t
+rmt_step_move_ticks(uint32_t interval, uint16_t count, int16_t add)
+{
+    uint64_t total = (uint64_t)count * interval;
+    // add*count*(count-1)/2 ; count*(count-1) is always even
+    int64_t ramp = (int64_t)add * ((int64_t)count * (count - 1) / 2);
+    return (uint32_t)(total + (uint64_t)ramp);
+}
+
+// How many step edges have been emitted 'elapsed' ticks into a move.
+// Edge m (0-based) is emitted at offset off(m) = m*interval +
+// add*m*(m-1)/2 (monotonic while intervals stay positive).  Returns
+// the count of edges with off(m) <= elapsed, clamped to [0, count].
+uint16_t
+rmt_step_move_emitted(uint32_t interval, uint16_t count, int16_t add
+                      , uint32_t elapsed)
+{
+    // Monotonic linear scan bounded by a coarse estimate seed keeps
+    // this exact for the ramp sign edge cases without 64-bit sqrt.
+    // Callers only invoke it for the single in-flight move, whose
+    // count is bounded, and typically near the end of the move.
+    uint64_t off = 0;
+    uint32_t m = 0;
+    while (m < count) {
+        // off(m) for the next edge
+        uint64_t next = (uint64_t)m * interval
+            + (int64_t)add * ((int64_t)m * (m - 1) / 2);
+        if (next > elapsed)
+            break;
+        off = next;
+        m++;
+    }
+    (void)off;
+    return (uint16_t)m;
+}
+
+// Wrap-underrun predicate (see RMT_WRAP_MARGIN).  'wr' is the next
+// ring slot we will write; 'rd' is the transmitter's current read
+// slot.  In steady state the writer leads the reader by ~RMT_REFILL;
+// a lead that has shrunk under the margin means the reader is about
+// to overtake the writer and re-read not-yet-refreshed items.
+int
+rmt_step_wrap_hazard(uint8_t wr, uint8_t rd)
+{
+    uint8_t lead = (uint8_t)(wr - rd) % RMT_ITEMS;
+    return lead < RMT_WRAP_MARGIN;
+}
+
+// Transmitter read cursor within this channel's 64-item block.  The
+// low 10 bits of RMT.status_ch[] are the current RAM address; IDF
+// v5.3.2 hal/esp32/include/hal/rmt_ll.h:481 decodes it as
+// (status_ch[ch] & 0x3FF) - ch*64.  (TX read cursor and RX write
+// cursor share this field on the classic ESP32 - TRM 13.4.)
+static uint_fast8_t IRAM_ATTR
+rmt_read_offset(uint8_t ch)
+{
+    return (uint_fast8_t)((RMT.status_ch[ch] & 0x3FF) - (uint32_t)ch * RMT_ITEMS)
+        % RMT_ITEMS;
+}
+
+/****************************************************************
  * Interrupt handling (runs on the core that called rmt_step_setup)
  ****************************************************************/
 
@@ -177,8 +250,23 @@ rmt_step_isr(void *arg)
         uint32_t err_bit = 1u << (ch * 3 + 2);
         if (st & thr_bit) {
             RMT.int_clr.val = thr_bit;
-            if (sc->running && !sc->done)
-                rmt_step_fill(sc, RMT_REFILL);
+            if (sc->running && !sc->done) {
+                // Watermark: has the reader closed on the writer?  If
+                // the refill is this late the transmitter is about to
+                // re-read stale items - latch an underrun and blank
+                // the ring so it hits an end marker (controlled stop)
+                // instead of emitting duplicated/garbage steps.
+                if (rmt_step_wrap_hazard(sc->wr, rmt_read_offset(ch))) {
+                    volatile uint32_t *mem =
+                        &RMTMEM[(uint32_t)ch * RMT_ITEMS];
+                    for (uint_fast8_t i = 0; i < RMT_ITEMS; i++)
+                        mem[i] = 0;
+                    sc->done = 1;
+                    sc->underrun = 1;
+                } else {
+                    rmt_step_fill(sc, RMT_REFILL);
+                }
+            }
         }
         if (st & (end_bit | err_bit)) {
             RMT.int_clr.val = end_bit | err_bit;
@@ -269,6 +357,15 @@ rmt_step_queue(struct rmt_step_chan *sc, uint32_t interval
     return 0;
 }
 
+uint_fast8_t
+rmt_step_queue_space(struct rmt_step_chan *sc)
+{
+    irqstatus_t flag = irq_save();
+    uint_fast8_t used = (uint8_t)(sc->mhead - sc->mtail);
+    irq_restore(flag);
+    return used >= MOVE_RING ? 0 : MOVE_RING - used;
+}
+
 int
 rmt_step_start(struct rmt_step_chan *sc)
 {
@@ -282,6 +379,7 @@ rmt_step_start(struct rmt_step_chan *sc)
     sc->low_carry = 0;
     sc->count = 0;
     sc->done = 0;
+    sc->underrun = 0;
     rmt_step_fill(sc, RMT_ITEMS); // prime the whole ring
     RMT.conf_ch[ch].conf1.mem_rd_rst = 1;
     RMT.conf_ch[ch].conf1.mem_rd_rst = 0;
@@ -298,6 +396,16 @@ uint8_t
 rmt_step_is_busy(struct rmt_step_chan *sc)
 {
     return sc->running;
+}
+
+uint8_t
+rmt_step_take_underrun(struct rmt_step_chan *sc)
+{
+    irqstatus_t flag = irq_save();
+    uint8_t u = sc->underrun;
+    sc->underrun = 0;
+    irq_restore(flag);
+    return u;
 }
 
 void

@@ -33,6 +33,27 @@ config KLIPPER_ARCH_MODEM
 
 endchoice
 
+config KLIPPER_RMT_STEP
+    bool "RMT step generation (hardware-timed step pulses)"
+    depends on KLIPPER_ARCH_COMPONENT
+    default n
+    help
+        Drive step generation through the RMT peripheral instead of
+        toggling a step GPIO in the timer ISR (RFC 0001 doc 12's "RMT
+        escape hatch").  The esp32 build then compiles
+        src/esp32/rmt_stepper.c in place of the portable
+        src/stepper.c: the same config_stepper/queue_step command
+        surface feeds (interval,count,add) triples into the RMT
+        channels, whose edge timing is immune to the WiFi-stack
+        timer-IRQ and flash-cache jitter that makes tick-precise
+        stepping on this chip hard.  One RMT channel is consumed per
+        configured stepper (8 channels total).  Component architecture
+        only (the RMT refill interrupt needs esp_intr_alloc).
+
+        Implemented but NOT yet validated on silicon - see the RMT
+        section and bring-up checklist in docs/ESP32.md.  Leave this
+        off to use the classic timer-IRQ stepper backend.
+
 config KLIPPER_WIFI_SSID
     string "WiFi SSID"
     default ""

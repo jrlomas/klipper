@@ -37,10 +37,21 @@ set(KLIPPER_INCLUDES
     ${KLIPPER_ROOT}/lib/intentproto/include)
 
 # --- sources carrying compile-time requests ---
+# The step backend is a build-time substitution (RFC 0001 doc 12): with
+# CONFIG_KLIPPER_RMT_STEP the esp32-specific src/esp32/rmt_stepper.c
+# (added to the board sources below) provides the config_stepper/
+# queue_step command surface driving the RMT peripheral, and the
+# portable src/stepper.c is left out of the build; otherwise the
+# classic timer-IRQ stepper.c is compiled as on every other target.
+if(CONFIG_KLIPPER_RMT_STEP)
+    set(KLIPPER_STEPPER_SRC "")
+else()
+    set(KLIPPER_STEPPER_SRC stepper.c)
+endif()
 set(KLIPPER_CORE_SRCS
     # core (see src/Makefile src-y)
     sched.c command.c basecmd.c debugcmds.c initial_pins.c
-    gpiocmds.c stepper.c endstop.c trsync.c adccmds.c
+    gpiocmds.c ${KLIPPER_STEPPER_SRC} endstop.c trsync.c adccmds.c
     # peripheral command modules (CONFIG_WANT_* in autoconf.h)
     spicmds.c spi_software.c i2ccmds.c i2c_software.c pwmcmds.c
     buttons.c tmcuart.c neopixel.c
@@ -79,6 +90,11 @@ else()
         ${KLIPPER_ROOT}/src/esp32/timer.c
         ${KLIPPER_ROOT}/src/esp32/rmt_step.c
         ${KLIPPER_ROOT}/src/esp32/udp_port.c)
+    if(CONFIG_KLIPPER_RMT_STEP)
+        # RMT-backed stepper backend replacing the portable stepper.c
+        list(APPEND KLIPPER_BOARD_SRCS
+            ${KLIPPER_ROOT}/src/esp32/rmt_stepper.c)
+    endif()
 endif()
 
 set(GEN_CTR_C ${CMAKE_CURRENT_BINARY_DIR}/compile_time_request.c)

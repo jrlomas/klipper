@@ -94,10 +94,29 @@ plus this fork's `trajq`/`execlog`/`trigger_source`/`heater_hold`/
 implements the board API. Bindings beyond the initial set (timer,
 GPIO, ADC, UDP console): **SPI**, **I2C**, **hard PWM (LEDC)**, and
 the step path — where the **RMT peripheral** is the flagged escape
-hatch ([07](07-Link_Transport.md)) for hardware-timed step pulses if
-plain timer-IRQ stepping proves as jitter-prone as expected. Until
-measured, the FOC/sampled backend remains this chip's first-class
-citizen and the stepper backend is experimental.
+hatch ([07](07-Link_Transport.md)) for hardware-timed step pulses,
+immune to the WiFi-stack timer-IRQ jitter that makes tick-precise
+stepping on this chip hard. That escape hatch now **exists**: with
+`CONFIG_KLIPPER_RMT_STEP` the port compiles an esp32-specific stepper
+backend (`src/esp32/rmt_stepper.c`) *in place of* the portable
+`src/stepper.c` — same `config_stepper`/`queue_step` command surface,
+but the `(interval, count, add)` triples drive the RMT channels
+(`rmt_step.c`) rather than GPIO toggles in a timer ISR. It solves the
+integration's real problems concretely: direction changes fence the
+pulse stream (dir GPIO flipped only between drained trains), the first
+pulse of every train is clock-anchored from a sched timer, and a
+wrap-mode refill underrun is watermarked (transmitter read cursor vs.
+write cursor) into a controlled stop wired to shutdown rather than
+silent bad motion; homing/trsync stop ceases pulses immediately and
+freezes an exact clock-derived position. The backend host-compiles,
+links and passes off-hardware pulse-planning unit tests, but has
+**not yet run on silicon** (component architecture only, since the RMT
+refill interrupt needs `esp_intr_alloc`; the bare-core modem arch
+revisits it with a register-level ISR) — see the bring-up checklist
+in [docs/ESP32.md](../../ESP32.md). The FOC/sampled backend (its own
+timer, tolerant of µs-level jitter) remains this chip's first-class
+citizen; the RMT path is the production classic-stepping route once
+validated.
 
 ## Honesty clause
 

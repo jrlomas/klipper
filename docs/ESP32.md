@@ -350,7 +350,7 @@ those configuration paths are register-level too (see above):
 | Hard PWM (LEDC high-speed) | `pwmcmds` | IDF `ledc` config; register duty updates |
 | UART bit-bang | `tmcuart` | generic (gpio + timers) |
 | Neopixel | `neopixel` | generic bit-bang - timing is subject to the jitter caution above; verify on hardware |
-| RMT step module | none yet (experimental) | register level, see below |
+| RMT step module | `config_stepper`/`queue_step`/... (when `CONFIG_KLIPPER_RMT_STEP`) | register level, see below |
 
 Details and constraints:
 
@@ -378,7 +378,20 @@ Details and constraints:
   bits).  Duty writes from timer dispatch are two register writes
   (duty + duty_start latch); `PWM_MAX` is 32768.
 
-## RMT step generation (experimental module)
+## RMT step generation (implemented - unvalidated on silicon)
+
+> **IMPLEMENTED, NOT YET RUN ON HARDWARE.**  The backend below
+> host-compiles and links (the esp32 hostcheck harness builds a third
+> `component-rmt` variant with `CONFIG_KLIPPER_RMT_STEP`), its
+> pulse-planning logic is unit-tested off-hardware (item translation,
+> clock-anchor math, wrap-underrun watermark), and every RMT register
+> and field is source-verified against ESP-IDF v5.3.2 - but it has
+> **not executed on a devkit**.  Edge timing, the dir fence, the
+> anchor latency and the underrun watermark are exactly the kind of
+> code only a scope can finish; see the
+> [bring-up checklist](#rmt-step-bring-up-checklist).  The default
+> build leaves `CONFIG_KLIPPER_RMT_STEP` off and uses the classic
+> timer-IRQ `stepper.c`.
 
 `src/esp32/rmt_step.c` is the register-level pulse-train emitter for
 the "RMT escape hatch" flagged in docs 07/12: each RMT channel turns
@@ -389,32 +402,116 @@ one half while the other transmits; long intervals become low-level
 filler items).  Once started, edge timing is immune to WiFi and
 flash-cache jitter.
 
-It is compiled into the build but **not wired to any command**: it
-cannot honestly back today's `stepper.c`, whose contract is a gpio
-toggle inside each sched-timer event, not a queued pulse stream.
-Integrating it means feeding it from the move queue level - either
-`queue_step` moves or the trajectory backend's step emission - and
-the open problems are real:
+`src/esp32/rmt_stepper.c` is the **stepper backend** that drives it.
+When `CONFIG_KLIPPER_RMT_STEP` is set (component architecture only -
+the RMT refill interrupt needs `esp_intr_alloc`) the esp32 CMake
+compiles it **in place of** the portable `src/stepper.c`, so it
+registers the identical `config_stepper` / `queue_step` /
+`set_next_step_dir` / `reset_step_clock` / `stepper_get_position` /
+`stepper_stop_on_trigger` command surface (klippy is unchanged - same
+dictionary, same 76/27 command/response counts) but feeds the RMT
+channels instead of scheduling GPIO toggles.  One RMT channel is
+consumed per configured stepper (8 total).  `src/stepper.c` itself is
+untouched and remains the backend for every other target.
 
-* **Direction changes fence the stream**: an RMT channel emits step
-  edges only; the dir pin must change between two flushed trains,
-  costing a train stop/start (or a second RMT channel and a
-  merge scheme).
-* **Timeline anchoring**: RMT time is relative to `tx_start`; step
-  N's absolute time is the sum of all prior items.  Aligning that
-  with klipper's clock needs a synchronized start (e.g. armed from
-  a sched timer) and drift accounting over long trains.
-* **Underrun is silent and dangerous**: in wrap mode the hardware
-  happily re-reads stale items if a refill is late - duplicated
-  steps, not a clean shutdown.  A production backend must watermark
-  the reader (RMT status register) and shut down on near-underrun.
-* Queue-underrun currently *ends* a train (an end marker is written)
-  - correct for discrete pulse bursts, but a continuous-motion
-  backend needs the always-ahead feeding discipline above.
+**Integration choice: option A (the `queue_step` move stream).**  Of
+the two candidate integration points, feeding `rmt_step` from the
+legacy `queue_step` path was chosen over emitting RMT items from the
+trajectory backend (`traj_stepper.c`): `rmt_step` already speaks
+`(interval, count, add)`, so the translation is direct, and the
+substitution stays a self-contained esp32 file that *owns* the pulse
+stream rather than a patch of the portable, per-event `stepper.c`
+(which, as doc 12 noted, cannot be retargeted at a queued pulse
+stream).
+
+The three open problems are now solved concretely:
+
+* **Direction-change fencing.**  An RMT channel emits step edges only,
+  so a dir change cannot occur mid-train.  `rmt_stepper.c` groups
+  consecutive same-direction moves into a **train** and closes the
+  train at each direction change.  The next train's start clock is the
+  current train's exact end clock (chained with
+  `rmt_step_move_ticks()`).  The dir GPIO is flipped in the anchor
+  timer callback, which first **fences on `rmt_step_is_busy()`** - so
+  the flip never lands under live pulses - and bails to `shutdown`
+  ("RMT dir fence timeout") if a channel is still busy past its
+  computed end clock.
+* **Clock anchoring.**  Each train's first pulse is armed from a sched
+  timer firing at the train's absolute start clock, correlating the
+  `tx_start` register write to `timer_read_time()`.  Chaining the
+  per-train start clocks keeps the whole motion anchored, and every
+  direction change / `reset_step_clock` re-synchronizes exactly.
+  *Residual error:* (1) the interval between the timer deadline and
+  the `tx_start` write - a few timer-dispatch microseconds - offsets
+  the whole train by a constant; (2) the RMT gen's per-step phase puts
+  the first edge of each move at the move's start clock rather than one
+  interval later (the klippy `queue_step` convention), a bounded
+  offset of ≤ one step interval that is **non-cumulative** - every
+  move boundary, and therefore every train boundary, re-aligns to the
+  clock because each move's emitted span equals its
+  `rmt_step_move_ticks()` span.  Step *counts* are exact; only
+  sub-interval edge phase drifts, so reported position is exact.  The
+  dir-setup time before the first step equals the gap between the dir
+  GPIO write and `tx_start` in the anchor callback.
+* **Wrap-mode underrun watermarking.**  In wrap mode the hardware
+  re-reads stale ring items if a refill is late - duplicated steps,
+  not a clean stop.  The refill ISR now samples the transmitter read
+  cursor (`RMT.status_ch[ch] & 0x3FF`, normalized per
+  `hal/esp32/.../rmt_ll.h`) against the write cursor at every
+  threshold event; if the writer's lead has collapsed below
+  `RMT_WRAP_MARGIN` it **latches an underrun and blanks the ring**, so
+  the transmitter hits an end marker (controlled stop) instead of
+  emitting garbage.  `rmt_stepper_task()` polls the latch
+  (`rmt_step_take_underrun`) and escalates to `shutdown`
+  ("RMT step underrun") - lost steps mean a desynchronized axis, a
+  hard fault.  (The exact margin wants scope calibration on first
+  silicon.)  A benign move-queue drain still ends a train cleanly via
+  the existing end-marker path and is *not* flagged as an underrun.
+
+**Homing / trsync stop.**  `stepper_stop_on_trigger` registers a
+trsync signal that, on trigger, calls `rmt_step_abort()` (pulses cease
+within one RMT item), cancels any pending train, and **freezes an
+exact stopped position from the clock** - `rmt_step_move_emitted()`
+counts how many edges of the in-flight train have physically been
+emitted by the trigger instant, so `stepper_get_position` reports the
+true position with no pulse counter.  (A PCNT cross-check remains
+future work.)
 
 The FOC/sampled backend (own timer, tolerant of microsecond jitter)
-remains this chip's first-class motion citizen; classic timer-IRQ
-stepping remains compiled-but-experimental.
+remains this chip's first-class motion citizen; the RMT backend is the
+production path for classic step/dir steppers once validated on
+silicon.
+
+### RMT step bring-up checklist
+
+What a devkit owner runs to convert "source-verified" to "validated"
+(component architecture, `CONFIG_KLIPPER_RMT_STEP=y`; scope on a
+step/dir pin):
+
+1. **Build/flash** the component arch with the RMT step option; run
+   the identify handshake so klippy downloads the dictionary and
+   configures a stepper (each consumes one RMT channel).
+2. **Rate correctness:** drive a constant-velocity `queue_step` stream
+   and scope the step pin; confirm the pulse rate and the pulse width
+   (`step_pulse_ticks`) match, idle and under WiFi soak.  Compare
+   edge jitter against the classic backend on the same pin - the RMT
+   edges should be jitter-free where the classic ISR path is not.
+3. **Clock anchor:** with `timesync` established, command a move at a
+   known future clock and confirm the first edge lands at that clock
+   within the documented `tx_start` dispatch residual.
+4. **Direction fence:** alternate `set_next_step_dir` + `queue_step`
+   so the stream reverses; confirm the dir pin flips only in the gap
+   between trains (no dir edge under live step pulses) and that step
+   counts are exact across the reversal.
+5. **Underrun watermark:** starve the refill (e.g. stall the host feed
+   mid-move) and confirm the channel stops cleanly and the board
+   reports `shutdown: RMT step underrun` rather than emitting extra
+   steps.  Tune `RMT_WRAP_MARGIN` from the observed read/write cursor
+   lead.
+6. **Homing:** run a homing move into an endstop and confirm pulses
+   cease immediately on trigger and `stepper_get_position` matches the
+   physically stepped count (cross-check with a PCNT channel if
+   available).
 
 ## Building
 
@@ -525,11 +622,17 @@ transport code): authenticated datagram console end-to-end, identify
 / dictionary download, command dispatch, tx batching, auth-failure
 rejection, trust-network mode.
 
-Compiled and dictionary-verified (79 commands / 28 responses,
-including `spicmds`, `i2ccmds`, `pwmcmds`, `buttons`, `tmcuart`,
-`neopixel` and the software SPI/I2C fallbacks) but, like the rest of
-the board code, not yet run on silicon: the SPI, I2C and LEDC
-bindings and the RMT step module.
+Compiled and dictionary-verified (including `spicmds`, `i2ccmds`,
+`pwmcmds`, `buttons`, `tmcuart`, `neopixel` and the software SPI/I2C
+fallbacks) but, like the rest of the board code, not yet run on
+silicon: the SPI, I2C and LEDC bindings.  The **RMT step backend**
+(`CONFIG_KLIPPER_RMT_STEP`, `src/esp32/rmt_stepper.c`) is likewise
+implemented and host-validated (its pulse-planning logic is
+unit-tested off-hardware and the `component-rmt` build variant
+compiles/links with the identical command surface) but
+unvalidated on silicon - see
+[RMT step generation](#rmt-step-generation-implemented---unvalidated-on-silicon)
+and its bring-up checklist.
 
 The ESP32 board code compiles and links in **both architectures**
 (validated against stub IDF headers + the vendored `lib/esp32`
@@ -552,8 +655,10 @@ rough order:
   reconnect handling.
 * Enable datagram erasure FEC once the glue grows in-order block
   reassembly.
-* Wiring `rmt_step.c` to a step backend (see "RMT step generation"
-  above); PCNT step verification; FOC backend integration.
+* On-silicon bring-up of the RMT step backend (see the
+  [RMT step bring-up checklist](#rmt-step-bring-up-checklist)); PCNT
+  step verification as a homing-position cross-check; FOC backend
+  integration.
 * Ethernet (RMII) bringup variant of `wifi.c`.
 * Chip reset command, watchdog (component arch; on the bare core a
   register-level TIMG watchdog).
