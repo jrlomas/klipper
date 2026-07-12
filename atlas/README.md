@@ -35,7 +35,22 @@ honesty; Atlas gives it a mind.
 primitive-for-primitive), consistent with HELIX 0.9's status. It needs an
 on-target bring-up before "it works" is true (see the §8 checklist).
 
-Tests: `test/atlas_{decoder,diagnosis,trace,view,provision,fleet,kb}_test.py`.
+## Milestone C prep — the deterministic contracts (built early)
+
+Built ahead of the model tier because they're deterministic and
+CPU-testable, so dropping Qwen3-4B on later is a plug-in, not an
+integration (HANDOFF §5):
+
+| Module | Contract |
+| --- | --- |
+| `apply/` | the **non-LLM risk classifier** (safety/consequential/cosmetic from a config diff) + draft→validate→classify→apply pipeline with journal + undo. The safety gate never depends on the model. |
+| `model/` | the `ModelBackend` abstraction (stub/cuda/rocm/cpu/hailo) + the **deploy-profile budget guard** that refuses anything past Qwen3-4B / ~6 GB even on a big dev card. |
+| `eval/` | the eval harness — diagnosis accuracy, config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first, always reported against the deploy profile. |
+
+Verification: [`docs/Atlas_Bring-up_Plan.md`](../docs/Atlas_Bring-up_Plan.md).
+
+Tests: `test/atlas_{decoder,diagnosis,trace,view,provision,fleet,kb,apply,model,eval}_test.py`
+— 111 checks across 10 suites.
 
 ## Try it on a real log
 
