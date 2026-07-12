@@ -9,8 +9,10 @@
 #      print resumes;
 #   2. underrun-truncated stream - the reconciler uses the board's
 #      held (ramp-end) position and flags the truncation;
-#   3. board reset - the extruder is reclassified auto-resumable while a
-#      positional axis is flagged for re-qualification, blocking resume.
+#   3. board reset - HELIX homing-retained model: the extruder re-primes
+#      and a retained positional axis re-anchors at its last commanded
+#      position (both auto-resumable), while an axis declared
+#      motion_homing_volatile blocks the resume pending a re-home.
 #
 # No printer, MCU, or chelper build is required.  Exits 0 on success.
 #
@@ -72,16 +74,20 @@ class FakeExecLog:
 
 
 class FakeTrajStepper:
-    def __init__(self, name, oid, mcu, recovery_class,
-                 held=None, last_intention=None):
+    def __init__(self, name, oid, mcu, is_relative=False,
+                 homing_volatile=False, held=None, last_intention=None):
         self.name = name
         self.oid = oid
         self.mcu = mcu
-        self.recovery_class = recovery_class
+        self.is_relative = is_relative
+        self.homing_volatile = homing_volatile
         self._held = held           # (clock, pos_su) or None / Exception
         self._last_intention = last_intention
         self.reconciled_with = None
-        self.reprimed = False
+        self.reanchored = False
+
+    def homing_retained(self):
+        return self.is_relative or not self.homing_volatile
 
     def read_held(self):
         if isinstance(self._held, Exception):
@@ -94,8 +100,8 @@ class FakeTrajStepper:
     def resume_reconcile(self, clock, pos_su):
         self.reconciled_with = (int(clock), int(pos_su))
 
-    def note_reprime(self):
-        self.reprimed = True
+    def note_resume_reanchor(self):
+        self.reanchored = True
 
 
 class FakeTrajQueuing:
@@ -181,9 +187,9 @@ def test_normal_resume():
     pr = FakePauseResume(paused=True)
     printer.objects['pause_resume'] = pr
     mcu = FakeMcu('mcu')
-    x = FakeTrajStepper('stepper_x', 1, mcu, 'reference',
+    x = FakeTrajStepper('stepper_x', 1, mcu,
                         held=(1000, 320000), last_intention=(500, 1000, 320000))
-    e = FakeTrajStepper('extruder', 2, mcu, 'extruder',
+    e = FakeTrajStepper('extruder', 2, mcu, is_relative=True,
                         held=(1000, 65536), last_intention=(500, 1000, 65536))
     printer.objects['trajectory_queuing'] = FakeTrajQueuing([x, e])
     f = make_fr(printer)
@@ -206,7 +212,7 @@ def test_underrun_truncated():
     mcu = FakeMcu('mcu')
     # Host INTENDED to reach 400000 su; the queue ran dry and the board
     # ramped out to 337000 su, which is what its accumulator now holds.
-    x = FakeTrajStepper('stepper_x', 1, mcu, 'reference',
+    x = FakeTrajStepper('stepper_x', 1, mcu,
                         held=(1200, 337000),
                         last_intention=(500, 1100, 400000))
     printer.objects['trajectory_queuing'] = FakeTrajQueuing([x])
@@ -231,31 +237,42 @@ def test_board_reset():
     # Toolhead board rebooted: it stays in the paused-link set (reconnect
     # boot-detection refused to clear it), so its accumulators are gone.
     mcu = FakeMcu('toolhead')
-    e = FakeTrajStepper('extruder', 2, mcu, 'extruder',
+    e = FakeTrajStepper('extruder', 2, mcu, is_relative=True,
                         held=(0, 0), last_intention=(500, 1000, 65536))
-    y = FakeTrajStepper('stepper_y', 3, mcu, 'reference',
+    # Retained absolute axis (default): homing trusted across the reset.
+    y = FakeTrajStepper('stepper_y', 3, mcu,
                         held=(0, 0), last_intention=(500, 1000, 240000))
-    printer.objects['trajectory_queuing'] = FakeTrajQueuing([e, y])
+    # Volatile absolute axis: homing genuinely lost, must be re-homed.
+    z = FakeTrajStepper('stepper_z', 4, mcu, homing_volatile=True,
+                        held=(0, 0), last_intention=(500, 1000, 80000))
+    printer.objects['trajectory_queuing'] = FakeTrajQueuing([e, y, z])
     f = make_fr(printer)
     f.link_paused_mcus.add('toolhead')
     f.execlogs = [FakeExecLog(mcu, [])]
     f._resume_motion(gcmd=None)
-    # E is relative -> reclassified auto-resumable (re-prime); it must
+    # E is relative -> re-primed (re-anchored on next motion); it must
     # NOT be rebased at a faked accumulator.
-    assert e.reprimed is True
+    assert e.reanchored is True
     assert e.reconciled_with is None
-    # Positional axis with an independent reference -> flagged for
-    # re-qualification; resume is blocked and no position is faked.
+    # Retained absolute axis -> also re-anchored at its last commanded
+    # position and auto-resumable; no faked accumulator either.
+    assert y.reanchored is True
     assert y.reconciled_with is None
+    # Volatile axis -> homing lost: NOT re-anchored, and it blocks resume.
+    assert z.reanchored is False
+    assert z.reconciled_with is None
     assert f.last_recovery['blocked'] is True
     assert printer.gcode.scripts == [], printer.gcode.scripts
-    classes = dict((r['joint'], r['class']) for r in f.last_recovery['reset'])
-    assert classes == {'extruder': 'extruder', 'stepper_y': 'reference'}, classes
-    yentry = [r for r in f.last_recovery['reset'] if r['joint'] == 'stepper_y'][0]
-    assert 're-qualify' in yentry['action'] or 're-home' in yentry['action']
-    assert yentry['last_intention'] == (500, 1000, 240000)
-    print("PASS: board reset - E reprimed, positional axis flagged, resume"
-          " blocked")
+    disp = dict((r['joint'], r['homing_retained'])
+                for r in f.last_recovery['reset'])
+    assert disp == {'extruder': True, 'stepper_y': True,
+                    'stepper_z': False}, disp
+    zentry = [r for r in f.last_recovery['reset']
+              if r['joint'] == 'stepper_z'][0]
+    assert 're-home' in zentry['action']
+    assert zentry['last_intention'] == (500, 1000, 80000)
+    print("PASS: board reset - E reprimed, retained axis re-anchored,"
+          " volatile axis blocks resume")
 
 
 def main():

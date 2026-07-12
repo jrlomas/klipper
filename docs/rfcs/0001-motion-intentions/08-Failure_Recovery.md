@@ -57,7 +57,7 @@ and what was already printed, and re-plans from ground truth.
 | --- | --- | --- | --- |
 | Queue underrun (host stall, link congestion) | segment queue empty at v≠0 | decel ramp → hold ([02](02-Intention_Protocol.md)) | Yes — rebase and continue |
 | Link loss, board still powered (loose cable, AP dropout) | Class-0 silence / beacon loss past budget ([01](01-Time_Model.md)) | **pause-and-hold**: finish or ramp out current motion, hold positions, heaters per failure policy, keep logging | Yes — replug/reassociate, re-handshake, rebase, continue |
-| Board reset / power loss | reconnect handshake shows fresh boot (uptime, config CRC) | that board's volatile state is gone; *other* boards pause-and-hold | Partially — see per-axis recovery below |
+| Board reset / power loss | reconnect handshake shows fresh boot (uptime, config CRC) | that board's volatile state is gone; *other* boards pause-and-hold | Partially — see per-joint recovery below |
 | Host crash / host power loss | all boards lose beacons + Class-0 traffic | machine-wide pause-and-hold (autonomous — no host needed) | Yes — host restarts, reads positions + execution logs, resumes |
 | Trigger abort (unexpected endstop, servo fault) | trsync fires | coordinated stop (as today), then **hold, not shutdown** | Usually — host inspects logs and decides |
 | Genuine firmware fault (watchdog, assertion, `Timer too close` on Class 0) | internal | full shutdown, as today — pause-and-hold requires a *trustworthy* MCU | Via log dump after restart, best-effort |
@@ -98,20 +98,37 @@ execution log, rebases every joint at its held position, re-disciplines
 the clock, and resumes. Nothing was lost because nothing was thrown
 away.
 
-### Per-axis recovery after a board reset
+### Per-joint recovery after a board reset
 
-If the board actually rebooted, its accumulators are gone. What
-remains recoverable, per joint class:
+If the board actually rebooted, its volatile accumulators are gone.
+HELIX recovers on a deliberately simple model — **no encoders, no
+closed-loop feedback**. A resume assumes the joint is still at the
+last coordinates it was commanded to, with the homing reference it
+had, and continues. The host still holds every joint's last commanded
+position (the intention twin) and its kinematic homing state; a board
+reset does not erase the *host's* knowledge, only the board's volatile
+segment accumulator. So the resume re-anchors each joint at that last
+commanded position on its next motion and carries on.
 
-* **Extruder (E)**: trivially resumable — E is relative; resume equals
-  re-prime and continue. A toolhead-board reset therefore does not
-  doom a print.
-* **Axes with independent reference** (encoders, or homing that can be
-  performed away from the printed part): re-qualify, then resume.
-* **Axes with neither**: held by *other* boards' state if they live
-  elsewhere; if they lived on the reset board, resumption needs
-  operator judgment. The host presents what it knows from the
-  persisted log rather than pretending.
+The only per-joint question is therefore binary — did this joint's
+**homing survive the reset**?
+
+* **Homing retained** (the default for every joint): re-anchor at the
+  last commanded position and continue. This covers the extruder (E is
+  relative — resume equals re-prime and continue) and every absolute
+  axis whose homing reference is trustworthy across the reset. A
+  toolhead-board reset therefore does not doom a print.
+* **Homing lost**: only when a joint is explicitly declared volatile
+  (`motion_homing_volatile: True`) because its reference genuinely
+  cannot be trusted across a reset. That joint blocks the resume until
+  its axis is re-homed; the host presents the last known intention and
+  does not fake a position.
+
+This intentionally collapses the earlier three-way classification
+(extruder / independent-reference / none) — which leaned on encoder or
+re-qualification machinery HELIX does not build — into "retained vs
+lost." Recovery from a non-fatal reset is the common, automatic case;
+a re-home is required only when homing is truly gone.
 
 ## Heater failure policy — keep the bed hot
 

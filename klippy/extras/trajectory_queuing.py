@@ -68,25 +68,46 @@ class TrajectoryStepper:
         record_size = config.getint('motion_intention_record',
                                     DEFAULT_INTENTION_RECORD, minval=16)
         self.intentions = collections.deque(maxlen=record_size)
-        # Per-axis recovery class after a board RESET (doc 08):
-        #  extruder  - relative, trivially resumable (re-prime, continue)
-        #  reference - has an independent reference (endstop/encoder):
-        #              re-qualify away from the part, then resume
-        #  none      - neither: present the persisted record, require
-        #              operator judgment (do not fake a position)
-        explicit = config.get('motion_recovery_class', None)
-        if explicit is not None:
-            if explicit not in ('extruder', 'reference', 'none'):
+        # Per-joint recovery disposition after a board RESET (RFC 0001
+        # doc 08, HELIX simplified model).  HELIX uses no encoders and no
+        # closed-loop position feedback: a resume assumes the joint is
+        # still at the last coordinates it was commanded to, with the
+        # homing reference it had, and continues.  The only case that
+        # cannot recover automatically is one where that homing was
+        # *truly lost* and must be re-established by re-homing.  So the
+        # per-joint knob is binary -- does this joint's homing survive a
+        # board reset?
+        #   * Relative axes (extruders) always do: re-prime and continue.
+        #   * Absolute axes are assumed to retain their homing by default;
+        #     set 'motion_homing_volatile: True' for a joint whose
+        #     reference genuinely cannot be trusted across a reset, which
+        #     forces a re-home before the print resumes.
+        self.is_relative = self.name.startswith('extruder')
+        self.homing_volatile = config.getboolean('motion_homing_volatile',
+                                                 False)
+        # Back-compat: the retired three-way 'motion_recovery_class'
+        # collapses onto this model.  'extruder' was relative (already
+        # detected by name); 'reference'/'none' both blocked the resume
+        # pending re-homing == volatile homing.
+        legacy = config.get('motion_recovery_class', None)
+        if legacy is not None:
+            if legacy not in ('extruder', 'reference', 'none'):
                 raise config.error(
                     "motion_recovery_class in '%s' must be extruder,"
-                    " reference or none" % (config.get_name(),))
-            self.recovery_class = explicit
-        elif self.name.startswith('extruder'):
-            self.recovery_class = 'extruder'
-        elif config.get('endstop_pin', None) is not None:
-            self.recovery_class = 'reference'
-        else:
-            self.recovery_class = 'none'
+                    " reference or none (deprecated: prefer"
+                    " motion_homing_volatile)" % (config.get_name(),))
+            logging.warning(
+                "trajectory_queuing: 'motion_recovery_class' is deprecated;"
+                " mapping '%s' onto the homing-retained model for '%s'",
+                legacy, config.get_name())
+            if legacy in ('reference', 'none'):
+                self.homing_volatile = True
+
+    def homing_retained(self):
+        # A joint recovers automatically when its homing survives the
+        # reset: always for a relative axis, and for an absolute axis
+        # unless it was declared volatile.
+        return self.is_relative or not self.homing_volatile
 
     # Called from MCU_stepper._build_config
     def build_config(self, step_pin, dir_pin, invert_step, invert_dir,
@@ -220,11 +241,17 @@ class TrajectoryStepper:
         self.mcu_stepper.sync_to_held_position(pos_su)
         self.intentions.append((clock, clock, pos_su))
 
-    def note_reprime(self):
-        # Extruder (relative) after a board RESET: its accumulator is
-        # gone, but E is relative - re-anchor at the host's current
-        # commanded position on the next motion and continue.
+    def note_resume_reanchor(self):
+        # Board RESET, homing retained: the board's volatile accumulator
+        # is gone, but the host still knows where this joint was (its
+        # last commanded position) and trusts the homing it had.  Re-anchor
+        # at the host's current commanded position on the next motion and
+        # continue.  Same mechanism for a relative axis (extruder re-prime)
+        # and an absolute axis whose homing survived the reset.
         self.note_rebase_needed()
+
+    # Retained name for callers/tests predating the homing-retained model.
+    note_reprime = note_resume_reanchor
 
     def _send_segs(self, n):
         segs = self.ffi_lib.segfit_get_segs(self.segfit)

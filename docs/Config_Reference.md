@@ -329,6 +329,18 @@ position_max:
 #   mm/s^2) the micro-controller applies to bring the actuator to a
 #   controlled stop should its segment queue underrun (for example on
 #   link loss). The default is 5000.
+#motion_homing_volatile: False
+#   Only used when motion_protocol is 'trajectory', and only relevant
+#   when the [failure_recovery] section is present. Controls how this
+#   joint recovers after its micro-controller RESET (rebooted or lost
+#   power) mid-print. By default (False) a RESUME_MOTION assumes the
+#   joint is still at the last coordinates it was commanded to, with
+#   the homing reference it had, and continues -- the HELIX recovery
+#   model uses no encoders or closed-loop feedback. Set this to True
+#   for a joint whose homing genuinely cannot be trusted across a
+#   reset; such a joint blocks the resume until its axis is re-homed.
+#   Extruders are always treated as relative (re-primed, never blocked)
+#   regardless of this setting. The default is False.
 ```
 
 ### Cartesian Kinematics

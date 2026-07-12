@@ -490,25 +490,30 @@ class FailureRecovery:
                     continue
                 # Unreadable board: fall through to reset handling.
                 state = 'reset'
-            # (per-axis recovery after a board RESET)
-            cls = ts.recovery_class
-            entry = {'joint': ts.name, 'class': cls,
+            # (per-joint recovery after a board RESET), HELIX simplified
+            # model (RFC 0001 doc 08): assume the joint is still at the
+            # last coordinates it was commanded to, with the homing it
+            # had, and continue -- unless that homing was truly lost, in
+            # which case the axis must be re-homed first.
+            retained = ts.homing_retained()
+            entry = {'joint': ts.name, 'homing_retained': retained,
+                     'relative': ts.is_relative,
                      'last_intention': ts.last_intention(), 'action': ''}
-            if cls == 'extruder':
-                ts.note_reprime()
-                entry['action'] = ("relative axis - re-prime and continue"
-                                   " (auto-resumable)")
-            elif cls == 'reference':
-                blocking = True
-                entry['action'] = ("has independent reference - re-home /"
-                                   " re-qualify away from the part, then"
-                                   " RESUME_MOTION (index re-qualification"
-                                   " is out of scope in v1)")
+            if retained:
+                # Re-anchor at the host's current commanded position on
+                # the next motion (the last coordinates the joint was in).
+                ts.note_resume_reanchor()
+                if ts.is_relative:
+                    entry['action'] = ("relative axis - re-prime and"
+                                       " continue at last position"
+                                       " (auto-resumable)")
+                else:
+                    entry['action'] = ("homing retained - resume at last"
+                                       " known coordinates and continue")
             else:
                 blocking = True
-                entry['action'] = ("no independent reference - operator"
-                                   " judgment required; last known intention"
-                                   " is shown, no position is faked")
+                entry['action'] = ("homing lost (motion_homing_volatile) -"
+                                   " re-home this axis, then RESUME_MOTION")
             reset.append(entry)
         self.last_recovery = {'reconciled': reconciled, 'reset': reset,
                               'blocked': blocking}
@@ -532,8 +537,10 @@ class FailureRecovery:
                  % (jname, pos_su, note))
         for e in reset:
             li = e['last_intention']
-            info("joint %s RESET (class=%s): %s%s"
-                 % (e['joint'], e['class'], e['action'],
+            info("joint %s RESET (homing %s): %s%s"
+                 % (e['joint'],
+                    "retained" if e['homing_retained'] else "LOST",
+                    e['action'],
                     (" last intended pos=%d su" % (li[2],)) if li else ""))
         if reconciled:
             # Doc 08 print-quality honesty - log it, do not try to solve
@@ -567,14 +574,15 @@ class FailureRecovery:
     def get_status(self, eventtime=None):
         holds = dict((name, {'engaged': h.engaged})
                      for name, h in self.holds.items())
-        classes = {}
+        disposition = {}
         tq = self.printer.lookup_object('trajectory_queuing', None)
         if tq is not None:
-            classes = dict((ts.name, ts.recovery_class)
-                           for ts in tq.get_trajectory_steppers())
+            disposition = dict(
+                (ts.name, 'retained' if ts.homing_retained() else 'volatile')
+                for ts in tq.get_trajectory_steppers())
         return {'paused_link_mcus': sorted(self.link_paused_mcus),
                 'heater_holds': holds,
-                'recovery_classes': classes,
+                'recovery_disposition': disposition,
                 'last_recovery': self.last_recovery}
 
     def cmd_STATUS(self, gcmd):
@@ -593,16 +601,24 @@ class FailureRecovery:
         tq = self.printer.lookup_object('trajectory_queuing', None)
         if tq is not None:
             for ts in tq.get_trajectory_steppers():
-                parts.append("joint %s: reset-recovery class=%s"
-                             % (ts.name, ts.recovery_class))
+                if ts.is_relative:
+                    disp = "relative (auto re-prime)"
+                elif ts.homing_retained():
+                    disp = "homing retained (auto resume)"
+                else:
+                    disp = "homing volatile (re-home required)"
+                parts.append("joint %s: reset-recovery = %s"
+                             % (ts.name, disp))
         if self.last_recovery is not None:
             lr = self.last_recovery
             parts.append("last RESUME_MOTION: %d joint(s) rebased, %d reset,"
                          " %s" % (len(lr['reconciled']), len(lr['reset']),
                                   "BLOCKED" if lr['blocked'] else "resumed"))
             for e in lr['reset']:
-                parts.append("  RESET %s (class=%s): %s"
-                             % (e['joint'], e['class'], e['action']))
+                parts.append("  RESET %s (homing %s): %s"
+                             % (e['joint'],
+                                "retained" if e['homing_retained'] else "LOST",
+                                e['action']))
         gcmd.respond_info("\n".join(parts))
 
     def cmd_ENGAGE(self, gcmd):
