@@ -1,0 +1,152 @@
+# Trajectory PWM/DAC actuator: sampled non-stepper motion backend
+#
+# Configures the MCU-side sampled PWM/DAC trajectory backend
+# (src/traj_pwm.c, RFC 0001 doc 04) for a non-stepper actuator whose
+# "position" is an output level - laser power, spindle speed, a hobby
+# servo or an analog/PWM-driven axis.  The MCU samples the segment
+# polynomial q(dt) = q0 + v*dt + 1/2*a*dt^2 at a fixed loop rate and
+# writes the mapped duty cycle; this module owns the config command,
+# the position anchor (trajectory_rebase) and the segment/hold command
+# surface.
+#
+# Scope (this pass): the config object plus full command wiring so a
+# caller can rebase() the anchor and queue segments directly - the
+# natural interface for laser/spindle raster where power tracks a
+# commanded value trajectory.  A host fitter integration (reuse the
+# segfit sampler over a value trajectory, mirroring
+# trajectory_queuing.py's TrajectoryStepper.flush) is the remaining
+# step and is documented as a hook below (feed_value_trajectory).
+#
+# Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+
+import logging
+
+SUBUNITS = 65536.
+DEFAULT_SAMPLE_TIME = 0.001
+DEFAULT_CYCLE_TIME = 0.100
+DEFAULT_UNDERRUN_DECEL = 5000.  # native units/s^2
+
+
+def subunit_to_duty(pos_su, scale, max_value):
+    # Pure sub-unit position -> duty mapping, mirroring
+    # traj_pwm_duty() in src/traj_pwm.c: duty = pos_su * max_value /
+    # scale, clamped to [0, max_value].  Negative positions map to 0.
+    # Kept a module-level pure function so it is unit testable without
+    # a printer or MCU (see test/traj_pwm_map_test.py).
+    if pos_su <= 0 or scale <= 0:
+        return 0
+    duty = (int(pos_su) * int(max_value)) // int(scale)
+    if duty >= max_value:
+        return int(max_value)
+    return int(duty)
+
+
+class TrajectoryPWM:
+    def __init__(self, config):
+        self.printer = config.get_printer()
+        self.name = config.get_name().split()[-1]
+        ppins = self.printer.lookup_object('pins')
+        pin_params = ppins.lookup_pin(config.get('pin'), can_invert=False)
+        self.mcu = pin_params['chip']
+        self._pin = pin_params['pin']
+        self.cycle_time = config.getfloat(
+            'cycle_time', DEFAULT_CYCLE_TIME, above=0.)
+        self.sample_time = config.getfloat(
+            'motion_sample_time', DEFAULT_SAMPLE_TIME, above=0.)
+        # full_scale: native position (in the caller's units) that maps
+        # to 100% output.  scale (sub-units per full-scale duty) is what
+        # the MCU divides the sampled sub-unit position by.
+        self.full_scale = config.getfloat('full_scale', 1., above=0.)
+        # shutdown_value: fraction of full scale driven on machine
+        # shutdown (RFC 0001 doc 04 stop table "output to configured
+        # shutdown value").
+        self.shutdown_frac = config.getfloat(
+            'shutdown_value', 0., minval=0., maxval=1.)
+        self.underrun_decel = config.getfloat(
+            'motion_underrun_decel', DEFAULT_UNDERRUN_DECEL, above=0.)
+        self.oid = None
+        self.max_value = 0
+        self.scale = int(self.full_scale * SUBUNITS + .5)
+        self.queue_cmd = self.hold_cmd = None
+        self.rebase_cmd = self.get_pos_cmd = None
+        self.need_rebase = True
+        self.mcu.register_config_callback(self._build_config)
+
+    def _build_config(self):
+        self.oid = self.mcu.create_oid()
+        self.mcu.request_move_queue_slot()
+        # Route this actuator's underrun events now that the oid exists.
+        self.mcu.register_response(self._handle_underrun, "traj_underrun",
+                                   self.oid)
+        self.max_value = int(self.mcu.get_constant_float("PWM_MAX"))
+        cycle_ticks = self.mcu.seconds_to_clock(self.cycle_time)
+        sample_ticks = max(1, self.mcu.seconds_to_clock(self.sample_time))
+        shutdown_value = int(self.shutdown_frac * self.max_value + .5)
+        freq = self.mcu.seconds_to_clock(1.)
+        # underrun_decel wire units: sub-units/tick^2, 32 fractional bits
+        decel_wire = int(self.underrun_decel * SUBUNITS
+                         / (freq * freq) * 2.**32 + .5)
+        self.mcu.add_config_cmd(
+            "config_traj_pwm oid=%d pin=%s cycle_ticks=%d sample_ticks=%d"
+            " scale=%d shutdown_value=%d max_value=%d underrun_decel=%d"
+            % (self.oid, self._pin, cycle_ticks, sample_ticks, self.scale,
+               shutdown_value, self.max_value, decel_wire))
+        cmd_queue = self.mcu.alloc_command_queue()
+        self.queue_cmd = self.mcu.lookup_command(
+            "queue_traj_pwm_segment oid=%c flags=%c duration=%u"
+            " velocity=%i accel=%i", cq=cmd_queue)
+        self.hold_cmd = self.mcu.lookup_command(
+            "traj_pwm_hold oid=%c duration=%u", cq=cmd_queue)
+        self.rebase_cmd = self.mcu.lookup_command(
+            "traj_pwm_rebase oid=%c clock=%u pos=%i", cq=cmd_queue)
+        self.get_pos_cmd = self.mcu.lookup_query_command(
+            "traj_pwm_get_position oid=%c",
+            "traj_position oid=%c clock=%u pos=%i", oid=self.oid,
+            cq=cmd_queue)
+
+    # ---- position anchor / segment feed API ------------------------
+
+    def rebase(self, print_time, pos_native):
+        # Anchor the chained position stream at pos_native (caller's
+        # units) as of print_time.  Required before any segment.
+        pos_su = int(round(pos_native * SUBUNITS))
+        clock = self.mcu.print_time_to_clock(print_time)
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
+        self.need_rebase = False
+
+    def queue_segment(self, duration_ticks, velocity, accel, flags=0):
+        # Queue one constant-acceleration span.  velocity is Q16.16
+        # sub-units/tick, accel is sub-units/tick^2 (32 fractional
+        # bits) - the same wire encoding the segment fitter emits.
+        self.queue_cmd.send([self.oid, flags, duration_ticks,
+                             velocity, accel])
+
+    def hold(self, duration_ticks):
+        self.hold_cmd.send([self.oid, duration_ticks])
+
+    def get_position(self):
+        params = self.get_pos_cmd.send([self.oid])
+        return params['pos'] / SUBUNITS
+
+    def feed_value_trajectory(self, *args, **kwargs):
+        # Fitter hook (remaining step): sample a value trajectory
+        # through the C segfit fitter (as trajectory_queuing.py does for
+        # steppers) and ship the resulting segments via queue_segment().
+        # Left unimplemented in this pass - laser/spindle callers drive
+        # rebase()/queue_segment() directly.
+        raise self.printer.command_error(
+            "trajectory_pwm fitter integration not yet wired")
+
+    def _handle_underrun(self, params):
+        self.need_rebase = True
+        logging.warning("Trajectory PWM underrun on %s: clock=%d pos=%d",
+                        self.name, params['clock'], params['pos'])
+
+    def get_status(self, eventtime):
+        return {'name': self.name, 'need_rebase': self.need_rebase}
+
+
+def load_config_prefix(config):
+    return TrajectoryPWM(config)

@@ -201,6 +201,12 @@ config WANT_TRAJECTORY
     bool
     depends on HAVE_GPIO && !MACH_AVR
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_TRAJECTORY_PWM
+    # Sampled PWM/DAC actuator backend (RFC 0001 doc 04). Needs both
+    # the trajectory segment core and a hard PWM output to sample onto.
+    bool
+    depends on WANT_TRAJECTORY && WANT_HARD_PWM
+    default y
 config WANT_TRIGGER_SOURCE
     bool
     depends on HAVE_GPIO_EDGE_TRIGGER
