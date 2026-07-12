@@ -804,6 +804,21 @@ class MCUConnectHelper:
         self._emergency_stop_cmd = None
         self._is_shutdown = self._is_timeout = False
         self._shutdown_msg = ""
+        # Communication timeout policy (RFC 0001 doc 08).  'shutdown'
+        # keeps the stock behavior (a lost link takes the whole machine
+        # down); 'pause' turns a lost link to this (secondary) mcu into
+        # a host-side pause-and-hold: a "mcu:comm_pause" event is sent,
+        # this mcu enters a 'paused-link' state, and motion already
+        # sent toward it underruns and holds on the MCU side.
+        self._on_comm_timeout = config.getchoice(
+            'on_comm_timeout', {'shutdown': 'shutdown', 'pause': 'pause'},
+            'shutdown')
+        if self._on_comm_timeout == 'pause' and name == 'mcu':
+            raise config.error(
+                "on_comm_timeout: pause is not supported on the primary mcu")
+        self._is_paused_link = False
+        self._saw_starting_while_paused = False
+        self._link_check_timer = None
         # Register handlers
         printer.register_event_handler("klippy:mcu_identify",
                                        self._mcu_identify)
@@ -811,6 +826,9 @@ class MCUConnectHelper:
         printer.register_event_handler("klippy:shutdown", self._shutdown)
         printer.register_event_handler("klippy:analyze_shutdown",
                                        self._analyze_shutdown)
+        if self._on_comm_timeout == 'pause':
+            printer.register_event_handler("klippy:ready",
+                                           self._start_link_checks)
     def get_mcu(self):
         return self._mcu
     def get_serial(self):
@@ -830,11 +848,30 @@ class MCUConnectHelper:
         if shutdown_clock is not None:
             shutdown_clock = self._mcu.clock32_to_clock64(shutdown_clock)
         event_type = params['#name']
+        if self._is_paused_link:
+            # The board became reachable again while in the paused-link
+            # state and reported an MCU-side shutdown.  Do not take the
+            # rest of the machine (and its engaged heater holds) down;
+            # RECONNECT_MCU will report that a restart is required.
+            logging.error("MCU '%s' reported shutdown ('%s') while its"
+                          " link was paused; a restart will be required",
+                          self._name, msg)
+            return
         self._printer.invoke_async_shutdown(
             "MCU shutdown", {"reason": msg, "mcu": self._name,
                              "event_type": event_type,
                              "shutdown_clock": shutdown_clock})
     def _handle_starting(self, params):
+        if self._is_paused_link:
+            # Boot detection while holding: remember that the board
+            # restarted (its volatile state is gone) so a subsequent
+            # RECONNECT_MCU can honestly demand a full RESTART, without
+            # shutting down the boards that are still holding.
+            self._saw_starting_while_paused = True
+            logging.error("MCU '%s' sent 'starting' while its link was"
+                          " paused - the board has restarted; a RESTART"
+                          " will be required", self._name)
+            return
         if not self._is_shutdown:
             self._printer.invoke_async_shutdown("MCU '%s' spontaneous restart"
                                                 % (self._name,))
@@ -912,8 +949,211 @@ class MCUConnectHelper:
         self._is_timeout = True
         logging.info("Timeout with MCU '%s' (eventtime=%f)",
                      self._name, eventtime)
+        if self._on_comm_timeout == 'pause' and not self._is_shutdown:
+            self._enter_paused_link()
+            return
         self._printer.invoke_shutdown("Lost communication with MCU '%s'" % (
             self._name,))
+    # Link-loss pause-and-hold handling (RFC 0001 doc 08)
+    def _start_link_checks(self):
+        # The stock timeout detection only runs from the periodic
+        # motion_queuing.stats() calibration (every ~5 seconds).  With
+        # 'on_comm_timeout: pause' the host must detect the loss before
+        # stale heater readings are quelled (~7s) and escalated by
+        # verify_heater, so poll the link state once a second.
+        if self._mcu.is_fileoutput():
+            return
+        self._link_check_timer = self._reactor.register_timer(
+            self._link_check_event, self._reactor.monotonic() + 1.)
+    def _link_check_event(self, eventtime):
+        self.check_timeout(eventtime)
+        return eventtime + 1.
+    def _enter_paused_link(self):
+        self._is_paused_link = True
+        self._saw_starting_while_paused = False
+        # Quiesce the periodic clock queries and drop the 'clock'
+        # response handler: after a long outage the 32-bit clock
+        # extension in clocksync would alias (>~2^31 ticks between
+        # samples) and poison the clock regression.  The regression
+        # state itself is left untouched so a successful reconnect can
+        # resume from the healthy pre-outage frequency estimate.
+        self._reactor.update_timer(self._clocksync.get_clock_timer,
+                                   self._reactor.NEVER)
+        try:
+            self._serial.register_response(None, 'clock')
+        except KeyError:
+            pass
+        logging.error(
+            "MCU '%s': lost communication - entering paused-link state"
+            " (on_comm_timeout: pause). Motion toward this MCU will"
+            " underrun and hold on the MCU side. Reseat the connection"
+            " and run RECONNECT_MCU MCU=%s.", self._name, self._name)
+        try:
+            self._printer.send_event("mcu:comm_pause", self._name)
+        except Exception:
+            logging.exception("MCU '%s': error in mcu:comm_pause handlers",
+                              self._name)
+    def is_link_paused(self):
+        return self._is_paused_link
+    def _probe_response(self, msg, response_name, retries=5, timeout=1.0):
+        # Bounded request/response probe that cannot wedge on a dead
+        # link.  The regular query helpers block indefinitely waiting
+        # for the transport-level ack (raw_send_wait_ack has no
+        # timeout), which is unacceptable while the link state is
+        # unknown, so send unacknowledged and wait with a deadline.
+        reactor = self._reactor
+        completion = reactor.completion()
+        state = {'done': False}
+        def handle_probe(params):
+            if not state['done']:
+                state['done'] = True
+                reactor.async_complete(completion, params)
+        self._serial.register_response(handle_probe, response_name)
+        try:
+            cmd = self._serial.get_msgparser().create_command(msg)
+            cq = self._serial.get_default_command_queue()
+            params = None
+            for i in range(retries):
+                self._serial.raw_send(cmd, 0, 0, cq)
+                params = completion.wait(reactor.monotonic() + timeout)
+                if params is not None:
+                    break
+        finally:
+            try:
+                self._serial.register_response(None, response_name)
+            except KeyError:
+                pass
+        return params
+    def _reopen_serial_fd(self):
+        # Open the port anew and splice the new descriptor into the
+        # existing serialqueue with dup2().  The serialqueue (and the
+        # C-level steppersync/trdispatch/command_queue objects holding
+        # pointers to it, plus both sides' transport sequence numbers)
+        # all survive, so the session genuinely resumes: the retransmit
+        # machinery delivers anything queued during the outage.
+        serial_dev = self._serial.serial_dev
+        if serial_dev is None:
+            raise error("MCU '%s' has no active serial session"
+                        % (self._name,))
+        old_fd = serial_dev.fileno()
+        if self._canbus_iface is not None:
+            import can # XXX
+            cbid = self._printer.lookup_object('canbus_ids')
+            nodeid = cbid.get_nodeid(self._serialport)
+            txid = nodeid * 2 + 256
+            filters = [{"can_id": txid + 1, "can_mask": 0x7ff,
+                        "extended": False}]
+            uuid = int(self._serialport, 16)
+            uuid = [(uuid >> (40 - i*8)) & 0xff for i in range(6)]
+            set_id_msg = can.Message(arbitration_id=0x3f0,
+                                     data=[0x01] + uuid + [nodeid],
+                                     is_extended_id=False)
+            bus = can.interface.Bus(channel=self._canbus_iface,
+                                    can_filters=filters, bustype='socketcan')
+            try:
+                bus.send(set_id_msg)
+                os.dup2(bus.fileno(), old_fd)
+            finally:
+                bus.shutdown()
+        elif self._baud:
+            # Deliberately skip the stk500v2/arduino baud dance used on
+            # first attach - toggling the port here could reset a board
+            # whose live state is exactly what is being preserved.
+            rts = self._restart_helper.lookup_attach_uart_rts()
+            new_dev = serialhdl.serial.Serial(baudrate=self._baud, timeout=0,
+                                              exclusive=True)
+            new_dev.port = self._serialport
+            new_dev.rts = rts
+            new_dev.open()
+            os.dup2(new_dev.fileno(), old_fd)
+            new_dev.close()
+        else:
+            new_fd = os.open(self._serialport, os.O_RDWR | os.O_NOCTTY)
+            os.dup2(new_fd, old_fd)
+            os.close(new_fd)
+    def attempt_reconnect(self, config_crc):
+        # Re-handshake with an MCU in the paused-link state; returns
+        # (success, message).  See MCU.attempt_reconnect() for the
+        # design notes and remaining seams.
+        if self._mcu.is_fileoutput():
+            return False, "RECONNECT_MCU not supported in debug output mode"
+        if not self._is_paused_link:
+            return False, ("MCU '%s' is not in a paused-link state"
+                           % (self._name,))
+        prev_clock = self._clocksync.last_clock
+        # Re-open the port if possible; if that fails (e.g. the device
+        # node never went away and this process still holds it, or the
+        # device has not re-enumerated yet) probe the existing link -
+        # electrical-only interruptions recover in place.
+        try:
+            self._reopen_serial_fd()
+            reopen_note = "port reopened"
+        except Exception as e:
+            logging.info("MCU '%s' reconnect: could not reopen port (%s);"
+                         " probing the existing link", self._name, e)
+            reopen_note = "port not reopened (%s)" % (e,)
+        # Probe for liveness and boot state (get_uptime returns the
+        # true 64-bit clock, immune to 32-bit extension aliasing)
+        uptime_params = self._probe_response('get_uptime', 'uptime')
+        if uptime_params is None:
+            return False, ("MCU '%s' did not respond (%s). Check the"
+                           " connection and retry RECONNECT_MCU."
+                           % (self._name, reopen_note))
+        new_clock = (uptime_params['high'] << 32) | uptime_params['clock']
+        config_params = self._probe_response('get_config', 'config')
+        if config_params is None:
+            return False, ("MCU '%s' answered get_uptime but not"
+                           " get_config. Retry RECONNECT_MCU."
+                           % (self._name,))
+        # Boot / state detection heuristics
+        if self._is_shutdown or config_params['is_shutdown']:
+            return False, ("MCU '%s' is reachable but in a shutdown state"
+                           " (%s). A FIRMWARE_RESTART and RESTART are"
+                           " required." % (self._name,
+                                           self._shutdown_msg or "unknown"))
+        if (self._saw_starting_while_paused
+            or not config_params['is_config'] or new_clock < prev_clock):
+            return False, ("MCU '%s' rebooted while disconnected - its"
+                           " volatile state (positions, queues) is gone."
+                           " In-place reconfigure is not attempted; a full"
+                           " RESTART is required." % (self._name,))
+        if config_params['crc'] != config_crc:
+            return False, ("MCU '%s' reports a different config CRC"
+                           " (%d vs %d expected). A full RESTART is"
+                           " required." % (self._name, config_params['crc'],
+                                           config_crc))
+        # Never-rebooted board with matching config: re-discipline the
+        # clock.  clocksync.connect() re-anchors last_clock/averages
+        # from get_uptime, takes a fresh burst of samples, re-registers
+        # the 'clock' handler and re-arms the periodic query timer;
+        # for a secondary mcu it also re-computes the print_time
+        # adjustment against the primary.
+        try:
+            self._clocksync.connect(self._serial)
+        except serialhdl.error as e:
+            return False, ("MCU '%s' clock re-sync failed: %s. Retry"
+                           " RECONNECT_MCU." % (self._name, str(e)))
+        # Clear the paused-link state
+        self._is_timeout = False
+        self._is_paused_link = False
+        self._saw_starting_while_paused = False
+        # Promptly re-anchor the C-level steppersync/stepcompress clock
+        # estimates (normally refreshed only every few seconds)
+        motion_queuing = self._printer.lookup_object('motion_queuing', None)
+        if motion_queuing is not None:
+            motion_queuing.stats(self._reactor.monotonic())
+        logging.info("MCU '%s' reconnected: no reboot detected (config crc"
+                     " match, uptime %d -> %d); clock re-synced (%s)",
+                     self._name, prev_clock, new_clock, reopen_note)
+        try:
+            self._printer.send_event("mcu:comm_resume", self._name)
+        except Exception:
+            logging.exception("MCU '%s': error in mcu:comm_resume handlers",
+                              self._name)
+        return True, ("MCU '%s' reconnected: the board never rebooted"
+                      " (config CRC matches, uptime continuous) and its"
+                      " clock has been re-synced. The print can be resumed"
+                      " with RESUME." % (self._name,))
     def is_shutdown(self):
         return self._is_shutdown
     def get_shutdown_msg(self):
@@ -1119,6 +1359,8 @@ class MCUConfigHelper:
     # Config creation helpers
     def is_config_finalized(self):
         return self._config_finalized
+    def get_config_crc(self):
+        return self._config_crc
     def setup_pin(self, pin_type, pin_params):
         self._verify_not_finalized()
         pcs = {'endstop': MCU_endstop,
@@ -1241,6 +1483,57 @@ class MCU:
         offset, freq = self._clocksync.calibrate_clock(print_time, eventtime)
         self._conn_helper.check_timeout(eventtime)
         return offset, freq
+    # Link-loss pause-and-hold (RFC 0001 doc 08)
+    def is_link_paused(self):
+        return self._conn_helper.is_link_paused()
+    def attempt_reconnect(self):
+        """Re-handshake with this mcu after a link loss (paused-link state).
+
+        Returns (success, message).  Implements the RFC 0001 doc 08
+        "replugged toolhead" resume flow as far as klippy's layering
+        cleanly allows:
+
+        * The serial port is re-opened and the new file descriptor is
+          spliced into the *existing* C serialqueue via dup2().  A full
+          serialhdl disconnect/re-connect (new serialqueue) is
+          deliberately NOT used: the C-level steppersync, trdispatch
+          and command_queue objects hold raw pointers into the original
+          serialqueue (command queues stay linked into its internal
+          lists), so swapping it out would corrupt or silently orphan
+          every existing command stream.  Keeping the serialqueue also
+          keeps both sides' transport sequence numbers, so in the
+          never-rebooted case the session literally resumes and the
+          retransmit machinery reliably delivers everything queued
+          during the outage.
+        * Because the transport session (and therefore the identify
+          data dictionary) is preserved rather than renegotiated,
+          "re-running identify" takes the form of boot-detection
+          probes: get_uptime (true 64-bit clock - a reboot makes it go
+          backwards), get_config (the RFC's is_config/is_shutdown flags
+          and config CRC - config lives in RAM, so is_config=1 with a
+          matching CRC proves the same configured session), plus any
+          'starting'/'shutdown' messages observed while paused.
+        * Never-rebooted case: the clock is re-disciplined
+          (clocksync.connect), the paused-link state is cleared, the
+          "mcu:comm_resume" event fires, and the operator may RESUME.
+        * Rebooted / CRC-mismatch / MCU-shutdown cases: reported
+          honestly as requiring a full RESTART - in-place reconfigure
+          of a live printer is not attempted.
+
+        Remaining seams (would need deeper surgery):
+        * Commands that were queued during the outage with scheduled
+          clocks (e.g. stale heater PWM refreshes) are delivered late
+          on reconnect; stock firmware will answer with an MCU-side
+          "Missed scheduling" shutdown, which is then reported as
+          "restart required".  Boards implementing the RFC's
+          pause-and-hold (underrun-hold + autonomous heater hold) are
+          expected to tolerate/ignore them.
+        * If the link dies again in the middle of the final
+          clocksync.connect() the reconnect can block until the link
+          returns (its query helpers wait on transport acks).
+        """
+        return self._conn_helper.attempt_reconnect(
+            self._config_helper.get_config_crc())
     # Statistics wrappers
     def get_status(self, eventtime=None):
         return self._stats_helper.get_status(eventtime)

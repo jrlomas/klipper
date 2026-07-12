@@ -1,7 +1,7 @@
 # Failure recovery orchestration: pause-and-hold host side (RFC 0001
 # doc 08).
 #
-# Three responsibilities:
+# Responsibilities:
 #  1. Execution log: configures the per-board execlog ring, keeps a
 #     rolling on-disk window of the live stream (flight recorder),
 #     and reliably drains the retained ring after a shutdown so the
@@ -12,7 +12,27 @@
 #     keeps its liveness ping running, and releases it on resume.
 #     Only heaters explicitly configured hold; everything else keeps
 #     the stock watchdog behavior.
-#  3. Manual controls for testing and recovery workflows
+#  3. Link-loss pause-and-hold: an mcu configured with
+#     'on_comm_timeout: pause' emits "mcu:comm_pause" instead of
+#     shutting the machine down when its link is lost.  This module
+#     reacts by pausing the print (pause_resume), engaging every
+#     configured heater hold (belt and braces - they also self-engage
+#     on MCU-side ping silence), and dropping host heater targets on
+#     the lost mcu so verify_heater cannot escalate quelled (stale)
+#     readings into a machine-wide shutdown.
+#  4. RECONNECT_MCU MCU=<name>: re-handshake with a paused-link mcu
+#     (see MCU.attempt_reconnect for what is genuinely done and the
+#     remaining seams).  If the board never rebooted the clock is
+#     re-synced and the operator may RESUME; if it rebooted or the
+#     config CRC differs, the honest answer - a full RESTART - is
+#     reported instead.
+#     On "mcu:comm_resume" heater holds are deliberately NOT
+#     auto-released: blindly returning heaters to host control right
+#     after a reconnect could leave them uncontrolled if no host
+#     target is active.  The operator (or the resume workflow) stays
+#     in charge - RELEASE_HEATER_HOLD (plus restoring heater targets)
+#     or resuming the print restores host control.
+#  5. Manual controls for testing and recovery workflows
 #     (ENGAGE_HEATER_HOLD / RELEASE_HEATER_HOLD /
 #     FAILURE_RECOVERY_STATUS, EXECLOG_DUMP).
 #
@@ -194,12 +214,17 @@ class FailureRecovery:
                 raise config.error("Unknown failure_policy '%s'" % (policy,))
         self.execlogs = []
         self.execlog_mcu_names = config.getlist('execlog_mcus', ('mcu',))
+        self.link_paused_mcus = set()
         self.printer.register_event_handler("klippy:mcu_identify",
                                             self._handle_mcu_identify)
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
+        self.printer.register_event_handler("mcu:comm_pause",
+                                            self._handle_comm_pause)
+        self.printer.register_event_handler("mcu:comm_resume",
+                                            self._handle_comm_resume)
         self.ping_timer = None
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command("FAILURE_RECOVERY_STATUS",
@@ -211,6 +236,9 @@ class FailureRecovery:
                                desc="Release the heater failsafe hold")
         gcode.register_command("EXECLOG_DUMP", self.cmd_EXECLOG_DUMP,
                                desc="Drain and log MCU execution logs")
+        gcode.register_command("RECONNECT_MCU", self.cmd_RECONNECT_MCU,
+                               desc="Re-handshake with an MCU whose link"
+                               " was lost (paused-link state)")
 
     def _handle_mcu_identify(self):
         # Configure execution logs on the mcus that support them
@@ -251,6 +279,103 @@ class FailureRecovery:
                 logging.info("execlog(%s): %d records: %s",
                              el.mcu.get_status(None).get('mcu', '?'),
                              len(records), records[-32:])
+    # Link-loss pause-and-hold (mcu 'on_comm_timeout: pause')
+    def _handle_comm_pause(self, mcu_name):
+        # Invoked (in reactor context) by mcu.py when a link times out
+        self.link_paused_mcus.add(mcu_name)
+        logging.error(
+            "failure_recovery: LINK LOST to MCU '%s' - pause-and-hold"
+            " engaged. Pausing the print; motion and held heaters on that"
+            " board continue autonomously. Reseat the connection and run"
+            " RECONNECT_MCU MCU=%s, then RESUME.", mcu_name, mcu_name)
+        # Engage every configured heater hold (belt and braces - the
+        # MCU-side holders also self-engage on ping silence).  Commands
+        # to the lost mcu are queued and delivered if/when the link
+        # returns; commands to healthy mcus take effect immediately.
+        for name, hold in sorted(self.holds.items()):
+            try:
+                hold.engage()
+                logging.info("failure_recovery: engaged heater hold on %s",
+                             name)
+            except Exception:
+                logging.exception("failure_recovery: engaging hold on %s"
+                                  " failed", name)
+        self._drop_heater_targets(mcu_name)
+        # Pause the print from a reactor callback (mirrors the filament
+        # runout sensor flow); heaters on healthy mcus keep their
+        # targets under normal host control while paused.
+        self.printer.get_reactor().register_callback(self._comm_pause_event)
+    def _drop_heater_targets(self, mcu_name):
+        # Zero the host-side target of every heater living on the lost
+        # mcu: no PWM can reach it anyway, its readings will shortly be
+        # quelled to 0 (heaters.py QUELL_STALE_TIME), and a nonzero
+        # target plus a 0 reading makes verify_heater shut down the
+        # whole machine.  The MCU-side hold policy (if configured)
+        # keeps the heater warm autonomously.
+        pheaters = self.printer.lookup_object('heaters', None)
+        if pheaters is None:
+            return
+        eventtime = self.printer.get_reactor().monotonic()
+        for hname in pheaters.get_all_heaters():
+            try:
+                heater = pheaters.lookup_heater(hname.split()[-1])
+                if heater.mcu_pwm.get_mcu().get_name() != mcu_name:
+                    continue
+                temp, target = heater.get_temp(eventtime)
+                if not target:
+                    continue
+                heater.set_temp(0.)
+                logging.error(
+                    "failure_recovery: heater %s is on lost MCU '%s' -"
+                    " host target %.1f dropped to 0 (MCU-side hold policy,"
+                    " if configured, keeps it warm)", hname, mcu_name, target)
+            except Exception:
+                logging.exception("failure_recovery: dropping target of %s"
+                                  " failed", hname)
+    def _comm_pause_event(self, eventtime):
+        pause_resume = self.printer.lookup_object('pause_resume', None)
+        if pause_resume is None:
+            logging.error("failure_recovery: [pause_resume] not configured -"
+                          " unable to pause the print after MCU link loss")
+            return
+        if pause_resume.get_status(eventtime)['is_paused']:
+            return
+        idle_timeout = self.printer.lookup_object('idle_timeout', None)
+        if (idle_timeout is not None
+                and idle_timeout.get_status(eventtime)['state'] != "Printing"):
+            logging.info("failure_recovery: not printing - no print pause"
+                         " needed after MCU link loss")
+            return
+        pause_resume.send_pause_command()
+        try:
+            gcode = self.printer.lookup_object('gcode')
+            gcode.run_script("PAUSE")
+        except Exception:
+            logging.exception("failure_recovery: error running PAUSE after"
+                              " MCU link loss")
+    def _handle_comm_resume(self, mcu_name):
+        # Deliberately do NOT auto-release the heater holds here:
+        # handing a heater back to host control right after a reconnect
+        # would leave it uncontrolled unless a host target is active
+        # again.  The operator (or the resume workflow) restores
+        # control: RELEASE_HEATER_HOLD plus restoring heater targets,
+        # or resuming the print.
+        self.link_paused_mcus.discard(mcu_name)
+        logging.error(
+            "failure_recovery: link to MCU '%s' RESTORED. Heater holds"
+            " remain engaged - RELEASE_HEATER_HOLD (and restore heater"
+            " targets) or resume the print to return heaters to host"
+            " control. Run RESUME to continue a paused print.", mcu_name)
+    def cmd_RECONNECT_MCU(self, gcmd):
+        name = gcmd.get('MCU')
+        objname = 'mcu' if name == 'mcu' else 'mcu ' + name
+        mcu = self.printer.lookup_object(objname, None)
+        if mcu is None:
+            raise gcmd.error("Unknown MCU '%s'" % (name,))
+        ok, msg = mcu.attempt_reconnect()
+        logging.info("failure_recovery: RECONNECT_MCU MCU=%s -> %s (%s)",
+                     name, "ok" if ok else "failed", msg)
+        gcmd.respond_info(msg)
 
     def cmd_STATUS(self, gcmd):
         parts = []
@@ -261,6 +386,10 @@ class FailureRecovery:
                             hold.hold_max_duration, hold.engaged))
         if not parts:
             parts.append("no heaters configured with failure_policy: hold")
+        if self.link_paused_mcus:
+            parts.append("paused-link mcus: %s (run RECONNECT_MCU MCU=<name>"
+                         " once reconnected)"
+                         % (", ".join(sorted(self.link_paused_mcus)),))
         gcmd.respond_info("\n".join(parts))
 
     def cmd_ENGAGE(self, gcmd):
