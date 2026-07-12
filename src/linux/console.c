@@ -17,11 +17,23 @@
 #include "board/irq.h" // irq_wait
 #include "board/misc.h" // console_sendf
 #include "command.h" // command_find_block
+#include "generic/udp_console.h" // udp_console_note_rx
 #include "internal.h" // console_setup
 #include "sched.h" // sched_wake_task
 
 static struct pollfd main_pfd[1];
 #define MP_TTY_IDX   0
+static int is_udp;
+
+// Route the console through the datagram (UDP) transport glue,
+// polling the given socket instead of a pty (see linux/udp.c)
+void
+console_use_udp(int fd)
+{
+    main_pfd[MP_TTY_IDX].fd = fd;
+    main_pfd[MP_TTY_IDX].events = POLLIN;
+    is_udp = 1;
+}
 
 // Report 'errno' in a message written to stderr
 void
@@ -124,6 +136,8 @@ static int receive_pos;
 void *
 console_receive_buffer(void)
 {
+    if (is_udp)
+        return udp_console_get_rx_buf();
     return receive_buf;
 }
 
@@ -168,6 +182,11 @@ DECL_TASK(console_task);
 void
 console_sendf(const struct command_encoder *ce, va_list args)
 {
+    if (is_udp) {
+        udp_console_sendf(ce, args);
+        return;
+    }
+
     // Generate message
     uint8_t buf[MESSAGE_MAX];
     uint_fast8_t msglen = command_encode_and_frame(buf, sizeof(buf), ce, args);
@@ -190,6 +209,10 @@ console_sleep(sigset_t *sigset)
             report_errno("ppoll main_pfd", ret);
         return;
     }
-    if (main_pfd[MP_TTY_IDX].revents)
-        sched_wake_task(&console_wake);
+    if (main_pfd[MP_TTY_IDX].revents) {
+        if (is_udp)
+            udp_console_note_rx();
+        else
+            sched_wake_task(&console_wake);
+    }
 }

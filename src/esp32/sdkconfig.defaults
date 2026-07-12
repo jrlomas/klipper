@@ -1,0 +1,29 @@
+# klipper ESP32 target defaults (RFC 0001 doc 07)
+
+CONFIG_IDF_TARGET="esp32"
+
+# 240MHz, performance optimized
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# 1kHz tick: bounds the main-task wake backstop (board irq_wait) at 1ms
+CONFIG_FREERTOS_HZ=1000
+
+# Core pinning (RFC 0001 doc 07): radio/network stack on core 0,
+# klipper scheduler + hardware-timer dispatch on core 1
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# The klipper task on core 1 yields via task notifications; do not
+# watchdog core 1's idle task
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# Allow gptimer alarm reprogramming from the timer ISR
+CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM=y
+
+# Room for the app (WiFi stack + klipper + embedded dictionary)
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Latency stability: no WiFi power save
+CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n

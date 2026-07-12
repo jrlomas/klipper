@@ -6,6 +6,7 @@
 
 #include <sched.h> // sched_setscheduler sched_get_priority_max
 #include <stdio.h> // fprintf
+#include <stdlib.h> // atoi
 #include <string.h> // memset
 #include <unistd.h> // getopt
 #include <sys/mman.h> // mlockall MCL_CURRENT MCL_FUTURE
@@ -68,9 +69,9 @@ main(int argc, char **argv)
 {
     // Parse program args
     orig_argv = argv;
-    int opt, watchdog = 0, realtime = 0;
-    char *serial = "/tmp/klipper_host_mcu";
-    while ((opt = getopt(argc, argv, "wrI:")) != -1) {
+    int opt, watchdog = 0, realtime = 0, udp_port = 0, trust_network = 0;
+    char *serial = "/tmp/klipper_host_mcu", *psk_file = NULL;
+    while ((opt = getopt(argc, argv, "wrtI:u:k:")) != -1) {
         switch (opt) {
         case 'w':
             watchdog = 1;
@@ -81,8 +82,18 @@ main(int argc, char **argv)
         case 'I':
             serial = optarg;
             break;
+        case 'u':
+            udp_port = atoi(optarg);
+            break;
+        case 'k':
+            psk_file = optarg;
+            break;
+        case 't':
+            trust_network = 1;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [-w] [-r] [-I path]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-w] [-r] [-I path]"
+                    " [-u udp_port [-k psk_file | -t]]\n", argv[0]);
             return -1;
         }
     }
@@ -93,7 +104,8 @@ main(int argc, char **argv)
         if (ret)
             return ret;
     }
-    int ret = console_setup(serial);
+    int ret = udp_port ? udp_console_setup(udp_port, psk_file, trust_network)
+        : console_setup(serial);
     if (ret)
         return -1;
     if (watchdog) {

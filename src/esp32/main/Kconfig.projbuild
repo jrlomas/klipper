@@ -1,0 +1,41 @@
+menu "Klipper firmware (RFC 0001 UDP console)"
+
+config KLIPPER_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+    help
+        SSID of the network the board should join.
+
+config KLIPPER_WIFI_PASSWORD
+    string "WiFi password"
+    default ""
+    help
+        WPA2 password (leave empty for an open network).
+
+config KLIPPER_UDP_PORT
+    int "UDP console port"
+    default 41414
+    help
+        UDP port the datagram console listens on.  The host side is
+        lib/intentproto/tools/udp_bridge.py --board <ip>:<port>.
+
+config KLIPPER_PSK
+    string "Pre-shared key (build-time fallback)"
+    default ""
+    help
+        HMAC pre-shared key used when none is provisioned in NVS
+        (namespace "klipper", key "udp_psk").  Prefer NVS
+        provisioning: a key baked into the firmware image is
+        readable by anyone holding the image.
+
+config KLIPPER_TRUST_NETWORK
+    bool "TRUST NETWORK: allow unauthenticated datagrams"
+    default n
+    help
+        Explicit confession that this board runs on an isolated,
+        fully trusted network segment and may accept datagrams
+        without HMAC authentication.  Anyone able to send UDP
+        packets to the board then controls motors and heaters.
+        Mirrors udp_bridge.py's --trust-network flag.
+
+endmenu

@@ -1,0 +1,119 @@
+# klipper firmware as an ESP-IDF component
+#
+# Layout mirrors klipper's own build:
+#  * klipper C sources (which carry .compile_time_request sections -
+#    see src/ctr.h) are compiled into a CMake OBJECT library
+#  * gen_compile_time_request.py objcopy-extracts those sections and
+#    runs scripts/buildcommands.py, producing klipper.dict and the
+#    generated compile_time_request.c
+#  * this component compiles the generated file plus the C++
+#    intentproto link layer and links the object library in
+#
+# Include resolution matches the Makefile flow: a "board" symlink to
+# src/esp32 and a board-generic/board symlink to src/generic, with a
+# hand-written static autoconf.h in src/esp32 (idf.py replaces
+# klipper's Kconfig for this target).
+
+set(KLIPPER_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../..)
+get_filename_component(KLIPPER_ROOT ${KLIPPER_ROOT} ABSOLUTE)
+
+# --- klipper include layout (board/ -> src/esp32, generic fallback) ---
+set(KLIPPER_INC_ROOT ${CMAKE_BINARY_DIR}/klipper_inc)
+file(MAKE_DIRECTORY ${KLIPPER_INC_ROOT})
+file(MAKE_DIRECTORY ${KLIPPER_INC_ROOT}/board-generic)
+file(CREATE_LINK ${KLIPPER_ROOT}/src/esp32
+     ${KLIPPER_INC_ROOT}/board SYMBOLIC)
+file(CREATE_LINK ${KLIPPER_ROOT}/src/generic
+     ${KLIPPER_INC_ROOT}/board-generic/board SYMBOLIC)
+set(KLIPPER_INCLUDES
+    ${KLIPPER_INC_ROOT}
+    ${KLIPPER_ROOT}/src/esp32
+    ${KLIPPER_ROOT}/src
+    ${KLIPPER_INC_ROOT}/board-generic
+    ${KLIPPER_ROOT}/lib/intentproto/include)
+
+# --- sources carrying compile-time requests ---
+set(KLIPPER_CORE_SRCS
+    # core (see src/Makefile src-y)
+    sched.c command.c basecmd.c debugcmds.c initial_pins.c
+    gpiocmds.c stepper.c endstop.c trsync.c adccmds.c
+    # trajectory intention queue (RFC 0001)
+    trajq.c traj_stepper.c execlog.c timesync.c heater_hold.c)
+list(TRANSFORM KLIPPER_CORE_SRCS PREPEND ${KLIPPER_ROOT}/src/)
+set(KLIPPER_GENERIC_SRCS
+    ${KLIPPER_ROOT}/src/generic/crc16_ccitt.c
+    ${KLIPPER_ROOT}/src/generic/alloc.c
+    ${KLIPPER_ROOT}/src/generic/timer_irq.c
+    ${KLIPPER_ROOT}/src/generic/udp_console.c)
+set(KLIPPER_BOARD_SRCS
+    ${KLIPPER_ROOT}/src/esp32/main.c
+    ${KLIPPER_ROOT}/src/esp32/irq.c
+    ${KLIPPER_ROOT}/src/esp32/timer.c
+    ${KLIPPER_ROOT}/src/esp32/gpio.c
+    ${KLIPPER_ROOT}/src/esp32/adc.c
+    ${KLIPPER_ROOT}/src/esp32/wifi.c
+    ${KLIPPER_ROOT}/src/esp32/udp_port.c)
+
+set(GEN_CTR_C ${CMAKE_CURRENT_BINARY_DIR}/compile_time_request.c)
+set(GEN_DICT ${CMAKE_CURRENT_BINARY_DIR}/klipper.dict)
+
+# --- the component itself: generated tables + C++ link layer ---
+idf_component_register(
+    SRCS
+        ${GEN_CTR_C}
+        ${KLIPPER_ROOT}/src/generic/udp_datagram.cpp
+        ${KLIPPER_ROOT}/lib/intentproto/src/datagram.cpp
+        ${KLIPPER_ROOT}/lib/intentproto/src/bch.cpp
+        ${KLIPPER_ROOT}/lib/intentproto/src/hmac.cpp
+    PRIV_INCLUDE_DIRS ${KLIPPER_INCLUDES}
+    PRIV_REQUIRES driver esp_adc esp_wifi nvs_flash lwip esp_netif
+        esp_event esp_timer)
+set_source_files_properties(${GEN_CTR_C} PROPERTIES GENERATED TRUE)
+
+# --- object library with the klipper sources ---
+add_library(klipper_core OBJECT
+    ${KLIPPER_CORE_SRCS} ${KLIPPER_GENERIC_SRCS} ${KLIPPER_BOARD_SRCS})
+target_include_directories(klipper_core PRIVATE ${KLIPPER_INCLUDES})
+# Inherit the IDF build environment (sdkconfig dir, arch flags, ...)
+idf_build_get_property(idf_includes INCLUDE_DIRECTORIES)
+idf_build_get_property(idf_defines COMPILE_DEFINITIONS)
+idf_build_get_property(idf_options COMPILE_OPTIONS)
+idf_build_get_property(idf_c_options C_COMPILE_OPTIONS)
+target_include_directories(klipper_core PRIVATE ${idf_includes})
+target_compile_definitions(klipper_core PRIVATE ${idf_defines})
+target_compile_options(klipper_core PRIVATE
+    ${idf_options} ${idf_c_options}
+    # klipper sources trip a few warnings under IDF's default set
+    -Wno-error -Wno-unused-but-set-variable)
+# Headers of the IDF components the board bindings use
+foreach(comp freertos esp_common esp_system esp_hw_support esp_rom
+        hal soc log heap esp_driver_gpio esp_driver_gptimer esp_adc
+        esp_wifi nvs_flash lwip esp_netif esp_event newlib esp_timer)
+    if(TARGET __idf_${comp})
+        target_link_libraries(klipper_core PRIVATE __idf_${comp})
+    endif()
+endforeach()
+
+# --- dictionary + compile_time_request generation ---
+idf_build_get_property(python PYTHON)
+set(CTR_OBJLIST ${CMAKE_CURRENT_BINARY_DIR}/klipper_ctr_objs.txt)
+file(GENERATE OUTPUT ${CTR_OBJLIST}
+     CONTENT "$<TARGET_OBJECTS:klipper_core>")
+add_custom_command(
+    OUTPUT ${GEN_CTR_C} ${GEN_DICT}
+    COMMAND ${python} ${KLIPPER_ROOT}/src/esp32/gen_compile_time_request.py
+        --objcopy ${CMAKE_OBJCOPY}
+        --objlist ${CTR_OBJLIST}
+        --out-c ${GEN_CTR_C}
+        --dict ${GEN_DICT}
+        --klipper-root ${KLIPPER_ROOT}
+        --tools "${CMAKE_C_COMPILER}\;${CMAKE_C_COMPILER}\;${CMAKE_C_COMPILER}\;${CMAKE_OBJCOPY}\;${CMAKE_OBJCOPY}\;${CMAKE_OBJCOPY}"
+    DEPENDS klipper_core $<TARGET_OBJECTS:klipper_core>
+        ${KLIPPER_ROOT}/scripts/buildcommands.py
+        ${KLIPPER_ROOT}/src/esp32/gen_compile_time_request.py
+    WORKING_DIRECTORY ${KLIPPER_ROOT}
+    COMMENT "Generating klipper.dict and compile_time_request.c"
+    VERBATIM)
+
+# Link the klipper objects into the app
+target_link_libraries(${COMPONENT_LIB} PRIVATE klipper_core)

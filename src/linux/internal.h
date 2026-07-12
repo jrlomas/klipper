@@ -19,7 +19,11 @@ void report_errno(char *where, int rc);
 int set_non_blocking(int fd);
 int set_close_on_exec(int fd);
 int console_setup(char *name);
+void console_use_udp(int fd);
 void console_sleep(sigset_t *sigset);
+
+// udp.c
+int udp_console_setup(int port, const char *psk_file, int trust_network);
 
 // timer.c
 int timer_check_periodic(uint32_t *ts);
