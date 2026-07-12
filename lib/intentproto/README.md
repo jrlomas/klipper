@@ -95,6 +95,23 @@ Python one politely when cffi is absent.
 The tests port a slice of the OpenAMS firmware's command set as the
 working example.
 
+## CAN transport (RFC 0001 doc 07)
+
+`can_transport.hpp` binds the framed byte stream to a CAN bus the way
+legacy Klipper does — CAN is a byte-stream carrier *below* the
+CRC16/VLQ framing. `CanCarrier::write_frame()` (plugged into
+`Config::write` via `can_write_thunk`) splits an outgoing frame into
+≤8-byte CAN data frames on the device's tx id; `on_can_frame()`
+forwards incoming data frames straight to `rx()`, which already
+reassembles across CAN-frame boundaries, so there is no receive buffer.
+Node addressing mirrors Klipper's UUID admin handshake
+(`query-unassigned` → UUID reply → 1-byte node-id → data on
+`0x100+2n` / `0x100+2n+1`), making an intentproto device a drop-in CAN
+peer. `test_can_transport` drives the admin assignment, the frame
+chunking, and a full host-command → CAN → dispatch → reply → CAN →
+host-decode round trip. The carrier is 362 bytes of Cortex-M0 code and
+is transport-agnostic (the caller supplies the `send` hook).
+
 ## Session security (optional)
 
 The datagram transport authenticates every packet with a truncated

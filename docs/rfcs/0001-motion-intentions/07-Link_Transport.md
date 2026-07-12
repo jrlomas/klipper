@@ -140,6 +140,25 @@ capability + header bits).
   while everything else — datagram sequencing, class mapping,
   authentication — is identical. UART/USB/CAN remain fully supported;
   they stop being the only respectable options.
+* **CAN is a byte-stream carrier below the framing (implemented).**
+  Because the protocol reproduces the legacy CRC16/VLQ framing, it
+  rides CAN exactly as legacy Klipper does: a protocol frame is split
+  into ≤8-byte CAN data frames and the receiver reassembles the byte
+  stream and locates frames by the framing itself. Two consequences,
+  both realized. First, the fork's own micro-controller commands
+  (`trajq`, `execlog`, `trigger_source`, `heater_hold`, `timesync` —
+  ordinary `DECL_COMMAND`s) traverse a CAN link with **no new code**,
+  through the existing `canserial.c` reassembly + `command_dispatch`
+  path. Second, the intentproto library gains a matching CAN carrier
+  (`lib/intentproto/can_transport.{hpp,cpp}`): outgoing frames chunk
+  onto the device's tx id, incoming CAN frames feed
+  `intentproto::rx()` (which already accepts bytes in any chunking, so
+  no reassembly buffer is needed), and node addressing mirrors
+  Klipper's UUID admin handshake (query-unassigned → UUID reply →
+  1-byte node-id assignment → data on `0x100+2n` / `0x100+2n+1`) so an
+  intentproto device is a drop-in CAN peer. 362 bytes of Cortex-M0
+  code; host-tested end to end (command → CAN chunk → dispatch →
+  reply → CAN chunk → host decode).
 * **ESP32 as a target:** dual-core 240 MHz with the radio stack pinned
   to one core and motion execution on the other fits the 32-bit floor
   of this RFC ([00-Vision.md](00-Vision.md)) comfortably (and the
