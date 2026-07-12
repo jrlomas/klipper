@@ -61,6 +61,7 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
 static struct move_node *move_free_list;
 static void *move_list;
 static uint16_t move_count;
+static uint16_t move_free_count, move_reserve_count;
 static uint8_t move_item_size;
 
 // Is the config and move queue finalized?
@@ -78,6 +79,7 @@ move_free(void *m)
     struct move_node *mf = m;
     mf->next = move_free_list;
     move_free_list = mf;
+    move_free_count++;
 }
 
 // Allocate runtime storage
@@ -89,6 +91,24 @@ move_alloc(void)
     if (!mf)
         shutdown("Move queue overflow");
     move_free_list = mf->next;
+    move_free_count--;
+    irq_restore(flag);
+    return mf;
+}
+
+// As move_alloc(), but return NULL (instead of shutdown) rather than
+// dip into the reserve held for motion-critical callers
+void *
+move_alloc_soft(void)
+{
+    irqstatus_t flag = irq_save();
+    struct move_node *mf = move_free_list;
+    if (!mf || move_free_count <= move_reserve_count) {
+        irq_restore(flag);
+        return NULL;
+    }
+    move_free_list = mf->next;
+    move_free_count--;
     irq_restore(flag);
     return mf;
 }
@@ -163,6 +183,7 @@ move_reset(void)
     struct move_node *mf = move_list + (move_count - 1)*move_item_size;
     mf->next = NULL;
     move_free_list = move_list;
+    move_free_count = move_count;
 }
 DECL_SHUTDOWN(move_reset);
 
@@ -176,6 +197,17 @@ move_finalize(void)
     move_list = alloc_chunks(move_item_size, 1024, &move_count);
     move_reset();
 }
+
+// Set number of free move nodes held back from move_alloc_soft() callers
+void
+command_move_reserve(uint32_t *args)
+{
+    uint16_t count = args[0];
+    irqstatus_t flag = irq_save();
+    move_reserve_count = count;
+    irq_restore(flag);
+}
+DECL_COMMAND(command_move_reserve, "move_reserve count=%hu");
 
 
 /****************************************************************
@@ -270,6 +302,7 @@ config_reset(uint32_t *args)
     move_free_list = NULL;
     move_list = NULL;
     move_count = move_item_size = 0;
+    move_free_count = move_reserve_count = 0;
     alloc_init();
     sched_timer_reset();
     sched_clear_shutdown();

@@ -17,7 +17,8 @@ struct digital_out_s {
     struct gpio_out pin;
     uint32_t max_duration, cycle_time;
     struct move_queue_head mq;
-    uint8_t flags;
+    uint16_t drop_count;
+    uint8_t flags, apply_late;
 };
 
 struct digital_move {
@@ -58,8 +59,13 @@ digital_load_event(struct timer *timer)
 {
     // Apply next update and remove it from queue
     struct digital_out_s *d = container_of(timer, struct digital_out_s, timer);
-    if (move_queue_empty(&d->mq))
-        shutdown("Missed scheduling of next digital out event");
+    if (move_queue_empty(&d->mq)) {
+        // With max_duration set this event is the watchdog expiring -
+        // it must shutdown even for late-OK (prompt class) outputs
+        if (d->max_duration || !d->apply_late)
+            shutdown("Missed scheduling of next digital out event");
+        return SF_DONE;
+    }
     struct move_node *mn = move_queue_pop(&d->mq);
     struct digital_move *m = container_of(mn, struct digital_move, node);
     uint32_t on_duration = m->on_duration;
@@ -145,7 +151,12 @@ void
 command_queue_digital_out(uint32_t *args)
 {
     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
-    struct digital_move *m = move_alloc();
+    struct digital_move *m = move_alloc_soft();
+    if (!m) {
+        // Prompt class traffic - drop the update rather than shutdown
+        d->drop_count++;
+        return;
+    }
     uint32_t time = m->waketime = args[1];
     m->on_duration = args[2];
 
@@ -156,6 +167,13 @@ command_queue_digital_out(uint32_t *args)
         return;
     }
     uint8_t flags = d->flags;
+    if (d->apply_late) {
+        uint32_t now = timer_read_time();
+        if (timer_is_before(time, now))
+            // Late-OK semantics - apply as soon as possible instead
+            // of shutting down ("Timer too close" in sched_add_timer)
+            time = m->waketime = now + timer_from_us(50);
+    }
     if (flags & DF_CHECK_END && timer_is_before(d->end_time, time))
         shutdown("Scheduled digital out event will exceed max_duration");
     d->end_time = time;
@@ -173,6 +191,27 @@ command_queue_digital_out(uint32_t *args)
 }
 DECL_COMMAND(command_queue_digital_out,
              "queue_digital_out oid=%c clock=%u on_ticks=%u");
+
+void
+command_set_digital_out_late_policy(uint32_t *args)
+{
+    struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+    d->apply_late = !!args[1];
+}
+DECL_COMMAND(command_set_digital_out_late_policy,
+             "set_digital_out_late_policy oid=%c apply_late=%c");
+
+void
+command_digital_out_query(uint32_t *args)
+{
+    struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+    irq_disable();
+    uint8_t value = !!(d->flags & DF_ON);
+    irq_enable();
+    sendf("digital_out_state oid=%c value=%c dropped=%hu"
+          , args[0], value, d->drop_count);
+}
+DECL_COMMAND(command_digital_out_query, "digital_out_query oid=%c");
 
 void
 command_update_digital_out(uint32_t *args)

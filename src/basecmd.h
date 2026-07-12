@@ -14,6 +14,7 @@ struct move_queue_head {
 void *alloc_chunk(size_t size);
 void move_free(void *m);
 void *move_alloc(void);
+void *move_alloc_soft(void);
 int move_queue_empty(struct move_queue_head *mh);
 struct move_node *move_queue_first(struct move_queue_head *mh);
 int move_queue_push(struct move_node *m, struct move_queue_head *mh);
