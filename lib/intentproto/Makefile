@@ -9,9 +9,10 @@ CXXFLAGS ?= -std=gnu++17 -Os -g -Wall -Wextra -fno-exceptions -fno-rtti
 CPPFLAGS += -Iinclude
 
 BUILD := build
-SRCS := src/proto.cpp src/dict.cpp src/hmac.cpp src/bch.cpp src/datagram.cpp
+SRCS := src/proto.cpp src/dict.cpp src/hmac.cpp src/bch.cpp src/datagram.cpp \
+	boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp)
-TESTS := test_proto test_hmac test_bch test_datagram
+TESTS := test_proto test_hmac test_bch test_datagram test_bootcore
 
 .PHONY: all test embedded clean
 
