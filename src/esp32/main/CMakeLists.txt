@@ -30,6 +30,10 @@ set(KLIPPER_INCLUDES
     ${KLIPPER_ROOT}/src/esp32
     ${KLIPPER_ROOT}/src
     ${KLIPPER_INC_ROOT}/board-generic
+    # Vendored Apache-2.0 register headers (lib/esp32/README) come
+    # before the IDF include dirs so the port's soc/*.h references
+    # resolve to the in-tree copies, mirroring lib/stm32's CMSIS
+    ${KLIPPER_ROOT}/lib/esp32/include
     ${KLIPPER_ROOT}/lib/intentproto/include)
 
 # --- sources carrying compile-time requests ---
@@ -50,16 +54,30 @@ set(KLIPPER_GENERIC_SRCS
     ${KLIPPER_ROOT}/src/generic/udp_console.c)
 set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/main.c
-    ${KLIPPER_ROOT}/src/esp32/irq.c
-    ${KLIPPER_ROOT}/src/esp32/timer.c
     ${KLIPPER_ROOT}/src/esp32/gpio.c
     ${KLIPPER_ROOT}/src/esp32/adc.c
     ${KLIPPER_ROOT}/src/esp32/spi.c
     ${KLIPPER_ROOT}/src/esp32/i2c.c
     ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
-    ${KLIPPER_ROOT}/src/esp32/rmt_step.c
-    ${KLIPPER_ROOT}/src/esp32/wifi.c
-    ${KLIPPER_ROOT}/src/esp32/udp_port.c)
+    ${KLIPPER_ROOT}/src/esp32/wifi.c)
+if(CONFIG_KLIPPER_ARCH_MODEM)
+    # "IDF as modem" (RFC 0001 doc 12 stage 3): bare core 1 booted by
+    # appcpu_boot.c, console over the shared-memory ring, IDF/lwIP
+    # confined to core 0.  rmt_step.c is component-arch only (it
+    # needs esp_intr_alloc; revisit with the bare-core ISR work).
+    list(APPEND KLIPPER_BOARD_SRCS
+        ${KLIPPER_ROOT}/src/esp32/appcpu_boot.c
+        ${KLIPPER_ROOT}/src/esp32/appcpu_vectors.S
+        ${KLIPPER_ROOT}/src/esp32/shmem_console.c
+        ${KLIPPER_ROOT}/src/esp32/modem.c)
+else()
+    # Component arch: klipper as a FreeRTOS task pinned to core 1
+    list(APPEND KLIPPER_BOARD_SRCS
+        ${KLIPPER_ROOT}/src/esp32/irq.c
+        ${KLIPPER_ROOT}/src/esp32/timer.c
+        ${KLIPPER_ROOT}/src/esp32/rmt_step.c
+        ${KLIPPER_ROOT}/src/esp32/udp_port.c)
+endif()
 
 set(GEN_CTR_C ${CMAKE_CURRENT_BINARY_DIR}/compile_time_request.c)
 set(GEN_DICT ${CMAKE_CURRENT_BINARY_DIR}/klipper.dict)
@@ -74,7 +92,8 @@ idf_component_register(
         ${KLIPPER_ROOT}/lib/intentproto/src/hmac.cpp
     PRIV_INCLUDE_DIRS ${KLIPPER_INCLUDES}
     PRIV_REQUIRES driver esp_adc esp_wifi nvs_flash lwip esp_netif
-        esp_event esp_timer)
+        esp_event esp_timer
+    LDFRAGMENTS linker.lf)
 set_source_files_properties(${GEN_CTR_C} PROPERTIES GENERATED TRUE)
 
 # --- object library with the klipper sources ---

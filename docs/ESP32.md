@@ -10,6 +10,23 @@ which is the recommended way to exercise the network stack.
 
 ## Architecture
 
+The port offers two selectable architectures (Kconfig, "Klipper
+firmware" -> Architecture; RFC 0001
+[doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)):
+
+* **component** (stage 1, default): klipper compiled as an IDF
+  component, running as a FreeRTOS task pinned to core 1; IDF is
+  present on both cores.  This is the original, validated build.
+* **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
+  klipper** — no RTOS, no IDF calls, register-level peripherals,
+  IRAM-resident hot path — and core 0 is reduced to a network
+  coprocessor shuttling sealed console datagrams through a lock-free
+  shared-memory ring.  See
+  [the modem architecture](#the-modem-architecture-idf-as-modem)
+  below, including its **runtime-unvalidated** status banner.
+
+Both share the identical console stack:
+
 ```
 klippy (serial protocol, unchanged)
    |          pty
@@ -18,7 +35,8 @@ lib/intentproto/tools/udp_bridge.py     (host)
 src/generic/udp_console.c               (mcu, transport independent)
 src/generic/udp_datagram.cpp            (C shim over lib/intentproto)
    |          struct udp_console_ops {recv, send, rx_accepted}
-src/esp32/udp_port.c  - or -  src/linux/udp.c
+src/esp32/udp_port.c (component)  - or -  src/esp32/shmem_console.c +
+src/esp32/modem.c (modem)         - or -  src/linux/udp.c
 ```
 
 * The console glue (`src/generic/udp_console.c`) authenticates and
@@ -41,9 +59,9 @@ src/esp32/udp_port.c  - or -  src/linux/udp.c
   layer's ARQ; enabling parity needs a small in-order reassembly
   buffer (future work).
 
-## Core pinning (RFC 0001 doc 07)
+## Core pinning (RFC 0001 doc 07) - component architecture
 
-The ESP32 is dual core; the port splits it:
+The ESP32 is dual core; the component architecture splits it:
 
 * **Core 0**: WiFi and lwIP tasks (pinned via `sdkconfig.defaults`),
   `app_main` (NVS init, PSK load, WiFi bringup), the UDP receive
@@ -70,14 +88,258 @@ escape hatch for production step generation, and the FOC backend
 (own timer, tolerant of µs-level ISR jitter) is a better first
 citizen of this chip.  This target is FOC-first.
 
+## The modem architecture (IDF as modem)
+
+> **RUNTIME UNVALIDATED — NEEDS HARDWARE.**  Everything in this
+> section compiles and links (host-gcc harness, both architectures),
+> the SPSC ring is unit-tested on the desktop under ThreadSanitizer/
+> AddressSanitizer, and every register write and boot step is
+> source-verified line-by-line against ESP-IDF v5.3.2 — but none of
+> it has executed on silicon: the development environment has no
+> xtensa toolchain and no devkit.  The APP-CPU bringup, the vector
+> table, the polled timer and the IRAM placement are exactly the
+> kind of code that only a serial console and a scope can finish.
+> Treat the `component` architecture as the working build until the
+> [bring-up checklist](#devkit-bring-up-checklist) has been run.
+
+The stage-3 architecture of doc 12: IDF, FreeRTOS and the closed
+radio blobs are confined to core 0, which becomes an on-die network
+coprocessor - no different in kind from the closed firmware inside a
+W5500.  Core 1 runs klipper the way an STM32 does: bare metal,
+register-level drivers against the vendored `lib/esp32` headers, its
+own stack and vector table, scheduler in a tight loop.
+
+```
+core 0 (PRO)  unicore IDF + WiFi/lwIP + blobs     src/esp32/modem.c
+                 |  sealed datagrams (HMAC intact) - opaque bytes
+              lock-free SPSC rings in shared DRAM  src/esp32/shmem_ring.h
+                 |  "just another serial port"
+core 1 (APP)  bare-metal klipper sched_main()      src/esp32/appcpu_boot.c
+              udp_console.c + HMAC verify          src/esp32/shmem_console.c
+```
+
+Files (all under `src/esp32/`): `appcpu_boot.c` (core-1 release
+sequence + the bare runtime), `appcpu_vectors.S` (entry stub +
+private vector table), `shmem_ring.h` (the ring), `shmem_console.c`
+(core-1 console ops), `modem.c` (core-0 socket shuttle).  The IDF
+project is built **unicore** (`CONFIG_FREERTOS_UNICORE=y`), so IDF
+never learns core 1 exists.
+
+### Security property
+
+HMAC verification runs on the **klipper core**, not the radio core:
+the modem moves sealed datagrams it cannot forge or unwrap, and it
+only ever transmits to a peer address that arrived attached to a
+datagram core 1 authenticated (the address blob travels with each rx
+ring record and is republished by core 1 through a seqlock on
+acceptance).  The blob is quarantined behind a byte pipe it cannot
+reach across - doc 12's stance made literal.
+
+### APP-CPU bringup sequence
+
+`esp32_appcpu_start()` (core 0, called from `app_main` after WiFi is
+up) replays IDF's own SMP release sequence, source-verified against
+the v5.3.2 tree (each step carries the file/line citation in the
+code):
+
+1. Refuse on single-core die variants (`EFUSE_RD_DISABLE_APP_CPU`).
+2. Enable the peripheral clocks core 1 will use at register level
+   (TIMG0, HSPI, VSPI, I2C0, LEDC) - done on core 0 because
+   `DPORT_PERIP_CLK_EN_REG` is a shared RMW register and DPORT must
+   never be touched cross-core (the ESP32 DPORT hazard).
+3. Clear core 1's interrupt-matrix routing
+   (`cpu_start.c core_intr_matrix_clear()`).
+4. APP flash cache + MMU init: `Cache_Read_Disable(1)`,
+   `Cache_Flush(1)`, MMU invalid-access clear, `mmu_init(1)`, copy
+   the 2048-entry PRO flash-MMU table to the APP table
+   (`cpu_start.c do_multicore_settings()`, needed because the
+   unicore boot skipped it), then `Cache_Flush(1)`,
+   `Cache_Read_Enable(1)` (`start_other_core()`).
+5. Unstall: clear the split 0x86 stall magic in
+   `RTC_CNTL_OPTIONS0_REG` / `RTC_CNTL_SW_CPU_STALL_REG`
+   (`hal/esp32 cpu_utility_ll.h`).
+6. Clock-gate + reset pulse via `DPORT_APPCPU_CTRL_B/C/A_REG`
+   (`start_other_core()`), then hand the ROM the entry address with
+   `ets_set_appcpu_boot_addr(appcpu_entry)`.
+7. Wait (<=1s) for core 1 to set the `core1_alive` flag.
+
+`appcpu_entry` (assembly) resets the register-window state, sets
+`INTENABLE=0`, installs the private vector table, sets
+`PS=WOE|UM|INTLEVEL 0`, switches to a 16KiB DRAM stack and calls
+`appcpu_main()`, which initializes the bare timer + console and
+enters `sched_main()` - after which core 1 must never reach an
+IDF/FreeRTOS symbol (nothing links it there: no interrupt is routed,
+no callback registered).
+
+The vector table carries the canonical Xtensa window
+overflow/underflow and alloca handlers (byte-for-byte the sequences
+from IDF's `xtensa_vectors.S`, mechanically diffed); every other
+vector parks the core after recording `EXCCAUSE/EPC1/EXCVADDR` into
+`esp32_core1_fault[]`, which the modem task reports over the core-0
+log - the bare core's only diagnostics channel.
+
+**Flash-write discipline**: a flash write disables the cache both
+cores execute from.  WiFi bringup (whose first run writes PHY
+calibration to NVS) therefore completes *before* core 1 boots, and
+nothing writes flash afterwards.  Any future feature that writes
+flash at runtime must stall core 1 first.
+
+### Ring protocol
+
+`shmem_ring.h` implements a single-producer/single-consumer byte
+ring (8KiB per direction) in internal DRAM, which both cores address
+uncached.  Records are `[u16 len][payload]`; rx records carry a
+16-byte opaque source-address blob (a `sockaddr_in` in the modem's
+encoding - core 1 copies it, never parses it) ahead of the sealed
+datagram.  Indices are free-running `uint32` moved with
+acquire/release atomics, which gcc lowers to plain `l32i`/`s32i`
+fenced with `memw` on the LX6 - and which lets the desktop unit test
+(`src/esp32/shmem_ring_test.c`: two threads, 2M records, content +
+order + torn-index invariants) run under ThreadSanitizer with the
+protocol fully visible to it.  A full ring drops the datagram -
+identical recovery contract to a wired port's rx/tx overflow (frame
+layer ARQ / host retransmit).
+
+Wakeups are polled, not signalled: core 1 checks the rx ring in its
+`irq_poll()`; the modem task alternates a 1ms-timeout `recvfrom`
+with a tx-ring drain.  Board->host latency is bounded by ~1ms + the
+console's own 2ms batching; the intention-queue design center makes
+both irrelevant to motion.
+
+### The polled bare runtime
+
+Core 1 enables no interrupts at all (like the klipper linux mcu,
+which dispatches timers from `irq_poll()` in the sched loop and
+serves production printers that way).  The klipper timer is TIMG0
+timer 0 at register level, 80MHz APB / 4 = 20MHz (same
+`CONFIG_CLOCK_FREQ` as the component arch); `irq_poll()`/`irq_wait()`
+run `timer_dispatch_many()` when the next deadline is due and
+surface pending ring records.  Dispatch latency therefore equals the
+longest non-preemptible stretch of task code - flash-cache misses in
+task-level code included - which is the same microsecond-order
+jitter class the component arch already tolerates and doc 07 already
+flags for classic stepping (this target stays FOC-first).  A level-1
+timer ISR through the private vector table is the natural upgrade
+once hardware allows measuring both variants; `irq_save()` is
+already a real `rsil` so the critical sections survive that change.
+
+Peripheral notes specific to the modem arch:
+
+* **ADC**: the oneshot unit, all eight ADC1 channel configs and the
+  conversion worker are set up from core 0 before core 1 boots;
+  the sample handshake is a lock-free seq/ack word pair (core 1
+  requests, the core-0 worker converts - the SAR ADC is entangled
+  with WiFi calibration, so conversions stay on the modem core).
+* **I2C**: bus-error recovery reprograms the controller but cannot
+  pulse the DPORT module reset from core 1; a truly wedged FSM
+  escalates to `I2C_BUS_TIMEOUT` -> shutdown.
+* **rmt_step.c** is compiled only in the component arch (it needs
+  `esp_intr_alloc`); it returns with the bare-core ISR work.
+* GPIO pad config, GPIO-matrix routing, pulls (including the RTC-pad
+  pull table), SPI, and LEDC config are all register-level in this
+  arch - no IDF call remains anywhere core 1 can reach.
+
+### IRAM discipline and map
+
+A flash-cache miss stalls the requesting core for microseconds while
+the line refills over SPI, and the fill path is shared - so the
+motion core's dispatch path must never fault.  Two mechanisms:
+
+* `DECL_IRAM` (src/esp32/internal.h) - a `.iram1.klipper.*` section
+  attribute on the board files' hot functions (`timer_read_time`,
+  `irq_poll`/`irq_wait`, the ring poll), mapped by IDF's built-in
+  `*(.iram1 .iram1.*)` rule in both architectures.
+* `src/esp32/main/linker.lf` - an ldgen fragment mapping whole hot
+  objects `noflash` in the modem arch.
+
+IRAM-resident set (modem arch) and estimated code sizes (host-gcc
+x86-64 text as proxy; confirm with `idf.py size` + map file on the
+first real build):
+
+| object | why | ~text |
+| ------ | --- | ----- |
+| sched.c | timer list + task loop | 2.0KiB |
+| generic/timer_irq.c | `timer_dispatch_many` | 0.5KiB |
+| stepper.c | step event handlers | 2.5KiB |
+| trajq.c + traj_stepper.c | trajectory execute path | 5.4KiB |
+| esp32/gpio.c | `out_w1ts/w1tc` hot writes | 2.2KiB |
+| esp32/appcpu_boot.c | poll loop, bare timer | 1.6KiB |
+| esp32/shmem_console.c | ring ops on dispatch path | 0.9KiB |
+| appcpu_vectors.S | vector table + entry | 1.2KiB |
+
+Total ≈ 16KiB code (+ a few KiB rodata moved by `noflash`) against
+the 128KiB IRAM, most of which WiFi/IDF claims; the budget fits with
+tens of KiB to spare.  Task-level code (command parsing, config,
+sensors) deliberately stays in flash: IRAM is the scarce resource,
+and a miss there costs dispatch latency of the jitter class already
+accepted on this chip.  Note the ldgen mapping of the klipper OBJECT
+library into `libmain.a` is one of the things the first hardware
+build must confirm (see checklist).
+
+### Building the modem architecture
+
+```
+cd /path/to/klipper/src/esp32
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.modem" \
+    set-target esp32
+idf.py menuconfig    # WiFi credentials etc., as below
+idf.py build flash monitor
+```
+
+`sdkconfig.defaults.modem` sets `CONFIG_FREERTOS_UNICORE=y` and
+`CONFIG_KLIPPER_ARCH_MODEM=y`; everything else (PSK provisioning,
+bridge, klippy) is identical to the component arch below.
+
+### Devkit bring-up checklist
+
+What a devkit owner runs, in order, to convert "source-verified" to
+"validated" (serial monitor + scope; classic ESP32-WROOM/WROVER,
+dual-core silicon):
+
+1. **Component-arch smoke test first**: build/flash the default
+   architecture, join WiFi, run the udp_bridge + `scripts/console.py`
+   identify handshake.  Proves toolchain, board, credentials, PSK.
+2. **Modem build boots core 0**: flash the modem build; expect
+   `klipper_modem: modem shuttling datagrams on udp port ...` then
+   `klipper_appcpu: core 1 running bare klipper (after ~Xms)` on the
+   monitor.  If instead `core 1 did not start`, the logged
+   fault/cause/epc triple (from `esp32_core1_fault[]`) localizes it:
+   cause=0 means the core never reached the entry stub (bringup
+   sequence), 0x1nn means a spurious interrupt-level vector fired,
+   anything else is a real exception at EPC.
+3. **Console end-to-end**: identify handshake + dictionary download
+   through the ring path; confirm auth-failure rejection (wrong PSK)
+   still drops silently; confirm responses only go to the
+   authenticated peer (send from a second source).
+4. **IRAM placement**: `idf.py size-components`, then check the map
+   file that sched/stepper/trajq/timer_irq landed in `iram0` (the
+   OBJECT-library-in-libmain.a ldgen question) and that IRAM didn't
+   overflow.
+5. **Timer sanity**: `timesync` round trips; scope a
+   `queue_step`-driven pin for rate correctness; measure dispatch
+   jitter (poll-loop worst case) idle vs. under command load and
+   WiFi soak - compare against the component arch numbers.
+6. **Flash-cache discipline**: confirm no runtime NVS writes occur
+   (none are expected after WiFi-up); optionally force one to verify
+   the failure mode is understood.
+7. **Peripheral re-verification on the register-level config paths**
+   (they differ from the component arch): gpio in/out + pulls on an
+   RTC pad (e.g. GPIO12) and a non-RTC pad, SPI loopback, I2C device
+   probe + NACK/timeout statuses, LEDC duty on a scope, ADC
+   readings.
+8. **Fault path**: deliberately crash core 1 (e.g. a test null
+   store) and confirm the modem logs the parked fault.
+
 ## Peripheral bindings
 
 Beyond the initial timer/GPIO/ADC set, the port implements the RFC
 0001 [doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)
 "command parity" bindings.  Per that document's stance, everything
 documented in the TRM is driven at register level against the
-Apache-2.0 `soc/*.h` headers; the IDF driver appears only where the
-call is task-context-only configuration:
+Apache-2.0 `soc/*.h` headers (vendored in `lib/esp32/`); in the
+component architecture the IDF driver additionally appears where the
+call is task-context-only configuration - in the modem architecture
+those configuration paths are register-level too (see above):
 
 | Binding | Commands | Implementation |
 | ------- | -------- | -------------- |
@@ -165,10 +427,19 @@ git clone --depth 1 -b v5.3.2 --recurse-submodules \
 cd esp-idf && ./install.sh esp32 && . export.sh
 cd /path/to/klipper/src/esp32
 idf.py set-target esp32
-idf.py menuconfig       # "Klipper firmware": WiFi SSID/password, UDP
-                        # port, optional build-time PSK, TRUST_NETWORK
+idf.py menuconfig       # "Klipper firmware": architecture, WiFi SSID/
+                        # password, UDP port, optional build-time PSK,
+                        # TRUST_NETWORK
 idf.py build flash monitor
 ```
+
+This builds the (default) component architecture; for the modem
+architecture see
+[Building the modem architecture](#building-the-modem-architecture)
+above.  The port's register drivers compile against the vendored
+Apache-2.0 soc headers in `lib/esp32/` (see `lib/esp32/README`), not
+against the installed IDF's copies - the same pattern as
+`lib/stm32*`'s CMSIS.
 
 The IDF build replicates klipper's `compile_time_request` flow in
 CMake (`src/esp32/main/CMakeLists.txt`): the klipper sources are
@@ -260,17 +531,23 @@ including `spicmds`, `i2ccmds`, `pwmcmds`, `buttons`, `tmcuart`,
 the board code, not yet run on silicon: the SPI, I2C and LEDC
 bindings and the RMT step module.
 
-The ESP32 board code compiles and links (validated against stub IDF
-headers with the dictionary flow executed for real; API names and
-Kconfig options checked against ESP-IDF v5.3.2 sources), but has
-**not yet been built with the xtensa toolchain or run on hardware** -
-the development environment could not download the toolchain.
-Remaining work, in rough order:
+The ESP32 board code compiles and links in **both architectures**
+(validated against stub IDF headers + the vendored `lib/esp32`
+register headers with the dictionary flow executed for real - 79
+commands / 28 responses in each; API names, register fields and the
+APP-CPU boot sequence checked against ESP-IDF v5.3.2 sources; the
+SPSC ring unit-tested under TSan/ASan), but has **not yet been built
+with the xtensa toolchain or run on hardware** - the development
+environment could not download the toolchain.  Remaining work, in
+rough order:
 
-* First `idf.py build` + on-hardware bring-up (timer ISR latency
-  measurements, WiFi soak test against udp_bridge.py; scope checks
-  of the SPI/I2C/LEDC bindings, which are validated the same
-  stub-header way as the rest of the port).
+* First `idf.py build` of both architectures + on-hardware bring-up:
+  the component arch first, then the modem arch's
+  [devkit checklist](#devkit-bring-up-checklist) (APP-CPU boot,
+  vector table, IRAM map, polled-dispatch jitter measurements).
+* A level-1 bare-core timer ISR through `appcpu_vectors.S` (replacing
+  polled dispatch) once hardware allows comparing the two; then
+  reinstating `rmt_step.c` on the bare core.
 * Keepalive datagrams during idle (NAT/AP state) and lwIP socket
   reconnect handling.
 * Enable datagram erasure FEC once the glue grows in-order block
@@ -278,6 +555,7 @@ Remaining work, in rough order:
 * Wiring `rmt_step.c` to a step backend (see "RMT step generation"
   above); PCNT step verification; FOC backend integration.
 * Ethernet (RMII) bringup variant of `wifi.c`.
-* Chip reset command, watchdog.
+* Chip reset command, watchdog (component arch; on the bare core a
+  register-level TIMG watchdog).
 * A native klippy UDP transport (RFC 0001 doc 05) replacing the pty
   bridge.

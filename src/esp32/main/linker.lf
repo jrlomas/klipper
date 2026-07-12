@@ -1,0 +1,38 @@
+# IRAM placement for the bare motion core ("IDF as modem", RFC 0001
+# doc 12 stage 3) - see "IRAM discipline" in docs/ESP32.md.
+#
+# A flash-cache miss stalls the requesting core for microseconds (SPI
+# flash fill), and a flash *write* (never performed after core-1
+# boot; see appcpu_boot.c) disables the cache outright.  In the
+# polled bare-core design the timer-dispatch latency equals the
+# longest non-preemptible stretch of code, so everything on the
+# dispatch path is pinned to IRAM: the scheduler and its timer list,
+# the generic dispatch loop, the step/gpio/trajectory execution
+# path, and the board's poll loop itself.  Task-level code (command
+# parsing, config, sensors) intentionally stays in flash - a miss
+# there costs dispatch latency of the same order as the RTOS jitter
+# the component arch already tolerates, and IRAM is a scarce shared
+# resource (WiFi + IDF need most of the 128KiB).
+#
+# "noflash" places both code and rodata off flash.  The board files'
+# hand-annotated hot functions (DECL_IRAM -> .iram1.klipper.*) are
+# additionally mapped by IDF's built-in *(.iram1 .iram1.*) rule and
+# do not depend on this fragment.
+#
+# NOTE (runtime unproven): the klipper objects reach libmain.a
+# through a CMake OBJECT library; verify on first hardware build
+# (idf.py size-components + the map file) that these entries matched
+# - see the bring-up checklist in docs/ESP32.md.
+
+[mapping:klipper]
+archive: libmain.a
+entries:
+    if KLIPPER_ARCH_MODEM = y:
+        sched (noflash)             # sched_timer_dispatch + task loop
+        timer_irq (noflash)         # timer_dispatch_many
+        stepper (noflash)           # step event handlers
+        trajq (noflash)             # trajectory-queue execute path
+        traj_stepper (noflash)      # trajectory step emission
+        gpio (noflash)              # out_w1ts/w1tc hot writes
+        appcpu_boot (noflash)       # irq_poll/irq_wait/timer_read_time
+        shmem_console (noflash)     # ring poll on the dispatch path

@@ -1,12 +1,22 @@
 // Main starting point for the ESP32 port
 //
-// Core split (RFC 0001 doc 07): app_main() runs on core 0 and brings
-// up NVS, WiFi and the UDP console socket there, alongside the
-// WiFi/lwIP tasks (pinned to core 0 via sdkconfig.defaults).  The
-// klipper scheduler runs in a dedicated high-priority task pinned to
-// core 1, which also allocates the klipper hardware-timer interrupt
-// on core 1 - motion dispatch never contends with the radio stack's
-// interrupts.
+// Two selectable architectures (RFC 0001 doc 12; Kconfig "Klipper
+// firmware" -> architecture):
+//
+//  * "component" (stage 1): app_main() runs on core 0 and brings up
+//    NVS, WiFi and the UDP console socket there, alongside the
+//    WiFi/lwIP tasks (pinned to core 0 via sdkconfig.defaults).  The
+//    klipper scheduler runs in a dedicated high-priority FreeRTOS
+//    task pinned to core 1, which also allocates the klipper
+//    hardware-timer interrupt on core 1.
+//
+//  * "modem" (stage 3): the IDF app is built unicore; core 0 is
+//    reduced to a network coprocessor (NVS, WiFi, and the modem task
+//    shuttling sealed datagrams through the shared-memory ring),
+//    and core 1 is manually unstalled into bare-metal sched_main()
+//    with no RTOS and no IDF calls (appcpu_boot.c).  WiFi comes up
+//    *before* the bare core so the PHY-calibration NVS write - the
+//    last flash write - never races core 1's flash-cache use.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //
@@ -24,13 +34,17 @@
 #include "generic/udp_console.h" // udp_console_sendf
 #include "internal.h" // esp32_wifi_start
 #include "sched.h" // sched_main
+#if KLIPPER_ARCH_MODEM
+#include "shmem_ring.h" // esp32_shmem
+#endif
 
 DECL_CONSTANT_STR("MCU", "esp32");
 
 static const char *TAG = "klipper";
 
 // The console is the datagram transport glue (see generic/
-// udp_console.c) over the lwIP socket in udp_port.c
+// udp_console.c) over the lwIP socket (udp_port.c, component arch)
+// or the shared-memory ring (shmem_console.c, modem arch)
 void
 console_sendf(const struct command_encoder *ce, va_list args)
 {
@@ -43,7 +57,8 @@ console_receive_buffer(void)
     return udp_console_get_rx_buf();
 }
 
-// klipper scheduler task - pinned to core 1
+#if !KLIPPER_ARCH_MODEM
+// klipper scheduler task - pinned to core 1 (component arch)
 static void
 klipper_task(void *arg)
 {
@@ -51,6 +66,7 @@ klipper_task(void *arg)
     esp32_timer_setup();
     sched_main();
 }
+#endif
 
 /****************************************************************
  * PSK provisioning
@@ -115,12 +131,29 @@ app_main(void)
     if (CONFIG_KLIPPER_TRUST_NETWORK && !psk_len)
         ESP_LOGW(TAG, "running UNAUTHENTICATED (trust_network confession)");
 
-    // Network bringup on core 0
+    // Network bringup on core 0.  In the modem architecture this
+    // must complete before core 1 boots: esp_wifi_start()'s first
+    // run writes PHY calibration data to NVS (flash), and a flash
+    // write disables the cache the bare core executes from.
     esp32_wifi_start();
+
+#if KLIPPER_ARCH_MODEM
+    // Stage the core-1 boot parameters in the shared area, start
+    // the datagram shuttle, then release the bare core
+    memcpy(esp32_shmem.psk, psk_buf, psk_len);
+    esp32_shmem.psk_len = psk_len;
+    esp32_shmem.trust_network = CONFIG_KLIPPER_TRUST_NETWORK;
+    esp32_adc_modem_init();
+    if (esp32_modem_start(CONFIG_KLIPPER_UDP_PORT) < 0)
+        return;
+    if (esp32_appcpu_start() < 0)
+        return;
+#else
     if (esp32_udp_port_setup(CONFIG_KLIPPER_UDP_PORT, psk_buf, psk_len) < 0)
         return;
 
     // Motion/scheduler on core 1
     xTaskCreatePinnedToCore(klipper_task, "klipper", 8192, NULL
                             , configMAX_PRIORITIES - 3, NULL, 1);
+#endif
 }

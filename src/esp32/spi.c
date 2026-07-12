@@ -23,21 +23,33 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
-#include "driver/gpio.h" // gpio_config
-#include "esp_private/periph_ctrl.h" // periph_module_enable
-#include "esp_rom_gpio.h" // esp_rom_gpio_connect_out_signal
 #include "soc/gpio_sig_map.h" // HSPICLK_OUT_IDX
 #include "soc/spi_struct.h" // SPI2, SPI3
 #include "board/gpio.h" // spi_setup
 #include "command.h" // shutdown
 #include "compiler.h" // ARRAY_SIZE
+#include "internal.h" // KLIPPER_ARCH_MODEM, esp32_pad_config
 #include "sched.h" // sched_shutdown
+#if !KLIPPER_ARCH_MODEM
+#include "driver/gpio.h" // gpio_config
+#include "esp_private/periph_ctrl.h" // periph_module_enable
+#include "esp_rom_gpio.h" // esp_rom_gpio_connect_out_signal
+#define SPI_MODULE(m) .module = m,
+#else
+// Modem arch: the bare motion core cannot take the IDF driver path;
+// pads/matrix are programmed via gpio.c's register helpers and the
+// peripheral clocks were enabled from core 0 before this core booted
+// (appcpu_boot.c esp32_appcpu_start)
+#define SPI_MODULE(m)
+#endif
 
 #define SPI_APB_FREQ 80000000
 
 struct spi_bus_info {
     spi_dev_t *spi;
+#if !KLIPPER_ARCH_MODEM
     periph_module_t module;
+#endif
     uint8_t miso_pin, mosi_pin, sck_pin;
     uint8_t miso_sig, mosi_sig, sck_sig;
 };
@@ -48,16 +60,26 @@ DECL_ENUMERATION("spi_bus", "spi3", 1);
 DECL_CONSTANT_STR("BUS_PINS_spi3", "GPIO19,GPIO23,GPIO18");
 
 static const struct spi_bus_info spi_bus[] = {
-    { &SPI2, PERIPH_HSPI_MODULE, 12, 13, 14,
-      HSPIQ_IN_IDX, HSPID_OUT_IDX, HSPICLK_OUT_IDX },
-    { &SPI3, PERIPH_VSPI_MODULE, 19, 23, 18,
-      VSPIQ_IN_IDX, VSPID_OUT_IDX, VSPICLK_OUT_IDX },
+    { .spi = &SPI2, SPI_MODULE(PERIPH_HSPI_MODULE)
+      .miso_pin = 12, .mosi_pin = 13, .sck_pin = 14,
+      .miso_sig = HSPIQ_IN_IDX, .mosi_sig = HSPID_OUT_IDX,
+      .sck_sig = HSPICLK_OUT_IDX },
+    { .spi = &SPI3, SPI_MODULE(PERIPH_VSPI_MODULE)
+      .miso_pin = 19, .mosi_pin = 23, .sck_pin = 18,
+      .miso_sig = VSPIQ_IN_IDX, .mosi_sig = VSPID_OUT_IDX,
+      .sck_sig = VSPICLK_OUT_IDX },
 };
 
 // Route a pad to a peripheral output signal through the GPIO matrix
 static void
 spi_pin_out(uint8_t pin, uint8_t signal)
 {
+#if KLIPPER_ARCH_MODEM
+    esp32_pad_config(pin, 0, 1, 0, 0);
+    // Must come after the pad config (which reclaims the pad for the
+    // plain GPIO output signal)
+    esp32_matrix_out(pin, signal);
+#else
     gpio_config_t config = {
         .pin_bit_mask = 1ULL << pin,
         .mode = GPIO_MODE_OUTPUT,
@@ -70,11 +92,16 @@ spi_pin_out(uint8_t pin, uint8_t signal)
     // Must come after gpio_config (which reclaims the pad for the
     // plain GPIO output signal)
     esp_rom_gpio_connect_out_signal(pin, signal, false, false);
+#endif
 }
 
 static void
 spi_pin_in(uint8_t pin, uint8_t signal)
 {
+#if KLIPPER_ARCH_MODEM
+    esp32_pad_config(pin, 1, 0, 0, 0);
+    esp32_matrix_in(pin, signal);
+#else
     gpio_config_t config = {
         .pin_bit_mask = 1ULL << pin,
         .mode = GPIO_MODE_INPUT,
@@ -85,6 +112,7 @@ spi_pin_in(uint8_t pin, uint8_t signal)
     if (gpio_config(&config))
         shutdown("spi pin config failed");
     esp_rom_gpio_connect_in_signal(pin, signal, false);
+#endif
 }
 
 struct spi_config
@@ -97,7 +125,9 @@ spi_setup(uint32_t bus, uint8_t mode, uint32_t rate)
     static uint8_t bus_init[ARRAY_SIZE(spi_bus)];
     if (!bus_init[bus]) {
         bus_init[bus] = 1;
+#if !KLIPPER_ARCH_MODEM
         periph_module_enable(sb->module);
+#endif
         spi_pin_out(sb->sck_pin, sb->sck_sig);
         spi_pin_out(sb->mosi_pin, sb->mosi_sig);
         spi_pin_in(sb->miso_pin, sb->miso_sig);

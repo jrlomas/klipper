@@ -1,0 +1,10 @@
+# Overlay defaults for the "IDF as modem" architecture (RFC 0001
+# doc 12 stage 3).  Build with:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.modem" \
+#       set-target esp32 && idf.py build
+# See docs/ESP32.md.
+
+# IDF/FreeRTOS never learn core 1 exists; appcpu_boot.c releases it
+# into bare-metal klipper
+CONFIG_FREERTOS_UNICORE=y
+CONFIG_KLIPPER_ARCH_MODEM=y

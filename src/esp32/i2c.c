@@ -26,9 +26,6 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
-#include "driver/gpio.h" // gpio_config
-#include "esp_private/periph_ctrl.h" // periph_module_enable
-#include "esp_rom_gpio.h" // esp_rom_gpio_connect_out_signal
 #include "soc/gpio_sig_map.h" // I2CEXT0_SCL_OUT_IDX
 #include "soc/i2c_struct.h" // I2C0
 #include "board/gpio.h" // i2c_setup
@@ -36,7 +33,13 @@
 #include "command.h" // shutdown
 #include "compiler.h" // ARRAY_SIZE
 #include "i2ccmds.h" // I2C_BUS_SUCCESS
+#include "internal.h" // KLIPPER_ARCH_MODEM, esp32_pad_config
 #include "sched.h" // sched_shutdown
+#if !KLIPPER_ARCH_MODEM
+#include "driver/gpio.h" // gpio_config
+#include "esp_private/periph_ctrl.h" // periph_module_enable
+#include "esp_rom_gpio.h" // esp_rom_gpio_connect_out_signal
+#endif
 
 #define I2C_APB_FREQ 80000000
 #define I2C_FIFO_SIZE 32
@@ -96,13 +99,32 @@ i2c_program(void)
 static void
 i2c_hw_reset(void)
 {
+#if KLIPPER_ARCH_MODEM
+    // The module-reset pulse lives in DPORT_PERIP_RST_EN_REG, and
+    // DPORT is off limits from the bare core (the ESP32 DPORT
+    // cross-CPU access hazard - see soc/dport_access.h; the modem
+    // core's unicore-configured IDF does unprotected direct DPORT
+    // reads).  Reprogramming the controller registers recovers the
+    // common error states; a truly wedged FSM escalates through the
+    // bounded busy-polls to I2C_BUS_TIMEOUT -> shutdown, and a
+    // config reset (or the planned watchdog) resets the chip.
+    i2c_program();
+#else
     periph_module_reset(PERIPH_I2C0_MODULE);
     i2c_program();
+#endif
 }
 
 static void
 i2c_pin_setup(uint8_t pin, uint32_t sig_idx)
 {
+#if KLIPPER_ARCH_MODEM
+    // Open drain with pullup; the peripheral drives and samples the
+    // same pad (both pins are non-RTC pads: IO_MUX pulls apply)
+    esp32_pad_config(pin, 1, 1, 1, 1);
+    esp32_matrix_out(pin, sig_idx);
+    esp32_matrix_in(pin, sig_idx);
+#else
     gpio_config_t config = {
         .pin_bit_mask = 1ULL << pin,
         .mode = GPIO_MODE_INPUT_OUTPUT_OD,
@@ -115,6 +137,7 @@ i2c_pin_setup(uint8_t pin, uint32_t sig_idx)
     // Open-drain: the peripheral drives and samples the same pad
     esp_rom_gpio_connect_out_signal(pin, sig_idx, false, false);
     esp_rom_gpio_connect_in_signal(pin, sig_idx, false);
+#endif
 }
 
 struct i2c_config
@@ -130,7 +153,10 @@ i2c_setup(uint32_t bus, uint32_t rate, uint8_t addr)
     static uint8_t init;
     if (!init) {
         init = 1;
+#if !KLIPPER_ARCH_MODEM
+        // (modem arch: clock enabled from core 0 at boot)
         periph_module_enable(PERIPH_I2C0_MODULE);
+#endif
         i2c_pin_setup(I2C0_SCL_PIN, I2CEXT0_SCL_OUT_IDX);
         i2c_pin_setup(I2C0_SDA_PIN, I2CEXT0_SDA_OUT_IDX);
     }

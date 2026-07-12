@@ -1,0 +1,18 @@
+This directory contains Espressif ESP32 register-definition headers
+vendored from ESP-IDF, mirroring how lib/stm32* vendors ARM CMSIS
+headers: src/esp32's register-level drivers compile against these
+copies rather than against an installed IDF tree (RFC 0001 doc 12,
+"vendored register headers" stage).
+
+Source:
+  https://github.com/espressif/esp-idf
+version v5.3.2 (commit 9d7f2d69).  Contents taken unmodified from:
+  components/soc/esp32/include/soc/   -> include/soc/
+  components/esp_common/include/      -> include/ (esp_assert.h,
+                                         esp_bit_defs.h - transitive
+                                         includes of soc/soc.h)
+
+These files are Apache-2.0 licensed by Espressif Systems (Shanghai)
+CO LTD; see the LICENSE file in this directory.  Only the headers
+needed by src/esp32 (DPORT/RTC control, GPIO + GPIO matrix + IO_MUX,
+SPI, I2C, LEDC, RMT, timer group, efuse) are vendored.

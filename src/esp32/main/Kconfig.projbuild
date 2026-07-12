@@ -1,5 +1,38 @@
 menu "Klipper firmware (RFC 0001 UDP console)"
 
+choice
+    prompt "Architecture (RFC 0001 doc 12)"
+    default KLIPPER_ARCH_MODEM if FREERTOS_UNICORE
+    default KLIPPER_ARCH_COMPONENT
+    help
+        How klipper shares the two cores with ESP-IDF.
+
+config KLIPPER_ARCH_COMPONENT
+    bool "component: klipper as a FreeRTOS task pinned to core 1"
+    help
+        The stage-1 build: IDF runs SMP FreeRTOS on both cores; the
+        klipper scheduler is a high-priority task pinned to core 1
+        and the console socket lives in a core-0 receive task
+        (udp_port.c).  Validated build path; use this on single-core
+        chip variants (ESP32-S0WD/U4WDH).
+
+config KLIPPER_ARCH_MODEM
+    bool "modem: bare-metal klipper on core 1, IDF as a network coprocessor"
+    depends on FREERTOS_UNICORE
+    help
+        The stage-3 "IDF as modem" architecture: the IDF app is
+        built unicore (enable FREERTOS_UNICORE, e.g. via
+        sdkconfig.defaults.modem), core 0 only shuttles sealed
+        console datagrams between the WiFi radio and a lock-free
+        shared-memory ring, and core 1 is manually unstalled into a
+        bare-metal klipper sched_main() - no RTOS, no IDF calls,
+        register-level peripherals, IRAM-resident hot path.  HMAC
+        verification runs on the klipper core; the radio-blob core
+        never sees plaintext authority.  Runtime is NOT yet
+        hardware-validated - see docs/ESP32.md.
+
+endchoice
+
 config KLIPPER_WIFI_SSID
     string "WiFi SSID"
     default ""

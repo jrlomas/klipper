@@ -72,6 +72,19 @@ quarantined behind a byte pipe it cannot reach across.
    a rewrite, precisely because the datagram glue is
    target-independent.
 
+**Stage-3 status**: implemented as the selectable `modem`
+architecture (Kconfig; the stage-1 `component` build remains the
+fallback). `lib/esp32/` vendors the Apache-2.0 register headers,
+`src/esp32/appcpu_boot.c` + `appcpu_vectors.S` boot core 1 bare with
+a private vector table and a polled scheduler, `shmem_console.c` /
+`modem.c` split the console over a lock-free shared-RAM ring — with
+HMAC verification kept on the Klipper core, so the blob core shuttles
+only sealed bytes it cannot forge — and the hot path is pinned to
+IRAM. Every register sequence is source-verified against ESP-IDF
+v5.3.2 and both architectures host-compile/link, but the modem
+architecture has **not yet run on silicon** — see the bring-up
+checklist in [docs/ESP32.md](../../ESP32.md).
+
 ## Command parity with STM32
 
 The generic command modules (`gpiocmds`, `endstop`, `trsync`,
