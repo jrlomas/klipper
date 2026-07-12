@@ -51,7 +51,7 @@ theme:
         icon: material/weather-sunny
         name: Switch to light mode
   font: false
-  logo: img/helix-mark.svg
+  logo: img/helix-logo.svg
   favicon: img/helix-favicon.svg
   icon:
     repo: fontawesome/brands/github
