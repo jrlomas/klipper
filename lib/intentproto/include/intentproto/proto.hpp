@@ -203,6 +203,60 @@ const Constant* first_constant();
 const Enumeration* first_enumeration();
 const Command* find_command(uint32_t id);
 
+// ---- extension self-description (RFC 0001 doc 10) ----
+// A v2 peer needs no dictionary round-trip: the device serves its
+// registry as data over two library-owned meta-commands. init()
+// registers them through the ordinary registry, so they appear in
+// the legacy dictionary AND describe themselves in the extension
+// stream (self-describing all the way down):
+//
+//   list_extensions start=%u count=%c
+//     -> one "extension_desc kind=%c id=%u desc=%.*s" for every
+//        registered Command (kind 0) and Response (kind 1) whose
+//        index falls in [start, start+count); commands come first,
+//        in id order. id is the message's assigned wire id; desc is
+//        its dictionary key string ("name param=%c param2=%u ..." —
+//        see message_key() below, one implementation per concept).
+//   list_constants start=%u count=%c
+//     -> one "constant_desc kind=%c desc=%.*s" for every registered
+//        Constant and Enumeration value (constants first), index in
+//        [start, start+count); desc is plain text per kind:
+//        0 integer constant "NAME=123", 1 string constant
+//        "NAME=abc", 2 enumeration value "enum_name.value_name=123".
+//
+// count is clamped to EXTDESC_COUNT_MAX per call; when the requested
+// range reaches the end of the registry the entries are followed by
+// "extension_done total=%u" — the host paginates start += count
+// until it sees it. A desc string longer than one frame's payload
+// cannot be served and its entry is silently skipped: keep names
+// short (the legacy dictionary has no such limit).
+//
+// The host-side reference binding is tools/extbind.py.
+
+// Per-call entry cap of the enumeration meta-commands.
+constexpr uint32_t EXTDESC_COUNT_MAX = 8;
+// extension_desc kinds.
+constexpr uint8_t EXTDESC_KIND_COMMAND = 0;
+constexpr uint8_t EXTDESC_KIND_RESPONSE = 1;
+// constant_desc kinds.
+constexpr uint8_t CONSTDESC_KIND_INT = 0;
+constexpr uint8_t CONSTDESC_KIND_STR = 1;
+constexpr uint8_t CONSTDESC_KIND_ENUM = 2;
+
+// Build a message's dictionary key string ("name param=%c ...") into
+// out, NUL-terminated. Shared by the dictionary builder and the
+// extension_desc stream. Returns the length, or 0 if cap is too
+// small (out is unspecified then).
+size_t message_key(char* out, size_t cap, const char* name,
+                   const char* const* param_names,
+                   const ParamType* param_types, uint8_t num_params);
+
+// Build a constant_desc string ("NAME=123" / "NAME=abc" /
+// "enum_name.value_name=123") into out, NUL-terminated. Same return
+// convention as message_key().
+size_t constant_desc(char* out, size_t cap, const Constant& k);
+size_t enumeration_desc(char* out, size_t cap, const Enumeration& e);
+
 // Counters for link diagnostics.
 struct LinkStats {
     uint32_t frames_ok;

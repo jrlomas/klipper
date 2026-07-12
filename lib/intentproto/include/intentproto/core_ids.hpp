@@ -85,9 +85,21 @@ constexpr uint32_t MSGID_FLASH_DATA = 29;
 constexpr uint32_t MSGID_FLASH_VERIFY = 30;
 constexpr uint32_t MSGID_FLASH_BOOT = 31;
 
-// First id past the frozen allocation; 32..0x7f reserved for future
+// ---- extension self-description (doc 10) ----
+// The fixed meta-commands a v2 peer enumerates the extension space
+// with instead of a dictionary round-trip; wire format documented in
+// proto.hpp ("extension self-description"). On a legacy link the
+// same messages exist but carry init()-assigned ids like any other
+// registered command (the two numbering schemes never mix).
+constexpr uint32_t MSGID_LIST_EXTENSIONS = 32;
+constexpr uint32_t MSGID_EXTENSION_DESC = 33;
+constexpr uint32_t MSGID_LIST_CONSTANTS = 34;
+constexpr uint32_t MSGID_CONSTANT_DESC = 35;
+constexpr uint32_t MSGID_EXTENSION_DONE = 36;
+
+// First id past the frozen allocation; 37..0x7f reserved for future
 // core commands.
-constexpr uint32_t MSGID_CORE_NEXT_FREE = 32;
+constexpr uint32_t MSGID_CORE_NEXT_FREE = 37;
 
 // Extension space: device-specific, self-described at connect.
 constexpr uint32_t MSGID_EXTENSION_BASE = 0x80;

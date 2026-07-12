@@ -14,7 +14,7 @@ SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
 	src/datagram.cpp boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp)
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
-	test_negotiate test_bootcore
+	test_negotiate test_extdesc test_bootcore
 
 .PHONY: all test embedded dict clean
 
@@ -26,8 +26,15 @@ $(BUILD):
 $(BUILD)/test_%: tests/test_%.cpp $(SRCS) $(HDRS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(SRCS) $< -o $@
 
+# test_extdesc must run from the package root so it writes
+# build/extdesc_wire.bin, which the python binding test then reads.
 test: $(addprefix $(BUILD)/,$(TESTS))
 	@for t in $(TESTS); do echo "== $$t"; ./$(BUILD)/$$t || exit 1; done
+	@if command -v python3 >/dev/null 2>&1; then \
+		echo "== test_extbind"; python3 tools/test_extbind.py || exit 1; \
+	else \
+		echo "== test_extbind (skipped: no python3)"; \
+	fi
 
 # Cortex-M0 (STM32F072 floor target) compile + size report; skipped
 # politely when the cross compiler is not installed.

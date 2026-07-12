@@ -284,6 +284,109 @@ bool dispatch_one(const uint8_t** pp, const uint8_t* end) {
     return true;
 }
 
+// ---- extension self-description (see proto.hpp for the format) ----
+// The device never introspects anything here: it serves the registry
+// as data. Both meta-commands walk the same lists init() numbered,
+// so entry order matches id order.
+
+// Descriptors of the library-registered meta-responses (created as
+// statics in init(), like the FRAMING_V2 constant).
+const Response* g_extension_desc_res;
+const Response* g_constant_desc_res;
+const Response* g_extension_done_res;
+
+struct ExtensionDescMsg { uint8_t kind; uint32_t id; buf desc; };
+struct ConstantDescMsg { uint8_t kind; buf desc; };
+struct ExtensionDoneMsg { uint32_t total; };
+
+void pack_extension_desc(Writer& w, const void* pv) {
+    const ExtensionDescMsg& m = *static_cast<const ExtensionDescMsg*>(pv);
+    w.put(m.kind);
+    w.put(m.id);
+    w.put(m.desc);
+}
+
+void pack_constant_desc(Writer& w, const void* pv) {
+    const ConstantDescMsg& m = *static_cast<const ConstantDescMsg*>(pv);
+    w.put(m.kind);
+    w.put(m.desc);
+}
+
+void pack_extension_done(Writer& w, const void* pv) {
+    const ExtensionDoneMsg& m = *static_cast<const ExtensionDoneMsg*>(pv);
+    w.put(m.total);
+}
+
+// True when idx lies in the requested [start, start+count) window.
+bool in_range(uint32_t idx, uint32_t start, uint32_t count) {
+    return idx >= start && idx - start < count;
+}
+
+void send_extension_desc(uint8_t kind, uint32_t id, const char* key,
+                         size_t key_len) {
+    ExtensionDescMsg m{kind, id, buf{(const uint8_t*)key,
+                                     (uint32_t)key_len}};
+    detail::send_response(*g_extension_desc_res, &m);
+}
+
+// Clamp the per-call entry cap and emit the range-end marker. Both
+// enumerations share the chunking contract, execlog_dump style: the
+// host paginates start += count until extension_done arrives.
+uint32_t clamp_count(const ArgWord* args) {
+    uint32_t count = (uint32_t)args[1];
+    return count > EXTDESC_COUNT_MAX ? EXTDESC_COUNT_MAX : count;
+}
+
+void finish_range(uint32_t start, uint32_t count, uint32_t total) {
+    if (start >= total || count >= total - start) {
+        ExtensionDoneMsg m{total};
+        detail::send_response(*g_extension_done_res, &m);
+    }
+}
+
+void handle_list_extensions(const ArgWord* args) {
+    uint32_t start = (uint32_t)args[0];
+    uint32_t count = clamp_count(args);
+    char key[PAYLOAD_MAX];
+    uint32_t idx = 0;
+    size_t n;
+    for (const Command* c = g_commands; c; c = c->next, idx++)
+        if (in_range(idx, start, count)
+            && (n = message_key(key, sizeof(key), c->name, c->param_names,
+                                c->param_types, c->num_params)) != 0)
+            send_extension_desc(EXTDESC_KIND_COMMAND, c->id, key, n);
+    for (const Response* r = g_responses; r; r = r->next, idx++)
+        if (in_range(idx, start, count)
+            && (n = message_key(key, sizeof(key), r->name, r->field_names,
+                                r->field_types, r->num_fields)) != 0)
+            send_extension_desc(EXTDESC_KIND_RESPONSE, r->id, key, n);
+    finish_range(start, count, idx);
+}
+
+void handle_list_constants(const ArgWord* args) {
+    uint32_t start = (uint32_t)args[0];
+    uint32_t count = clamp_count(args);
+    char key[PAYLOAD_MAX];
+    uint32_t idx = 0;
+    size_t n;
+    for (const Constant* k = g_constants; k; k = k->next, idx++)
+        if (in_range(idx, start, count)
+            && (n = constant_desc(key, sizeof(key), *k)) != 0) {
+            ConstantDescMsg m{k->str_value ? CONSTDESC_KIND_STR
+                                           : CONSTDESC_KIND_INT,
+                              buf{(const uint8_t*)key, (uint32_t)n}};
+            detail::send_response(*g_constant_desc_res, &m);
+        }
+    for (const Enumeration* e = g_enumerations; e; e = e->next, idx++)
+        if (in_range(idx, start, count)
+            && (n = enumeration_desc(key, sizeof(key), *e)) != 0) {
+            ConstantDescMsg m{CONSTDESC_KIND_ENUM,
+                              buf{(const uint8_t*)key, (uint32_t)n}};
+            detail::send_response(*g_constant_desc_res, &m);
+        }
+    finish_range(start, count, idx);
+}
+
 void process_block(uint8_t seq, const uint8_t* payload, size_t len) {
     g_link.last_rx_seq = seq;
     const uint8_t* p = payload;
@@ -303,6 +406,41 @@ void init(const Config& cfg) {
         // in every dictionary this registry serves (RFC 0001 doc 07
         // negotiation step 1) without a user-level declaration.
         static Constant framing_v2("FRAMING_V2", 1);
+        // Extension self-description meta-messages (RFC 0001 doc 10;
+        // format in proto.hpp). Registered through the ordinary
+        // registry — they land in the legacy dictionary AND describe
+        // themselves in the extension stream. Constructed here, they
+        // take the ids after every application declaration.
+        static const char* const list_pnames[] = {"start", "count"};
+        static const ParamType list_ptypes[] =
+            {ParamType::U32, ParamType::U8};
+        static Command cmd_list_extensions("list_extensions", list_pnames,
+                                           list_ptypes, 2,
+                                           handle_list_extensions);
+        static Command cmd_list_constants("list_constants", list_pnames,
+                                          list_ptypes, 2,
+                                          handle_list_constants);
+        static const char* const ext_desc_fnames[] = {"kind", "id", "desc"};
+        static const ParamType ext_desc_ftypes[] =
+            {ParamType::U8, ParamType::U32, ParamType::Buf};
+        static Response res_extension_desc("extension_desc",
+                                           ext_desc_fnames, ext_desc_ftypes,
+                                           3, pack_extension_desc);
+        static const char* const const_desc_fnames[] = {"kind", "desc"};
+        static const ParamType const_desc_ftypes[] =
+            {ParamType::U8, ParamType::Buf};
+        static Response res_constant_desc("constant_desc",
+                                          const_desc_fnames,
+                                          const_desc_ftypes, 2,
+                                          pack_constant_desc);
+        static const char* const ext_done_fnames[] = {"total"};
+        static const ParamType ext_done_ftypes[] = {ParamType::U32};
+        static Response res_extension_done("extension_done",
+                                           ext_done_fnames, ext_done_ftypes,
+                                           1, pack_extension_done);
+        g_extension_desc_res = &res_extension_desc;
+        g_constant_desc_res = &res_constant_desc;
+        g_extension_done_res = &res_extension_done;
         g_commands = reverse_list(g_commands);
         g_responses = reverse_list(g_responses);
         g_constants = reverse_list(g_constants);

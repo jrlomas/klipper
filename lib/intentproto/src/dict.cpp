@@ -39,10 +39,37 @@ struct Appender {
     void quoted(const char* s) { ch('"'); raw(s); ch('"'); }
 };
 
-// "name param=%c param2=%u" — the dictionary key for a message.
-void message_key(Appender& a, const char* name, const char* const* pnames,
-                 const ParamType* ptypes, uint8_t n) {
-    a.ch('"');
+// Finish a buffer-building helper: NUL-terminate and return the
+// length, or 0 when the buffer (plus the NUL) did not fit.
+size_t finish_key(Appender& a) {
+    if (a.overflow || a.len >= a.cap)
+        return 0;
+    a.out[a.len] = '\0';
+    return a.len;
+}
+
+// Emit a message's dictionary key ("name param=%c ...") as a quoted
+// JSON key — built by the shared message_key() so the JSON and the
+// extension_desc stream can never disagree. A key that does not fit
+// the (generous) local buffer fails the whole build, matching the
+// out-of-capacity behavior everywhere else.
+void message_key_json(Appender& a, const char* name,
+                      const char* const* pnames, const ParamType* ptypes,
+                      uint8_t n) {
+    char key[128];
+    if (!message_key(key, sizeof(key), name, pnames, ptypes, n)) {
+        a.overflow = true;
+        return;
+    }
+    a.quoted(key);
+}
+
+} // namespace
+
+size_t message_key(char* out, size_t cap, const char* name,
+                   const char* const* pnames, const ParamType* ptypes,
+                   uint8_t n) {
+    Appender a{out, cap, 0, false};
     a.raw(name);
     for (uint8_t i = 0; i < n; i++) {
         a.ch(' ');
@@ -50,10 +77,29 @@ void message_key(Appender& a, const char* name, const char* const* pnames,
         a.ch('=');
         a.raw(format_of(ptypes[i]));
     }
-    a.ch('"');
+    return finish_key(a);
 }
 
-} // namespace
+size_t constant_desc(char* out, size_t cap, const Constant& k) {
+    Appender a{out, cap, 0, false};
+    a.raw(k.name);
+    a.ch('=');
+    if (k.str_value)
+        a.raw(k.str_value);
+    else
+        a.num(k.int_value);
+    return finish_key(a);
+}
+
+size_t enumeration_desc(char* out, size_t cap, const Enumeration& e) {
+    Appender a{out, cap, 0, false};
+    a.raw(e.enum_name);
+    a.ch('.');
+    a.raw(e.value_name);
+    a.ch('=');
+    a.num(e.value);
+    return finish_key(a);
+}
 
 size_t build_dictionary(char* out, size_t cap) {
     const Config& cfg = current_config();
@@ -67,8 +113,8 @@ size_t build_dictionary(char* out, size_t cap) {
     for (const Command* c = first_command(); c; c = c->next) {
         if (!first) a.ch(',');
         first = false;
-        message_key(a, c->name, c->param_names, c->param_types,
-                    c->num_params);
+        message_key_json(a, c->name, c->param_names, c->param_types,
+                         c->num_params);
         a.ch(':');
         a.num(c->id);
     }
@@ -113,8 +159,8 @@ size_t build_dictionary(char* out, size_t cap) {
     a.raw(",\"responses\":{\"identify_response offset=%u data=%.*s\":0");
     for (const Response* r = first_response(); r; r = r->next) {
         a.ch(',');
-        message_key(a, r->name, r->field_names, r->field_types,
-                    r->num_fields);
+        message_key_json(a, r->name, r->field_names, r->field_types,
+                         r->num_fields);
         a.ch(':');
         a.num(r->id);
     }
