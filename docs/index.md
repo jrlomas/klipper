@@ -1,19 +1,51 @@
 ---
 hide:
   - toc
-title: Welcome
+  - navigation
+title: HELIX
 ---
 
-![](img/klipper-logo.png){ .center-image }
+![HELIX](img/helix-mark.svg){ .center-image width="150" }
 
-The Klipper firmware controls 3d-Printers. It combines the power of a
-general purpose computer with one or more micro-controllers. See the
-[features document](Features.md) for more information on why you
-should use the Klipper software.
+<h1 style="text-align:center; letter-spacing:0.14em; margin:0.2em 0 0;">HELIX</h1>
+<p style="text-align:center; font-size:1.2em; color:var(--md-default-fg-color--light); margin:0.4em 0 1.6em;">
+Motion firmware that trusts its micro-controllers.
+</p>
 
-Start by [installing Klipper software](Installation.md).
+HELIX is an evolution of [Klipper](https://www.klipper3d.org/) — rebuilt
+around motion **intentions**, machine time, and networks. Instead of
+streaming a pre-computed firehose of step pulses to a micro-controller
+that does exactly as it's told, HELIX sends *intentions* — where each
+joint should be and how it's moving — and lets the board own its clock,
+its position, and its queue. It knows where it is, and when the world
+misbehaves it holds its ground instead of falling on its sword.
 
-Klipper software is Free Software. Read the
-[documentation](Overview.md), see the [license](../COPYING), or
-[download](https://github.com/Klipper3d/Klipper) the software. We
-depend on the generous support from our [sponsors](Sponsors.md).
+That one change unlocks the rest: an **actuator-agnostic** motion model
+(steppers, PWM/DAC, and a future closed-loop BLDC/FOC joint are all
+backends behind one protocol), **pause-and-hold** recovery instead of
+shutdown-everything, network-native transports, **hardware-event**
+sensing that makes things polling never could, and one firmware shared
+across the STM32 and ESP32 families.
+
+## Start here
+
+- **[HELIX overview](HELIX.md)** — the whole story in one page: the idea,
+  and each capability as problem → solution → payoff.
+- **[User Guide](Helix_User_Guide.md)** — from a stock-Klipper mental
+  model to turning on HELIX's new capabilities.
+- **[Developer Guide](Helix_Developer_Guide.md)** — the architecture, the
+  protocol library, and how to build or port HELIX.
+- **[Command &amp; feature reference](Helix_Commands.md)** — every new
+  command, config option, and firmware capability in one place.
+- **[Features](Features.md)** · **[RFC 0001 design canon](rfcs/0001-motion-intentions/00-Vision.md)**
+
+Start running it with the [installation guide](Installation.md); the
+inherited Klipper documentation lives under the [Overview](Overview.md).
+
+---
+
+*HELIX is a friendly fork of Klipper, created by Kevin O'Connor and its
+community. It is Free Software under the [GNU GPLv3](../COPYING),
+preserves Klipper's copyrights and attribution throughout the source, and
+builds on that work with deep respect. HELIX is an evolution of Klipper,
+and no longer Klipper itself.*

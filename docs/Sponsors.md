@@ -18,20 +18,6 @@ serve the 3D printing community better. Follow them on
 
 [<img src="./img/sponsors/obico-light-horizontal.png" width="200" style="margin:25px" />](https://obico.io/klipper.html?source=klipper_sponsor)
 
-## Klipper Developers
-
-### Kevin O'Connor
-
-Kevin is the original author and current maintainer of Klipper. Donate
-at: [https://ko-fi.com/koconnor](https://ko-fi.com/koconnor) or
-[https://www.patreon.com/koconnor](https://www.patreon.com/koconnor)
-
-### Eric Callahan
-
-Eric is the author of bed_mesh, spi_flash, and several other Klipper
-modules.  Eric has a donations page at:
-[https://ko-fi.com/arksine](https://ko-fi.com/arksine)
-
 ## Related Klipper Projects
 
 Klipper is frequently used with other Free Software. Consider using or
