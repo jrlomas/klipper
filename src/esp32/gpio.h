@@ -35,4 +35,30 @@ uint32_t gpio_adc_sample(struct gpio_adc g);
 uint16_t gpio_adc_read(struct gpio_adc g);
 void gpio_adc_cancel_sample(struct gpio_adc g);
 
+struct gpio_pwm {
+    uint8_t chan;   // LEDC high-speed channel
+    uint8_t shift;  // 15 - duty_resolution (see hard_pwm.c)
+};
+struct gpio_pwm gpio_pwm_setup(uint32_t pin, uint32_t cycle_time
+                               , uint16_t val);
+void gpio_pwm_write(struct gpio_pwm g, uint16_t val);
+
+struct spi_config {
+    void *spi;       // spi_dev_t* (SPI2 or SPI3)
+    uint32_t clock;  // precomputed SPI_CLOCK_REG value
+    uint8_t mode;
+};
+struct spi_config spi_setup(uint32_t bus, uint8_t mode, uint32_t rate);
+void spi_prepare(struct spi_config config);
+void spi_transfer(struct spi_config config, uint8_t receive_data
+                  , uint8_t len, uint8_t *data);
+
+struct i2c_config {
+    uint8_t addr;    // 7-bit address, pre-shifted left by one
+};
+struct i2c_config i2c_setup(uint32_t bus, uint32_t rate, uint8_t addr);
+int i2c_write(struct i2c_config config, uint8_t write_len, uint8_t *write);
+int i2c_read(struct i2c_config config, uint8_t reg_len, uint8_t *reg
+             , uint8_t read_len, uint8_t *read);
+
 #endif // gpio.h

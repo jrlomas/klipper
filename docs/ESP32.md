@@ -70,6 +70,90 @@ escape hatch for production step generation, and the FOC backend
 (own timer, tolerant of µs-level ISR jitter) is a better first
 citizen of this chip.  This target is FOC-first.
 
+## Peripheral bindings
+
+Beyond the initial timer/GPIO/ADC set, the port implements the RFC
+0001 [doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)
+"command parity" bindings.  Per that document's stance, everything
+documented in the TRM is driven at register level against the
+Apache-2.0 `soc/*.h` headers; the IDF driver appears only where the
+call is task-context-only configuration:
+
+| Binding | Commands | Implementation |
+| ------- | -------- | -------------- |
+| GPIO in/out | `gpiocmds`, `endstop`, `trsync`, `buttons` | IDF pad config; register (`out_w1ts/w1tc`) hot path |
+| ADC (ADC1) | `adccmds` | IDF oneshot, deferred to a core-0 task |
+| SPI (`spi2`/HSPI, `spi3`/VSPI) | `spicmds` + software SPI | register level (polled, W0..W15 buffer) |
+| I2C (`i2c0`) | `i2ccmds` + software I2C | register level (command-list engine) |
+| Hard PWM (LEDC high-speed) | `pwmcmds` | IDF `ledc` config; register duty updates |
+| UART bit-bang | `tmcuart` | generic (gpio + timers) |
+| Neopixel | `neopixel` | generic bit-bang - timing is subject to the jitter caution above; verify on hardware |
+| RMT step module | none yet (experimental) | register level, see below |
+
+Details and constraints:
+
+* **SPI** (`src/esp32/spi.c`): synchronous polled transfers, ISR
+  tolerant (klipper's `spidev_shutdown` can run from the shutdown
+  path, where the IDF driver's mutexes are unusable).  Bus `spi2` is
+  MISO/MOSI/CLK = GPIO12/13/14, `spi3` is GPIO19/23/18, routed
+  through the GPIO matrix; modes 0-3; the divider realizes
+  80MHz/(2*pre) without exceeding the requested rate, capped at
+  20MHz for matrix-routed MISO timing.  CS is a plain klipper gpio.
+* **I2C** (`src/esp32/i2c.c`): bus `i2c0` on SCL=GPIO22, SDA=GPIO21
+  (open drain, internal pullups - external pullups still
+  recommended).  The address byte travels in its own hardware
+  command segment so klippy sees distinct `START_NACK` /
+  `START_READ_NACK` / `NACK` / `TIMEOUT` statuses (stm32 semantics);
+  transfers longer than the 32-byte FIFO use the TRM's END-command
+  continuation.  Errors reset the controller (the ESP32 I2C FSM is
+  not reliably recoverable in place).
+* **Hard PWM** (`src/esp32/hard_pwm.c`): 8 LEDC high-speed channels
+  (one per pin), 4 shared timers (channels with equal cycle_time
+  share).  `cycle_time` (20MHz klipper ticks) maps to an LEDC
+  frequency of `20MHz/cycle_ticks` with duty resolution chosen as
+  the largest realizable `res <= 15` bits (`~log2(80MHz*cycle/20MHz)`);
+  higher PWM frequency costs resolution (20kHz -> 12 bits, 1MHz -> 6
+  bits).  Duty writes from timer dispatch are two register writes
+  (duty + duty_start latch); `PWM_MAX` is 32768.
+
+## RMT step generation (experimental module)
+
+`src/esp32/rmt_step.c` is the register-level pulse-train emitter for
+the "RMT escape hatch" flagged in docs 07/12: each RMT channel turns
+klipper-style `(interval, count, add)` move triples into
+hardware-timed step pulses at 20MHz resolution using the channel's
+64-item RAM as a wrap-mode ring buffer (threshold interrupt refills
+one half while the other transmits; long intervals become low-level
+filler items).  Once started, edge timing is immune to WiFi and
+flash-cache jitter.
+
+It is compiled into the build but **not wired to any command**: it
+cannot honestly back today's `stepper.c`, whose contract is a gpio
+toggle inside each sched-timer event, not a queued pulse stream.
+Integrating it means feeding it from the move queue level - either
+`queue_step` moves or the trajectory backend's step emission - and
+the open problems are real:
+
+* **Direction changes fence the stream**: an RMT channel emits step
+  edges only; the dir pin must change between two flushed trains,
+  costing a train stop/start (or a second RMT channel and a
+  merge scheme).
+* **Timeline anchoring**: RMT time is relative to `tx_start`; step
+  N's absolute time is the sum of all prior items.  Aligning that
+  with klipper's clock needs a synchronized start (e.g. armed from
+  a sched timer) and drift accounting over long trains.
+* **Underrun is silent and dangerous**: in wrap mode the hardware
+  happily re-reads stale items if a refill is late - duplicated
+  steps, not a clean shutdown.  A production backend must watermark
+  the reader (RMT status register) and shut down on near-underrun.
+* Queue-underrun currently *ends* a train (an end marker is written)
+  - correct for discrete pulse bursts, but a continuous-motion
+  backend needs the always-ahead feeding discipline above.
+
+The FOC/sampled backend (own timer, tolerant of microsecond jitter)
+remains this chip's first-class motion citizen; classic timer-IRQ
+stepping remains compiled-but-experimental.
+
 ## Building
 
 The ESP32 target builds with ESP-IDF (v5.3.x) rather than klipper's
@@ -170,6 +254,12 @@ transport code): authenticated datagram console end-to-end, identify
 / dictionary download, command dispatch, tx batching, auth-failure
 rejection, trust-network mode.
 
+Compiled and dictionary-verified (79 commands / 28 responses,
+including `spicmds`, `i2ccmds`, `pwmcmds`, `buttons`, `tmcuart`,
+`neopixel` and the software SPI/I2C fallbacks) but, like the rest of
+the board code, not yet run on silicon: the SPI, I2C and LEDC
+bindings and the RMT step module.
+
 The ESP32 board code compiles and links (validated against stub IDF
 headers with the dictionary flow executed for real; API names and
 Kconfig options checked against ESP-IDF v5.3.2 sources), but has
@@ -178,13 +268,16 @@ the development environment could not download the toolchain.
 Remaining work, in rough order:
 
 * First `idf.py build` + on-hardware bring-up (timer ISR latency
-  measurements, WiFi soak test against udp_bridge.py).
+  measurements, WiFi soak test against udp_bridge.py; scope checks
+  of the SPI/I2C/LEDC bindings, which are validated the same
+  stub-header way as the rest of the port).
 * Keepalive datagrams during idle (NAT/AP state) and lwIP socket
   reconnect handling.
 * Enable datagram erasure FEC once the glue grows in-order block
   reassembly.
-* RMT/PCNT-based step pulse backend; FOC backend integration.
+* Wiring `rmt_step.c` to a step backend (see "RMT step generation"
+  above); PCNT step verification; FOC backend integration.
 * Ethernet (RMII) bringup variant of `wifi.c`.
-* PWM (LEDC), SPI, I2C, chip reset command, watchdog.
+* Chip reset command, watchdog.
 * A native klippy UDP transport (RFC 0001 doc 05) replacing the pty
   bridge.

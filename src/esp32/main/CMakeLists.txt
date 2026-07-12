@@ -37,6 +37,9 @@ set(KLIPPER_CORE_SRCS
     # core (see src/Makefile src-y)
     sched.c command.c basecmd.c debugcmds.c initial_pins.c
     gpiocmds.c stepper.c endstop.c trsync.c adccmds.c
+    # peripheral command modules (CONFIG_WANT_* in autoconf.h)
+    spicmds.c spi_software.c i2ccmds.c i2c_software.c pwmcmds.c
+    buttons.c tmcuart.c neopixel.c
     # trajectory intention queue (RFC 0001)
     trajq.c traj_stepper.c execlog.c timesync.c heater_hold.c)
 list(TRANSFORM KLIPPER_CORE_SRCS PREPEND ${KLIPPER_ROOT}/src/)
@@ -51,6 +54,10 @@ set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/timer.c
     ${KLIPPER_ROOT}/src/esp32/gpio.c
     ${KLIPPER_ROOT}/src/esp32/adc.c
+    ${KLIPPER_ROOT}/src/esp32/spi.c
+    ${KLIPPER_ROOT}/src/esp32/i2c.c
+    ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
+    ${KLIPPER_ROOT}/src/esp32/rmt_step.c
     ${KLIPPER_ROOT}/src/esp32/wifi.c
     ${KLIPPER_ROOT}/src/esp32/udp_port.c)
 
@@ -88,6 +95,7 @@ target_compile_options(klipper_core PRIVATE
 # Headers of the IDF components the board bindings use
 foreach(comp freertos esp_common esp_system esp_hw_support esp_rom
         hal soc log heap esp_driver_gpio esp_driver_gptimer esp_adc
+        esp_driver_ledc
         esp_wifi nvs_flash lwip esp_netif esp_event newlib esp_timer)
     if(TARGET __idf_${comp})
         target_link_libraries(klipper_core PRIVATE __idf_${comp})
