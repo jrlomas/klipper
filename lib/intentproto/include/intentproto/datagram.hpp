@@ -46,13 +46,17 @@ struct ClassStats {
 // ---- datagram binding ----
 // [u16 seq][u8 flags][payload: whole frames][8-byte HMAC tag]
 // flags: bits 0-1 traffic class, bit 2 = XOR parity datagram,
-//        bit 3 = authenticated
+//        bit 3 = authenticated, bit 4 = session-protected (the
+//        optional session-security upgrade, session_sec.hpp; the
+//        static-PSK path here never sets or inspects it). Bits 5-7
+//        remain reserved header space as RFC 0001 doc 07 promised.
 constexpr size_t DATAGRAM_HEADER = 3;
 constexpr size_t DATAGRAM_TAG = 8;
 constexpr size_t DATAGRAM_MAX = 1472; // typical UDP payload MTU
 constexpr uint8_t DGF_CLASS_MASK = 0x03;
 constexpr uint8_t DGF_PARITY = 0x04;
 constexpr uint8_t DGF_AUTH = 0x08;
+constexpr uint8_t DGF_SESSION = 0x10;
 
 struct DatagramTx {
     const uint8_t* psk;

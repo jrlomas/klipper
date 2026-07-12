@@ -17,10 +17,10 @@ BUILD := build
 # src/capi.cpp is the host-profile extern "C" shim (doc 10); it carries
 # no static registration, so linking it into every test is harmless.
 SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
-	src/datagram.cpp src/capi.cpp boot/bootcore.cpp
+	src/datagram.cpp src/session_sec.cpp src/capi.cpp boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp) include/intentproto/capi.h
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
-	test_negotiate test_extdesc test_wide test_bootcore
+	test_negotiate test_extdesc test_wide test_bootcore test_session_sec
 
 .PHONY: all test capi embedded dict clean
 

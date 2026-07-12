@@ -95,6 +95,38 @@ Python one politely when cffi is absent.
 The tests port a slice of the OpenAMS firmware's command set as the
 working example.
 
+## Session security (optional)
+
+The datagram transport authenticates every packet with a truncated
+HMAC-SHA256 keyed by a **static** PSK — that is the mandatory floor
+(RFC 0001 doc 07) and the default, and it is untouched. On top of it,
+`session_sec.hpp` adds the *negotiated* upgrade RFC 07 had deferred as
+"heavier machinery (DTLS, key rotation, per-board identities)":
+
+* **HKDF-SHA256** (`hmac.hpp`, RFC 5869, built from the existing HMAC)
+  derives per-session traffic keys from the PSK plus exchanged nonces,
+  so the raw PSK never rides on a data packet.
+* A **3-message PSK handshake** (`ClientHello` / `ServerHello` /
+  `ClientFinished`) establishes independent tx/rx keys and carries a
+  **per-board identity**. It is a pure state machine like `host.hpp`:
+  no heap, no I/O, no clock, no RNG — the caller feeds it its own
+  nonce and bytes; it emits bytes and reaches `Established`.
+* **Key rotation** by an epoch bump (a datagram-count threshold or an
+  explicit `rekey()`), **replay protection** by a 64-entry sliding
+  window over the per-epoch sequence, and **downgrade** to the static
+  path when a peer does not answer the offer.
+
+Scope and threat model are argued at the top of `session_sec.hpp`:
+this is a purpose-built authenticated session, **not** full IETF DTLS
+1.3 (still deferred — it would be unverifiable in a freestanding,
+no-heap library), and it is **auth-only** — like the static path it
+authenticates but does not encrypt, because the stated threat is
+forgery/replay of motion commands, not payload secrecy. Session
+datagrams are flagged with `DGF_SESSION` (flags bit 4); the static-PSK
+codec never sets or inspects it. A live `SecureSession` (both
+directions, keys, epochs and the replay window) costs 264 bytes of
+RAM per link on the STM32F072 floor.
+
 ## Not yet implemented (tracked in RFC 0001 doc 10)
 
 * Segment payload codecs (`queue_traj_segment` coefficient

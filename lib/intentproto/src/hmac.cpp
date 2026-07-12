@@ -221,4 +221,60 @@ bool hmac_tag_equal(const uint8_t a[HMAC_TAG_SIZE],
     return diff == 0;
 }
 
+// ---------------- HKDF-SHA256 (RFC 5869) ----------------
+
+void hkdf_extract(const uint8_t* salt, size_t salt_len,
+                  const uint8_t* ikm, size_t ikm_len,
+                  uint8_t prk[SHA256_DIGEST_SIZE]) {
+    // A null salt is defined as HashLen zero bytes (section 2.2). The
+    // HMAC key path already zero-pads a short key, so passing the zero
+    // buffer explicitly keeps that intent visible.
+    uint8_t zero[SHA256_DIGEST_SIZE];
+    if (!salt || !salt_len) {
+        memset(zero, 0, sizeof(zero));
+        salt = zero;
+        salt_len = sizeof(zero);
+    }
+    hmac_sha256(salt, salt_len, ikm, ikm_len, prk);
+    memset(zero, 0, sizeof(zero));
+}
+
+void hkdf_expand(const uint8_t prk[SHA256_DIGEST_SIZE],
+                 const uint8_t* info, size_t info_len,
+                 uint8_t* okm, size_t okm_len) {
+    // T(0) = empty; T(i) = HMAC(PRK, T(i-1) || info || i); OKM is the
+    // first okm_len bytes of T(1) || T(2) || ... (section 2.3).
+    uint8_t t[SHA256_DIGEST_SIZE];
+    size_t t_len = 0;
+    uint8_t counter = 0;
+    size_t done = 0;
+    while (done < okm_len) {
+        counter++;
+        HmacSha256 h;
+        h.begin(prk, SHA256_DIGEST_SIZE);
+        h.update(t, t_len);            // T(i-1); empty on the first pass
+        if (info_len)
+            h.update(info, info_len);
+        h.update(&counter, 1);
+        h.finish(t);
+        t_len = SHA256_DIGEST_SIZE;
+        size_t n = okm_len - done;
+        if (n > SHA256_DIGEST_SIZE)
+            n = SHA256_DIGEST_SIZE;
+        memcpy(okm + done, t, n);
+        done += n;
+    }
+    memset(t, 0, sizeof(t));
+}
+
+void hkdf_sha256(const uint8_t* salt, size_t salt_len,
+                 const uint8_t* ikm, size_t ikm_len,
+                 const uint8_t* info, size_t info_len,
+                 uint8_t* okm, size_t okm_len) {
+    uint8_t prk[SHA256_DIGEST_SIZE];
+    hkdf_extract(salt, salt_len, ikm, ikm_len, prk);
+    hkdf_expand(prk, info, info_len, okm, okm_len);
+    memset(prk, 0, sizeof(prk));
+}
+
 } // namespace intentproto

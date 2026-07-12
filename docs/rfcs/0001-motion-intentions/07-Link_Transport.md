@@ -182,9 +182,27 @@ UDP transport** — not an open question, not a later phase:
 * An unauthenticated mode exists only as an explicit
   `trust_network: true` configuration confession, for lab benches and
   isolated VLANs.
-* Heavier machinery (DTLS, key rotation, per-board identities) is
-  deferred, but the datagram layout reserves the header space so
-  adopting it later is not a re-framing.
+* Heavier machinery (session keys, key rotation, per-board
+  identities) is **no longer deferred**: it now exists as an
+  *optional, negotiated* session-security layer in the intentproto
+  library (`session_sec.hpp`), riding the reserved header space
+  exactly as promised — a spare flags bit (`DGF_SESSION`) marks
+  session-protected datagrams, so adopting it was not a re-framing.
+  A peer *offers* the upgrade with a short PSK-authenticated
+  handshake (client/server nonces + a per-board identity); HKDF-SHA256
+  derives independent, rotatable per-session tx/rx keys from the PSK
+  and the nonces, an epoch bump rotates them, and a sliding window
+  gives per-epoch replay protection. If the peer does not support it,
+  both sides stay on the **static-PSK HMAC floor, which remains
+  mandatory and the default**. The layer is deliberately *auth-only*
+  (rotated session keys, no payload encryption): the threat here is
+  forgery and blind replay of motion/heater commands, not secrecy of
+  the commands. Full IETF DTLS 1.3 remains out of scope — the
+  purpose-built layer delivers the properties this section names
+  (session keys, rotation, identity, replay defence) at a size a
+  freestanding no-heap MCU build can actually audit. Confidentiality,
+  should it ever be wanted, is a clean HKDF-keystream addition on top
+  of the same schedule and still not a re-framing.
 * Wired point-to-point transports (USB, UART, CAN) keep their current
   physical-access trust model — unchanged, but now that model is a
   *stated* decision rather than an accident.

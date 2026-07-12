@@ -62,6 +62,32 @@ void hmac_sha256_tag(const uint8_t* key, size_t keylen,
 bool hmac_tag_equal(const uint8_t a[HMAC_TAG_SIZE],
                     const uint8_t b[HMAC_TAG_SIZE]);
 
+// ---- HKDF-SHA256 (RFC 5869) ----
+// The extract-and-expand key derivation function, built entirely from
+// the HMAC-SHA256 above. Used by the optional session-security layer
+// (session_sec.hpp) to turn the static PSK plus exchanged nonces into
+// independent, rotatable per-session traffic keys — none of which is
+// the raw PSK. Freestanding: caller-owned buffers, no heap.
+
+// HKDF-Extract: PRK = HMAC(salt, IKM). A null/empty salt is replaced
+// with SHA256_DIGEST_SIZE zero bytes, per RFC 5869 section 2.2.
+void hkdf_extract(const uint8_t* salt, size_t salt_len,
+                  const uint8_t* ikm, size_t ikm_len,
+                  uint8_t prk[SHA256_DIGEST_SIZE]);
+
+// HKDF-Expand: write okm_len bytes of output keying material from PRK
+// and an optional context/info string (RFC 5869 section 2.3).
+// okm_len must be <= 255 * SHA256_DIGEST_SIZE.
+void hkdf_expand(const uint8_t prk[SHA256_DIGEST_SIZE],
+                 const uint8_t* info, size_t info_len,
+                 uint8_t* okm, size_t okm_len);
+
+// One-shot extract-then-expand convenience.
+void hkdf_sha256(const uint8_t* salt, size_t salt_len,
+                 const uint8_t* ikm, size_t ikm_len,
+                 const uint8_t* info, size_t info_len,
+                 uint8_t* okm, size_t okm_len);
+
 } // namespace intentproto
 
 #endif // INTENTPROTO_HMAC_HPP
