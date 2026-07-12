@@ -152,7 +152,7 @@ nav:
       - founding/0001-motion-intentions/11-Bootloader.md
       - founding/0001-motion-intentions/12-ESP32_Architecture.md
       - founding/0001-motion-intentions/13-Syscall_API.md
-    - FD-0002 — The Companion System:
+    - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
   - Device Specific Documents:
     - Example_Configs.md

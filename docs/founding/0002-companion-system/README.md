@@ -1,10 +1,13 @@
-# Founding Document 0002 — The Companion System
+# Founding Document 0002 — Atlas, the Companion System
 
 *Shorthand: **FD-0002**.* This is a **founding document** of HELIX: the
-design canon for the layer that turns HELIX from motion-and-comms
-firmware into **intelligent software** — a companion that watches the
-machine, understands it, diagnoses itself, provisions and heals its own
-fleet, and gets smarter as its users teach it.
+design canon for **Atlas** — the layer that turns HELIX from
+motion-and-comms firmware into **intelligent software**. Atlas is the
+companion that watches the machine, understands it, diagnoses itself,
+provisions and heals its own fleet, and gets smarter as its users teach
+it. HELIX gives the machine honesty; **Atlas** gives it a mind. Together
+they are **Helix Atlas** — the name earns itself twice over: an atlas
+*shows you where everything is*, and a Titan *carries the weight*.
 
 Status: **Planning.** Nothing here is implemented yet. This document is
 the spine; on review it splits into the numbered FD-0002 series (mirroring
@@ -41,14 +44,15 @@ These are the non-negotiables every later section answers to.
    proposes**; it never silently acts on a safety-critical path. Every
    model-proposed change is a concrete diff that is deterministically
    validated and user-confirmed before it applies.
-3. **Tiered compute — graceful degradation.** The companion runs on a
-   bare **Raspberry Pi 5** with everything deterministic (decoder,
-   diagnosis rules, monitoring, provisioning) as ordinary programs. Add an
-   **AI accelerator** (a Hailo-class NPU / the Pi AI HAT, or a
-   Strix-Halo–class host) and the **intelligence tier** switches on: local
-   **open-weight** models for interpretation, natural-language config and
-   control, and (later) voice. Nothing *requires* the accelerator; the
-   LLM tier is purely additive.
+3. **Tiered compute — graceful degradation.** Atlas runs on a bare
+   **Raspberry Pi 5** with everything deterministic (decoder, diagnosis
+   rules, monitoring, provisioning) as ordinary programs. Add the
+   LLM-capable accelerator (the **Hailo-10H** / Raspberry Pi **AI HAT+ 2**,
+   or a Strix-Halo–class host) and the **intelligence tier** switches on:
+   a local **open-weight** model for interpretation, natural-language
+   config and control, and (later) voice. Nothing *requires* the
+   accelerator; the LLM tier is purely additive, and Atlas never becomes
+   *less* safe for lacking one.
 4. **The repository is a knowledge base, not just code.** Failure
    patterns, board and config catalogs, and the model configuration +
    memory files that make "our" assistant *ours* live and version in this
@@ -65,26 +69,54 @@ These are the non-negotiables every later section answers to.
 
 ---
 
-## 2. Compute tiers — two Pi 5 profiles
+## 2. Compute tiers — the hardware reality
 
-The repo ships **two selectable profiles**; the companion auto-detects
-which hardware it is on and enables the matching tier.
+The repo ships **selectable profiles**; Atlas auto-detects the hardware
+and enables the matching tier. The important, non-obvious fact drives the
+whole design:
 
-| | **Base tier** (Pi 5, no accelerator) | **Intelligence tier** (Pi 5 + accelerator / "Halo") |
-| --- | --- | --- |
-| Trace + blackbox decode | ✓ deterministic | ✓ |
-| Diagnosis **rules** engine | ✓ deterministic | ✓ |
-| Live health monitor + anomaly | ✓ deterministic | ✓ |
-| Provisioning + fleet coherence | ✓ | ✓ |
-| **LLM interpretation** of unmatched cases | small CPU model or off | ✓ local open-weight model |
-| **NL config / control** ("change the display to…") | — | ✓ |
-| Report synthesis / RAG over the KB | templated | ✓ model-written |
-| Voice (future) | — | ✓ local ASR → intent pipeline |
+> **Only the Hailo-10H can host an LLM.** The Raspberry Pi **AI HAT+ 2**
+> (Hailo-10H, ~40 TOPS, **8 GB** of dedicated on-board LPDDR4X) can run a
+> language model *on the accelerator*. The earlier **Hailo-8 / 8L**
+> (26 / 13 TOPS) are vision/CNN NPUs — they **cannot** run an LLM, but
+> they *can* accelerate **Whisper** (speech-to-text), which is exactly
+> what the voice feature needs. So the accelerator tier is really two
+> distinct capabilities: **LLM (needs the 10H)** and **ASR (any Hailo, or
+> CPU)**.
 
-The point of the split is that a **$0 upgrade path** exists: buy the
-accelerator, the same companion becomes conversational. The deterministic
-floor never depends on it, so a machine is never *less* safe for lacking
-one.
+| | **Base** (Pi 5 only) | **ASR-accel** (Pi 5 + Hailo-8/8L) | **Intelligence** (Pi 5 + Hailo-10H / AI HAT+ 2) |
+| --- | --- | --- | --- |
+| Trace + blackbox decode | ✓ | ✓ | ✓ |
+| Diagnosis **rules** engine | ✓ | ✓ | ✓ |
+| Live monitor + anomaly | ✓ | ✓ | ✓ |
+| Provisioning + fleet coherence | ✓ | ✓ | ✓ |
+| **LLM** interpretation / NL config / control | tiny CPU model or off | tiny CPU model or off | ✓ on-accelerator |
+| Report synthesis / RAG over KB | templated | templated | ✓ model-written |
+| **Voice** (future) | — | ✓ Whisper on Hailo | ✓ Whisper + LLM |
+
+**The model we design against.** The **Qwen3 dense family** —
+0.6B / 1.7B / 4B / 8B / 14B / 32B, all with a 128K context window, **tool
+calling**, **structured output**, and dual-mode thinking (a slow
+reasoning mode for a hard diagnosis, a fast mode for routine work). Tool
+calling + structured output are precisely what Atlas's
+draft → validate → apply discipline requires, so this family is not a
+fashion pick — it is a functional requirement.
+
+- **Default (Hailo-10H, 8 GB):** **Qwen3-4B** at Q4_K_M (~2.5–3 GB) — fits
+  the on-board RAM with headroom for context and the ASR model. Fallback
+  **Qwen3-1.7B** on tighter budgets; stretch **Qwen3-8B** where it fits.
+- **Power host (Strix-Halo–class):** Qwen3-8B/14B comfortably.
+- **Base (Pi 5 CPU):** a 0.6B/1.7B model is possible but slow (a few
+  tok/s); treat CPU-LLM as "works, not pleasant," and keep everything
+  load-bearing in the deterministic floor.
+- **Pinning:** the exact model + quantization + revision is **data in the
+  repo** (§6), versioned with the prompts and memory, so "our Atlas" is
+  reproducible and can be re-pinned as the Qwen line advances (3.5/3.6 …)
+  or as Hailo's model zoo compiles newer weights.
+
+The payoff of the split: a **clean upgrade path** — a bare Pi 5 runs the
+whole deterministic companion today; add the AI HAT+ 2 and the same Atlas
+becomes conversational, with no change to the safety floor.
 
 ---
 
@@ -204,12 +236,10 @@ machine can trust an update — reusing FD-0001's Ed25519):
 Verified outcomes raise a candidate's confidence.
 
 **Acceptance → promotion (governance).** A raw submission **never
-auto-influences another machine.** Promotion to the shared catalog is
-gated: a maintainer (assisted by the model's triage) reviews the case, a
-deterministic check confirms the signature is well-formed and
-non-conflicting, the entry is signed, and only then is it published to
-the KB where other machines will pull it. Confidence and provenance ride
-with every entry.
+auto-influences another machine.** Promotion is a transparent,
+public process on GitHub — the rationale for *every* accept and reject is
+visible, so the community can see **why** a pattern did or did not become
+part of the shared brain. This is specified in full in §6a below.
 
 **Security of aggregation (poisoning, privacy, consent).**
 - **Privacy:** local-first; opt-in; redacted; minimized. Nothing about a
@@ -222,6 +252,80 @@ with every entry.
 
 ---
 
+## 6a. How reports are aggregated &amp; accepted (the KB lifecycle)
+
+The knowledge base is a public asset, so **how a case becomes knowledge
+is itself public.** Nothing is promoted in a back room; every decision —
+accept *or* reject — leaves a readable rationale in the open. The
+mechanism is ordinary GitHub, used deliberately.
+
+**State machine.** Every submission is a GitHub Issue that moves through
+labelled states, and the label *is* the audit trail:
+
+1. `case/new` — an opt-in, redacted blackbox bundle arrives as an Issue
+   from a structured template (symptom, merged-timeline excerpt,
+   diagnosis or "no match", firmware/host/library versions, Atlas's
+   proposed rule if any). A bot validates the template and attaches a
+   **content hash** and the submitter's provenance.
+2. `case/triage` — deduplicated against existing cases and open patterns
+   (Atlas assists by clustering similar bundles). Duplicates are linked to
+   the canonical case, raising its **observation count**, not spawning
+   noise.
+3. `case/analysis` — a candidate **pattern** is drafted: signature →
+   cause → fix, with a confidence seed. This is a proposed change to the
+   catalog data, opened as a **pull request linked to the Issue**, so the
+   exact diff to the shared brain is reviewable.
+4. `case/verify` — the fix is corroborated: reproduction, a
+   deterministic check that the signature is well-formed and does **not
+   conflict** with an existing pattern, and real-world **"did this fix
+   work?"** feedback from other machines that hit it. Confidence rises
+   with independent confirmations.
+5. `accepted` **or** `rejected/*` — a maintainer merges the PR (the
+   pattern enters the signed catalog) **or** closes it with a
+   **`rejected/<reason>`** label. Either way the closing comment states
+   the rationale in plain language.
+
+**Every decision carries its "why."** Acceptance and rejection both
+require a written rationale on the Issue, drawn from a fixed, public
+vocabulary so reasons are consistent and searchable:
+
+- Accept reasons: `reproduced`, `multi-machine-confirmed`,
+  `root-cause-clear`, `fix-verified`.
+- Reject reasons: `rejected/not-reproducible`,
+  `rejected/machine-specific` (a local quirk, not general knowledge),
+  `rejected/duplicate`, `rejected/insufficient-data`,
+  `rejected/unsafe-fix`, `rejected/superseded`.
+
+A reader can therefore open the KB's Issue tracker and see not just
+*what* Atlas knows, but the *entire argument* for every entry — and for
+everything the project decided **not** to learn, which is often the more
+instructive record.
+
+**Promotion gate (what actually changes the shared brain).** A pattern
+influences other machines **only** when: its PR is merged into the
+catalog on the default branch, the catalog is **Ed25519-signed** by the
+project key, and machines pull the signed update. So the model can
+*propose* a pattern (step 3), the community can *corroborate* it
+(step 4), but only a **reviewed, merged, signed** change reaches the
+fleet — the same trust discipline HELIX already applies to firmware
+images. Raw submissions never touch another machine.
+
+**Confidence &amp; decay.** Each accepted pattern carries a confidence that
+rises with independent confirmations and **decays** if later cases
+contradict it or a HELIX/Atlas release supersedes the underlying cause —
+so the brain forgets stale lessons instead of hoarding them. A
+contradicted pattern re-enters the lifecycle at `case/verify` rather than
+being silently trusted.
+
+**Anti-poisoning, restated concretely.** Because the only path to the
+fleet is a signed merge to the catalog, a bad actor cannot inject
+knowledge by spamming submissions: they can open Issues (which are
+public and deduplicated), but they cannot merge, sign, or bypass the
+`case/verify` corroboration. Submitter provenance and reputation weight
+triage priority, never the final gate.
+
+---
+
 ## 7. Plane 4 — The LLM as interpreter *and* actuator
 
 The features Klipper isn't even considering. Two modes, one guardrail.
@@ -231,12 +335,24 @@ answer "why did my print fail?" — grounded by RAG over the KB and the
 machine's own **memory file** (its history, quirks, learned baselines).
 
 **Generate &amp; control.** "Change the display menu so it does X."
-"Add a macro that…". "Verify my config for errors." The model produces a
-**concrete diff or action**, which is then **deterministically validated
-and shown to the user for confirmation** before anything applies. Nothing
-safety-critical is ever auto-applied — the model drafts, the deterministic
-layer checks, the human commits. This is the same
-NL → structured → validate → confirm discipline throughout.
+"Add a macro that…". "Verify my config for errors." Atlas produces a
+**concrete diff or action**, which is then **deterministically
+validated** before anything happens. What comes next depends on a
+**risk tier**, not a blanket rule:
+
+| Tier | Examples | Behaviour |
+| --- | --- | --- |
+| **Catastrophic / safety-affecting** | thermal limits, endstop/probe config, kinematics, driver current, anything that can damage the machine or a person | **Always confirm.** Never auto-applied. |
+| **Consequential but reversible** | pin remaps, macro logic, speed/accel defaults | Auto-apply **allowed**, with a one-click undo and an audit entry; a preview is offered. |
+| **Cosmetic / non-functional** | display menu layout, UI labels, colours, wording | **Auto-apply.** |
+
+Every applied change — at any tier — is journaled to the machine's
+memory with its diff, so *undo* and *"what did Atlas change?"* are always
+answerable. The rule is **"auto-apply when not catastrophic,"** with a
+deterministic classifier (not the model) deciding the tier from the diff,
+so the safety gate never depends on the LLM's judgement. Atlas drafts;
+the deterministic layer classifies and validates; the human is asked only
+when the stakes justify it.
 
 **Voice (future, opt-in).** A microphone → local ASR → the *same* intent
 pipeline. No new trust surface: a spoken request is just another way to
@@ -282,17 +398,31 @@ base vs the intelligence tier.
 
 ## 10. Open decisions (for review before we split &amp; build)
 
-1. **The companion-service boundary** — how much lives as Moonraker
-   components vs a standalone HELIX daemon. (Affects everything downstream.)
-2. **Redaction policy** — the exact default-strip list for shared bundles,
-   and whether any field is *ever* sent unredacted.
-3. **KB trust model** — single project signing key vs a web of maintainer
-   keys; submitter reputation mechanics.
-4. **Target model family** — which open-weight model(s) we pin for the
-   accelerator tier, and the minimum accelerator we design against.
-5. **Auto-apply boundary** — is *anything* ever applied without an
-   explicit confirm (e.g. a purely cosmetic display tweak), or is
-   confirm-always an inviolable rule?
+**Settled (this review):**
+- ✅ **Companion boundary** — **Moonraker** owns anything that *changes
+  but is polled or API'd* (state, jobs, report submission, KB pulls,
+  feedback capture). A **standalone Atlas daemon** owns the always-on
+  monitor, the local-model runtime, and the merged-timeline store.
+- ✅ **Model &amp; accelerator** — pin the **Qwen3 dense family**; default
+  **Qwen3-4B (Q4_K_M)**; design the intelligence tier against the
+  **Hailo-10H / AI HAT+ 2** (8 GB). Base and ASR-accel tiers run the
+  deterministic floor without an LLM.
+- ✅ **Auto-apply** — **"auto-apply when not catastrophic,"** with a
+  deterministic (non-LLM) classifier setting the risk tier and every
+  change journaled + undoable (§7).
+- ✅ **Acceptance is public** — the full KB lifecycle runs on GitHub
+  Issues with a written, fixed-vocabulary rationale for every accept and
+  reject (§6a).
 
-*When these are settled, FD-0002 splits into the numbered series and
-Milestone A begins.*
+**Still open:**
+1. **Redaction policy** — the exact **allowlist** (redact-by-default; a
+   field is shared only if explicitly on the list) for blackbox bundles.
+   Is any field *ever* shared unredacted?
+2. **KB trust model** — start with a **single project signing key**, or a
+   maintainer web-of-trust from the outset? Submitter-reputation mechanics.
+3. **ASR engine** — Whisper variant/size for the voice tier, and whether
+   the Hailo-8/8L ASR-accel tier is worth first-class support or just
+   "works on CPU."
+
+*When the three open items are settled, FD-0002 splits into the numbered
+series and Milestone A (Observe + Provision) begins.*
