@@ -93,6 +93,35 @@ src-$(CONFIG_MACH_STM32G0) += stm32/comp.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/gpio_exti.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/adc_watchdog.c stm32/timer_capture.c
 
+# Native RMII Ethernet MAC/DMA bring-up skeleton (design seam)
+src-$(CONFIG_WANT_ETHERNET_RMII) += stm32/eth_mac.c
+
+# Ethernet datagram console: the intentproto datagram codec is
+# freestanding C++ (no exceptions/rtti/heap); compile it with the ARM
+# g++ and link it alongside the LTO C objects, exactly as the linux and
+# esp32 ports do for the same udp_console.c glue.
+ifeq ($(CONFIG_NEED_UDP_CONSOLE),y)
+CXX = $(CROSS_PREFIX)g++
+w5500-cxxflags := $(CFLAGS-y) -mthumb -D$(MCU_UPPER) \
+	-iquote src/generic -Ilib/intentproto/include \
+	-std=c++17 -Os -MD -Wall -fno-exceptions -fno-rtti \
+	-fno-threadsafe-statics -ffunction-sections -fdata-sections -ggdb3
+udpdg-objs := $(OUT)src/generic/udp_datagram.o \
+	$(OUT)lib/intentproto/src/datagram.o \
+	$(OUT)lib/intentproto/src/bch.o \
+	$(OUT)lib/intentproto/src/hmac.o
+OBJS_klipper.elf += $(udpdg-objs)
+
+$(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp
+	@echo "  Compiling (C++) $@"
+	$(Q)$(CXX) $(w5500-cxxflags) -c $< -o $@
+
+$(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp
+	@echo "  Compiling (C++) $@"
+	$(Q)mkdir -p $(OUT)lib/intentproto/src
+	$(Q)$(CXX) $(w5500-cxxflags) -c $< -o $@
+endif
+
 # Binary output file rules
 target-y += $(OUT)klipper.bin
 

@@ -149,6 +149,7 @@ nav:
     - SDCard_Updates.md
     - RPi_microcontroller.md
     - ESP32.md
+    - Ethernet.md
     - Beaglebone.md
     - Bootloaders.md
     - Bootloader_Entry.md

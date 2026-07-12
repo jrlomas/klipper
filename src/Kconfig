@@ -213,6 +213,87 @@ config WANT_BOOTLOADER
     bool
     depends on HAVE_BOOTLOADER_REQUEST
     default y if !HAVE_LIMITED_CODE_SIZE
+
+# Network transports (RFC 0001 doc 07): the datagram console binding
+# runs unchanged over Ethernet.  These are opt-in and code-size
+# sensitive - default off everywhere, and never defaulted on for
+# limited-code-size boards.
+config WANT_ETHERNET_W5500
+    bool "Support W5500 SPI Ethernet datagram console transport"
+    depends on WANT_SPI
+    default n
+    help
+        WIZnet W5500 hardwired TCP/IP controller as a UDP datagram
+        console transport - the same intentproto binding used over
+        WiFi, riding a wired link.  Works on any board with an SPI bus.
+        See docs/Ethernet.md.  Compile-checked, not hardware-validated.
+
+if WANT_ETHERNET_W5500
+config W5500_SPI_RATE
+    int "W5500 SPI clock rate (Hz)"
+    default 8000000
+config W5500_TRUST_NETWORK
+    bool "Run the W5500 link unauthenticated (trust_network confession)"
+    default n
+config W5500_PSK
+    string "Pre-shared key for datagram authentication"
+    default ""
+config CONSOLE_W5500
+    bool "Route the MCU console over the W5500 link"
+    default n
+    help
+        Make the W5500 the board's console transport: board
+        console_sendf()/console_receive_buffer() route through the
+        datagram glue (as esp32/main.c does for its lwIP socket) and
+        the link is brought up at startup from the static
+        configuration below.  Leave off to use the W5500 as a
+        secondary transport configured at runtime by config_w5500.
+if CONSOLE_W5500
+config W5500_SPI_BUS
+    int "W5500 SPI bus index"
+    default 0
+config W5500_CS_PIN
+    int "W5500 chip-select pin, encoded as (port-'A')*16 + num (PA4=4)"
+    default 4
+config W5500_UDP_PORT
+    int "W5500 UDP listen port"
+    default 1234
+config W5500_IP
+    hex "Static IPv4 address (0xC0A800FE == 192.168.0.254)"
+    default 0xC0A800FE
+config W5500_NETMASK
+    hex "Static IPv4 netmask"
+    default 0xFFFFFF00
+config W5500_GATEWAY
+    hex "Static IPv4 gateway"
+    default 0xC0A80001
+endif # CONSOLE_W5500
+endif # WANT_ETHERNET_W5500
+
+# Native on-chip Ethernet MAC + external RMII PHY path (needs a
+# software IP stack).  HAVE_ETH_MAC is set by ports with a built-in MAC.
+config HAVE_ETH_MAC
+    bool
+config WANT_ETHERNET_RMII
+    bool "Support native RMII Ethernet MAC datagram console (design seam)"
+    depends on HAVE_ETH_MAC
+    default n
+    help
+        Native on-chip Ethernet MAC driving an external RMII PHY.
+        Ships the MAC/DMA descriptor-ring bring-up skeleton
+        (stm32/eth_mac.c) and a minimal built-in UDP/IP/ARP responder
+        (generic/nano_udp.c) as the pluggable IP layer; the MAC DMA
+        bring-up is a clearly-marked TODO seam where lwIP or the
+        built-in responder plugs in.  See docs/Ethernet.md.
+config WANT_NANO_UDP
+    bool
+    default y if WANT_ETHERNET_RMII
+# The datagram-console glue (generic/udp_console.c + the C++ intentproto
+# codec) is shared by every network transport
+config NEED_UDP_CONSOLE
+    bool
+    default y if WANT_ETHERNET_W5500 || WANT_ETHERNET_RMII
+
 menu "Optional features (to reduce code size)"
     depends on HAVE_LIMITED_CODE_SIZE
 config WANT_ADC

@@ -35,3 +35,10 @@ src-$(CONFIG_WANT_TRAJECTORY) += trajq.c traj_stepper.c execlog.c timesync.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += trigger_source.c
 src-$(CONFIG_WANT_HEATER_HOLD) += heater_hold.c
 src-$(CONFIG_WANT_BOOTLOADER) += bootloader_entry.c
+
+# Ethernet datagram-console transports (RFC 0001 doc 07).  The shared
+# datagram glue (udp_console.c + the C++ intentproto codec, wired in the
+# port Makefile) is pulled by NEED_UDP_CONSOLE.
+src-$(CONFIG_NEED_UDP_CONSOLE) += generic/udp_console.c
+src-$(CONFIG_WANT_ETHERNET_W5500) += generic/w5500.c
+src-$(CONFIG_WANT_NANO_UDP) += generic/nano_udp.c
