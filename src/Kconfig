@@ -228,6 +228,29 @@ config WANT_BOOTLOADER
     bool
     depends on HAVE_BOOTLOADER_REQUEST
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_SIGNED_IMAGES
+    bool "Signed firmware images (Ed25519)"
+    depends on WANT_BOOTLOADER
+    default n
+    help
+        Verify an Ed25519 (RFC 8032) signature over the application
+        image in the first-class bootloader before marking it valid or
+        booting it (RFC 0001 doc 11, "Signed images") - a second gate
+        beyond the transport HMAC and the whole-image CRC. The signature
+        covers exactly the bytes the CRC covers and is stored in the
+        validity page; the public key is embedded in the bootloader
+        (keys/helix_pubkey.h) and the private key never lives on the
+        device.
+
+        The Ed25519 + SHA-512 verify adds ~6 KiB of bootloader code, so
+        it does not fit the 16 KiB bootloader budget of the smallest
+        parts (STM32F072/G0B1); those targets build the CRC-only
+        bootloader and this option has no effect there. The bootloader
+        itself is built from src/boot_app with `make bootloader SIGNED=1`,
+        which defines CONFIG_WANT_SIGNED_IMAGES for that build; this
+        Kconfig symbol records the intent for the application build.
+        Off by default: enabling it means every accepted image must be
+        signed, so provision signing keys first.
 
 # Network transports (RFC 0001 doc 07): the datagram console binding
 # runs unchanged over Ethernet.  These are opt-in and code-size

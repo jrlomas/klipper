@@ -18,11 +18,12 @@ BUILD := build
 # no static registration, so linking it into every test is harmless.
 SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
 	src/datagram.cpp src/session_sec.cpp src/can_transport.cpp \
+	src/sha512.cpp src/ed25519.cpp \
 	src/capi.cpp boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp) include/intentproto/capi.h
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
 	test_negotiate test_extdesc test_wide test_bootcore test_session_sec \
-	test_can_transport
+	test_can_transport test_sha512 test_ed25519
 
 .PHONY: all test capi embedded dict clean
 
@@ -40,8 +41,11 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 	@for t in $(TESTS); do echo "== $$t"; ./$(BUILD)/$$t || exit 1; done
 	@if command -v python3 >/dev/null 2>&1; then \
 		echo "== test_extbind"; python3 tools/test_extbind.py || exit 1; \
+		echo "== test_ed25519_e2e (python signer <-> C verifier)"; \
+		python3 tools/test_ed25519_e2e.py || exit 1; \
 	else \
 		echo "== test_extbind (skipped: no python3)"; \
+		echo "== test_ed25519_e2e (skipped: no python3)"; \
 	fi
 
 # Host-profile C ABI (doc 10). test_capi.c is compiled as C to prove

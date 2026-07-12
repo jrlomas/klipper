@@ -114,11 +114,20 @@ boot_flash_erase_info(const struct boot_flash_geom *g)
     return boot_flash_erase(g->info_addr);
 }
 
+// Write the validity record, and — for a signed image — the 64-byte
+// Ed25519 signature immediately after it in the same erased info sector
+// (RFC 0001 doc 11). sig may be NULL / flags may lack BOOT_INFO_FLAG_SIGNED
+// for an unsigned image.
 int
 boot_flash_write_info(const struct boot_flash_geom *g, uint32_t size,
-                      uint32_t crc)
+                      uint32_t crc, uint32_t flags, const uint8_t *sig)
 {
-    struct boot_info_record rec = {BOOT_INFO_MAGIC, size, crc, 0};
+    struct boot_info_record rec = {BOOT_INFO_MAGIC, size, crc, flags};
     boot_flash_erase(g->info_addr);
-    return boot_flash_write(g->info_addr, (const uint8_t *)&rec, sizeof(rec));
+    int rc = boot_flash_write(g->info_addr, (const uint8_t *)&rec,
+                              sizeof(rec));
+    if (rc || !(flags & BOOT_INFO_FLAG_SIGNED) || !sig)
+        return rc;
+    return boot_flash_write(g->info_addr + BOOT_INFO_SIG_OFFSET, sig,
+                            BOOT_INFO_SIG_SIZE);
 }

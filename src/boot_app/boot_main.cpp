@@ -15,6 +15,15 @@
 #include <intentproto/method.hpp>
 #include <intentproto/proto.hpp>
 
+// Signed firmware images (RFC 0001 doc 11, "Signed images"). Entirely
+// compiled out unless the bootloader is built with signing enabled; an
+// unsigned build behaves exactly as before (CRC-only validity). The
+// embedded public key is generated from keys/helix_dev_signing.pub —
+// see keys/README.md. The private key never lives on the device.
+#ifdef CONFIG_WANT_SIGNED_IMAGES
+#include "../../keys/helix_pubkey.h"
+#endif
+
 extern "C" {
 #include "boot_flash.h"
 // Per-target driver (exactly one boot_flash_stm32*.c is linked).
@@ -24,7 +33,7 @@ int boot_flash_write(uint32_t addr, const uint8_t *data, size_t len);
 const uint8_t *boot_flash_read(uint32_t addr);
 int boot_flash_erase_info(const struct boot_flash_geom *g);
 int boot_flash_write_info(const struct boot_flash_geom *g, uint32_t size,
-                          uint32_t crc);
+                          uint32_t crc, uint32_t flags, const uint8_t *sig);
 
 // Transport seam. The port supplies these (USB CDC / UART / CAN);
 // weak defaults let the object set link and compile-check standalone.
@@ -91,7 +100,12 @@ ops_set_valid(int valid, void *user)
     const boot_flash_geom *g = (const boot_flash_geom *)user;
     if (!valid)
         return boot_flash_erase_info(g);
-    return boot_flash_write_info(g, g_bc.image_size, g_bc.image_crc);
+    // Persist the signed flag and signature (bootcore set them only
+    // after the signature verified); an unsigned image has flags==0.
+    const uint8_t *sig = (g_bc.flags & BOOTCORE_FLAG_SIGNED)
+                             ? g_bc.signature : nullptr;
+    return boot_flash_write_info(g, g_bc.image_size, g_bc.image_crc,
+                                 g_bc.flags, sig);
 }
 
 static FlashOps g_ops;
@@ -116,7 +130,7 @@ build_ops(void)
 KLIPPER_RESPONSE(flash_result, (uint8_t, op), (uint8_t, code),
                  (uint32_t, arg));
 
-enum { OP_BEGIN = 0, OP_DATA, OP_VERIFY, OP_BOOT, OP_ENTER };
+enum { OP_BEGIN = 0, OP_DATA, OP_VERIFY, OP_BOOT, OP_ENTER, OP_SIGN };
 
 KLIPPER_METHOD(flash_begin, (uint32_t, size), (uint32_t, crc32))
 {
@@ -130,9 +144,28 @@ KLIPPER_METHOD(flash_data, (uint32_t, offset), (buf, data))
     reply(flash_result{OP_DATA, (uint8_t)rc, g_bc.received});
 }
 
+#ifdef CONFIG_WANT_SIGNED_IMAGES
+// flash_sign data=<64-byte Ed25519 signature> — the host supplies the
+// signature over the exact application image (the CRC'd bytes) before
+// flash_verify. Only present in a signing-enabled bootloader.
+KLIPPER_METHOD(flash_sign, (buf, data))
+{
+    int rc = (data.len == BOOT_SIG_SIZE)
+                 ? bootcore_set_signature(&g_bc, data.data)
+                 : BOOT_ERR_RANGE;
+    reply(flash_result{OP_SIGN, (uint8_t)rc, (uint32_t)data.len});
+}
+#endif
+
 KLIPPER_METHOD0(flash_verify)
 {
     int rc = bootcore_verify(&g_bc);
+#ifdef CONFIG_WANT_SIGNED_IMAGES
+    // Signature is a second, mandatory gate: the app is not marked
+    // valid unless BOTH the CRC and the Ed25519 signature pass.
+    if (rc == BOOT_OK)
+        rc = bootcore_verify_signature(&g_bc, helix_pubkey);
+#endif
     reply(flash_result{OP_VERIFY, (uint8_t)rc, g_bc.image_crc});
 }
 
@@ -172,7 +205,21 @@ app_is_valid(void)
         return 0;
     if (!rec->size || rec->size > g->app_size)
         return 0;
-    return bootcore_app_crc_ok(&g_ops, rec->size, rec->crc);
+    if (!bootcore_app_crc_ok(&g_ops, rec->size, rec->crc))
+        return 0;
+#ifdef CONFIG_WANT_SIGNED_IMAGES
+    // Enforced signing: the stored image must be marked signed and its
+    // signature (stored right after the record) must verify against the
+    // embedded key. A CRC-only image is refused here — the same
+    // re-verification that makes an interrupted update a retry now also
+    // makes an unsigned or tampered image a non-boot.
+    if (!(rec->flags & BOOT_INFO_FLAG_SIGNED))
+        return 0;
+    const uint8_t *sig = boot_flash_read(g->info_addr + BOOT_INFO_SIG_OFFSET);
+    if (!bootcore_app_sig_ok(&g_ops, rec->size, sig, helix_pubkey))
+        return 0;
+#endif
+    return 1;
 }
 
 // Standard Cortex-M application handoff: load the app's stack pointer

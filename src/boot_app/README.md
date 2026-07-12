@@ -125,14 +125,44 @@ combined image: build/combined-f072.bin (stm32f072)
 The script (`zlib.crc32`, i.e. `intentproto::crc32`) lays out one raw
 image: bootloader at offset 0, 0xFF pad to the app base, the
 application image, 0xFF pad to the info page, then the 16-byte
-`boot_info_record` `{magic, app_size, crc32, 0}` the bootloader reads
-at boot. Stamping the validity record here means the *first* boot of a
-freshly programmed board finds a valid app and jumps straight to it —
-no in-band update needed to bootstrap. The single `combined.bin` is
+`boot_info_record` `{magic, app_size, crc32, flags}` the bootloader
+reads at boot. Stamping the validity record here means the *first* boot
+of a freshly programmed board finds a valid app and jumps straight to it
+— no in-band update needed to bootstrap. The single `combined.bin` is
 flashed once at `0x08000000` by DFU/programmer; every later update is
 in-band. `_boot_reqword` in the link script is pinned to the
 application's `INTENTPROTO_BOOT_REQ_ADDR` (`src/generic/bootentry.h`)
 so the `enter_bootloader` request survives the reset.
+
+### Signed images (optional)
+
+Built with `make bootloader SIGNED=1`, the bootloader also verifies an
+Ed25519 (RFC 8032) signature over the application image before it marks
+it valid or boots it (RFC 0001 doc 11, "Signed images"). The signature
+covers the same bytes the CRC covers and is stored in the info page
+right after the 16-byte record (`info_addr + 16`); the record's `flags`
+word carries `BOOT_INFO_FLAG_SIGNED`. The public key is compiled in from
+`keys/helix_pubkey.h`; the private key signs off-device.
+
+Sign during assembly, or sign an assembled image:
+
+```
+# one step:
+../../scripts/build_combined.py stm32f4 build/boot-f4.bin ../../out/klipper.bin \
+    -o build/combined-f4.bin --sign-key ../../keys/helix_dev_signing.key
+# or after the fact:
+../../scripts/sign_image.py combined stm32f4 build/combined-f4.bin \
+    --key ../../keys/helix_dev_signing.key -o build/combined-f4.signed.bin
+```
+
+**Fit:** the Ed25519+SHA-512 verify adds ~6 KB, which does not fit the
+16 KB bootloader budget of STM32F072/G0B1 — those stay CRC-only. Signed
+images are an F4-class (32 KB budget) feature: `make bootloader SIGNED=1`
+builds F4 signed and leaves F072 CRC-only. The committed signing keypair
+is a **throwaway dev key** that must be rotated before release — see
+[`keys/README.md`](../../keys/README.md). Verification code and vectors
+live in `lib/intentproto` (`sha512`, `ed25519`, `test_sha512`,
+`test_ed25519`, and the Python↔C crosscheck `tools/test_ed25519_e2e.py`).
 
 ### What remains hardware-gated
 

@@ -47,6 +47,15 @@ enum class BootState : uint8_t {
     Failed,      // update failed; safe to retry with flash_begin
 };
 
+// Signature size for the optional Ed25519 signed-image feature
+// (see bootcore_verify_signature and RFC 0001 doc 11 "Signed images").
+constexpr size_t BOOT_SIG_SIZE = 64;
+
+// flags bit persisted in the validity record's spare word: the image
+// carries a valid Ed25519 signature (set only after the signature
+// verifies).
+enum { BOOTCORE_FLAG_SIGNED = 0x00000001u };
+
 struct BootCore {
     const FlashOps* ops;
     BootState state;
@@ -54,6 +63,12 @@ struct BootCore {
     uint32_t image_crc;
     uint32_t received;    // contiguous high-water mark
     uint32_t last_error;
+    // Optional signed-image state (RFC 0001 doc 11). flags carries
+    // BOOTCORE_FLAG_SIGNED once the signature verifies; signature holds
+    // the host-supplied Ed25519 signature that set_app_valid persists
+    // alongside the validity record. Zero on an unsigned update.
+    uint32_t flags;
+    uint8_t signature[BOOT_SIG_SIZE];
 };
 
 enum {
@@ -63,6 +78,7 @@ enum {
     BOOT_ERR_ORDER = 3,      // non-contiguous data block
     BOOT_ERR_FLASH = 4,      // port erase/write failure
     BOOT_ERR_CRC = 5,        // whole-image CRC mismatch
+    BOOT_ERR_SIG = 6,        // Ed25519 signature verification failed
 };
 
 void bootcore_init(BootCore* bc, const FlashOps* ops);
@@ -88,6 +104,34 @@ int bootcore_boot(BootCore* bc);
 // application? (valid flag is the port's; this checks the CRC the
 // port stored alongside the image, if it chooses to.)
 int bootcore_app_crc_ok(const FlashOps* ops, uint32_t size, uint32_t crc);
+
+// ---- Optional Ed25519 signed images (RFC 0001 doc 11) ----
+// A second gate beyond the CRC: the bootloader verifies an Ed25519
+// signature (RFC 8032) over the exact application image bytes — the
+// same bytes the CRC covers — before it will mark the image valid or
+// boot it. Signing is off-device; the device only verifies against an
+// embedded public key. All of this is inert unless the port wires it
+// up (see src/boot_app/boot_main.cpp, gated by CONFIG_WANT_SIGNED_IMAGES),
+// so an unsigned build behaves exactly as before.
+
+// Stash the host-supplied 64-byte signature for this transfer. The
+// signature is verified by bootcore_verify_signature and persisted by
+// the port's set_app_valid alongside the validity record.
+int bootcore_set_signature(BootCore* bc, const uint8_t sig[BOOT_SIG_SIZE]);
+
+// After bootcore_verify (CRC ok, state Verified): verify the stashed
+// signature over the flashed image against pub_key. On success sets
+// BOOTCORE_FLAG_SIGNED (so set_app_valid records the image as signed)
+// and leaves the state Verified; on failure -> Failed, BOOT_ERR_SIG.
+int bootcore_verify_signature(BootCore* bc,
+                              const uint8_t pub_key[32]);
+
+// Boot-time signature check the port runs before jumping (mirror of
+// bootcore_app_crc_ok): verify sig over the stored image [app_base,
+// app_base+size) against pub_key. Returns 1 on a good signature.
+int bootcore_app_sig_ok(const FlashOps* ops, uint32_t size,
+                        const uint8_t sig[BOOT_SIG_SIZE],
+                        const uint8_t pub_key[32]);
 
 } // namespace intentproto
 

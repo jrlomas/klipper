@@ -25,9 +25,35 @@ IP := $(REPO)/lib/intentproto
 COMMON := -I$(REPO)/lib/cmsis-core -I$(IP)/include -I. \
 	-ffreestanding -ffunction-sections \
 	-fdata-sections -Os -Wall -Wextra -mthumb
+# Signed firmware images (RFC 0001 doc 11, "Signed images"): build with
+#   make bootloader SIGNED=1
+# to compile in Ed25519+SHA-512 verification and enforce a valid
+# signature at boot. Off by default so everyone builds the CRC-only
+# bootloader unchanged.
+#
+# Signing is a per-target capability: the Ed25519+SHA-512 verify adds
+# ~6 KB, which does not fit the 16 KB bootloader budget of the smallest
+# parts (STM32F072, STM32G0B1). Per the owner's standing policy, a
+# target that cannot fit the feature simply builds WITHOUT it rather
+# than contorting — so `make bootloader SIGNED=1` builds F4 signed and
+# leaves F072 CRC-only. SIGN is the per-link switch the bootloader
+# target sets from SIGNED and each target's budget; the crypto objects
+# are LINKED only when SIGN=1 (with SIGN unset, --gc-sections drops
+# bootcore's unreferenced signature path, so no ed25519/sha512 object is
+# needed and the CRC-only image is byte-for-byte unchanged).
+SIGNED ?=
+SIGN ?=
+ifeq ($(SIGN),1)
+SIGN_DEF := -DCONFIG_WANT_SIGNED_IMAGES
+SIGN_CPP := $(IP)/src/sha512.cpp $(IP)/src/ed25519.cpp
+else
+SIGN_DEF :=
+SIGN_CPP :=
+endif
+
 CXXFLAGS := -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-	-fno-use-cxa-atexit $(COMMON)
-CFLAGS := -std=gnu11 $(COMMON)
+	-fno-use-cxa-atexit $(COMMON) $(SIGN_DEF)
+CFLAGS := -std=gnu11 $(COMMON) $(SIGN_DEF)
 
 BUILD := build
 
@@ -38,9 +64,10 @@ PORTABLE_C := boot_flash.c
 # Full intentproto protocol library the bootloader links to speak the
 # same framing/dictionary/Class-1 surface as the application. proto +
 # dict + datagram(v2 framing) + bch + hmac; --gc-sections drops the
-# network-only paths a UART bootloader does not reach.
+# network-only paths a UART bootloader does not reach. SIGN_CPP adds
+# sha512 + ed25519 only for a signing-enabled build.
 IP_LIB_CPP := $(IP)/src/proto.cpp $(IP)/src/dict.cpp \
-	$(IP)/src/datagram.cpp $(IP)/src/bch.cpp $(IP)/src/hmac.cpp
+	$(IP)/src/datagram.cpp $(IP)/src/bch.cpp $(IP)/src/hmac.cpp $(SIGN_CPP)
 
 # Bootloader image translation units (startup + transport, per target).
 LINK_CPP := $(PORTABLE_CPP) $(IP_LIB_CPP)
@@ -56,6 +83,7 @@ test:
 	$(HOSTCXX) -std=c++17 -Os -Wall -Wextra -fno-exceptions -fno-rtti \
 		-I$(IP)/include -I. \
 		test_flashops.cpp $(IP)/boot/bootcore.cpp boot_flash.c \
+		$(IP)/src/sha512.cpp $(IP)/src/ed25519.cpp \
 		-o $(BUILD)/test_flashops
 	./$(BUILD)/test_flashops
 
@@ -87,16 +115,18 @@ compile-one:
 	  awk '{t+=$$1+$$2} END{printf "   %s objectset .text+.data = %d bytes\n","$(T)",t}'
 
 # ---- link the real, flashable bootloader images ----
+# F072 (16 KB budget) is always CRC-only: signing does not fit there.
+# F4 (32 KB budget) is signed when SIGNED=1 is requested.
 bootloader:
-	@$(MAKE) --no-print-directory link-one T=f072 \
+	@$(MAKE) --no-print-directory link-one T=f072 SIGN= \
 	  CPU="-mcpu=cortex-m0" INC="-I$(REPO)/lib/stm32f0/include" \
 	  DRV=boot_flash_stm32f072.c UART=boot_uart_stm32f0.c \
 	  DEV=stm32f072xb.h LD=boot_stm32f072.ld BUDGET=16384
-	@$(MAKE) --no-print-directory link-one T=f4 \
+	@$(MAKE) --no-print-directory link-one T=f4 SIGN=$(SIGNED) \
 	  CPU="-mcpu=cortex-m4" INC="-I$(REPO)/lib/stm32f4/include" \
 	  DRV=boot_flash_stm32f4.c UART=boot_uart_stm32f4.c \
 	  DEV=stm32f407xx.h LD=boot_stm32f4.ld BUDGET=32768
-	@echo "bootloader images linked"
+	@echo "bootloader images linked$(if $(filter 1,$(SIGNED)), (F4 signed; F072 CRC-only),)"
 
 link-one:
 	@mkdir -p $(BUILD)

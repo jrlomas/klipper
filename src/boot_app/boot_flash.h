@@ -46,12 +46,25 @@ struct boot_flash_geom {
 // read back at boot. A whole-image CRC check gates the jump, so an
 // interrupted update (info page still erased, or CRC mismatch) simply
 // keeps the board in the bootloader — a retry, never a paperweight.
+//
+// Signed-image layout (RFC 0001 doc 11, "Signed images"): the spare
+// word is a flags word. BOOT_INFO_FLAG_SIGNED means the 64-byte
+// Ed25519 signature over the application image is stored in the SAME
+// info erase-unit immediately after this 16-byte record, at
+// info_addr + BOOT_INFO_SIG_OFFSET. The signature covers exactly the
+// application bytes the CRC covers ([app_base, app_base+size)). An
+// unsigned image leaves the flag clear and validates by CRC alone;
+// signature enforcement is the bootloader's compile-time policy
+// (CONFIG_WANT_SIGNED_IMAGES), so this stays backward compatible.
 #define BOOT_INFO_MAGIC 0x50414F42UL   // "BOAP"
+#define BOOT_INFO_FLAG_SIGNED 0x00000001UL
+#define BOOT_INFO_SIG_OFFSET 16        // signature follows the record
+#define BOOT_INFO_SIG_SIZE 64          // Ed25519 signature length
 struct boot_info_record {
     uint32_t magic;
     uint32_t size;
     uint32_t crc;
-    uint32_t pad;                   // keep the record 8-byte writable
+    uint32_t flags;                 // BOOT_INFO_FLAG_* (was reserved)
 };
 
 // Per-target geometry constructors (portable; see boot_flash.c).

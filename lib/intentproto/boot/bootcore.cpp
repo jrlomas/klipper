@@ -2,6 +2,7 @@
 // See bootcore.hpp and RFC 0001 doc 11.
 
 #include "bootcore.hpp"
+#include <intentproto/ed25519.hpp>
 #include <string.h>
 
 namespace intentproto {
@@ -104,6 +105,49 @@ bootcore_app_crc_ok(const FlashOps* ops, uint32_t size, uint32_t crc)
         return 0;
     const uint8_t* img = ops->read(ops->app_base, ops->user);
     return crc32(0, img, size) == crc;
+}
+
+// ---- Optional Ed25519 signed images ----
+
+int
+bootcore_set_signature(BootCore* bc, const uint8_t sig[BOOT_SIG_SIZE])
+{
+    // Accept the signature while a transfer is in progress or verified;
+    // it is checked against the image by bootcore_verify_signature.
+    if (bc->state != BootState::Receiving
+        && bc->state != BootState::Verified)
+        return fail(bc, BOOT_ERR_STATE);
+    memcpy(bc->signature, sig, BOOT_SIG_SIZE);
+    return BOOT_OK;
+}
+
+int
+bootcore_app_sig_ok(const FlashOps* ops, uint32_t size,
+                    const uint8_t sig[BOOT_SIG_SIZE],
+                    const uint8_t pub_key[32])
+{
+    if (!size || size > ops->app_size)
+        return 0;
+    // Flash is memory-mapped (ops->read returns a pointer), so the
+    // image is hashed in place — no separate streaming buffer needed.
+    const uint8_t* img = ops->read(ops->app_base, ops->user);
+    return ed25519_verify(sig, img, size, pub_key) ? 1 : 0;
+}
+
+int
+bootcore_verify_signature(BootCore* bc, const uint8_t pub_key[32])
+{
+    const FlashOps* ops = bc->ops;
+    // CRC must have passed first: the signature covers exactly the
+    // bytes the CRC covered.
+    if (bc->state != BootState::Verified)
+        return fail(bc, BOOT_ERR_STATE);
+    if (!bootcore_app_sig_ok(ops, bc->image_size, bc->signature, pub_key))
+        return fail(bc, BOOT_ERR_SIG);
+    // Record the image as signed; set_app_valid persists the flag and
+    // the signature so the boot-time gate can re-verify.
+    bc->flags |= BOOTCORE_FLAG_SIGNED;
+    return BOOT_OK;
 }
 
 } // namespace intentproto

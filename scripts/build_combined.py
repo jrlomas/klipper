@@ -28,10 +28,18 @@
 # checks.
 
 import argparse
+import os
 import struct
+import sys
 import zlib
 
 BOOT_INFO_MAGIC = 0x50414F42  # "BOAP", matches boot_flash.h
+# Signed-image flag stored in the validity record's flags word (bit 0),
+# and the 64-byte Ed25519 signature slot right after the 16-byte record
+# (RFC 0001 doc 11, "Signed images"; see boot_flash.h).
+BOOT_INFO_FLAG_SIGNED = 0x00000001
+BOOT_INFO_SIG_OFFSET = 16
+SIG_SIZE = 64
 
 FLASH_BASE = 0x08000000
 
@@ -52,7 +60,7 @@ GEOM = {
 }
 
 
-def build(target, boot_bin, app_bin):
+def build(target, boot_bin, app_bin, sign_key=None):
     g = GEOM[target]
     app_off = g["app_base"] - FLASH_BASE
     info_off = g["info_addr"] - FLASH_BASE
@@ -73,18 +81,42 @@ def build(target, boot_bin, app_bin):
 
     # CRC-32 over the exact application bytes the bootloader will read.
     crc = zlib.crc32(app_bin) & 0xFFFFFFFF
-    record = struct.pack("<IIII", BOOT_INFO_MAGIC, len(app_bin), crc, 0)
 
-    # Assemble: bootloader, pad to app_off, app, pad to info_off, record.
+    # Optional Ed25519 signature over the SAME bytes the CRC covers,
+    # stored in the info page right after the record with the signed
+    # flag set (RFC 0001 doc 11). A signing-enabled bootloader boots
+    # only signed images; an unsigned image leaves flags == 0.
+    flags = 0
+    sig = b""
+    signer_info = None
+    if sign_key is not None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import sign_image
+        seed = sign_image.load_key(sign_key)
+        sig = sign_image.ed25519_sign(seed, bytes(app_bin))
+        if len(sig) != SIG_SIZE:
+            raise SystemExit("unexpected signature length %d" % len(sig))
+        flags |= BOOT_INFO_FLAG_SIGNED
+        signer_info = {"backend": sign_image.backend_name(),
+                       "pub": sign_image._public_from_seed(seed).hex(),
+                       "sig": sig.hex()}
+
+    record = struct.pack("<IIII", BOOT_INFO_MAGIC, len(app_bin), crc, flags)
+
+    # Assemble: bootloader, pad to app_off, app, pad to info_off, record
+    # (+ signature slot for a signed image).
     img = bytearray()
     img += boot_bin
     img += b"\xff" * (app_off - len(img))
     img += app_bin
     img += b"\xff" * (info_off - len(img))
     img += record
+    if sig:
+        img += sig
     return bytes(img), {
         "app_off": app_off, "app_size": len(app_bin), "app_crc": crc,
-        "info_off": info_off, "total": len(img),
+        "info_off": info_off, "total": len(img), "flags": flags,
+        "signer": signer_info,
     }
 
 
@@ -94,6 +126,8 @@ def main():
     ap.add_argument("bootloader_bin")
     ap.add_argument("application_bin")
     ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("--sign-key", help="Ed25519 private seed (keys/*.key) to "
+                    "sign the application image (RFC 0001 doc 11)")
     args = ap.parse_args()
 
     with open(args.bootloader_bin, "rb") as f:
@@ -101,7 +135,7 @@ def main():
     with open(args.application_bin, "rb") as f:
         app_bin = f.read()
 
-    img, info = build(args.target, boot_bin, app_bin)
+    img, info = build(args.target, boot_bin, app_bin, sign_key=args.sign_key)
     with open(args.output, "wb") as f:
         f.write(img)
 
@@ -109,8 +143,13 @@ def main():
     print("  bootloader : %6d bytes @ 0x%08x" % (len(boot_bin), FLASH_BASE))
     print("  application: %6d bytes @ 0x%08x (crc32=0x%08x)"
           % (info["app_size"], FLASH_BASE + info["app_off"], info["app_crc"]))
-    print("  validity   :     16 bytes @ 0x%08x (magic=0x%08x)"
-          % (FLASH_BASE + info["info_off"], BOOT_INFO_MAGIC))
+    print("  validity   :     16 bytes @ 0x%08x (magic=0x%08x, flags=0x%08x)"
+          % (FLASH_BASE + info["info_off"], BOOT_INFO_MAGIC, info["flags"]))
+    if info["signer"]:
+        print("  signature  :     64 bytes @ 0x%08x (Ed25519, signer=%s)"
+              % (FLASH_BASE + info["info_off"] + BOOT_INFO_SIG_OFFSET,
+                 info["signer"]["backend"]))
+        print("  pubkey     : %s" % info["signer"]["pub"])
     print("  total      : %6d bytes" % info["total"])
 
 

@@ -67,6 +67,82 @@ update writes the inactive bank and swaps atomically — zero downtime
 worth having, but the single-bank flow above is the baseline every
 target supports.
 
+## Signed images
+
+Transport HMAC ([07-Link_Transport.md](07-Link_Transport.md)) proves a
+flash command came from a peer that holds the link key, and the
+whole-image CRC proves the bytes arrived intact. Neither proves the
+*image itself* is one the fleet operator authorised. The threat signed
+images close is an **unsigned image swap over the update channel**: a
+peer that has (or steals) the transport key, a compromised host, or a
+supply-chain substitution of the combined `.bin` before first flash can
+push a CRC-valid image the board will happily run. Ed25519 signatures
+move trust from "whoever can talk on the wire" to "whoever holds the
+release private key".
+
+**Mechanism.** The bootloader verifies an Ed25519 (RFC 8032) signature
+over the exact application image — the same bytes the CRC covers,
+`[app_base, app_base+size)` — against a public key compiled into the
+bootloader (`keys/helix_pubkey.h`). The device only ever *verifies*;
+it never signs and never generates keys, so the MCU carries just a
+verify routine (freestanding SHA-512 + Curve25519 field arithmetic,
+`lib/intentproto/src/{sha512,ed25519}.cpp`). Signing happens off-device
+(`scripts/sign_image.py`) with the private key held on the owner's
+server.
+
+**Layout.** The validity record's previously-reserved word is now a
+`flags` word; `BOOT_INFO_FLAG_SIGNED` (bit 0) marks a signed image. The
+64-byte signature is stored in the same info erase-unit immediately
+after the 16-byte record (`info_addr + 16`). So the info page reads:
+
+```
+info_addr + 0 : {magic "BOAP", size, crc32, flags}   (16 bytes)
+info_addr + 16: Ed25519 signature                     (64 bytes, if flags&SIGNED)
+```
+
+`scripts/build_combined.py --sign-key` (or `scripts/sign_image.py
+combined`) computes the signature during/after assembly and sets the
+flag; the very first boot of a freshly programmed board therefore finds
+a signed, valid app with no in-band step.
+
+**Verify flow.** In-band, the host sends the signature with a
+`flash_sign` command; `flash_verify` then gates on BOTH the CRC and the
+signature (`bootcore_verify` then `bootcore_verify_signature`), and
+`set_app_valid(1)` — which persists the flag + signature into the info
+page — runs only if both pass. At every boot the port re-checks the
+CRC *and*, when signing is enabled, re-verifies the stored signature
+(`bootcore_app_sig_ok`) before jumping. Because flash is memory-mapped
+the image is hashed in place; no extra buffer is needed. The
+unbrickable-by-construction rule is unchanged: an unsigned, tampered, or
+interrupted image simply fails the gate and leaves the board in the
+bootloader, reachable over the same link — a retry, not a paperweight.
+
+**Backward compatible.** All of this is compiled out unless the
+bootloader is built with signing on (`make bootloader SIGNED=1`,
+`CONFIG_WANT_SIGNED_IMAGES`). A CRC-only bootloader is byte-for-byte
+unchanged and still boots unsigned images; a signing-enabled bootloader
+*enforces* signatures (an unsigned image is refused).
+
+**Key management.** The real release private key lives only on the
+owner's server and is never committed. A **throwaway** dev keypair is
+committed deliberately (`keys/helix_dev_signing.{key,pub}`, marked
+DEV/TEST-only) so the mechanism can be built and tested end-to-end; it
+**must be rotated before any real release** — see `keys/README.md`.
+Rotation is: generate a new key off-repo, regenerate `helix_pubkey.h`
+from its public half, ship bootloaders embedding the new key, sign
+releases with the new private key.
+
+**Size / fit tradeoff.** The verify code (Ed25519 + SHA-512) adds about
+5.7 KiB of Cortex-M0 code (ed25519 ~3.7 KiB + sha512 ~2.0 KiB) and,
+with the bootcore glue, ~6 KiB total. That fits the 32 KiB F4 budget
+comfortably (10 960 → 16 684 bytes, +5 724) but does **not** fit the
+16 KiB budget of the smallest parts: an STM32F072 signed bootloader
+overflows its `rom` region by ~856 bytes. Per the standing policy, a
+target that cannot fit a feature simply does not build it rather than
+contorting — so **F072/G0B1 (16 KiB budget) build the CRC-only
+bootloader; signed images are an F4-class (32 KiB budget) feature**.
+Larger dual-bank parts, where they exist, have the room.
+
 ## Compatibility
 
 * **Katapult coexistence:** boards already running Katapult can be
@@ -82,9 +158,10 @@ target supports.
 
 * Whether the bootloader dictionary is a static minimal one (proposed)
   or generated per-build like the application's.
-* Signed firmware images (beyond transport HMAC): worthwhile once
-  boards accept updates over networks — defer to the same phase as
-  key provisioning ([07-Link_Transport.md](07-Link_Transport.md)).
+* Signed firmware images (beyond transport HMAC): **implemented** — see
+  "Signed images" above. Ed25519 verify in the bootloader, private key
+  off-repo, dev key committed for the mechanism and rotated before
+  release. Fits the F4-class budget; the 16 KiB parts stay CRC-only.
 * A/B application slots on large-flash single-bank parts (F4): worth
   the flash, or is bootloader-retry sufficient? (Proposed: retry is
   sufficient; A/B only where dual-bank hardware makes it free.)
