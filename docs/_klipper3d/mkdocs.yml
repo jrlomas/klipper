@@ -135,22 +135,25 @@ nav:
     - Benchmarks.md
     - CONTRIBUTING.md
     - Packaging.md
-  - Founding Documents (FD-0001):
-    - founding/0001-motion-intentions/README.md
-    - founding/0001-motion-intentions/00-Vision.md
-    - founding/0001-motion-intentions/01-Time_Model.md
-    - founding/0001-motion-intentions/02-Intention_Protocol.md
-    - founding/0001-motion-intentions/03-Traffic_Classes.md
-    - founding/0001-motion-intentions/04-Actuator_Backends.md
-    - founding/0001-motion-intentions/05-Host_Architecture.md
-    - founding/0001-motion-intentions/06-Migration.md
-    - founding/0001-motion-intentions/07-Link_Transport.md
-    - founding/0001-motion-intentions/08-Failure_Recovery.md
-    - founding/0001-motion-intentions/09-Hardware_Triggers.md
-    - founding/0001-motion-intentions/10-Protocol_Library.md
-    - founding/0001-motion-intentions/11-Bootloader.md
-    - founding/0001-motion-intentions/12-ESP32_Architecture.md
-    - founding/0001-motion-intentions/13-Syscall_API.md
+  - Founding Documents:
+    - FD-0001 — Motion Intentions:
+      - founding/0001-motion-intentions/README.md
+      - founding/0001-motion-intentions/00-Vision.md
+      - founding/0001-motion-intentions/01-Time_Model.md
+      - founding/0001-motion-intentions/02-Intention_Protocol.md
+      - founding/0001-motion-intentions/03-Traffic_Classes.md
+      - founding/0001-motion-intentions/04-Actuator_Backends.md
+      - founding/0001-motion-intentions/05-Host_Architecture.md
+      - founding/0001-motion-intentions/06-Migration.md
+      - founding/0001-motion-intentions/07-Link_Transport.md
+      - founding/0001-motion-intentions/08-Failure_Recovery.md
+      - founding/0001-motion-intentions/09-Hardware_Triggers.md
+      - founding/0001-motion-intentions/10-Protocol_Library.md
+      - founding/0001-motion-intentions/11-Bootloader.md
+      - founding/0001-motion-intentions/12-ESP32_Architecture.md
+      - founding/0001-motion-intentions/13-Syscall_API.md
+    - FD-0002 — The Companion System:
+      - founding/0002-companion-system/README.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md
