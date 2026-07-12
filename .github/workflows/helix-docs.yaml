@@ -1,0 +1,84 @@
+# Build the HELIX documentation site (mkdocs) and publish it to this
+# repository's GitHub Pages, so the docs are browsable at
+#   https://<owner>.github.io/<repo>/
+#
+# ONE-TIME SETUP (repository admin): in Settings -> Pages, set
+# "Build and deployment" -> Source to "GitHub Actions". No gh-pages
+# branch is needed; this workflow uploads the built site directly to the
+# Pages environment.
+#
+# It builds the English HELIX site directly from
+# docs/_klipper3d/mkdocs.yml (the klipper3d.org translation machinery is
+# intentionally not used here). Runs automatically when docs change on
+# the default branch, and can be run on demand for any branch from the
+# Actions tab (Run workflow) -- handy to preview the site before merging.
+
+name: HELIX docs
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - docs/**
+      - .github/workflows/helix-docs.yaml
+  workflow_dispatch: {}
+
+# Least privilege needed to publish to the Pages environment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress publish.
+concurrency:
+  group: helix-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          # 3.8 matches the versions the pinned mkdocs stack in
+          # mkdocs-requirements.txt is known to build cleanly against.
+          python-version: '3.8'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('docs/_klipper3d/mkdocs-requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install dependencies
+        run: pip install -r docs/_klipper3d/mkdocs-requirements.txt
+      - name: Build the HELIX site
+        # Run from the repo root so the mkdocs simple-hooks plugin can
+        # import docs._klipper3d.mkdocs_hooks. Output goes to ./site
+        # (site_dir in mkdocs.yml).
+        run: |
+          mkdocs build -f docs/_klipper3d/mkdocs.yml
+          # mkdocs copies the _klipper3d config dir into the output; keep
+          # only its CSS and drop the python/config leftovers.
+          if [ -d site/_klipper3d ]; then
+            find site/_klipper3d ! -name '*.css' -type f -delete
+            rm -rf site/_klipper3d/__pycache__
+          fi
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
