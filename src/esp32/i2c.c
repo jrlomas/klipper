@@ -1,6 +1,6 @@
 // I2C master (I2C0) on ESP32
 //
-// Register-level driver against the Apache-2.0 soc headers (RFC 0001
+// Register-level driver against the Apache-2.0 soc headers (FD-0001
 // doc 12's preference; the I2C controller is fully documented in the
 // TRM).  The IDF alternative (the i2c_master driver) is built on
 // interrupts plus FreeRTOS primitives and does not expose the

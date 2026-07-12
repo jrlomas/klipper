@@ -1,4 +1,4 @@
-// Flash-ops unit tests (RFC 0001 doc 11, part 4).
+// Flash-ops unit tests (FD-0001 doc 11, part 4).
 //
 // The register-level programming can't run on a desktop, but the
 // portable FlashOps *table logic* — app-region bounds, erase-unit

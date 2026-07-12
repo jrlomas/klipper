@@ -91,4 +91,4 @@ recorder), and `query_board_syscalls` (capability negotiation).
 
 For the narrative behind any of these, see the [HELIX overview](HELIX.md),
 the [User Guide](Helix_User_Guide.md), and the design canon in
-[RFC 0001](rfcs/0001-motion-intentions/00-Vision.md).
+[FD-0001](founding/0001-motion-intentions/00-Vision.md).

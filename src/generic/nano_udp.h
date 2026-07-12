@@ -1,7 +1,7 @@
 #ifndef __GENERIC_NANO_UDP_H
 #define __GENERIC_NANO_UDP_H
 // Minimal single-socket UDP/IP/ARP responder for the native RMII
-// Ethernet datagram console (RFC 0001 doc 07).  See nano_udp.c.
+// Ethernet datagram console (FD-0001 doc 07).  See nano_udp.c.
 
 #include <stdint.h> // uint32_t
 

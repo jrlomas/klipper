@@ -1,6 +1,6 @@
 # Micro-controller clock synchronization
 #
-# Machine-time authority (RFC 0001 doc 01): machine time is defined as
+# Machine-time authority (FD-0001 doc 01): machine time is defined as
 # the primary MCU's free-running counter, extended to 64 bits with an
 # epoch established at connect. The regression below no longer makes
 # the host the timekeeper - it estimates host-time -> machine-time so
@@ -145,7 +145,7 @@ class ClockSync:
         return float(reqclock - clock)/freq + sample_time
     def estimated_print_time(self, eventtime):
         return self.clock_to_print_time(self.get_clock(eventtime))
-    # Machine-time authority helpers (RFC 0001 doc 01). On the link to
+    # Machine-time authority helpers (FD-0001 doc 01). On the link to
     # the primary MCU this clock *is* machine time; on a link to a
     # secondary it is that board's local clock. The beacon relay
     # bridges the two through host time:

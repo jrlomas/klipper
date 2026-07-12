@@ -1,7 +1,7 @@
-menu "Klipper firmware (RFC 0001 UDP console)"
+menu "Klipper firmware (FD-0001 UDP console)"
 
 choice
-    prompt "Architecture (RFC 0001 doc 12)"
+    prompt "Architecture (FD-0001 doc 12)"
     default KLIPPER_ARCH_MODEM if FREERTOS_UNICORE
     default KLIPPER_ARCH_COMPONENT
     help
@@ -39,7 +39,7 @@ config KLIPPER_RMT_STEP
     default n
     help
         Drive step generation through the RMT peripheral instead of
-        toggling a step GPIO in the timer ISR (RFC 0001 doc 12's "RMT
+        toggling a step GPIO in the timer ISR (FD-0001 doc 12's "RMT
         escape hatch").  The esp32 build then compiles
         src/esp32/rmt_stepper.c in place of the portable
         src/stepper.c: the same config_stepper/queue_step command

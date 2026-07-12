@@ -350,7 +350,7 @@ class TriggerDispatch:
 
 # Number and spacing of the post-edge confirmation re-reads the firmware
 # performs before it fires trsync for a hardware-triggered endstop
-# (RFC 0001 doc 09 "qualify-after-event").  A false edge costs one brief
+# (FD-0001 doc 09 "qualify-after-event").  A false edge costs one brief
 # re-read burst and never fires; the whole window is bounded well under
 # the firmware's QUALIFY_MAX_TICKS safety cap.
 TRIGGER_QUALIFY_COUNT = 4
@@ -367,7 +367,7 @@ class MCU_endstop:
         self._mcu.register_config_callback(self._build_config)
         self._rest_ticks = 0
         self._dispatch = TriggerDispatch(mcu)
-        # Hardware interrupt trigger path (RFC 0001 doc 09).  Resolved in
+        # Hardware interrupt trigger path (FD-0001 doc 09).  Resolved in
         # _build_config: a second oid drives config_trigger_gpio and the
         # arm/disarm/query commands; the polled config_endstop above is
         # always kept for query_endstop and as the automatic fallback.
@@ -881,7 +881,7 @@ class MCUConnectHelper:
         self._emergency_stop_cmd = None
         self._is_shutdown = self._is_timeout = False
         self._shutdown_msg = ""
-        # Communication timeout policy (RFC 0001 doc 08).  'shutdown'
+        # Communication timeout policy (FD-0001 doc 08).  'shutdown'
         # keeps the stock behavior (a lost link takes the whole machine
         # down); 'pause' turns a lost link to this (secondary) mcu into
         # a host-side pause-and-hold: a "mcu:comm_pause" event is sent,
@@ -1031,7 +1031,7 @@ class MCUConnectHelper:
             return
         self._printer.invoke_shutdown("Lost communication with MCU '%s'" % (
             self._name,))
-    # Link-loss pause-and-hold handling (RFC 0001 doc 08)
+    # Link-loss pause-and-hold handling (FD-0001 doc 08)
     def _start_link_checks(self):
         # The stock timeout detection only runs from the periodic
         # motion_queuing.stats() calibration (every ~5 seconds).  With
@@ -1486,7 +1486,7 @@ class MCU:
         self._serial = self._conn_helper.get_serial()
         self._config_helper = MCUConfigHelper(self, self._conn_helper)
         self._stats_helper = MCUStatsHelper(self, self._conn_helper)
-        # Interrupt-driven homing (RFC 0001 doc 09): when the firmware
+        # Interrupt-driven homing (FD-0001 doc 09): when the firmware
         # exposes the trigger_source command set, endstop/probe detection
         # runs off a hardware edge interrupt instead of a polled timer
         # list.  Enabled by default and auto-disabled when the firmware
@@ -1569,13 +1569,13 @@ class MCU:
         offset, freq = self._clocksync.calibrate_clock(print_time, eventtime)
         self._conn_helper.check_timeout(eventtime)
         return offset, freq
-    # Link-loss pause-and-hold (RFC 0001 doc 08)
+    # Link-loss pause-and-hold (FD-0001 doc 08)
     def is_link_paused(self):
         return self._conn_helper.is_link_paused()
     def attempt_reconnect(self):
         """Re-handshake with this mcu after a link loss (paused-link state).
 
-        Returns (success, message).  Implements the RFC 0001 doc 08
+        Returns (success, message).  Implements the FD-0001 doc 08
         "replugged toolhead" resume flow as far as klippy's layering
         cleanly allows:
 
@@ -1595,7 +1595,7 @@ class MCU:
           data dictionary) is preserved rather than renegotiated,
           "re-running identify" takes the form of boot-detection
           probes: get_uptime (true 64-bit clock - a reboot makes it go
-          backwards), get_config (the RFC's is_config/is_shutdown flags
+          backwards), get_config (the founding document's is_config/is_shutdown flags
           and config CRC - config lives in RAM, so is_config=1 with a
           matching CRC proves the same configured session), plus any
           'starting'/'shutdown' messages observed while paused.
@@ -1611,7 +1611,7 @@ class MCU:
           clocks (e.g. stale heater PWM refreshes) are delivered late
           on reconnect; stock firmware will answer with an MCU-side
           "Missed scheduling" shutdown, which is then reported as
-          "restart required".  Boards implementing the RFC's
+          "restart required".  Boards implementing the founding document's
           pause-and-hold (underrun-hold + autonomous heater hold) are
           expected to tolerate/ignore them.
         * If the link dies again in the middle of the final

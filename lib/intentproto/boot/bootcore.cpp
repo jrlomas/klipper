@@ -1,5 +1,5 @@
 // intentproto bootloader core: portable in-band update state machine.
-// See bootcore.hpp and RFC 0001 doc 11.
+// See bootcore.hpp and FD-0001 doc 11.
 
 #include "bootcore.hpp"
 #include <intentproto/ed25519.hpp>

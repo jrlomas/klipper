@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Focused test for the udp_bridge.py XOR erasure layer (RFC 0001
+# Focused test for the udp_bridge.py XOR erasure layer (FD-0001
 # doc 07, "two layers").  Drives DatagramCodec through
 # encode -> drop exactly one datagram -> parity -> decode and asserts
 # the lost datagram's frames are reconstructed without a retransmit.

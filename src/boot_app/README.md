@@ -1,4 +1,4 @@
-# First-class bootloader application (RFC 0001 doc 11)
+# First-class bootloader application (FD-0001 doc 11)
 
 The flashable bootloader that ships *inside* the firmware image. It
 links the same MIT protocol library (`lib/intentproto/`) as the
@@ -138,7 +138,7 @@ so the `enter_bootloader` request survives the reset.
 
 Built with `make bootloader SIGNED=1`, the bootloader also verifies an
 Ed25519 (RFC 8032) signature over the application image before it marks
-it valid or boots it (RFC 0001 doc 11, "Signed images"). The signature
+it valid or boots it (FD-0001 doc 11, "Signed images"). The signature
 covers the same bytes the CRC covers and is stored in the info page
 right after the 16-byte record (`info_addr + 16`); the record's `flags`
 word carries `BOOT_INFO_FLAG_SIGNED`. The public key is compiled in from

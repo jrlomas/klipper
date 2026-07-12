@@ -134,7 +134,7 @@ static void test_tags() {
     uint8_t tag[8];
     intentproto::hmac_sha256_tag(key, sizeof(key),
                                  (const uint8_t*)"Hi There", 8, tag);
-    // Leftmost 8 bytes of the RFC 4231 case 1 digest.
+    // Leftmost 8 bytes of the founding document 4231 case 1 digest.
     uint8_t want[8];
     from_hex("b0344c61d8db3853", want, 8);
     CHECK(intentproto::hmac_tag_equal(tag, want));

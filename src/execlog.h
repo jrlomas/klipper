@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// Execution log record types (RFC 0001 doc 08)
+// Execution log record types (FD-0001 doc 08)
 enum {
     EL_SEG_DONE = 1, // segment completed: pos = end pos, aux = 0
     EL_TRIGGER = 2,  // trsync stop: aux = reason

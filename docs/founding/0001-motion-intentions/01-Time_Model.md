@@ -1,4 +1,4 @@
-# RFC 0001: Time Model
+# FD-0001: Time Model
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -15,7 +15,7 @@ against host time ([klippy/clocksync.py](../../../klippy/clocksync.py))
 and converts all event times into each MCU's domain. The host promises
 timing it doesn't physically own.
 
-This RFC inverts the authority. **Machine time is defined as the
+This document inverts the authority. **Machine time is defined as the
 primary MCU's free-running counter**, extended to 64 bits with an
 epoch established at connect. Nothing changes physically — the same
 crystal ticks — but the contract changes:

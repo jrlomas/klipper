@@ -1,4 +1,4 @@
-// First-class bootloader application main (RFC 0001 doc 11).
+// First-class bootloader application main (FD-0001 doc 11).
 //
 // The bootloader speaks the same MIT protocol library as the
 // application (proto.hpp): same framing, same dictionary mechanism,
@@ -15,7 +15,7 @@
 #include <intentproto/method.hpp>
 #include <intentproto/proto.hpp>
 
-// Signed firmware images (RFC 0001 doc 11, "Signed images"). Entirely
+// Signed firmware images (FD-0001 doc 11, "Signed images"). Entirely
 // compiled out unless the bootloader is built with signing enabled; an
 // unsigned build behaves exactly as before (CRC-only validity). The
 // embedded public key is generated from keys/helix_dev_signing.pub —

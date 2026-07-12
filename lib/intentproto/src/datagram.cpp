@@ -1,5 +1,5 @@
 // intentproto v2 link layer: BCH framing, authenticated datagrams,
-// XOR erasure parity. See datagram.hpp and RFC 0001 doc 07.
+// XOR erasure parity. See datagram.hpp and FD-0001 doc 07.
 
 #include "intentproto/datagram.hpp"
 #include "intentproto/bch.hpp"

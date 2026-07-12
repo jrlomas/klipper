@@ -1,6 +1,6 @@
 // WIZnet W5500 SPI Ethernet as a datagram-console transport
 //
-// RFC 0001 doc 07 makes the point that "the same UDP binding runs
+// FD-0001 doc 07 makes the point that "the same UDP binding runs
 // unchanged over Ethernet."  This file is that binding for a wired
 // link: it is a *transport* that supplies the generic datagram-console
 // glue (src/generic/udp_console.c) with a struct udp_console_ops, no
@@ -379,7 +379,7 @@ w5500_load_psk(void)
 // Host-driven bring-up of the link.  Network parameters (SPI bus, CS
 // pin, static IP config, listen port) come from the host, matching the
 // config_spi idiom (host-encoded pin numbers); the PSK / trust choice
-// stays build-time (RFC 0001 doc 07 key provisioning).  When the W5500
+// stays build-time (FD-0001 doc 07 key provisioning).  When the W5500
 // is itself the console (CONFIG_CONSOLE_W5500) the link is instead
 // brought up at startup from Kconfig, since the console cannot carry
 // the command that configures the console.

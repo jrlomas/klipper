@@ -1,4 +1,4 @@
-// ADC analog watchdog trigger source (RFC 0001 doc 09 section 2).
+// ADC analog watchdog trigger source (FD-0001 doc 09 section 2).
 //
 // Board half of src/trigger_source.c for the adc_watchdog kind. The
 // ADC free-runs (continuous conversion) on one channel and the analog

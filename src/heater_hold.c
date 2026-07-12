@@ -1,4 +1,4 @@
-// Heater failsafe hold: autonomous bang-bang hold policy (RFC 0001
+// Heater failsafe hold: autonomous bang-bang hold policy (FD-0001
 // doc 08).
 //
 // An opt-in, per-heater policy that keeps a heater (typically the

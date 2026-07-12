@@ -59,8 +59,8 @@ serial:
 #   reset itself. The default is 'arduino' if the micro-controller
 #   communicates over a serial port, 'command' otherwise.
 #on_comm_timeout: shutdown
-#   Policy for a lost communication link to this micro-controller (RFC
-#   0001 [doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md)).
+#   Policy for a lost communication link to this micro-controller
+#   (FD-0001 [doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md)).
 #   The default 'shutdown' keeps the stock behavior - a lost link takes
 #   the whole machine into a shutdown state. Setting this to 'pause'
 #   turns a lost link into a host-side "pause-and-hold" instead: a
@@ -74,8 +74,8 @@ serial:
 #hardware_endstop_trigger: True
 #   Use hardware edge interrupts for endstop/probe detection during
 #   homing instead of the legacy polled software timer, when the
-#   micro-controller's firmware supports it (RFC 0001
-#   [doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)).
+#   micro-controller's firmware supports it (FD-0001
+#   [doc 09](founding/0001-motion-intentions/09-Hardware_Triggers.md)).
 #   With this enabled (the default) a homing move arms an on-chip edge
 #   interrupt that stops motion in microseconds and latches the exact
 #   trigger tick, rather than sampling the pin on a timer. It is applied
@@ -102,8 +102,8 @@ pins such as "extra_mcu:ar9" may then be used elsewhere in the config
 
 ### [failure_recovery]
 
-Failure-recovery orchestration from RFC 0001
-[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md). This is
+Failure-recovery orchestration from FD-0001
+[doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md). This is
 an opt-in module - if the section is not present, none of its behavior
 is active and the stock Klipper failure handling is unchanged. When
 enabled it configures the per-board execution log ("flight recorder"),
@@ -125,15 +125,15 @@ the associated G-Code commands.
 #   skipped with a log message. The default is "mcu".
 #asyncio_drain: False
 #   If true, route the execution-log drain through the [asyncio_bridge]
-#   seam (RFC 0001 doc 05) instead of the direct reactor path. This is
+#   seam (FD-0001 doc 05) instead of the direct reactor path. This is
 #   an advanced/experimental option; on any bridge error it falls back
 #   to the direct drain. The default is False.
 ```
 
 ### [timesync]
 
-Machine-time beacon discipline from RFC 0001
-[doc 01](rfcs/0001-motion-intentions/01-Time_Model.md). This opt-in
+Machine-time beacon discipline from FD-0001
+[doc 01](founding/0001-motion-intentions/01-Time_Model.md). This opt-in
 module relays clock-sync beacons from the primary micro-controller so
 that secondary boards discipline their clocks to "machine time". If
 the section is not present, no beacons are relayed and clock
@@ -160,8 +160,8 @@ exposed printer object.
 
 ### [asyncio_bridge]
 
-The asyncio&lt;-&gt;reactor bridge seam from RFC 0001
-[doc 05](rfcs/0001-motion-intentions/05-Host_Architecture.md). This
+The asyncio&lt;-&gt;reactor bridge seam from FD-0001
+[doc 05](founding/0001-motion-intentions/05-Host_Architecture.md). This
 module is normally loaded automatically on demand (for example by
 `[failure_recovery] asyncio_drain: True`); the section only needs to
 be declared to tune its timeouts. It is opt-in and has no effect on
@@ -180,8 +180,8 @@ the stock motion path.
 ### [trajectory_queuing]
 
 Owns the actuators that opt into the trajectory-intention motion path
-(`motion_protocol: trajectory`, RFC 0001
-[doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)). It is
+(`motion_protocol: trajectory`, FD-0001
+[doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md)). It is
 normally loaded automatically as soon as one stepper enables that path;
 the section only needs to be declared to set the option below. It exposes
 the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
@@ -353,8 +353,8 @@ position_max:
 #   if near position_min.
 #motion_protocol: legacy
 #   Selects how motion for this stepper is delivered to the micro-
-#   controller (RFC 0001
-#   [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)).
+#   controller (FD-0001
+#   [doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md)).
 #   The default 'legacy' uses the stock pre-computed step-pulse
 #   (queue_step) path. Setting this to 'trajectory' opts this single
 #   actuator into the trajectory-intention path, in which the host
@@ -1212,8 +1212,8 @@ max_temp:
 #   These parameters must be provided.
 #failure_policy: off
 #   Failsafe hold policy for this heater during a failure/link loss
-#   (RFC 0001
-#   [doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md);
+#   (FD-0001
+#   [doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md);
 #   requires the [failure_recovery] section). The default 'off' keeps
 #   the stock watchdog behavior. Setting this to 'hold' arms an
 #   autonomous micro-controller bang-bang holder that keeps the heater
@@ -1253,7 +1253,7 @@ max_temp:
 #hold_max_temp: 110
 #hold_max_duration: 3600
 #hold_ping_timeout: 5.0
-#   Opt-in failsafe hold policy (RFC 0001 doc 08). See the "extruder"
+#   Opt-in failsafe hold policy (FD-0001 doc 08). See the "extruder"
 #   section for a description of these parameters. Requires the
 #   [failure_recovery] section. The default is 'off' (stock behavior).
 ```

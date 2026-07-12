@@ -1,7 +1,7 @@
 #ifndef INTENTPROTO_HMAC_HPP
 #define INTENTPROTO_HMAC_HPP
 // SHA-256 (FIPS 180-4) and HMAC-SHA256 (RFC 2104) for the datagram
-// transport (RFC 0001, doc 07): UDP frames carry a truncated 8-byte
+// transport (FD-0001, doc 07): UDP frames carry a truncated 8-byte
 // HMAC-SHA256 tag.
 //
 // Core profile: freestanding C++ — no heap, no exceptions, no RTTI,

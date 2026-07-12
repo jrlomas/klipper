@@ -1,4 +1,4 @@
-# The asyncio <-> greenlet-reactor bridge seam (RFC 0001 doc 05).
+# The asyncio <-> greenlet-reactor bridge seam (FD-0001 doc 05).
 #
 # Doc 05 is explicit that klippy's bespoke greenlet reactor is NOT
 # rewritten up front: the legacy motion path keeps running on it, and

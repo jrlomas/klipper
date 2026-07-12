@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Standalone proof of the asyncio<->reactor bridge seam (RFC 0001
+# Standalone proof of the asyncio<->reactor bridge seam (FD-0001
 # doc 05). Drives klippy's real greenlet reactor plus a live
 # AsyncioBridge and exercises the two-way handoff end to end:
 #

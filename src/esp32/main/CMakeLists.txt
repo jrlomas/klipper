@@ -37,7 +37,7 @@ set(KLIPPER_INCLUDES
     ${KLIPPER_ROOT}/lib/intentproto/include)
 
 # --- sources carrying compile-time requests ---
-# The step backend is a build-time substitution (RFC 0001 doc 12): with
+# The step backend is a build-time substitution (FD-0001 doc 12): with
 # CONFIG_KLIPPER_RMT_STEP the esp32-specific src/esp32/rmt_stepper.c
 # (added to the board sources below) provides the config_stepper/
 # queue_step command surface driving the RMT peripheral, and the
@@ -55,7 +55,7 @@ set(KLIPPER_CORE_SRCS
     # peripheral command modules (CONFIG_WANT_* in autoconf.h)
     spicmds.c spi_software.c i2ccmds.c i2c_software.c pwmcmds.c
     buttons.c tmcuart.c neopixel.c
-    # trajectory intention queue (RFC 0001)
+    # trajectory intention queue (FD-0001)
     trajq.c traj_stepper.c execlog.c timesync.c heater_hold.c)
 list(TRANSFORM KLIPPER_CORE_SRCS PREPEND ${KLIPPER_ROOT}/src/)
 set(KLIPPER_GENERIC_SRCS
@@ -71,10 +71,10 @@ set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/i2c.c
     ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
     ${KLIPPER_ROOT}/src/esp32/wifi.c
-    # In-band update mapped onto ESP-IDF OTA (RFC 0001 doc 11)
+    # In-band update mapped onto ESP-IDF OTA (FD-0001 doc 11)
     ${KLIPPER_ROOT}/src/esp32/ota.c)
 if(CONFIG_KLIPPER_ARCH_MODEM)
-    # "IDF as modem" (RFC 0001 doc 12 stage 3): bare core 1 booted by
+    # "IDF as modem" (FD-0001 doc 12 stage 3): bare core 1 booted by
     # appcpu_boot.c, console over the shared-memory ring, IDF/lwIP
     # confined to core 0.  rmt_step.c is component-arch only (it
     # needs esp_intr_alloc; revisit with the bare-core ISR work).

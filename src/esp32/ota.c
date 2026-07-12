@@ -1,4 +1,4 @@
-// ESP32 in-band update over ESP-IDF OTA (RFC 0001 doc 11).
+// ESP32 in-band update over ESP-IDF OTA (FD-0001 doc 11).
 //
 // The protocol commands are identical to every other target's —
 // enter_bootloader / flash_begin / flash_data / flash_verify /

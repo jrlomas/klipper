@@ -1,4 +1,4 @@
-// Portable per-target flash geometry constructors (RFC 0001 doc 11).
+// Portable per-target flash geometry constructors (FD-0001 doc 11).
 //
 // No register access — pure layout data, compiled for both the arm
 // bootloader and the host FlashOps tests. Budgets follow doc 11's

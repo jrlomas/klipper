@@ -6,8 +6,8 @@ time, and networks.*
 This document is the whole story in one place: what HELIX is, the
 problem it was built to solve, how it solves it, and what that buys you.
 If you only read one page, read this one. When you want the rigorous
-version, every section points into [the RFC 0001 design
-canon](rfcs/0001-motion-intentions/00-Vision.md).
+version, every section points into [the FD-0001 design
+canon](founding/0001-motion-intentions/00-Vision.md).
 
 ---
 
@@ -70,7 +70,7 @@ servo joint — a brushless extruder, a servo axis — is just another
 backend on the exact same queue tomorrow. The step firehose held that
 door shut by construction; intentions open it. *(The backend contract and
 the FOC/BLDC case are specified in
-[doc 04](rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
+[doc 04](founding/0001-motion-intentions/04-Actuator_Backends.md).)*
 
 **What it buys you.** Smoother motion, tolerance to imperfect links,
 a board that can answer "where are you?" without the host — and an
@@ -78,7 +78,7 @@ actuator model that isn't nailed to stepper motors. HELIX carries
 segments all the way up to **cubic and quintic Bézier** curves for jerk-
 and snap-limited motion, chained so exactly that thousands of them in a
 row accumulate zero positional drift.
-→ [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)
+→ [doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md)
 
 ## A machine that agrees on the time
 
@@ -90,7 +90,7 @@ disciplines a computer to a reference.
 **What it buys you.** "Do this at time T" means the same instant on the
 mainboard, on a CAN toolhead, and on a WiFi accessory — so coordinated
 motion and synchronized events survive being spread across a network
-instead of a shared backplane. → [doc 01](rfcs/0001-motion-intentions/01-Time_Model.md)
+instead of a shared backplane. → [doc 01](founding/0001-motion-intentions/01-Time_Model.md)
 
 ## Pause, hold, resume — not shutdown
 
@@ -119,7 +119,7 @@ lost.
 
 **What it buys you.** The single most print-destroying event in the old
 world — a toolhead cable working loose — becomes a pause you walk over
-and fix. → [doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md)
+and fix. → [doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md)
 
 ## Networks as first-class transports
 
@@ -142,9 +142,9 @@ transport is built to be trusted:
 * **Signed firmware** — images can be **Ed25519-signed** and verified by
   the bootloader before they are allowed to run.
 
-→ [doc 07](rfcs/0001-motion-intentions/07-Link_Transport.md),
-[doc 11](rfcs/0001-motion-intentions/11-Bootloader.md),
-[doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)
+→ [doc 07](founding/0001-motion-intentions/07-Link_Transport.md),
+[doc 11](founding/0001-motion-intentions/11-Bootloader.md),
+[doc 12](founding/0001-motion-intentions/12-ESP32_Architecture.md)
 
 ## Stops that happen in hardware
 
@@ -166,7 +166,7 @@ sample, **DMA-driven ADC oversampling** at rates a scheduled poll could
 never reach without starving step generation, and analog window
 triggers. Those uses aren't all built yet — the point is the substrate
 now makes them *reachable* rather than a fight with the scheduler.
-→ [doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)
+→ [doc 09](founding/0001-motion-intentions/09-Hardware_Triggers.md)
 
 ## One protocol, one library, every board the same
 
@@ -186,8 +186,8 @@ freestanding C++ library (`lib/intentproto`). Two decisions define it:
   modules to a board without reflashing it (the idea; the VM that would
   have run them was deliberately left out as low-value).
 
-→ [doc 10](rfcs/0001-motion-intentions/10-Protocol_Library.md),
-[doc 13](rfcs/0001-motion-intentions/13-Syscall_API.md)
+→ [doc 10](founding/0001-motion-intentions/10-Protocol_Library.md),
+[doc 13](founding/0001-motion-intentions/13-Syscall_API.md)
 
 ## What HELIX is not
 
@@ -205,8 +205,8 @@ newer bargain.
 
 * **Run it:** the [HELIX User Guide](Helix_User_Guide.md).
 * **Build it:** the [HELIX Developer Guide](Helix_Developer_Guide.md).
-* **Understand it deeply:** the [RFC 0001
-  canon](rfcs/0001-motion-intentions/00-Vision.md).
+* **Understand it deeply:** the [FD-0001
+  canon](founding/0001-motion-intentions/00-Vision.md).
 * **Its Klipper roots:** the inherited [documentation
   overview](Overview.md).
 

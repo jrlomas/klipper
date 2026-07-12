@@ -1,5 +1,5 @@
 // The network modem task - the core-0 side of the "IDF as modem"
-// architecture (RFC 0001 doc 12 stage 3)
+// architecture (FD-0001 doc 12 stage 3)
 //
 // In the modem architecture this is the only place the console data
 // path touches IDF/lwIP: a core-0 task owns the UDP socket and

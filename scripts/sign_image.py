@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Sign a firmware image with an Ed25519 private key for signed firmware
-# images (RFC 0001 doc 11, "Signed images").
+# images (FD-0001 doc 11, "Signed images").
 #
 # The bootloader (src/boot_app) verifies an Ed25519 signature over the
 # exact application image bytes — the same bytes the CRC covers — before

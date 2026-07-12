@@ -1,4 +1,4 @@
-// In-band bootloader entry command (RFC 0001 doc 11).
+// In-band bootloader entry command (FD-0001 doc 11).
 //
 // enter_bootloader is an ordinary Class-1 application command: it
 // stamps the first-class-bootloader request magic in a no-init RAM

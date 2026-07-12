@@ -7,7 +7,7 @@ src-y += linux/pca9685.c linux/spidev.c linux/analog.c linux/hard_pwm.c
 src-y += linux/i2c.c linux/gpio.c generic/crc16_ccitt.c generic/alloc.c
 src-y += linux/sensor_ds18b20.c
 
-# Datagram (UDP) console transport (RFC 0001 doc 07)
+# Datagram (UDP) console transport (FD-0001 doc 07)
 src-y += linux/udp.c generic/udp_console.c
 
 # The intentproto datagram link layer is freestanding C++ (no

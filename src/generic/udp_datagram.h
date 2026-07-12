@@ -1,6 +1,6 @@
 #ifndef __GENERIC_UDP_DATAGRAM_H
 #define __GENERIC_UDP_DATAGRAM_H
-// C bindings for the intentproto datagram link layer (RFC 0001 doc 07)
+// C bindings for the intentproto datagram link layer (FD-0001 doc 07)
 
 #include <stdint.h> // uint32_t
 

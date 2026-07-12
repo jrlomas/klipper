@@ -7,7 +7,7 @@ installation information.
 ## HELIX 0.9
 
 The first HELIX release: the complete motion-and-communication redesign
-described in the [RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md),
+described in the [FD-0001 canon](founding/0001-motion-intentions/00-Vision.md),
 built on Klipper 0.13.0.
 
 > **Maturity — read this first.** HELIX 0.9 is a **software-complete,

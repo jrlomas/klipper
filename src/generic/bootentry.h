@@ -1,6 +1,6 @@
 #ifndef __GENERIC_BOOTENTRY_H
 #define __GENERIC_BOOTENTRY_H
-// First-class bootloader entry convention (RFC 0001 doc 11).
+// First-class bootloader entry convention (FD-0001 doc 11).
 //
 // enter_bootloader stamps a magic request word in a no-init RAM slot
 // that survives a software reset (SRAM keeps its contents across

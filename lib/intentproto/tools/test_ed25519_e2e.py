@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# End-to-end signed-image crosscheck (RFC 0001 doc 11, "Signed images"):
+# End-to-end signed-image crosscheck (FD-0001 doc 11, "Signed images"):
 # the host signer (scripts/sign_image.py) signs blobs with the COMMITTED
 # dev key, and the freestanding on-device C verifier (built here as
 # tools/ed25519_verify_cli) must accept exactly those signatures and

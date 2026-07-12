@@ -2,7 +2,7 @@
 //
 // This module binds klipper's console contract (command.c frame
 // blocks - see serial_irq.c for the reference wired binding) to the
-// intentproto datagram transport of RFC 0001 doc 07:
+// intentproto datagram transport of FD-0001 doc 07:
 //
 //  - received datagrams are authenticated (truncated HMAC-SHA256)
 //    and sequence-checked by the intentproto layer (udp_datagram.h),
@@ -12,7 +12,7 @@
 //    overhead, mirroring udp_bridge.py's host-side batching), then
 //    wrapped and sealed into one datagram
 //
-// Erasure FEC (RFC 0001 doc 07, "two layers"): when a port selects a
+// Erasure FEC (FD-0001 doc 07, "two layers"): when a port selects a
 // non-zero fec_k (udp_console_set_fec_k), the tx side emits a parity
 // datagram after every k data datagrams and the rx side reconstructs a
 // single datagram lost inside a protected block the moment that block's

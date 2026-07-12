@@ -4,7 +4,7 @@
 // public-key / message / signature triples), plus a 1023-byte
 // multi-block message vector that drives SHA-512 across many blocks.
 // Each vector is checked to ACCEPT the valid signature and to REJECT a
-// tampered signature, message, and public key. The RFC triples were
+// tampered signature, message, and public key. The RFC 8032 triples were
 // independently confirmed valid with an external Ed25519 library; the
 // 1023-byte vector is deterministic (fixed seed 00..1f, message byte
 // i = (i*7+3) & 0xff) and produced by scripts/sign_image.py's signer.

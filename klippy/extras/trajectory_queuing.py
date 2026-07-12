@@ -1,13 +1,13 @@
 # Trajectory intention emitter: per-actuator opt-in motion protocol
 #
 # Owns steppers configured with 'motion_protocol: trajectory'
-# (RFC 0001): configures the MCU-side segment executor, anchors the
+# (FD-0001): configures the MCU-side segment executor, anchors the
 # chained position stream with trajectory_rebase, runs the C segment
 # fitter over each flush window, and ships queue_traj_segment
 # commands. The legacy queue_step path is untouched for every other
 # stepper — the two coexist per actuator on the same MCU.
 #
-# Homing/probing (RFC 0001 doc 02 "Homing, probing, and trsync"):
+# Homing/probing (FD-0001 doc 02 "Homing, probing, and trsync"):
 # MCU_trsync arms traj_stop_on_trigger (instead of
 # stepper_stop_on_trigger) for opted-in steppers - see
 # MCU_stepper.get_stop_on_trigger_command_name().  During the homing
@@ -34,7 +34,7 @@ SUBUNITS = 65536.
 TSEG_POLY_CUBIC = 1 << 6
 TSEG_POLY_QUINTIC = 2 << 6
 
-# ---- Higher-order (cubic / quintic) Bezier segments (RFC 0001 doc 02) ----
+# ---- Higher-order (cubic / quintic) Bezier segments (FD-0001 doc 02) ----
 #
 # Fixed-point scaling (extends v=Q16.16, a=Q0.32): each higher derivative
 # carries 16 more fractional bits - jerk *2^48, snap *2^64, crackle *2^80.
@@ -137,12 +137,12 @@ def bezier_to_wire(ctrl_su, duration):
         coeffs[key] = _clamp_i32(traj_round(true_k * (2. ** (16 * k))))
     return order, coeffs
 # Default deviation tolerance: max(half a microstep, ~5um) is decided
-# host-side in sub-units; see RFC 0001 doc 02.
+# host-side in sub-units; see FD-0001 doc 02.
 DEFAULT_TOLERANCE_SU = SUBUNITS / 2.
 DEFAULT_SAMPLE_TIME = 0.001
 DEFAULT_UNDERRUN_DECEL = 5000.  # mm/s^2
 # Rolling intention record depth (the host twin of the MCU execlog
-# window - RFC 0001 doc 08); sized like the execlog ring by default.
+# window - FD-0001 doc 08); sized like the execlog ring by default.
 DEFAULT_INTENTION_RECORD = 256
 
 
@@ -168,7 +168,7 @@ class TrajectoryStepper:
         self.need_rebase = True
         self.su_per_mm = 1.
         # Rolling record of intentions SENT: the host twin the resume
-        # reconciler (RFC 0001 doc 08) diffs against what the board
+        # reconciler (FD-0001 doc 08) diffs against what the board
         # actually executed.  Each entry is
         # (start_clock, end_clock, end_pos_subunits) taken from the
         # exact chained anchor the fitter maintains (segfit_get_anchor
@@ -176,7 +176,7 @@ class TrajectoryStepper:
         record_size = config.getint('motion_intention_record',
                                     DEFAULT_INTENTION_RECORD, minval=16)
         self.intentions = collections.deque(maxlen=record_size)
-        # Per-joint recovery disposition after a board RESET (RFC 0001
+        # Per-joint recovery disposition after a board RESET (FD-0001
         # doc 08, HELIX simplified model).  HELIX uses no encoders and no
         # closed-loop position feedback: a resume assumes the joint is
         # still at the last coordinates it was commanded to, with the
@@ -378,7 +378,7 @@ class TrajectoryStepper:
             return
         self.intentions.append((start_clock, end_clock, int(acc >> 32)))
 
-    # ---- resume reconciliation (RFC 0001 doc 08) ----
+    # ---- resume reconciliation (FD-0001 doc 08) ----
     def get_intention_record(self):
         return list(self.intentions)
 

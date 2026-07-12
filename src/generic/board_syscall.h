@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "board/gpio.h" // struct gpio_out
 
-// Unified cross-family board syscall surface (RFC 0001 doc 13).
+// Unified cross-family board syscall surface (FD-0001 doc 13).
 //
 // Every Klipper port already implements the same board.h primitives
 // (GPIO, timer, ADC, PWM, SPI, I2C) plus the shared scheduler and irq

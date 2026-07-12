@@ -1,4 +1,4 @@
-// Trajectory intention segment core (RFC 0001).
+// Trajectory intention segment core (FD-0001).
 //
 // Actuator-independent half of the intention protocol: the segment
 // queue, exact chained-position accounting, underrun ramp synthesis,
@@ -330,7 +330,7 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
                     , int32_t velocity, int32_t accel)
 {
     if (!timesync_class0_ok()) {
-        // Machine-time discipline stale - refuse ingest (RFC 0001 doc 01)
+        // Machine-time discipline stale - refuse ingest (FD-0001 doc 01)
         tq->dropped++;
         return;
     }
@@ -457,7 +457,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 void
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
 {
-    // The anchor is a machine-time instant (RFC 0001 doc 01);
+    // The anchor is a machine-time instant (FD-0001 doc 01);
     // identity when timesync is unconfigured
     clock = timesync_clock_to_local(clock);
     irq_disable();

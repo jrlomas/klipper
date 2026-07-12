@@ -3,7 +3,7 @@
 // Lock-free single-producer/single-consumer byte ring in shared RAM
 //
 // This is the cross-core pipe of the "IDF as modem" architecture
-// (RFC 0001 doc 12): core 0 (the IDF/WiFi modem) and core 1 (bare
+// (FD-0001 doc 12): core 0 (the IDF/WiFi modem) and core 1 (bare
 // metal klipper) exchange sealed console datagrams through two of
 // these rings.  It is also used, unchanged, by the desktop unit test
 // (shmem_ring_test.c) with two POSIX threads standing in for the two

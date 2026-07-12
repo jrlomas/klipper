@@ -1,7 +1,7 @@
 # Trajectory PWM/DAC actuator: sampled non-stepper motion backend
 #
 # Configures the MCU-side sampled PWM/DAC trajectory backend
-# (src/traj_pwm.c, RFC 0001 doc 04) for a non-stepper actuator whose
+# (src/traj_pwm.c, FD-0001 doc 04) for a non-stepper actuator whose
 # "position" is an output level - laser power, spindle speed, a hobby
 # servo or an analog/PWM-driven axis.  The MCU samples the segment
 # polynomial q(dt) = q0 + v*dt + 1/2*a*dt^2 at a fixed loop rate and
@@ -60,7 +60,7 @@ class TrajectoryPWM:
         # the MCU divides the sampled sub-unit position by.
         self.full_scale = config.getfloat('full_scale', 1., above=0.)
         # shutdown_value: fraction of full scale driven on machine
-        # shutdown (RFC 0001 doc 04 stop table "output to configured
+        # shutdown (FD-0001 doc 04 stop table "output to configured
         # shutdown value").
         self.shutdown_frac = config.getfloat(
             'shutdown_value', 0., minval=0., maxval=1.)

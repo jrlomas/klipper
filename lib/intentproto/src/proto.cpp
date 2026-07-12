@@ -403,10 +403,10 @@ void process_block(uint8_t seq, const uint8_t* payload, size_t len) {
 void init(const Config& cfg) {
     if (!g_finalized) {
         // Library-owned capability advertisement: framing v2 lands
-        // in every dictionary this registry serves (RFC 0001 doc 07
+        // in every dictionary this registry serves (FD-0001 doc 07
         // negotiation step 1) without a user-level declaration.
         static Constant framing_v2("FRAMING_V2", 1);
-        // Extension self-description meta-messages (RFC 0001 doc 10;
+        // Extension self-description meta-messages (FD-0001 doc 10;
         // format in proto.hpp). Registered through the ordinary
         // registry — they land in the legacy dictionary AND describe
         // themselves in the extension stream. Constructed here, they

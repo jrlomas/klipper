@@ -1,4 +1,4 @@
-# Failure recovery orchestration: pause-and-hold host side (RFC 0001
+# Failure recovery orchestration: pause-and-hold host side (FD-0001
 # doc 08).
 #
 # Responsibilities:
@@ -210,7 +210,7 @@ class FailureRecovery:
             'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
         self.holds = {}
         # Opt-in: route the execlog drain through the asyncio<->reactor
-        # bridge seam (RFC 0001 doc 05) instead of the direct reactor
+        # bridge seam (FD-0001 doc 05) instead of the direct reactor
         # path. Defaults off so the working reactor path is unchanged;
         # this is the proof-of-consumer that the seam is real, not a
         # wholesale migration (the shutdown flight-recorder drain and
@@ -402,7 +402,7 @@ class FailureRecovery:
                      name, "ok" if ok else "failed", msg)
         gcmd.respond_info(msg)
 
-    # ---- Motion resume reconciliation (RFC 0001 doc 08) ----
+    # ---- Motion resume reconciliation (FD-0001 doc 08) ----
     # The intention queue went down; the execution log comes up; resume
     # is the host reconciling the two.  Per opted-in trajectory stepper:
     # drain the board's execlog, read its authoritative held
@@ -491,7 +491,7 @@ class FailureRecovery:
                 # Unreadable board: fall through to reset handling.
                 state = 'reset'
             # (per-joint recovery after a board RESET), HELIX simplified
-            # model (RFC 0001 doc 08): assume the joint is still at the
+            # model (FD-0001 doc 08): assume the joint is still at the
             # last coordinates it was commanded to, with the homing it
             # had, and continue -- unless that homing was truly lost, in
             # which case the axis must be re-homed first.
@@ -546,7 +546,7 @@ class FailureRecovery:
             # Doc 08 print-quality honesty - log it, do not try to solve
             # blemish-free resume in v1.
             info("v1 resume is mechanically exact but not cosmetically"
-                 " invisible - a blemish is likely (RFC 0001 doc 08)")
+                 " invisible - a blemish is likely (FD-0001 doc 08)")
         if blocking:
             info("resume BLOCKED: joint(s) need re-qualification or operator"
                  " judgment; the print was NOT resumed")

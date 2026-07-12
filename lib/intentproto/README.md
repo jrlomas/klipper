@@ -1,7 +1,7 @@
 # intentproto
 
 The single protocol library of the motion-intentions fork — see
-[RFC 0001, doc 10](../../docs/rfcs/0001-motion-intentions/10-Protocol_Library.md).
+[FD-0001, doc 10](../../docs/founding/0001-motion-intentions/10-Protocol_Library.md).
 For the full wire-protocol reference this library implements, see
 [Protocol v2](../../docs/Protocol_v2.md).
 
@@ -15,7 +15,7 @@ library's two load-bearing decisions on real code:
    dictionary builder, and the host-side retransmit-window session
    (`host.hpp` — sequence assignment, in-flight window, go-back-N).
    Both sessions negotiate framing v2 (BCH t=3 FEC trailer) per
-   [RFC 0001 doc 07](../../docs/rfcs/0001-motion-intentions/07-Link_Transport.md):
+   [FD-0001 doc 07](../../docs/founding/0001-motion-intentions/07-Link_Transport.md):
    the device advertises `FRAMING_V2` in its dictionary and latches
    on the first valid v2 frame; the host probes after
    `session_enable_v2()` and falls back to legacy automatically
@@ -80,7 +80,7 @@ make embedded    # Cortex-M0 compile + size report (arm-none-eabi-g++)
 make dict        # example identify-blob build (tools/mkdict.py)
 ```
 
-The **host profile** (RFC 0001 doc 10) is exposed through a versioned,
+The **host profile** (FD-0001 doc 10) is exposed through a versioned,
 C-linkage ABI in `include/intentproto/capi.h`
 (`INTENTPROTO_ABI_VERSION` + `intentproto_abi_version()`), implemented
 as a thin `extern "C"` shim in `src/capi.cpp` over the C++ core: host
@@ -97,7 +97,7 @@ Python one politely when cffi is absent.
 The tests port a slice of the OpenAMS firmware's command set as the
 working example.
 
-## CAN transport (RFC 0001 doc 07)
+## CAN transport (FD-0001 doc 07)
 
 `can_transport.hpp` binds the framed byte stream to a CAN bus the way
 legacy Klipper does — CAN is a byte-stream carrier *below* the
@@ -118,8 +118,8 @@ is transport-agnostic (the caller supplies the `send` hook).
 
 The datagram transport authenticates every packet with a truncated
 HMAC-SHA256 keyed by a **static** PSK — that is the mandatory floor
-(RFC 0001 doc 07) and the default, and it is untouched. On top of it,
-`session_sec.hpp` adds the *negotiated* upgrade RFC 07 had deferred as
+(FD-0001 doc 07) and the default, and it is untouched. On top of it,
+`session_sec.hpp` adds the *negotiated* upgrade FD-0001 doc 07 had deferred as
 "heavier machinery (DTLS, key rotation, per-board identities)":
 
 * **HKDF-SHA256** (`hmac.hpp`, RFC 5869, built from the existing HMAC)
@@ -146,11 +146,11 @@ codec never sets or inspects it. A live `SecureSession` (both
 directions, keys, epochs and the replay window) costs 264 bytes of
 RAM per link on the STM32F072 floor.
 
-## Not yet implemented (tracked in RFC 0001 doc 10)
+## Not yet implemented (tracked in FD-0001 doc 10)
 
 * Segment payload codecs (`queue_traj_segment` coefficient
   quantization, chained-position bookkeeping) per
-  [02](../../docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md).
+  [02](../../docs/founding/0001-motion-intentions/02-Intention_Protocol.md).
 * Binding the datagram/HMAC transport (`datagram.hpp`) to the
   sessions' framed byte streams (framing v2 and traffic classes are
   wired into the negotiation path; the UDP datagram layer still

@@ -1,4 +1,4 @@
-// ESP32 RMT-backed stepper backend (RFC 0001 doc 12: the "RMT escape
+// ESP32 RMT-backed stepper backend (FD-0001 doc 12: the "RMT escape
 // hatch" for step generation, made real).
 //
 // This is a drop-in replacement for the portable src/stepper.c,

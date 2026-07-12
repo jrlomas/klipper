@@ -1,7 +1,7 @@
 #ifndef INTENTPROTO_PROTO_HPP
 #define INTENTPROTO_PROTO_HPP
 // intentproto — the single protocol library of the motion-intentions
-// fork (RFC 0001, doc 10).
+// fork (FD-0001, doc 10).
 //
 // Core profile: freestanding C++ — no heap, no exceptions, no RTTI,
 // no virtual dispatch, no STL containers. Bytes in, bytes out,
@@ -180,7 +180,7 @@ void init(const Config& cfg);
 
 // Feed raw link bytes in any chunking. Both framings are accepted at
 // all times: legacy frames are CRC checked; frames whose seq byte
-// sets FRAME_V2_FLAG are BCH decoded (framing v2, RFC 0001 doc 07).
+// sets FRAME_V2_FLAG are BCH decoded (framing v2, FD-0001 doc 07).
 // Valid frames are acked, damaged ones nacked, and their messages
 // dispatched to registered command handlers from inside this call.
 // `identify` is handled by the library.
@@ -206,7 +206,7 @@ const Constant* first_constant();
 const Enumeration* first_enumeration();
 const Command* find_command(uint32_t id);
 
-// ---- extension self-description (RFC 0001 doc 10) ----
+// ---- extension self-description (FD-0001 doc 10) ----
 // A v2 peer needs no dictionary round-trip: the device serves its
 // registry as data over two library-owned meta-commands. init()
 // registers them through the ordinary registry, so they appear in

@@ -1,8 +1,8 @@
-# RFC 0001: The Intention Protocol
+# FD-0001: The Intention Protocol
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
-This is the core document of the RFC set. It defines what a trajectory
+This is the core document of the founding document. It defines what a trajectory
 *intention* (segment) is, its wire encoding, how a stepper realizes it
 without floating point, and the queue/refill/underrun protocol.
 
@@ -297,7 +297,7 @@ interpolating step edges (forward differencing) needs no solver, but
 gives step-time granularity of the sampling period, burns constant CPU
 even when idle, and its error grows with step rate exactly where
 precision matters most. Newton-per-step costs CPU *proportional to
-work done* and keeps single-tick timing. This RFC takes the
+work done* and keeps single-tick timing. This document takes the
 Newton-per-step position.
 
 ### CPU budget

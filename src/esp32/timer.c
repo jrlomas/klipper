@@ -7,7 +7,7 @@
 // the klipper main task *after* it has been pinned to core 1: the
 // esp_intr_alloc() performed by gptimer_register_event_callbacks()
 // attaches the interrupt to the calling core, which is what pins
-// klipper timer dispatch away from the WiFi core (RFC 0001 doc 07
+// klipper timer dispatch away from the WiFi core (FD-0001 doc 07
 // core-pinning).
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>

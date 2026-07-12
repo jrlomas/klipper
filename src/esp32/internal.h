@@ -5,7 +5,7 @@
 #include <stdint.h> // uint32_t
 #include "sdkconfig.h" // CONFIG_KLIPPER_ARCH_MODEM
 
-// Architecture selection (RFC 0001 doc 12).  "component": klipper
+// Architecture selection (FD-0001 doc 12).  "component": klipper
 // runs as a FreeRTOS task pinned to core 1 inside the IDF app (the
 // stage-1 build).  "modem": core 1 runs bare-metal klipper booted by
 // appcpu_boot.c and IDF is reduced to a core-0 network coprocessor

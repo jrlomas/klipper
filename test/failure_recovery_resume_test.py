@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Standalone unit test for host-side motion resume reconciliation
-# (RFC 0001 doc 08 "Resume workflow").  Stubs the MCU / stepper /
+# (FD-0001 doc 08 "Resume workflow").  Stubs the MCU / stepper /
 # execlog interfaces and drives FailureRecovery._resume_motion through
 # three scenarios:
 #

@@ -1,4 +1,4 @@
-// GPIO edge-interrupt trigger sources via EXTI (RFC 0001 doc 09).
+// GPIO edge-interrupt trigger sources via EXTI (FD-0001 doc 09).
 //
 // Board half of src/trigger_source.c for STM32: routes a GPIO pin to
 // its EXTI line, latches a timestamp at IRQ entry, and delivers the

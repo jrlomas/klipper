@@ -1,4 +1,4 @@
-// Stepper backend for trajectory intention segments (RFC 0001).
+// Stepper backend for trajectory intention segments (FD-0001).
 //
 // Realizes quadratic position segments as step/dir edges with pure
 // integer math: for each step, solve q(t) = q_target for the tick of

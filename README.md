@@ -51,7 +51,7 @@ motion, **holds position with the heaters still on**, and waits. You
 reseat the cable, it re-handshakes, reconciles exactly where it stopped
 from its own execution log, and resumes. Pause-and-hold replaces
 abort-everything as the default response to recoverable failure. *(See
-[RFC 0001 doc 08](docs/rfcs/0001-motion-intentions/08-Failure_Recovery.md).)*
+[FD-0001 doc 08](docs/founding/0001-motion-intentions/08-Failure_Recovery.md).)*
 
 **The link stops being a firehose.** Because each board buffers deep
 queues of intentions and integrates them against its own clock, latency
@@ -59,8 +59,8 @@ and jitter on the wire become slack the queue absorbs instead of
 defects in your surface finish. That is what finally makes **WiFi and
 Ethernet** first-class transports — not just USB and a short CAN stub.
 A network-native ESP32 toolhead is a real target, not a curiosity.
-*(Docs [07](docs/rfcs/0001-motion-intentions/07-Link_Transport.md),
-[12](docs/rfcs/0001-motion-intentions/12-ESP32_Architecture.md).)*
+*(Docs [07](docs/founding/0001-motion-intentions/07-Link_Transport.md),
+[12](docs/founding/0001-motion-intentions/12-ESP32_Architecture.md).)*
 
 **It stops being stepper-only.** This is the deeper point of intentions:
 a segment says *where the joint should be*, not which step pulses to
@@ -70,8 +70,8 @@ future **closed-loop BLDC/FOC** servo joint tomorrow, all driven by the
 same trajectory queue. HELIX carries segments up to **quintic (jerk- and
 snap-limited) Bézier** curves, chained with drift-free fixed-point
 integration so a thousand in a row still land exactly on target. *(Docs
-[02](docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md),
-[04](docs/rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
+[02](docs/founding/0001-motion-intentions/02-Intention_Protocol.md),
+[04](docs/founding/0001-motion-intentions/04-Actuator_Backends.md).)*
 
 **Hardware events, not polling — a capability unlock.** Endstop and
 probe detection moves off a polled software timer onto on-chip **edge
@@ -82,12 +82,12 @@ event-driven detection with DMA makes a class of things *possible that
 polling made impossible* — catching an overrun or fault the moment it
 happens, DMA-driven ADC oversampling, comparator-based analog triggers —
 with automatic fall back to polling where the silicon can't. *(Doc
-[09](docs/rfcs/0001-motion-intentions/09-Hardware_Triggers.md).)*
+[09](docs/founding/0001-motion-intentions/09-Hardware_Triggers.md).)*
 
 **A machine that agrees on the time.** Every board disciplines its clock
 to a shared **machine time**, so "do this at T" means the same instant
 across a mainboard, a CAN toolhead, and a WiFi accessory alike. *(Doc
-[01](docs/rfcs/0001-motion-intentions/01-Time_Model.md).)*
+[01](docs/founding/0001-motion-intentions/01-Time_Model.md).)*
 
 **Communication you can trust.** Every datagram is authenticated
 (truncated HMAC over a static PSK floor, an optional DTLS-class session
@@ -95,12 +95,12 @@ with key rotation and per-board identity on top); framing gains an
 optional **forward-error-correction** trailer for lossy links; and
 firmware images can be **Ed25519-signed** and verified by the bootloader
 before they ever run. *(Docs
-[07](docs/rfcs/0001-motion-intentions/07-Link_Transport.md),
-[11](docs/rfcs/0001-motion-intentions/11-Bootloader.md).)*
+[07](docs/founding/0001-motion-intentions/07-Link_Transport.md),
+[11](docs/founding/0001-motion-intentions/11-Bootloader.md).)*
 
 **One firmware across families.** STM32 and ESP32 speak the same
 protocol, expose the same versioned
-[board syscall surface](docs/rfcs/0001-motion-intentions/13-Syscall_API.md),
+[board syscall surface](docs/founding/0001-motion-intentions/13-Syscall_API.md),
 and are written against the same board API. A module is written once,
 not once per chip.
 
@@ -112,16 +112,16 @@ and **an MCU with a memory**:
 
 | Pillar | What changed | Where |
 | --- | --- | --- |
-| Motion intentions | step firehose → per-joint polynomial queues | [doc 02](docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md) |
-| Machine time | host-owned time → disciplined shared clock | [doc 01](docs/rfcs/0001-motion-intentions/01-Time_Model.md) |
-| Failure recovery | shutdown-everything → pause, hold, resume | [doc 08](docs/rfcs/0001-motion-intentions/08-Failure_Recovery.md) |
-| Link & transport | USB/CAN only → network-native, authenticated, FEC | [doc 07](docs/rfcs/0001-motion-intentions/07-Link_Transport.md) |
-| Hardware triggers | polled endstops → interrupt-driven stops | [doc 09](docs/rfcs/0001-motion-intentions/09-Hardware_Triggers.md) |
-| The protocol library | code generation → annotation static registration | [doc 10](docs/rfcs/0001-motion-intentions/10-Protocol_Library.md) |
-| ESP32 as a target | unsupported → network-native, IDF-as-modem | [doc 12](docs/rfcs/0001-motion-intentions/12-ESP32_Architecture.md) |
+| Motion intentions | step firehose → per-joint polynomial queues | [doc 02](docs/founding/0001-motion-intentions/02-Intention_Protocol.md) |
+| Machine time | host-owned time → disciplined shared clock | [doc 01](docs/founding/0001-motion-intentions/01-Time_Model.md) |
+| Failure recovery | shutdown-everything → pause, hold, resume | [doc 08](docs/founding/0001-motion-intentions/08-Failure_Recovery.md) |
+| Link & transport | USB/CAN only → network-native, authenticated, FEC | [doc 07](docs/founding/0001-motion-intentions/07-Link_Transport.md) |
+| Hardware triggers | polled endstops → interrupt-driven stops | [doc 09](docs/founding/0001-motion-intentions/09-Hardware_Triggers.md) |
+| The protocol library | code generation → annotation static registration | [doc 10](docs/founding/0001-motion-intentions/10-Protocol_Library.md) |
+| ESP32 as a target | unsupported → network-native, IDF-as-modem | [doc 12](docs/founding/0001-motion-intentions/12-ESP32_Architecture.md) |
 
 The full design canon lives in
-[the RFC 0001 series](docs/rfcs/0001-motion-intentions/00-Vision.md).
+[the FD-0001 series](docs/founding/0001-motion-intentions/00-Vision.md).
 
 ## Start here
 
@@ -131,7 +131,7 @@ The full design canon lives in
   you from a stock Klipper mental model to HELIX's new capabilities.
 * **Building or porting HELIX?** The
   [Developer Guide](docs/Helix_Developer_Guide.md) is the map to the
-  architecture, the protocol library, and the RFC canon.
+  architecture, the protocol library, and the founding-document canon.
 
 ## Heritage and license
 

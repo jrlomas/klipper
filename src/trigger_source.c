@@ -1,4 +1,4 @@
-// Event-driven trigger sources feeding trsync (RFC 0001 doc 09).
+// Event-driven trigger sources feeding trsync (FD-0001 doc 09).
 //
 // Detection moves from polled software timers to hardware events
 // (GPIO edge interrupts, analog comparators); what happens after a
@@ -58,7 +58,7 @@ command_config_trigger_gpio(uint32_t *args)
     if (ret)
         shutdown("Pin unavailable as edge trigger");
     // Optionally route the same edge to a timer input-capture channel
-    // for a hardware-exact timestamp (RFC doc 09 sec 3). Availability
+    // for a hardware-exact timestamp (FD-0001 doc 09 sec 3). Availability
     // is per-pin/per-port; if unwired the ISR-entry read is used.
     if (board_timer_capture_setup(tsrc))
         tsrc->flags |= TSRC_CAN_CAPTURE;
@@ -67,7 +67,7 @@ DECL_COMMAND(command_config_trigger_gpio,
              "config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c"
              " qualify_ticks=%u qualify_count=%c");
 
-// Analog watchdog trigger source (RFC doc 09 sec 2): the ADC
+// Analog watchdog trigger source (FD-0001 doc 09 sec 2): the ADC
 // free-runs on one channel and hardware auto-compares each sample
 // against high/low thresholds, raising an event with no ADC polling.
 // This is the event-not-poll fallback on families without COMP.

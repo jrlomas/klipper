@@ -1,4 +1,4 @@
-// Machine-time authority and sync-beacon discipline (RFC 0001 doc 01).
+// Machine-time authority and sync-beacon discipline (FD-0001 doc 01).
 //
 // Machine time is the primary MCU's free-running counter. This file
 // implements both halves of the host-relayed beacon protocol:

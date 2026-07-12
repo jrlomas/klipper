@@ -1,4 +1,4 @@
-# RFC 0001: First-Class Bootloader
+# FD-0001: First-Class Bootloader
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and run the nano_udp host unit test (RFC 0001 doc 07 RMII path).
+# Build and run the nano_udp host unit test (FD-0001 doc 07 RMII path).
 set -eu
 cd "$(dirname "$0")/../.."
 CC=${CC:-cc}

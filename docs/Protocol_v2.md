@@ -2,19 +2,19 @@
 
 This is the authoritative reference for **protocol v2**, the wire
 protocol of the HELIX motion-intentions fork. It consolidates material
-that was previously scattered across the RFC set —
-[07-Link_Transport](rfcs/0001-motion-intentions/07-Link_Transport.md),
-[10-Protocol_Library](rfcs/0001-motion-intentions/10-Protocol_Library.md),
-[03-Traffic_Classes](rfcs/0001-motion-intentions/03-Traffic_Classes.md) —
+that was previously scattered across the founding document —
+[07-Link_Transport](founding/0001-motion-intentions/07-Link_Transport.md),
+[10-Protocol_Library](founding/0001-motion-intentions/10-Protocol_Library.md),
+[03-Traffic_Classes](founding/0001-motion-intentions/03-Traffic_Classes.md) —
 and grounds every claim in the reference implementation, the
 `intentproto` library
 ([lib/intentproto/](../lib/intentproto/), and its
 [README](../lib/intentproto/README.md)).
 
 The audience is someone implementing or debugging the protocol on
-either side of the wire. Where this document and an RFC disagree on a
+either side of the wire. Where this document and a founding-document section disagree on a
 concrete value, this document (and the code it cites) is correct: the
-RFCs recorded *proposals*; the numbers below are what shipped.
+The founding-document sections recorded *proposals*; the numbers below are what shipped.
 
 For the legacy Klipper MCU protocol that v2 extends, see the companion
 document [Protocol.md](Protocol.md). Protocol v2 is a strict,
@@ -442,7 +442,7 @@ the device is passive.
 1. **Advertisement.** The device advertises framing v2 as the
    dictionary constant `FRAMING_V2 = 1`, registered by `init()` itself,
    which rides the identify dictionary transferred in legacy framing.
-   (The RFC originally sketched a string constant `LINK_FEC="bch10_t3"`;
+   (The founding document originally sketched a string constant `LINK_FEC="bch10_t3"`;
    the implementation ships the integer `FRAMING_V2 = 1`.)
 2. **Probe.** After reading `FRAMING_V2` from the dictionary the caller
    promotes the host session with `session_enable_v2()`, which enters
@@ -490,7 +490,7 @@ mainboard + WiFi v2 toolboard) just works.
 
 Protocol v2 distinguishes three traffic classes **by failure
 semantics**, not priority
-([03-Traffic_Classes.md](rfcs/0001-motion-intentions/03-Traffic_Classes.md)).
+([03-Traffic_Classes.md](founding/0001-motion-intentions/03-Traffic_Classes.md)).
 Class is a **static property of the message id** — it costs zero wire
 bytes because both ends know each id's class from the dictionary /
 spec.
@@ -595,7 +595,7 @@ is mandatory and the default. Layered *over* it, and entirely optional,
 is a negotiated session-security upgrade
 ([include/intentproto/session_sec.hpp](../lib/intentproto/include/intentproto/session_sec.hpp),
 [src/session_sec.cpp](../lib/intentproto/src/session_sec.cpp)) that
-delivers the four properties RFC 07 named for "heavier machinery":
+delivers the four properties FD-0001 doc 07 named for "heavier machinery":
 session keys, key rotation, per-board identity, and replay protection.
 
 ### Scope and threat model — AUTH-ONLY
@@ -723,7 +723,7 @@ Transport authentication ([§8](#8-the-datagram-transport-udp--ethernet--wifi),
 [§9](#9-session-security-the-dtls-class-upgrade)) proves *who sent a
 datagram*. **Image signing** proves *what firmware a board is allowed to
 run* — a different guarantee, at a different layer. It lives in the
-bootloader ([11-Bootloader.md](rfcs/0001-motion-intentions/11-Bootloader.md)),
+bootloader ([11-Bootloader.md](founding/0001-motion-intentions/11-Bootloader.md)),
 above the transport.
 
 The bootloader verifies an **Ed25519 (RFC 8032)** signature over the
@@ -841,9 +841,9 @@ The desktop test suite exercises every layer described here
 | `test_session_sec` | PSK handshake, session datagram round-trip, replay rejection, epoch rotation, per-board identity, downgrade, forgery rejection |
 | `test_can_transport` | UUID admin handshake, ≤8-byte frame chunking, full host→CAN→dispatch→reply→CAN→host round trip |
 
-What remains is hardware bring-up and the items the RFCs still track as
+What remains is hardware bring-up and the items the founding documents still track as
 open: segment payload codecs
-([02-Intention_Protocol.md](rfcs/0001-motion-intentions/02-Intention_Protocol.md)),
+([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md)),
 binding the standalone UDP datagram layer onto the negotiated framed
 byte streams, the extension-space connect-time host binding, and PSK
 provisioning flow. See the intentproto
@@ -855,9 +855,9 @@ provisioning flow. See the intentproto
 
 * [Protocol.md](Protocol.md) — the legacy Klipper MCU protocol that v2 extends.
 * [lib/intentproto/README.md](../lib/intentproto/README.md) — the reference implementation.
-* [RFC 0001 doc 03 — Traffic Classes](rfcs/0001-motion-intentions/03-Traffic_Classes.md)
-* [RFC 0001 doc 07 — Link Transport](rfcs/0001-motion-intentions/07-Link_Transport.md)
-* [RFC 0001 doc 10 — Protocol Library](rfcs/0001-motion-intentions/10-Protocol_Library.md)
-* [RFC 0001 doc 11 — Bootloader](rfcs/0001-motion-intentions/11-Bootloader.md)
+* [FD-0001 doc 03 — Traffic Classes](founding/0001-motion-intentions/03-Traffic_Classes.md)
+* [FD-0001 doc 07 — Link Transport](founding/0001-motion-intentions/07-Link_Transport.md)
+* [FD-0001 doc 10 — Protocol Library](founding/0001-motion-intentions/10-Protocol_Library.md)
+* [FD-0001 doc 11 — Bootloader](founding/0001-motion-intentions/11-Bootloader.md)
 </content>
 </invoke>

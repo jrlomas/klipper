@@ -1,4 +1,4 @@
-/* First-class bootloader link script — STM32G0B1 (RFC 0001 doc 11).
+/* First-class bootloader link script — STM32G0B1 (FD-0001 doc 11).
  *
  * 16 KB bootloader at flash base; application at 0x08004000. 512 KB
  * dual-bank part (2x256 KB); the trailing 2 KB page holds the

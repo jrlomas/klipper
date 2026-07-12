@@ -1,4 +1,4 @@
-# RFC 0001: The Unified Board Syscall API
+# FD-0001: The Unified Board Syscall API
 
 Status: Implemented in HELIX 0.9 (board syscall ABI v1.0)
 

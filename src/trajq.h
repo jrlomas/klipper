@@ -5,7 +5,7 @@
 #include "autoconf.h" // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 #include "basecmd.h" // struct move_queue_head
 
-// Trajectory intention protocol (RFC 0001): positions are in
+// Trajectory intention protocol (FD-0001): positions are in
 // sub-units (1 native unit = 2^16 sub-units); velocity is Q16.16
 // sub-units/tick; accel is sub-units/tick^2 with 32 fractional bits.
 // The chained position accumulator carries sub-units with 32
@@ -20,7 +20,7 @@ struct traj_segment {
     int32_t velocity;
     int32_t accel;
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
-    // Higher-order power-basis coefficients (RFC 0001 doc 02
+    // Higher-order power-basis coefficients (FD-0001 doc 02
     // "Higher-order segments"). jerk is Q sub-units/tick^3 with 48
     // fractional bits, snap Q .tick^4 with 64, crackle Q .tick^5 with
     // 80 - each derivative adds one power of t and 16 fractional bits.

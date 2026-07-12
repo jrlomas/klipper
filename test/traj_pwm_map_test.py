@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Standalone unit test for the trajectory PWM/DAC sub-unit -> duty
-# mapping (RFC 0001 doc 04 PWM/DAC backend).  Exercises the pure
+# mapping (FD-0001 doc 04 PWM/DAC backend).  Exercises the pure
 # host-side subunit_to_duty() helper, which mirrors traj_pwm_duty() in
 # src/traj_pwm.c bit for bit: duty = pos_su * max_value / scale,
 # truncated and clamped to [0, max_value].  No printer/MCU/chelper is

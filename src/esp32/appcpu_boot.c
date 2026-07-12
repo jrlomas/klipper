@@ -1,5 +1,5 @@
 // Manual APP-CPU (core 1) bringup and the bare-metal core-1 runtime
-// for the "IDF as modem" architecture (RFC 0001 doc 12 stage 3).
+// for the "IDF as modem" architecture (FD-0001 doc 12 stage 3).
 //
 // The IDF app is built unicore (CONFIG_FREERTOS_UNICORE=y): IDF and
 // FreeRTOS never learn that core 1 exists.  esp32_appcpu_start()

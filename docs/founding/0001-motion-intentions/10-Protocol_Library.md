@@ -1,4 +1,4 @@
-# RFC 0001: The Protocol Library
+# FD-0001: The Protocol Library
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -231,8 +231,8 @@ The library takes the opposite position, stated as rules:
 * **The clean-room rule (hard constraint):** the library contains
   only original code. Nothing is copied or mechanically derived from
   the existing GPL sources — not a table, not a comment. This is
-  practical because the v2 protocol is new work specified by these
-  RFCs, and because **a complete original C implementation of the
+  practical because the v2 protocol is new work specified by this
+  founding document, and because **a complete original C implementation of the
   legacy protocol already exists**: the author wrote one
   independently for the OpenAMS boards' own (non-Klipper) firmware,
   working from the wire behavior rather than the GPL sources. That

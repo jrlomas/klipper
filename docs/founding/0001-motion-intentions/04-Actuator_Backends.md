@@ -1,4 +1,4 @@
-# RFC 0001: Actuator Backends
+# FD-0001: Actuator Backends
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -81,7 +81,7 @@ opted-in steppers.
 The motivating case: a brushless extruder (or any servo joint) driven
 by an on-board or on-toolhead FOC loop.
 
-**Contract, not controller.** This RFC specifies only how the drive
+**Contract, not controller.** This document specifies only how the drive
 consumes segments; the current/velocity/position loop internals are
 the drive's business (compare ODrive/SimpleFOC input interfaces, or a
 CiA 402 drive in interpolated position mode).

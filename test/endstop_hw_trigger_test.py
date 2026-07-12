@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Standalone unit test for interrupt-driven homing detection
-# (RFC 0001 doc 09).  Drives klippy's MCU_endstop through home_start /
+# (FD-0001 doc 09).  Drives klippy's MCU_endstop through home_start /
 # home_wait with a stubbed MCU and trigger dispatch, asserting that:
 #
 #   1. when the firmware advertises the trigger_source command set, a

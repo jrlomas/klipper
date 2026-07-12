@@ -448,7 +448,7 @@
             to send — so the actuator is a swappable backend: steppers and
             PWM/DAC today, a closed-loop <strong>BLDC/FOC</strong> servo joint
             tomorrow, on one queue. Up to quintic Bézier, zero drift.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/02-Intention_Protocol.md">RFC 0001 · docs 02–04 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/02-Intention_Protocol.md">FD-0001 · docs 02–04 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">02 · Time</span>
@@ -456,7 +456,7 @@
           <p class="change">host-owned time → <em>disciplined shared clock</em></p>
           <p>Every board disciplines its clock to one machine time, so
             "do this at T" means the same instant across the whole machine.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/01-Time_Model.md">RFC 0001 · doc 01 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/01-Time_Model.md">FD-0001 · doc 01 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">03 · Recovery</span>
@@ -465,7 +465,7 @@
           <p>Finish queued motion, hold position with heaters on their
             failsafe policy, keep an execution log, and reconcile the exact
             stopping point on resume.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/08-Failure_Recovery.md">RFC 0001 · doc 08 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/08-Failure_Recovery.md">FD-0001 · doc 08 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">04 · Transport</span>
@@ -474,7 +474,7 @@
           <p>The same HMAC-authenticated datagram protocol over UDP, CAN, USB
             and UART; a DTLS-class session, forward error correction, and
             Ed25519-signed images.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/07-Link_Transport.md">RFC 0001 · doc 07 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/07-Link_Transport.md">FD-0001 · doc 07 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">05 · Triggers</span>
@@ -485,7 +485,7 @@
             overrun the instant it happens, DMA-driven ADC oversampling,
             analog window triggers — reachable now, not a fight with the
             scheduler.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/09-Hardware_Triggers.md">RFC 0001 · doc 09 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/09-Hardware_Triggers.md">FD-0001 · doc 09 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">06 · Library</span>
@@ -494,7 +494,7 @@
           <p>A command is a macro beside its handler that registers itself
             before <code>main()</code>; the data dictionary is a serialization
             of the live registry, served not scraped.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/10-Protocol_Library.md">RFC 0001 · doc 10 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/10-Protocol_Library.md">FD-0001 · doc 10 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">07 · Reach</span>
@@ -503,15 +503,15 @@
           <p>STM32 and ESP32 speak the same protocol and expose the same
             versioned board syscall table — a module is written once, not once
             per chip. The ESP32 becomes a network-native target.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/12-ESP32_Architecture.md">RFC 0001 · docs 12–13 ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/12-ESP32_Architecture.md">FD-0001 · docs 12–13 ↗</a>
         </article>
         <article class="pillar" style="background:var(--panel-2)">
           <span class="idx">∞ · Canon</span>
           <h3>The full design record</h3>
           <p class="change">every decision, with its <em>why</em></p>
-          <p>Fourteen RFC documents argue the motivation before the mechanism —
+          <p>Fourteen founding-document sections argue the motivation before the mechanism —
             the same discipline that produced everything on this page.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/00-Vision.md">RFC 0001 series ↗</a>
+          <a class="doc" href="founding/0001-motion-intentions/00-Vision.md">FD-0001 series ↗</a>
         </article>
       </div>
     </div>
@@ -594,7 +594,7 @@
         <span>GPLv3</span>
         <span>STM32 · ESP32</span>
         <span>intentproto</span>
-        <span>RFC 0001</span>
+        <span>FD-0001</span>
       </div>
     </div>
   </footer>

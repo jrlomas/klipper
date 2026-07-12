@@ -1,4 +1,4 @@
-// STM32G0B1 flash driver for the first-class bootloader (RFC 0001
+// STM32G0B1 flash driver for the first-class bootloader (FD-0001
 // doc 11). Up to 512 KB in two 256 KB banks, uniform 2 KB pages,
 // 64-bit (double-word) programming.
 //
@@ -115,7 +115,7 @@ boot_flash_erase_info(const struct boot_flash_geom *g)
 
 // Write the validity record, and — for a signed image — the 64-byte
 // Ed25519 signature immediately after it in the same erased info unit
-// (RFC 0001 doc 11). sig may be NULL / flags may lack BOOT_INFO_FLAG_SIGNED
+// (FD-0001 doc 11). sig may be NULL / flags may lack BOOT_INFO_FLAG_SIGNED
 // for an unsigned image.
 int
 boot_flash_write_info(const struct boot_flash_geom *g, uint32_t size,

@@ -1,4 +1,4 @@
-# RFC 0001: Failure Recovery — Pause, Hold, Resume
+# FD-0001: Failure Recovery — Pause, Hold, Resume
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -6,7 +6,7 @@ Klipper's failure philosophy today is binary: any error — a late
 timer, a lost message, a homing timeout — ends in `shutdown()`, which
 turns off every heater, releases every motor, and abandons the print.
 For a firmware bug on an 8-bit board with no spare state, that was the
-only safe answer. For the architecture in this RFC set — boards that
+only safe answer. For the architecture in this founding document — boards that
 own their clocks, their positions, and their trajectory queues — it
 throws away exactly the state that would let a print *survive*.
 

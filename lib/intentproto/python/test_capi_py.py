@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# intentproto cffi binding round-trip test (RFC 0001 doc 10).
+# intentproto cffi binding round-trip test (FD-0001 doc 10).
 #
 # Builds the API-mode extension from capi.h + the C++ core and drives a
 # host-session loopback against the device singleton entirely through

@@ -1,8 +1,8 @@
 # Ethernet datagram console transport
 
-This document describes wired-Ethernet transports for the RFC 0001
+This document describes wired-Ethernet transports for the FD-0001
 datagram console (see
-[doc 07 - Link Layer and Transports](rfcs/0001-motion-intentions/07-Link_Transport.md)).
+[doc 07 - Link Layer and Transports](founding/0001-motion-intentions/07-Link_Transport.md)).
 Two paths are provided:
 
 * the **W5500** - a WIZnet SPI Ethernet controller that runs the
@@ -20,7 +20,7 @@ Two paths are provided:
 
 ## Same binding, different loss model
 
-Nothing about the protocol changes on Ethernet. RFC 0001 doc 07 is
+Nothing about the protocol changes on Ethernet. FD-0001 doc 07 is
 explicit: *"The same UDP binding runs unchanged over Ethernet."* These
 transports are exactly that - a source of `struct udp_console_ops`
 (`recv` / `send` / `rx_accepted`) for the target-independent datagram
@@ -41,7 +41,7 @@ remains available if a particular plant wants it.
 
 ## Authentication (PSK / trust)
 
-Authentication is mandatory on network transports (RFC 0001 doc 07).
+Authentication is mandatory on network transports (FD-0001 doc 07).
 Every datagram carries a truncated HMAC keyed by a pre-shared key. The
 key is provisioned at build time, mirroring the ESP32 port:
 

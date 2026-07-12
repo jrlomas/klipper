@@ -1,5 +1,5 @@
 // Experimental hardware-timed step pulse emission via the ESP32 RMT
-// peripheral (RFC 0001 docs 07/12: the flagged escape hatch for step
+// peripheral (FD-0001 docs 07/12: the flagged escape hatch for step
 // generation on this chip, where WiFi-induced ISR jitter makes
 // classic timer-IRQ stepping suspect).
 //

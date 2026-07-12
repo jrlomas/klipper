@@ -49,17 +49,17 @@
 #define CONFIG_WANT_HEATER_HOLD 1
 #define CONFIG_WANT_TRIGGER_ANALOG 0
 #define CONFIG_WANT_TRIGGER_SOURCE 0
-// In-band update maps onto ESP-IDF OTA (RFC 0001 doc 11); see ota.c.
+// In-band update maps onto ESP-IDF OTA (FD-0001 doc 11); see ota.c.
 #define CONFIG_WANT_BOOTLOADER 1
 
 // The WiFi/RTOS environment cannot honor tick-exact step pulse
-// timing guarantees (RFC 0001 doc 07's caution); the classic stepper
+// timing guarantees (FD-0001 doc 07's caution); the classic stepper
 // backend compiles and runs but is experimental on this chip.
 #define CONFIG_INLINE_STEPPER_HACK 1
 #define CONFIG_HAVE_STEPPER_OPTIMIZED_BOTH_EDGE 0
 #define CONFIG_WANT_STEPPER_OPTIMIZED_BOTH_EDGE 0
 
-// RMT-backed step generation (RFC 0001 doc 12: the "RMT escape hatch").
+// RMT-backed step generation (FD-0001 doc 12: the "RMT escape hatch").
 // When set (menuconfig CONFIG_KLIPPER_RMT_STEP), the esp32 CMake
 // compiles src/esp32/rmt_stepper.c *instead of* the portable
 // src/stepper.c: the same config_stepper/queue_step/... command

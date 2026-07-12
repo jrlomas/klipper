@@ -6,7 +6,7 @@
 // within a configured deviation tolerance. Coefficient quantization
 // is part of the fit: the *quantized* polynomial is evaluated
 // against the sampled trajectory, so wire rounding can never push
-// the executed path outside tolerance (RFC 0001 docs 02/05).
+// the executed path outside tolerance (FD-0001 docs 02/05).
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //
@@ -137,7 +137,7 @@ traj_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
 // ---- higher-order (cubic/quintic) exact chaining ----
 // These MUST stay bit-for-bit identical to src/trajq.c (smul_shr,
 // poly_term, trajq_end_delta_seg). See the range-analysis comment block
-// there and RFC 0001 doc 02 for the fixed-point scaling. jerk is stored
+// there and FD-0001 doc 02 for the fixed-point scaling. jerk is stored
 // * 2^48, snap * 2^64, crackle * 2^80.
 
 static int64_t

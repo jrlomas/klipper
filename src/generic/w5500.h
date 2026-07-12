@@ -1,7 +1,7 @@
 #ifndef __GENERIC_W5500_H
 #define __GENERIC_W5500_H
 // WIZnet W5500 hardwired-TCP/IP SPI Ethernet console transport
-// (RFC 0001 doc 07).  See w5500.c.
+// (FD-0001 doc 07).  See w5500.c.
 
 #include <stdint.h> // uint32_t
 

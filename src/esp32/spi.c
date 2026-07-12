@@ -6,7 +6,7 @@
 // shutdown path (spidev_shutdown sends shutdown messages after any
 // failure, including ones raised inside timer dispatch); the IDF
 // driver takes FreeRTOS mutexes and is unusable there.  Second, the
-// fork's ESP32 stance (RFC 0001 doc 12) prefers register drivers
+// fork's ESP32 stance (FD-0001 doc 12) prefers register drivers
 // against the Apache-2.0 soc headers wherever the peripheral is
 // documented - and the SPI master is fully documented in the TRM.
 // The transfer is a simple CPU-copy through the 64-byte W0..W15

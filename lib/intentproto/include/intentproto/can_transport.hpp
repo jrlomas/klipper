@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// CAN carrier for the intentproto framed byte stream (RFC 0001 doc 07).
+// CAN carrier for the intentproto framed byte stream (FD-0001 doc 07).
 //
 // Klipper's CAN bus is a byte-stream carrier that sits *below* the
 // CRC16/VLQ framing, exactly as UART and USB do: an outgoing protocol

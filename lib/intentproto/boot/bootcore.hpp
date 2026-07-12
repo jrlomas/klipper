@@ -1,6 +1,6 @@
 #ifndef INTENTPROTO_BOOTCORE_HPP
 #define INTENTPROTO_BOOTCORE_HPP
-// First-class bootloader core (RFC 0001 doc 11).
+// First-class bootloader core (FD-0001 doc 11).
 //
 // The portable half of the in-band update flow: flash-agnostic state
 // machine for enter/flash_begin/flash_data/flash_verify/flash_boot,
@@ -48,7 +48,7 @@ enum class BootState : uint8_t {
 };
 
 // Signature size for the optional Ed25519 signed-image feature
-// (see bootcore_verify_signature and RFC 0001 doc 11 "Signed images").
+// (see bootcore_verify_signature and FD-0001 doc 11 "Signed images").
 constexpr size_t BOOT_SIG_SIZE = 64;
 
 // flags bit persisted in the validity record's spare word: the image
@@ -63,7 +63,7 @@ struct BootCore {
     uint32_t image_crc;
     uint32_t received;    // contiguous high-water mark
     uint32_t last_error;
-    // Optional signed-image state (RFC 0001 doc 11). flags carries
+    // Optional signed-image state (FD-0001 doc 11). flags carries
     // BOOTCORE_FLAG_SIGNED once the signature verifies; signature holds
     // the host-supplied Ed25519 signature that set_app_valid persists
     // alongside the validity record. Zero on an unsigned update.
@@ -105,7 +105,7 @@ int bootcore_boot(BootCore* bc);
 // port stored alongside the image, if it chooses to.)
 int bootcore_app_crc_ok(const FlashOps* ops, uint32_t size, uint32_t crc);
 
-// ---- Optional Ed25519 signed images (RFC 0001 doc 11) ----
+// ---- Optional Ed25519 signed images (FD-0001 doc 11) ----
 // A second gate beyond the CRC: the bootloader verifies an Ed25519
 // signature (RFC 8032) over the exact application image bytes — the
 // same bytes the CRC covers — before it will mark the image valid or

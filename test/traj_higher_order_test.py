@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Standalone unit test for higher-order (cubic / quintic) trajectory
-# Bezier segments (RFC 0001 doc 02 "Higher-order segments").
+# Bezier segments (FD-0001 doc 02 "Higher-order segments").
 #
 # Proves the NON-NEGOTIABLE invariant of the segment protocol: the MCU's
 # exact per-segment end delta equals, bit-for-bit, the host reference

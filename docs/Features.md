@@ -5,7 +5,7 @@ the kinematics, the tuning tools, the ecosystem — and adds a new
 architectural layer beneath it. This page lists both: first what HELIX
 adds, then the inherited Klipper capabilities it is built on. For the
 *why* behind the new layer, read the [HELIX overview](HELIX.md); for the
-rigorous version, the [RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md).
+rigorous version, the [FD-0001 canon](founding/0001-motion-intentions/00-Vision.md).
 
 Every HELIX capability is **opt-in**. A configuration that doesn't ask
 for them behaves exactly like the Klipper it grew from.
@@ -21,9 +21,8 @@ for them behaves exactly like the Klipper it grew from.
   step/dir steppers and sampled **PWM/DAC** actuators are supported
   today, and the architecture is built so a **closed-loop BLDC/FOC**
   servo joint is just another backend on the same queue tomorrow — a
-  door that the pre-computed step stream held permanently shut. *(RFC
-  [02](rfcs/0001-motion-intentions/02-Intention_Protocol.md),
-  [04](rfcs/0001-motion-intentions/04-Actuator_Backends.md).)*
+  door that the pre-computed step stream held permanently shut. *(FD-0001 doc [02](founding/0001-motion-intentions/02-Intention_Protocol.md),
+  [04](founding/0001-motion-intentions/04-Actuator_Backends.md).)*
 
 * **Higher-order motion.** Segments run up to **cubic and quintic
   (jerk- and snap-limited) Bézier** curves, chained with drift-free
@@ -36,13 +35,12 @@ for them behaves exactly like the Klipper it grew from.
   holds position with the motors energized, keeps the heaters on a
   per-heater **failsafe policy** (the bed stays hot, the part stays
   stuck), and keeps a rolling **execution log**. On resume the host
-  reconciles the exact stopping point from that log. *(RFC
-  [08](rfcs/0001-motion-intentions/08-Failure_Recovery.md).)*
+  reconciles the exact stopping point from that log. *(FD-0001 doc [08](founding/0001-motion-intentions/08-Failure_Recovery.md).)*
 
 * **Machine time.** Every board disciplines its clock to a shared
   machine time via a beacon and a control loop, so "do this at T" means
   the same instant across a mainboard, a CAN toolhead, and a WiFi
-  accessory. *(RFC [01](rfcs/0001-motion-intentions/01-Time_Model.md).)*
+  accessory. *(FD-0001 doc [01](founding/0001-motion-intentions/01-Time_Model.md).)*
 
 * **Networks as first-class transports.** The same protocol runs over
   UDP (Ethernet/WiFi), CAN, USB, and UART, because deep intention queues
@@ -50,9 +48,8 @@ for them behaves exactly like the Klipper it grew from.
   a static PSK), with an optional **DTLS-class secure session** (rotating
   keys, per-board identity), a negotiable **forward-error-correction**
   framing trailer for lossy links, and **Ed25519-signed firmware images**
-  the bootloader verifies before running. *(RFC
-  [07](rfcs/0001-motion-intentions/07-Link_Transport.md),
-  [11](rfcs/0001-motion-intentions/11-Bootloader.md).)*
+  the bootloader verifies before running. *(FD-0001 doc [07](founding/0001-motion-intentions/07-Link_Transport.md),
+  [11](founding/0001-motion-intentions/11-Bootloader.md).)*
 
 * **Hardware events instead of polling — a capability unlock.** Endstop
   and probe detection moves off a polled software timer onto on-chip
@@ -65,25 +62,22 @@ for them behaves exactly like the Klipper it grew from.
   hardware input-capture timestamps. Homing and probing use this today
   (with automatic fall back to polling where the silicon can't); the
   broader capabilities it opens are now architecturally within reach.
-  *(RFC [09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md).)*
+  *(FD-0001 doc [09](founding/0001-motion-intentions/09-Hardware_Triggers.md).)*
 
 * **One protocol library, declared not generated.** The wire protocol is
   implemented once as a freestanding C++ library (`lib/intentproto`).
   Commands are declared with an annotation macro beside the handler and
   register themselves before `main()` — no code generator, no build step
   that parses source, and the data dictionary is a serialization of the
-  live registry, served not scraped. *(RFC
-  [10](rfcs/0001-motion-intentions/10-Protocol_Library.md).)*
+  live registry, served not scraped. *(FD-0001 doc [10](founding/0001-motion-intentions/10-Protocol_Library.md).)*
 
 * **One firmware across families.** STM32 and ESP32 speak the same
   protocol and expose the same **versioned board syscall table**, so a
-  module is written once against the API, not once per chip. *(RFC
-  [13](rfcs/0001-motion-intentions/13-Syscall_API.md).)*
+  module is written once against the API, not once per chip. *(FD-0001 doc [13](founding/0001-motion-intentions/13-Syscall_API.md).)*
 
 * **ESP32 as a network-native target.** A dual-core ESP32 runs bare-metal
   motion on one core with the radio stack quarantined on the other,
-  making a WiFi toolhead a real, first-class target. *(RFC
-  [12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md).)*
+  making a WiFi toolhead a real, first-class target. *(FD-0001 doc [12](founding/0001-motion-intentions/12-ESP32_Architecture.md).)*
 
 * **New console surface.** `HELIX_STATUS` reports exactly which
   capabilities each board's firmware was built with and which host

@@ -1,5 +1,5 @@
 // APP-CPU (core 1) entry stub and private vector table for the
-// "IDF as modem" architecture (RFC 0001 doc 12 stage 3)
+// "IDF as modem" architecture (FD-0001 doc 12 stage 3)
 //
 // The bare klipper core needs its own VECBASE because it must not
 // share IDF's FreeRTOS-coupled vectors.  With windowed-ABI code,

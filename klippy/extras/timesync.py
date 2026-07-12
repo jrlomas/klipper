@@ -1,4 +1,4 @@
-# Machine-time authority: host-relayed sync beacon loop (RFC 0001 doc 01)
+# Machine-time authority: host-relayed sync beacon loop (FD-0001 doc 01)
 #
 # Machine time is the primary MCU's free-running counter. Boards on
 # point-to-point links cannot hear each other, so the host relays
@@ -34,7 +34,7 @@ TS_ENABLED = 1
 TS_PRIMED = 2
 TS_CONVERGED = 4
 
-# TODO seam (RFC 0001 doc 05): mcu.py does not yet expose its
+# TODO seam (FD-0001 doc 05): mcu.py does not yet expose its
 # ClockSync object and is being reworked separately; do not edit it
 # from here. Until the host-time->machine-time estimator becomes a
 # first-class MCU interface, reach the private attribute in this one

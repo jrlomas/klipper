@@ -1,4 +1,4 @@
-# RFC 0001: Migration, Validation, and Risks
+# FD-0001: Migration, Validation, and Risks
 
 Status: Adopted -- the migration path HELIX 0.9 followed
 
@@ -132,7 +132,7 @@ until it is met.
 
 | Phase | Work | Exit criterion |
 | --- | --- | --- |
-| P1 | This RFC set; review by maintainers | Consensus on protocol + open questions resolved or explicitly deferred |
+| P1 | This founding document; review by maintainers | Consensus on protocol + open questions resolved or explicitly deferred |
 | P2 | Protocol library ([10-Protocol_Library.md](10-Protocol_Library.md), seeded from the author's OpenAMS legacy-protocol library) + linux-MCU segment executor + host segment emitter behind a config flag; the differ, using the library as its codec | Differ passes acceptance corpus; measured segment bandwidth published; library builds standalone in embedded (F072-budget) and host profiles |
 | P3 | Traffic classes (Class 1 prompt execution, per-class pools) — **separable and independently valuable**; can proceed in parallel with P2 | An LED/fan flood cannot shut down a linux-MCU print; heater watchdog behavior verified |
 | P4 | Stepper backend on real silicon (STM32F1/F4, RP2040); benchmarks | Meets estimated step-rate ceilings ±25%; prints on a test machine match legacy prints |

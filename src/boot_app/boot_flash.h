@@ -1,7 +1,7 @@
 #ifndef BOOT_APP_BOOT_FLASH_H
 #define BOOT_APP_BOOT_FLASH_H
 // Portable per-target flash geometry for the first-class bootloader
-// (RFC 0001 doc 11).
+// (FD-0001 doc 11).
 //
 // The geometry and the erase-boundary / bounds / validity-record
 // predicates here are pure logic — no register access — so they are
@@ -47,7 +47,7 @@ struct boot_flash_geom {
 // interrupted update (info page still erased, or CRC mismatch) simply
 // keeps the board in the bootloader — a retry, never a paperweight.
 //
-// Signed-image layout (RFC 0001 doc 11, "Signed images"): the spare
+// Signed-image layout (FD-0001 doc 11, "Signed images"): the spare
 // word is a flags word. BOOT_INFO_FLAG_SIGNED means the 64-byte
 // Ed25519 signature over the application image is stored in the SAME
 // info erase-unit immediately after this 16-byte record, at

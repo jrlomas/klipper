@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "board/gpio.h" // struct gpio_in
 
-// Hardware event trigger sources (RFC 0001 doc 09): edge interrupts
+// Hardware event trigger sources (FD-0001 doc 09): edge interrupts
 // and analog comparators fire trsync directly, replacing timer-list
 // polling for detection. The polled endstop path remains the
 // portability fallback.
@@ -33,7 +33,7 @@ struct trigger_source {
 enum { TS_KIND_GPIO, TS_KIND_COMP, TS_KIND_ADC_WATCHDOG };
 enum {
     TSRC_ARMED = 1 << 0, TSRC_TRIGGERED = 1 << 1, TSRC_CAN_QUALIFY = 1 << 2,
-    // Timer input-capture (RFC doc 09 sec 3): CAN_CAPTURE means the
+    // Timer input-capture (FD-0001 doc 09 sec 3): CAN_CAPTURE means the
     // board wired this source's pin to a capture channel; CAPTURE_ON
     // means the host armed it with capture=1 so the latched
     // hardware-exact edge tick is used instead of the ISR-entry read.
@@ -50,7 +50,7 @@ int board_edge_trigger_setup(struct trigger_source *tsrc);
 void board_edge_trigger_arm(struct trigger_source *tsrc, int enable);
 
 // Board-half contract for the adc_watchdog kind (analog auto-compare
-// while the ADC free-runs; RFC doc 09 sec 2 fallback where COMP is
+// while the ADC free-runs; FD-0001 doc 09 sec 2 fallback where COMP is
 // absent). Returns 0 if the pin/thresholds were accepted.
 int board_adc_watchdog_setup(struct trigger_source *tsrc);
 void board_adc_watchdog_arm(struct trigger_source *tsrc, int enable);

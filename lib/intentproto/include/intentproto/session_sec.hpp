@@ -1,7 +1,7 @@
 #ifndef INTENTPROTO_SESSION_SEC_HPP
 #define INTENTPROTO_SESSION_SEC_HPP
 // Optional session-security layer for the datagram transport
-// (RFC 0001 doc 07, "Security" section — the deferred "heavier
+// (FD-0001 doc 07, "Security" section — the deferred "heavier
 // machinery: DTLS, key rotation, per-board identities").
 //
 // SCOPE DECISION. Full IETF DTLS 1.3 in a freestanding, no-heap,
@@ -11,7 +11,7 @@
 // certificate or full PSK-with-(EC)DHE key schedule — thousands of
 // lines whose correctness this fork cannot audit. Instead this file
 // implements a PURPOSE-BUILT lightweight authenticated session that
-// delivers exactly the four properties RFC 07 names, using ONLY the
+// delivers exactly the four properties FD-0001 doc 07 names, using ONLY the
 // primitives already in the library:
 //
 //   * session keys, not the raw PSK on every packet  — HKDF-SHA256
@@ -28,7 +28,7 @@
 // AUTH-ONLY, NOT CONFIDENTIALITY. Like the static-PSK path, this layer
 // AUTHENTICATES datagrams (truncated HMAC-SHA256 over the whole
 // datagram, now keyed by a rotating session key) but does NOT encrypt
-// the payload. That is deliberate: the threat RFC 07 states is forgery
+// the payload. That is deliberate: the threat FD-0001 doc 07 states is forgery
 // and blind replay of motion/heater commands by anything on the
 // network segment — not secrecy of the commands themselves. A stream
 // cipher (an HKDF-derived keystream XORed over the payload) could be

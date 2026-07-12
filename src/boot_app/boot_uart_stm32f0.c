@@ -1,5 +1,5 @@
 // Polled UART transport for the first-class bootloader — STM32F0/G0
-// USART (RFC 0001 doc 11).
+// USART (FD-0001 doc 11).
 //
 // Transport choice: a UART, not USB. The F072 bootloader budget is
 // 16 KB (doc 11), and it already spends most of that on the intentproto

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Assemble the first-class bootloader "one build, one flash" combined
-# image (RFC 0001 doc 11).
+# image (FD-0001 doc 11).
 #
 # Produces ONE flashable artifact from two inputs:
 #   * the bootloader .bin, which owns the reset vector at flash base
@@ -36,7 +36,7 @@ import zlib
 BOOT_INFO_MAGIC = 0x50414F42  # "BOAP", matches boot_flash.h
 # Signed-image flag stored in the validity record's flags word (bit 0),
 # and the 64-byte Ed25519 signature slot right after the 16-byte record
-# (RFC 0001 doc 11, "Signed images"; see boot_flash.h).
+# (FD-0001 doc 11, "Signed images"; see boot_flash.h).
 BOOT_INFO_FLAG_SIGNED = 0x00000001
 BOOT_INFO_SIG_OFFSET = 16
 SIG_SIZE = 64
@@ -84,7 +84,7 @@ def build(target, boot_bin, app_bin, sign_key=None):
 
     # Optional Ed25519 signature over the SAME bytes the CRC covers,
     # stored in the info page right after the record with the signed
-    # flag set (RFC 0001 doc 11). A signing-enabled bootloader boots
+    # flag set (FD-0001 doc 11). A signing-enabled bootloader boots
     # only signed images; an unsigned image leaves flags == 0.
     flags = 0
     sig = b""
@@ -127,7 +127,7 @@ def main():
     ap.add_argument("application_bin")
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("--sign-key", help="Ed25519 private seed (keys/*.key) to "
-                    "sign the application image (RFC 0001 doc 11)")
+                    "sign the application image (FD-0001 doc 11)")
     args = ap.parse_args()
 
     with open(args.bootloader_bin, "rb") as f:

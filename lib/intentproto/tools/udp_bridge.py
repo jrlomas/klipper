@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# UDP transport bridge for intentproto datagrams (RFC 0001 doc 07).
+# UDP transport bridge for intentproto datagrams (FD-0001 doc 07).
 #
 # Bridges klippy's existing serial transport to a UDP/WiFi/Ethernet
 # board: creates a PTY that klippy opens as its serial port, and
@@ -8,7 +8,7 @@
 # lib/intentproto's C datagram layer byte for byte. This makes
 # network boards usable with today's host without touching
 # serialqueue; the native asyncio transport replaces it as klippy
-# host modernization lands (RFC 0001 doc 05).
+# host modernization lands (FD-0001 doc 05).
 #
 # Usage:
 #   udp_bridge.py --board 192.168.1.50:41414 --psk-file /path/psk \

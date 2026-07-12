@@ -2,7 +2,7 @@
 //
 // Runs on core 0 (app_main context); the WiFi and lwIP tasks are
 // pinned to core 0 via sdkconfig.defaults, keeping the radio stack
-// off the motion core (RFC 0001 doc 07 core-pinning).  Credentials
+// off the motion core (FD-0001 doc 07 core-pinning).  Credentials
 // come from the IDF Kconfig (idf.py menuconfig -> "Klipper
 // firmware").  An Ethernet (RMII) board would replace this file with
 // esp_eth bringup; the datagram console binding is identical.

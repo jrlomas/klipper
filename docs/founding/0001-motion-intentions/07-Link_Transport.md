@@ -1,9 +1,9 @@
-# RFC 0001: Link Layer and Transports
+# FD-0001: Link Layer and Transports
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 > For the full, implementation-grounded treatment of the wire protocol
-> this RFC introduces, see [Protocol v2](../../Protocol_v2.md). This
+> this document introduces, see [Protocol v2](../../Protocol_v2.md). This
 > document is the original design rationale; the values below have been
 > reconciled with the shipped code.
 
@@ -168,7 +168,7 @@ capability + header bits).
   reply → CAN chunk → host decode).
 * **ESP32 as a target:** dual-core 240 MHz with the radio stack pinned
   to one core and motion execution on the other fits the 32-bit floor
-  of this RFC ([00-Vision.md](00-Vision.md)) comfortably (and the
+  of this document ([00-Vision.md](00-Vision.md)) comfortably (and the
   chip offers RMII Ethernet as well as WiFi). One honest caution: the
   WiFi stack's interrupt behavior makes tick-precise step generation
   on the same silicon genuinely hard — core pinning helps, and the
@@ -184,7 +184,7 @@ capability + header bits).
   milliseconds — with *zero* effect on motion, and a longer stall
   degrades to a controlled, resumable stop. Today's architecture
   answers the same stall with a mid-print shutdown. This is why
-  WiFi-attached motion boards are credible under this RFC and are not
+  WiFi-attached motion boards are credible under this document and are not
   credible today.
 
 ## Security: mandatory for network transports
@@ -197,7 +197,7 @@ a device that drives a 300 °C heater. Virtual networks and firewalls
 can wrap the problem, but the protocol itself is due for the upgrade,
 and going WiFi/Ethernet makes it non-optional.
 
-Position this RFC takes: **authentication is mandatory in v1 of the
+Position this document takes: **authentication is mandatory in v1 of the
 UDP transport** — not an open question, not a later phase:
 
 * Every datagram carries a truncated **HMAC** (e.g. HMAC-SHA256/8

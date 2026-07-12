@@ -1,7 +1,7 @@
 #ifndef INTENTPROTO_SHA512_HPP
 #define INTENTPROTO_SHA512_HPP
 // SHA-512 (FIPS 180-4). Added for Ed25519 signed-image verification
-// (RFC 0001 doc 11, "Signed images"): RFC 8032 Ed25519 hashes with
+// (FD-0001 doc 11, "Signed images"): RFC 8032 Ed25519 hashes with
 // SHA-512, which the SHA-256 in hmac.hpp does not provide.
 //
 // Core profile: freestanding C++ — no heap, no exceptions, no RTTI,

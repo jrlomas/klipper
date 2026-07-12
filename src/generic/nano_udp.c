@@ -1,7 +1,7 @@
 // Minimal single-socket UDP/IP/ARP responder
 //
 // This is the pluggable IP layer for the native RMII Ethernet path
-// (RFC 0001 doc 07): the on-chip MAC (src/stm32/eth_mac.c) hands raw
+// (FD-0001 doc 07): the on-chip MAC (src/stm32/eth_mac.c) hands raw
 // ethernet frames to nano_udp_input() and transmits frames produced
 // here.  It is deliberately just enough for ONE UDP console socket -
 // ARP replies so a host can find us, IPv4 header + checksum, UDP demux

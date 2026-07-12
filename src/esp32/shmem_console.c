@@ -1,5 +1,5 @@
 // Shared-memory ring backing for the datagram console - the core-1
-// (bare klipper) side of the "IDF as modem" split (RFC 0001 doc 12)
+// (bare klipper) side of the "IDF as modem" split (FD-0001 doc 12)
 //
 // This file is a drop-in replacement for the socket ops that
 // udp_port.c provides in the component architecture: the generic

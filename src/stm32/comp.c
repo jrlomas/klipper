@@ -211,7 +211,7 @@ static void setup_comp_window_exti(uint32_t input_pin) {
     irq_restore(flag);
 }
 
-// Trigger-source bridge (RFC 0001 doc 09): a window comparator can
+// Trigger-source bridge (FD-0001 doc 09): a window comparator can
 // drive trsync directly as a hardware trigger source. Configured by
 // config_trigger_comp; fires when the input enters (on_enter=1) or
 // leaves (on_enter=0) the window.

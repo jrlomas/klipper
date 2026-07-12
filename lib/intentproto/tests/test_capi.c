@@ -1,6 +1,6 @@
 /* intentproto C API test — compiled as C (not C++).
  *
- * Purpose (RFC 0001 doc 10, host profile):
+ * Purpose (FD-0001 doc 10, host profile):
  *   1. prove capi.h is valid C and the ABI links from a C translation
  *      unit with no C++ in sight;
  *   2. drive a host-session loopback against the device singleton's

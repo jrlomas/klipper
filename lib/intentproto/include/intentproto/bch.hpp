@@ -1,6 +1,6 @@
 #ifndef INTENTPROTO_BCH_HPP
 #define INTENTPROTO_BCH_HPP
-// Framing v2 forward error correction (RFC 0001, doc 07): shortened
+// Framing v2 forward error correction (FD-0001, doc 07): shortened
 // binary BCH over GF(2^10), natural length n = 1023 bits, shortened
 // to the frame length (<= 61 data bytes = 488 bits), t = 3 — any
 // three bit errors per frame are corrected in place; heavier damage

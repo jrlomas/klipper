@@ -1,4 +1,4 @@
-# HELIX capability introspection (RFC 0001).
+# HELIX capability introspection (FD-0001).
 #
 # One console command, HELIX_STATUS, that answers "what does this machine
 # actually run?" - which of the fork's motion/communication capabilities

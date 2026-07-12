@@ -1,7 +1,7 @@
 // SHA-512 per FIPS 180-4.
 // Freestanding profile: no heap, no exceptions, no RTTI; the only
 // libc dependency is memcpy. See sha512.hpp for why the library needs
-// a second hash (Ed25519 signed-image verification, RFC 0001 doc 11).
+// a second hash (Ed25519 signed-image verification, FD-0001 doc 11).
 
 #include "intentproto/sha512.hpp"
 

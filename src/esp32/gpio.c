@@ -5,7 +5,7 @@
 // out_w1tc (out1_* bank for pins 32..39) addresses in both
 // architectures - single-instruction and safe from ISRs.
 //
-// Pad configuration differs by architecture (RFC 0001 doc 12):
+// Pad configuration differs by architecture (FD-0001 doc 12):
 //  * component: the IDF gpio driver (task context only)
 //  * modem: register level against the vendored soc headers
 //    (lib/esp32) - the IDF driver takes FreeRTOS locks that do not

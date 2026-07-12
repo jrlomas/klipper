@@ -2,7 +2,7 @@
 #define INTENTPROTO_ED25519_HPP
 // Ed25519 signature VERIFICATION (RFC 8032), verify-only.
 //
-// Added for signed firmware images (RFC 0001 doc 11, "Signed images"):
+// Added for signed firmware images (FD-0001 doc 11, "Signed images"):
 // the bootloader verifies an Ed25519 signature over the application
 // image before it will mark it valid or boot it. The device never
 // signs and never generates keys — signing happens off-device with the

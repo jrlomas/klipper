@@ -1,37 +1,51 @@
-# RFC 0001: Motion Intentions
+# Founding Document 0001 — Motion Intentions
 
-A proposed architectural evolution of Klipper (as a permanent,
-backwards-compatible fork): per-joint trajectory **intentions**
-instead of pre-computed step pulses, the primary MCU as the machine's
-**time authority**, explicit **traffic classes** so non-critical
-traffic can never halt a print, **pause-and-hold failure recovery**
-with an execution log so failures resume instead of aborting,
+*Shorthand: **FD-0001**.* This is a **founding document** of HELIX, not
+a request for comment. It was written to *argue* an architecture; that
+architecture now *exists*, implemented in HELIX 0.9. The reasoning-first
+form is preserved because the *why* is exactly what a reader of an
+evolved codebase most needs — but read it as the design record of what
+HELIX built, not a proposal awaiting a verdict.
+
+FD-0001 is the architectural evolution of Klipper (carried out as a
+permanent, backwards-compatible fork): per-joint trajectory
+**intentions** instead of pre-computed step pulses, the primary MCU as
+the machine's **time authority**, explicit **traffic classes** so
+non-critical traffic can never halt a print, **pause-and-hold failure
+recovery** with an execution log so failures resume instead of aborting,
 **hardware-event triggers** in place of polling, and a
-backwards-compatible, authenticated **FEC/UDP link layer** for
-wireless and Ethernet boards.
+backwards-compatible, authenticated **FEC/UDP link layer** for wireless
+and Ethernet boards.
 
-## Status
+## The documents
+
+All are **implemented in HELIX 0.9** (software complete; hardware
+bring-up pending — see [Releases](../../Releases.md) and the
+[Test &amp; Bring-up Plan](../../Helix_Test_Plan.md)). Each document's own
+status line records its precise implementation state.
 
 | Document | Contents | Status |
 | --- | --- | --- |
-| [00-Vision.md](00-Vision.md) | Problem, proposal, premises, non-goals, prior art | Draft / Discussion |
-| [01-Time_Model.md](01-Time_Model.md) | Machine time, primary-MCU authority, beacon sync, budgets | Draft / Discussion |
-| [02-Intention_Protocol.md](02-Intention_Protocol.md) | Segment semantics, wire format, FPU-free execution, queue/refill, underrun | Draft / Discussion |
-| [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Draft / Discussion |
-| [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Draft / Discussion |
-| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Draft / Discussion |
-| [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Draft / Discussion |
-| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Draft / Discussion |
-| [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Draft / Discussion |
-| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Draft / Discussion |
-| [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Draft / Discussion |
-| [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Draft / Discussion |
+| [00-Vision.md](00-Vision.md) | Problem, premises, non-goals, prior art | Implemented — HELIX 0.9 |
+| [01-Time_Model.md](01-Time_Model.md) | Machine time, primary-MCU authority, beacon sync, budgets | Implemented — HELIX 0.9 |
+| [02-Intention_Protocol.md](02-Intention_Protocol.md) | Segment semantics, wire format, FPU-free execution, queue/refill, underrun | Implemented — HELIX 0.9 |
+| [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Implemented — HELIX 0.9 |
+| [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Implemented — HELIX 0.9 |
+| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Implemented — HELIX 0.9 |
+| [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Adopted — HELIX 0.9 |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Implemented — HELIX 0.9 |
+| [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Implemented — HELIX 0.9 |
+| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Implemented — HELIX 0.9 |
+| [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Implemented — HELIX 0.9 |
+| [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Implemented — HELIX 0.9 |
+| [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Implemented — HELIX 0.9 (runtime bring-up pending) |
+| [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 07 → 11
+* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 07 → 11 → 13 → 12
 * *Host / klippy*: 02 → 05 → 10 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 02 (underrun) → 03
@@ -99,8 +113,9 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
 ## Relationship to existing docs
 
-These RFCs describe a *proposal*; the authoritative descriptions of
-current behavior remain [Code_Overview.md](../../Code_Overview.md),
+These founding documents record the *why* and the design of the HELIX
+evolution; the authoritative descriptions of current behavior remain
+[Code_Overview.md](../../Code_Overview.md),
 [Protocol.md](../../Protocol.md),
 [MCU_Commands.md](../../MCU_Commands.md), and
 [Benchmarks.md](../../Benchmarks.md), which are cited throughout.

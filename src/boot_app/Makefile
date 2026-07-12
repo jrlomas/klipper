@@ -1,4 +1,4 @@
-# First-class bootloader build (RFC 0001 doc 11).
+# First-class bootloader build (FD-0001 doc 11).
 #
 # Targets:
 #   make check      cross-compile every translation unit for all three
@@ -25,7 +25,7 @@ IP := $(REPO)/lib/intentproto
 COMMON := -I$(REPO)/lib/cmsis-core -I$(IP)/include -I. \
 	-ffreestanding -ffunction-sections \
 	-fdata-sections -Os -Wall -Wextra -mthumb
-# Signed firmware images (RFC 0001 doc 11, "Signed images"): build with
+# Signed firmware images (FD-0001 doc 11, "Signed images"): build with
 #   make bootloader SIGNED=1
 # to compile in Ed25519+SHA-512 verification and enforce a valid
 # signature at boot. Off by default so everyone builds the CRC-only

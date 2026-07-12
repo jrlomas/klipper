@@ -38,7 +38,7 @@ across the STM32 and ESP32 families.
   protocol library, and how to build or port HELIX.
 - **[Command &amp; feature reference](Helix_Commands.md)** — every new
   command, config option, and firmware capability in one place.
-- **[Features](Features.md)** · **[RFC 0001 design canon](rfcs/0001-motion-intentions/00-Vision.md)**
+- **[Features](Features.md)** · **[FD-0001 design canon](founding/0001-motion-intentions/00-Vision.md)**
 
 Start running it with the [installation guide](Installation.md); the
 inherited Klipper documentation lives under the [Overview](Overview.md).

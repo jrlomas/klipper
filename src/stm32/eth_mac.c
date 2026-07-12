@@ -1,6 +1,6 @@
 // Native STM32 RMII Ethernet MAC/DMA bring-up skeleton (design seam)
 //
-// RFC 0001 doc 07 lists "RMII PHYs on STM32/ESP32" alongside W5500-class
+// FD-0001 doc 07 lists "RMII PHYs on STM32/ESP32" alongside W5500-class
 // SPI parts as the wired-network options.  Unlike the W5500 (which runs
 // the IP stack in silicon), the STM32's built-in MAC delivers only raw
 // ethernet frames and needs a software IP/UDP stack above it.

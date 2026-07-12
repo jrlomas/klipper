@@ -1,6 +1,6 @@
 #ifndef INTENTPROTO_CAPI_H
 #define INTENTPROTO_CAPI_H
-/* intentproto host-profile C API (RFC 0001 doc 10, "host profile").
+/* intentproto host-profile C API (FD-0001 doc 10, "host profile").
  *
  * This is the library's stable, C-linkage surface: the seam a host
  * (klippy's transmit machinery, a third-party C firmware, a test
@@ -60,7 +60,7 @@ const char *intentproto_version_string(void);
 #define IP_MESSAGE_MAX 64
 #define IP_PAYLOAD_MAX 59  /* MESSAGE_MAX - MESSAGE_MIN */
 
-/* Traffic classes (RFC 0001 doc 03), matching TrafficClass. */
+/* Traffic classes (FD-0001 doc 03), matching TrafficClass. */
 #define IP_CLASS_SCHEDULED 0
 #define IP_CLASS_PROMPT    1
 #define IP_CLASS_TELEMETRY 2
@@ -86,7 +86,7 @@ size_t ip_vlq_encode(uint8_t *out, uint32_t v);
  * number of bytes consumed (1..5), or 0 on a truncated input. */
 size_t ip_vlq_decode(const uint8_t *in, size_t len, uint32_t *out);
 
-/* Framing v2 (BCH t=3 trailer, RFC 0001 doc 07). Encode payload
+/* Framing v2 (BCH t=3 trailer, FD-0001 doc 07). Encode payload
  * (<= 57 bytes) into out (>= payload_len + 7); returns frame length. */
 size_t ip_frame_v2_encode(uint8_t *out, const uint8_t *payload,
                           size_t payload_len, uint8_t seq);
@@ -169,7 +169,7 @@ typedef struct ip_host_diag {
 void ip_host_session_diag(const ip_host_session *h, ip_host_diag *out);
 
 /* ================================================================
- * Datagram transport binding (datagram.hpp, RFC 0001 doc 07)
+ * Datagram transport binding (datagram.hpp, FD-0001 doc 07)
  * ================================================================ */
 
 typedef struct ip_datagram_tx ip_datagram_tx;

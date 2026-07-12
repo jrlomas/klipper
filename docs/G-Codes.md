@@ -498,8 +498,8 @@ will be desynchronized from all extruder movement.
 
 The following commands are available when a
 [failure_recovery config section](Config_Reference.md#failure_recovery)
-is enabled. See RFC 0001
-[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md) for the
+is enabled. See FD-0001
+[doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md) for the
 design rationale.
 
 #### FAILURE_RECOVERY_STATUS
@@ -1669,8 +1669,8 @@ will be disabled, if set to 1 it is enabled.
 
 The following command is available when a
 [timesync config section](Config_Reference.md#timesync) is enabled. See
-RFC 0001
-[doc 01](rfcs/0001-motion-intentions/01-Time_Model.md) for the design
+FD-0001
+[doc 01](founding/0001-motion-intentions/01-Time_Model.md) for the design
 rationale.
 
 #### TIMESYNC_STATUS
@@ -1683,8 +1683,8 @@ correction (in ppm).
 
 The following commands are available when at least one stepper opts into
 the trajectory-intention motion path (`motion_protocol: trajectory`). See
-RFC 0001
-[doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md) for the
+FD-0001
+[doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md) for the
 design rationale.
 
 #### TRAJECTORY_STATUS

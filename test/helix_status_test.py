@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Standalone unit test for the HELIX_STATUS capability introspection
-# command (RFC 0001).  Stubs the printer / gcode / MCU and checks that
+# command (FD-0001).  Stubs the printer / gcode / MCU and checks that
 # firmware features are reported from the served dictionary (via
 # check_valid_response) and host subsystems from loaded objects.
 #

@@ -4,7 +4,7 @@ This guide is the map for anyone building, extending, or porting HELIX.
 It assumes familiarity with Klipper's architecture (host `klippy` in
 Python, firmware in C, a data-dictionary protocol between them) and
 points you at where HELIX diverges and why. The authoritative design
-rationale is [the RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md);
+rationale is [the FD-0001 canon](founding/0001-motion-intentions/00-Vision.md);
 this page is the orientation you read first.
 
 ## The shape of the system
@@ -86,7 +86,7 @@ registry and assigns wire ids. The data dictionary is a *serialization
 of that registry*, not a scrape of your source. There is no generator,
 no build step that parses code, and parameter **types** are deduced from
 the function signature so they can never drift.
-See [doc 10](rfcs/0001-motion-intentions/10-Protocol_Library.md).
+See [doc 10](founding/0001-motion-intentions/10-Protocol_Library.md).
 
 **2. Drift-free integration is a contract, not an implementation
 detail.** The MCU segment evaluator (`trajq.c`), the host fitter
@@ -94,7 +94,7 @@ detail.** The MCU segment evaluator (`trajq.c`), the host fitter
 compute end-of-segment position with the *same* integer truncation. They
 must stay in lockstep; a change to one is a change to all three, and the
 higher-order tests exist to prove they still agree bit-for-bit.
-See [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md).
+See [doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md).
 
 ## Building and testing
 
@@ -127,12 +127,12 @@ floor targets still build.
 
 Because HELIX is written against the same `board/*.h` surface Klipper
 uses — and now against the versioned
-[board syscall table](rfcs/0001-motion-intentions/13-Syscall_API.md) —
+[board syscall table](founding/0001-motion-intentions/13-Syscall_API.md) —
 a new family that implements the board primitives gets the
 hardware-agnostic modules (`trajq`, `execlog`, `trigger_source`,
 `heater_hold`, `timesync`) for free. The ESP32 port is the worked
 example of doing this for a network-native, dual-core target; its
-architecture stance is [doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md).
+architecture stance is [doc 12](founding/0001-motion-intentions/12-ESP32_Architecture.md).
 
 ## Contributing
 
@@ -140,7 +140,7 @@ HELIX develops in the open and keeps Klipper's attribution and GPLv3
 licensing intact. New protocol features belong in `lib/intentproto` with
 tests; new firmware capabilities behind a Kconfig gate with the floor
 targets still building; new host behavior in `klippy/extras` with a
-standalone test in `test/`. Design changes of any weight get an RFC doc
-in `docs/rfcs/` before the code, so the *why* is recorded alongside the
+standalone test in `test/`. Design changes of any weight get a founding-document entry
+in `docs/founding/` before the code, so the *why* is recorded alongside the
 *what* — the same discipline that produced the
-[RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md).
+[FD-0001 canon](founding/0001-motion-intentions/00-Vision.md).

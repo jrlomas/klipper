@@ -1,6 +1,6 @@
 // intentproto framing v2 negotiation tests: loopback of HostSession
 // against the device side in proto.cpp, plus a simulated legacy-only
-// peer. Covers the RFC 0001 doc 07 negotiation path: legacy default,
+// peer. Covers the FD-0001 doc 07 negotiation path: legacy default,
 // dictionary-driven upgrade, BCH correction avoiding retransmits,
 // uncorrectable damage falling back to ARQ, and the automatic
 // legacy-peer fallback (v2_rejected).

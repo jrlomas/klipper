@@ -84,7 +84,7 @@ was last commanded, with the homing it had, and continues — no encoders
 required. If a particular axis genuinely cannot be trusted across a board
 reset, mark it `motion_homing_volatile: True` and HELIX will require a
 re-home for that axis before resuming. Full rationale in
-[RFC 0001 doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md).
+[FD-0001 doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md).
 
 ## Faster, more repeatable homing
 
@@ -106,7 +106,7 @@ HELIX speaks the same authenticated protocol over UDP (Ethernet/WiFi),
 CAN, USB, and UART. CAN boards work as they do in Klipper. For Ethernet
 and the ESP32 network target, see [Ethernet](Ethernet.md) and
 [ESP32](ESP32.md), and the transport design in
-[RFC 0001 doc 07](rfcs/0001-motion-intentions/07-Link_Transport.md).
+[FD-0001 doc 07](founding/0001-motion-intentions/07-Link_Transport.md).
 
 ## Knowing what your machine can do
 

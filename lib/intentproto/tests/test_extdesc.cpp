@@ -1,4 +1,4 @@
-// intentproto extension self-description tests (RFC 0001 doc 10).
+// intentproto extension self-description tests (FD-0001 doc 10).
 //
 // Drives list_extensions / list_constants end-to-end in loopback:
 // every registered command, response, constant, and enumeration

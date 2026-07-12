@@ -1,4 +1,4 @@
-# ESP-IDF project file for the klipper ESP32 target (RFC 0001 doc 07)
+# ESP-IDF project file for the klipper ESP32 target (FD-0001 doc 07)
 #
 # Build:  . $IDF_PATH/export.sh && idf.py set-target esp32 && idf.py build
 # See docs/ESP32.md for the full recipe (WiFi credentials, PSK

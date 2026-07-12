@@ -210,7 +210,7 @@ class MCU_stepper:
         return clock, mcu_pos
     def read_traj_held_subunits(self):
         # Sub-unit-exact readback of a trajectory stepper's held
-        # position accumulator for the RFC 0001 doc 08 resume
+        # position accumulator for the FD-0001 doc 08 resume
         # reconciler.  traj_position reports integer sub-units (1
         # microstep = 2^16); this held accumulator is the board's
         # authoritative position when it never rebooted.  Returns

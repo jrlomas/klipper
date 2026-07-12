@@ -1,4 +1,4 @@
-// intentproto CAN carrier tests (RFC 0001 doc 07).
+// intentproto CAN carrier tests (FD-0001 doc 07).
 //
 //  1. UUID admin handshake: an unassigned node answers QUERY_UNASSIGNED
 //     with its UUID and latches the id the host assigns.

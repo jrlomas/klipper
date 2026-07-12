@@ -1,4 +1,4 @@
-# RFC 0001: Hardware Triggers
+# FD-0001: Hardware Triggers
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -33,7 +33,7 @@ autonomy.
 
 ## Event-driven trigger sources
 
-Three peripheral classes, all standard on the 32-bit floor this RFC
+Three peripheral classes, all standard on the 32-bit floor this document
 assumes ([00-Vision.md](00-Vision.md)):
 
 ### 1. GPIO edge interrupts (EXTI / pin-change)
@@ -64,7 +64,7 @@ DAC and an IRQ callback into klippy (paired with
 `klippy/extras/window_comparator.py`). A window (upper *and* lower
 bound) is exactly the right shape for load-cell probing: fire when
 force enters the contact band, stay quiet through baseline drift
-below it and clip above it. This RFC adopts that design as the
+below it and clip above it. This document adopts that design as the
 reference analog trigger source, generalized behind the trigger
 interface below.
 
@@ -150,7 +150,7 @@ ordinary follow-on work rather than a fight with the scheduler.
 
 ## The trigger-locality rule
 
-Hardware triggers make an existing truth sharper, so this RFC states
+Hardware triggers make an existing truth sharper, so this document states
 it as a rule: **any actuator that must stop on a trigger should share
 a board with that trigger's sensor.** Local stop latency is now
 microseconds (IRQ → trsync → backend stop, all on-chip); cross-board

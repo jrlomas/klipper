@@ -1,4 +1,4 @@
-# Overlay defaults for the "IDF as modem" architecture (RFC 0001
+# Overlay defaults for the "IDF as modem" architecture (FD-0001
 # doc 12 stage 3).  Build with:
 #   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.modem" \
 #       set-target esp32 && idf.py build

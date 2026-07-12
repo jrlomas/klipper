@@ -202,14 +202,14 @@ config WANT_TRAJECTORY
     depends on HAVE_GPIO && !MACH_AVR
     default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_TRAJECTORY_PWM
-    # Sampled PWM/DAC actuator backend (RFC 0001 doc 04). Needs both
+    # Sampled PWM/DAC actuator backend (FD-0001 doc 04). Needs both
     # the trajectory segment core and a hard PWM output to sample onto.
     bool
     depends on WANT_TRAJECTORY && WANT_HARD_PWM
     default y
 config WANT_TRAJECTORY_HIGHER_ORDER
     # Cubic (jerk) and quintic (jerk/snap/crackle) Bezier segments on
-    # top of the quadratic core (RFC 0001 doc 02 "Higher-order
+    # top of the quadratic core (FD-0001 doc 02 "Higher-order
     # segments"). Adds j/s/c coefficient fields and the exact chained
     # integration for them; a quadratic-only build is byte-identical
     # with this off.
@@ -217,7 +217,7 @@ config WANT_TRAJECTORY_HIGHER_ORDER
     depends on WANT_TRAJECTORY
     default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_SYSCALL_API
-    # Unified cross-family board syscall table (RFC 0001 doc 13): one
+    # Unified cross-family board syscall table (FD-0001 doc 13): one
     # versioned function-pointer surface, wrapping the existing board.h
     # primitives, that every port exposes identically. Additive and small.
     bool
@@ -242,7 +242,7 @@ config WANT_SIGNED_IMAGES
     help
         Verify an Ed25519 (RFC 8032) signature over the application
         image in the first-class bootloader before marking it valid or
-        booting it (RFC 0001 doc 11, "Signed images") - a second gate
+        booting it (FD-0001 doc 11, "Signed images") - a second gate
         beyond the transport HMAC and the whole-image CRC. The signature
         covers exactly the bytes the CRC covers and is stored in the
         validity page; the public key is embedded in the bootloader
@@ -259,7 +259,7 @@ config WANT_SIGNED_IMAGES
         Off by default: enabling it means every accepted image must be
         signed, so provision signing keys first.
 
-# Network transports (RFC 0001 doc 07): the datagram console binding
+# Network transports (FD-0001 doc 07): the datagram console binding
 # runs unchanged over Ethernet.  These are opt-in and code-size
 # sensitive - default off everywhere, and never defaulted on for
 # limited-code-size boards.

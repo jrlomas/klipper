@@ -1,4 +1,4 @@
-/* First-class bootloader link script — STM32F4 / F407 (RFC 0001
+/* First-class bootloader link script — STM32F4 / F407 (FD-0001
  * doc 11).
  *
  * 32 KB bootloader in sectors 0-1; the application starts at sector 2

@@ -1,9 +1,9 @@
-# RFC 0001: Motion Intentions — Vision
+# Founding Document 0001 — Motion Intentions: Vision
 
 Status: Adopted -- realized in HELIX 0.9
 
 > **These documents are no longer proposals — they are the design
-> record of what HELIX built.** The RFC 0001 set was written to *argue*
+> record of what HELIX built.** The FD-0001 set was written to *argue*
 > the architecture; the architecture now *exists*, implemented in the
 > HELIX 0.9 codebase (software complete; hardware bring-up pending — see
 > [Releases](../../Releases.md)). Each document's status line reflects
@@ -19,7 +19,7 @@ micro-controller the machine's time authority, and separating
 time-critical motion traffic from commands and telemetry that must never
 be able to halt a print.
 
-It is the entry point of an RFC set — see [README.md](README.md) for
+It is the entry point of this founding document — see [README.md](README.md) for
 the reading order and glossary.
 
 ## Problem statement
@@ -198,7 +198,7 @@ Actuator backend (NEW)
 
 ## Decisions taken as premises
 
-The following decisions were made before this RFC was drafted and are
+The following decisions were made before this document was drafted and are
 treated as premises; the documents design *within* them rather than
 relitigating them:
 
@@ -215,7 +215,7 @@ relitigating them:
    No FPU required — all segment execution is fixed-point/integer.
    AVR (8-bit) boards remain supported only on the unchanged legacy
    `queue_step` path.
-4. **Deliverable: this RFC set first.** No implementation is proposed
+4. **Deliverable: this founding document first.** No implementation is proposed
    for merge until the design has been reviewed. A phased prototype
    plan is in [06-Migration.md](06-Migration.md).
 5. **Link evolution is backwards compatible.** Legacy CRC16 framing

@@ -1,4 +1,4 @@
-# RFC 0001: ESP32 Architecture Stance
+# FD-0001: ESP32 Architecture Stance
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 

@@ -1,7 +1,7 @@
 #ifndef INTENTPROTO_HOST_HPP
 #define INTENTPROTO_HOST_HPP
 // intentproto host session — the retransmit-window state machine for
-// the host side of the legacy protocol (RFC 0001 doc 10). This is
+// the host side of the legacy protocol (FD-0001 doc 10). This is
 // the library's counterpart to the device side in proto.cpp: it
 // assigns sequence numbers, frames commands, tracks the in-flight
 // window, and turns acks/naks/timeouts into go-back-N retransmits.
@@ -21,7 +21,7 @@
 // The window must stay smaller than the 16-value sequence space to
 // keep acks unambiguous; 12 matches the reference host.
 //
-// Framing negotiation (RFC 0001 doc 07): rx accepts both framings at
+// Framing negotiation (FD-0001 doc 07): rx accepts both framings at
 // all times; tx framing follows a three-state machine —
 //
 //   Legacy ---session_enable_v2()---> Probing ---valid v2 rx---> V2

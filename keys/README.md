@@ -1,7 +1,7 @@
 # Firmware signing keys
 
-Ed25519 keys for signed firmware images (RFC 0001 doc 11,
-[docs/rfcs/0001-motion-intentions/11-Bootloader.md](../docs/rfcs/0001-motion-intentions/11-Bootloader.md),
+Ed25519 keys for signed firmware images (FD-0001 doc 11,
+[docs/founding/0001-motion-intentions/11-Bootloader.md](../docs/founding/0001-motion-intentions/11-Bootloader.md),
 "Signed images"). The bootloader in `src/boot_app` verifies an Ed25519
 (RFC 8032) signature over the application image against the public key
 embedded in `helix_pubkey.h` before it will mark the image valid or

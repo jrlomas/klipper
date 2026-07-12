@@ -1,4 +1,4 @@
-// Minimal Cortex-M startup for the first-class bootloader (RFC 0001
+// Minimal Cortex-M startup for the first-class bootloader (FD-0001
 // doc 11).
 //
 // The bootloader owns the reset vector of the combined "one build, one

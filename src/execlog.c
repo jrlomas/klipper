@@ -1,4 +1,4 @@
-// Execution log: the uplink twin of the intention queue (RFC 0001
+// Execution log: the uplink twin of the intention queue (FD-0001
 // doc 08). A per-board ring buffer records what was actually
 // executed (segments, triggers, holds, rebases, faults). Records
 // stream live as best-effort telemetry and remain retrievable after

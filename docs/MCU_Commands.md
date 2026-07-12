@@ -295,8 +295,8 @@ scheduling new queue_step commands accordingly.
 ### Trajectory intention commands
 
 These commands implement the per-actuator "trajectory intention" motion
-path from RFC 0001
-([doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)). They
+path from FD-0001
+([doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md)). They
 are used only for steppers configured with `motion_protocol: trajectory`
 and coexist with the legacy queue_step path.
 
@@ -318,7 +318,7 @@ and coexist with the legacy queue_step path.
   q(t) = q0 + v*t + 1/2*a*t^2 + 1/6*j*t^3. 'jerk' is a signed 32-bit
   coefficient in sub-units/tick^3 with 48 fractional bits. Only
   available when the firmware is built with
-  CONFIG_WANT_TRAJECTORY_HIGHER_ORDER (RFC 0001 doc 02 "Higher-order
+  CONFIG_WANT_TRAJECTORY_HIGHER_ORDER (FD-0001 doc 02 "Higher-order
   segments"). The command sets polynomial-order bits 6-7 = 01.
 
 * `queue_traj_segment_quintic oid=%c flags=%c duration=%u velocity=%i
@@ -355,8 +355,8 @@ response if the segment queue runs dry.
 
 The execution log ("flight recorder") retains a ring of what the
 micro-controller actually executed so failures can be analyzed and
-resumed (RFC 0001
-[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md)).
+resumed (FD-0001
+[doc 08](founding/0001-motion-intentions/08-Failure_Recovery.md)).
 
 * `config_execlog oid=%c size=%hu` : Creates an execution-log object
   retaining 'size' records.
@@ -377,7 +377,7 @@ resumed (RFC 0001
 ### Heater failsafe hold commands
 
 The autonomous bang-bang heater holder keeps a heater at a safe
-temperature if the host or link goes away (RFC 0001 doc 08). Used for
+temperature if the host or link goes away (FD-0001 doc 08). Used for
 heaters configured with `failure_policy: hold`.
 
 * `config_heater_hold oid=%c heater_pin=%u sensor_pin=%u
@@ -406,8 +406,8 @@ heaters configured with `failure_policy: hold`.
 ### Machine-time sync commands
 
 The primary micro-controller is the machine's time authority; the host
-relays its beacons so secondary boards can discipline their clocks (RFC
-0001 [doc 01](rfcs/0001-motion-intentions/01-Time_Model.md)).
+relays its beacons so secondary boards can discipline their clocks
+(FD-0001 [doc 01](founding/0001-motion-intentions/01-Time_Model.md)).
 
 * `sync_beacon_read` : Requests a beacon from the primary; it responds
   with "sync_beacon seq=%c clock=%u".
@@ -427,8 +427,8 @@ relays its beacons so secondary boards can discipline their clocks (RFC
 ### Hardware trigger commands
 
 Hardware-event trigger sources deliver endstop/probe-style events
-without host polling (RFC 0001
-[doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)).
+without host polling (FD-0001
+[doc 09](founding/0001-motion-intentions/09-Hardware_Triggers.md)).
 
 * `config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c qualify_ticks=%u
   qualify_count=%c` : Creates a GPIO edge trigger source with an
@@ -449,8 +449,8 @@ without host polling (RFC 0001
 
 ### Board syscall API commands
 
-The unified cross-family board syscall table (RFC 0001
-[doc 13](rfcs/0001-motion-intentions/13-Syscall_API.md)) is a versioned
+The unified cross-family board syscall table (FD-0001
+[doc 13](founding/0001-motion-intentions/13-Syscall_API.md)) is a versioned
 function-pointer surface every port exposes identically. The firmware
 also advertises it to the host.
 

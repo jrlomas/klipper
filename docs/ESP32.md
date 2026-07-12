@@ -1,8 +1,8 @@
 # ESP32 micro-controller (UDP/WiFi network transport)
 
 This document describes the experimental ESP32 target and the UDP
-datagram console transport it uses (RFC 0001
-[doc 07](rfcs/0001-motion-intentions/07-Link_Transport.md), phase P7).
+datagram console transport it uses (FD-0001
+[doc 07](founding/0001-motion-intentions/07-Link_Transport.md), phase P7).
 The same transport is testable on a desktop with no hardware via the
 linux micro-controller's UDP option - see
 [the test recipe below](#desktop-testing-the-linux-mcu-over-udp),
@@ -11,8 +11,8 @@ which is the recommended way to exercise the network stack.
 ## Architecture
 
 The port offers two selectable architectures (Kconfig, "Klipper
-firmware" -> Architecture; RFC 0001
-[doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)):
+firmware" -> Architecture; FD-0001
+[doc 12](founding/0001-motion-intentions/12-ESP32_Architecture.md)):
 
 * **component** (stage 1, default): klipper compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
@@ -59,7 +59,7 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   layer's ARQ; enabling parity needs a small in-order reassembly
   buffer (future work).
 
-## Core pinning (RFC 0001 doc 07) - component architecture
+## Core pinning (FD-0001 doc 07) - component architecture
 
 The ESP32 is dual core; the component architecture splits it:
 
@@ -77,7 +77,7 @@ The klipper timer is a GPTimer at 20MHz (`CONFIG_CLOCK_FREQ`
 integer division of the 80MHz APB clock that keeps a long 32-bit
 wrap period (~214s), giving 50ns scheduling granularity.
 
-**Caution (from RFC 0001 doc 07):** the WiFi stack's interrupt and
+**Caution (from FD-0001 doc 07):** the WiFi stack's interrupt and
 flash-cache behavior make *tick-precise* step generation on this
 silicon genuinely hard.  Core pinning removes most contention, but
 occasional microsecond-level jitter remains (e.g. during flash
@@ -332,8 +332,8 @@ dual-core silicon):
 
 ## Peripheral bindings
 
-Beyond the initial timer/GPIO/ADC set, the port implements the RFC
-0001 [doc 12](rfcs/0001-motion-intentions/12-ESP32_Architecture.md)
+Beyond the initial timer/GPIO/ADC set, the port implements the founding document
+0001 [doc 12](founding/0001-motion-intentions/12-ESP32_Architecture.md)
 "command parity" bindings.  Per that document's stance, everything
 documented in the TRM is driven at register level against the
 Apache-2.0 `soc/*.h` headers (vendored in `lib/esp32/`); in the
@@ -662,5 +662,5 @@ rough order:
 * Ethernet (RMII) bringup variant of `wifi.c`.
 * Chip reset command, watchdog (component arch; on the bare core a
   register-level TIMG watchdog).
-* A native klippy UDP transport (RFC 0001 doc 05) replacing the pty
+* A native klippy UDP transport (FD-0001 doc 05) replacing the pty
   bridge.

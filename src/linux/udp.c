@@ -2,7 +2,7 @@
 // network transport)
 //
 // This wires the generic datagram console glue (src/generic/
-// udp_console.c) to a plain UDP socket so the complete RFC 0001
+// udp_console.c) to a plain UDP socket so the complete FD-0001
 // doc 07 network stack - klippy -> lib/intentproto/tools/
 // udp_bridge.py -> HMAC-authenticated datagrams -> klipper frames -
 // can be exercised on a desktop with zero hardware.  An ESP32 board

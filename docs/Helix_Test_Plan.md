@@ -533,7 +533,7 @@ release**.
 Each phase maps back to the design canon and the implementation so a
 reviewer can find the code behind a test:
 
-| Phase | Design (RFC 0001) | Where it lives |
+| Phase | Design (FD-0001) | Where it lives |
 | --- | --- | --- |
 | 0 protocol/host | doc 02, 10, [Protocol v2](Protocol_v2.md) | `lib/intentproto`, `chelper/segfit.c`, `klippy/extras/trajectory_queuing.py` |
 | 3 machine time | doc 01 | `klippy/extras/timesync`, MCU beacon |

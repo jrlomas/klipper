@@ -8,7 +8,7 @@ All dates in this document are approximate.
 
 ## Changes
 
-20260712: The RFC 0001 "motion intentions" features are now available
+20260712: The FD-0001 "motion intentions" features are now available
 as opt-in, backwards-compatible config options; the default behavior is
 unchanged and no action is required to keep an existing config working.
 New optional config sections `[failure_recovery]`, `[timesync]`, and
@@ -22,8 +22,8 @@ New G-Code commands `FAILURE_RECOVERY_STATUS`, `ENGAGE_HEATER_HOLD`,
 `RELEASE_HEATER_HOLD`, `EXECLOG_DUMP`, `RECONNECT_MCU`, and
 `TIMESYNC_STATUS` are registered only when the corresponding section is
 enabled. See the [Config Reference](Config_Reference.md),
-[G-Codes](G-Codes.md), and RFC 0001
-[docs](rfcs/0001-motion-intentions/README.md) for details.
+[G-Codes](G-Codes.md), and FD-0001
+[docs](founding/0001-motion-intentions/README.md) for details.
 
 20260525: The internal implementation of "probe:z_virtual_endstop" has
 changed. Most users will not observe a change in behavior. Previously

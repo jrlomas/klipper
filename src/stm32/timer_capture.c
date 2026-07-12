@@ -1,5 +1,5 @@
 // Timer input-capture hardware timestamps for trigger sources
-// (RFC 0001 doc 09 section 3).
+// (FD-0001 doc 09 section 3).
 //
 // Detecting an edge (gpio_exti.c) and timestamping it are separate
 // jobs. The EXTI ISR can only read the clock at *ISR entry* -- later

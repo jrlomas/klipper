@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Generate an Ed25519 signing keypair for signed firmware images
-# (RFC 0001 doc 11, "Signed images") and, optionally, the embedded C
+# (FD-0001 doc 11, "Signed images") and, optionally, the embedded C
 # public-key header the bootloader compiles in.
 #
 # This produced the committed DEV/TEST keypair in keys/. The REAL
@@ -37,7 +37,7 @@ def gen_header(pub, var="helix_pubkey"):
                  " keys/*.pub file.")
     lines.append("// The Ed25519 public key the bootloader verifies signed"
                  " images against")
-    lines.append("// (RFC 0001 doc 11). Regenerate after rotating the key with")
+    lines.append("// (FD-0001 doc 11). Regenerate after rotating the key with")
     lines.append("// scripts/gen_signing_key.py --pub keys/<name>.pub"
                  " --header keys/helix_pubkey.h")
     lines.append("#include <stdint.h>")

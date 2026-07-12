@@ -1,4 +1,4 @@
-# RFC 0001: Traffic Classes
+# FD-0001: Traffic Classes
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 

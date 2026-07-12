@@ -1,4 +1,4 @@
-// Unified cross-family board syscall table (RFC 0001 doc 13).
+// Unified cross-family board syscall table (FD-0001 doc 13).
 //
 // One portable implementation serves every port: it wraps each port's
 // existing board.h primitives, so STM32, ESP32, and the rest expose an

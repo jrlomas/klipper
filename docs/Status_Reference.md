@@ -549,7 +549,7 @@ objects:
 ## timesync
 
 The following information is available in the
-[timesync](Config_Reference.md#timesync) object (RFC 0001 doc 01):
+[timesync](Config_Reference.md#timesync) object (FD-0001 doc 01):
 - `machine_time`: The primary micro-controller's estimated print time
   (in seconds), exposed so external clients may synchronize to machine
   time. `None` until the beacon loop is active.
@@ -565,7 +565,7 @@ The following information is available in the
 
 The following information is available in the
 [trajectory_queuing](Config_Reference.md#trajectory_queuing) object
-(RFC 0001 doc 02), present whenever any stepper uses
+(FD-0001 doc 02), present whenever any stepper uses
 `motion_protocol: trajectory`:
 - `trajectory_steppers`: a list, one entry per trajectory actuator, each
   a dictionary with `name`, `oid`, `anchored`, `need_rebase`, `su_per_mm`,

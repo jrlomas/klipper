@@ -1,9 +1,9 @@
-// PWM/DAC sampled actuator backend for trajectory segments (RFC 0001).
+// PWM/DAC sampled actuator backend for trajectory segments (FD-0001).
 //
 // Non-stepper backend: "position" is an output level, not step edges.
 // Unlike the stepper backend it does NOT solve for microstep boundary
 // crossings.  It SAMPLES the segment polynomial at a fixed loop rate
-// (RFC 0001 doc 02 "Sampled realization", doc 04 "PWM / DAC backend"):
+// (FD-0001 doc 02 "Sampled realization", doc 04 "PWM / DAC backend"):
 // each tick it evaluates q(dt) = q0 + v*dt + 1/2*a*dt^2 directly (two
 // 64-bit multiply-accumulates, FPU-free) via trajq_pos_at(), maps the
 // resulting sub-unit position to a duty cycle, and writes it to a hard
@@ -114,7 +114,7 @@ traj_pwm_stop(struct trajq *tq)
     sched_del_timer(&p->time);
     // Freeze the output (leave the last written level untouched) and
     // record the live sub-unit position back into the anchor, so the
-    // host can recover exact state (RFC 0001 doc 04 stop table).
+    // host can recover exact state (FD-0001 doc 04 stop table).
     if (tq->flags & TQF_ACTIVE) {
         uint32_t t = timer_read_time() - tq->seg_start_clock;
         if (t > tq->duration)
@@ -305,7 +305,7 @@ traj_pwm_shutdown(void)
         trajq_halt(&p->tq, TQF_NEED_REBASE);
         irq_enable();
         // Machine shutdown: drive the output to its configured
-        // shutdown level (RFC 0001 doc 04 stop table).
+        // shutdown level (FD-0001 doc 04 stop table).
         gpio_pwm_write(p->out, p->shutdown_value);
     }
 }

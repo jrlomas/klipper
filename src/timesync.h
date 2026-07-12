@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// Machine-time discipline (RFC 0001 doc 01). Machine time is the
+// Machine-time discipline (FD-0001 doc 01). Machine time is the
 // primary MCU's free-running counter; secondaries maintain an
 // (offset, rate) mapping from machine time to their local clock,
 // disciplined by host-relayed sync beacons. When no discipline has

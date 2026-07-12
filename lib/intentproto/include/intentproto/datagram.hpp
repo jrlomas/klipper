@@ -1,6 +1,6 @@
 #ifndef INTENTPROTO_DATAGRAM_HPP
 #define INTENTPROTO_DATAGRAM_HPP
-// intentproto v2 link layer (RFC 0001 doc 07):
+// intentproto v2 link layer (FD-0001 doc 07):
 //  - framing v2: BCH(t=3) error-correcting trailer replacing CRC16,
 //    negotiated via the reserved seq-byte bits legacy firmware
 //    provably rejects
@@ -33,7 +33,7 @@ int frame_v2_decode(uint8_t* frame, size_t frame_len,
                     const uint8_t** payload, uint8_t* seq,
                     int* corrected = nullptr);
 
-// ---- traffic classes (RFC 0001 doc 03) ----
+// ---- traffic classes (FD-0001 doc 03) ----
 enum class TrafficClass : uint8_t { Scheduled = 0, Prompt = 1,
                                     Telemetry = 2 };
 
@@ -49,7 +49,7 @@ struct ClassStats {
 //        bit 3 = authenticated, bit 4 = session-protected (the
 //        optional session-security upgrade, session_sec.hpp; the
 //        static-PSK path here never sets or inspects it). Bits 5-7
-//        remain reserved header space as RFC 0001 doc 07 promised.
+//        remain reserved header space as FD-0001 doc 07 promised.
 constexpr size_t DATAGRAM_HEADER = 3;
 constexpr size_t DATAGRAM_TAG = 8;
 constexpr size_t DATAGRAM_MAX = 1472; // typical UDP payload MTU

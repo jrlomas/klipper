@@ -1,4 +1,4 @@
-# RFC 0001: Host Architecture
+# FD-0001: Host Architecture
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
@@ -68,7 +68,7 @@ For each migrated joint, per flush interval:
    at the duration caps of
    [02-Intention_Protocol.md](02-Intention_Protocol.md).
 
-**The honesty point this RFC must state plainly:** with input shaping
+**The honesty point this document must state plainly:** with input shaping
 and pressure advance active, the joint trajectory is *not* piecewise
 constant-acceleration — shaped motion is a sum of time-shifted
 trapezoids and PA adds a smoothed derivative term. Per-joint quadratic

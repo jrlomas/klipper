@@ -321,7 +321,7 @@ choice
     config STM32_FLASH_START_20000
         bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7 || MACH_STM32H750
 
-    # First-class bootloader (RFC 0001 doc 11): selecting one of these
+    # First-class bootloader (FD-0001 doc 11): selecting one of these
     # links the application at the offset the src/boot_app/ bootloader
     # reserves, so the two assemble into the combined "one build, one
     # flash" image (scripts/build_combined.py). The offsets match the
@@ -520,7 +520,7 @@ choice
         select CONSOLE_W5500
         help
             Use a WIZnet W5500 SPI Ethernet controller as the board's
-            console transport (RFC 0001 doc 07).  No USART/USB/CAN
+            console transport (FD-0001 doc 07).  No USART/USB/CAN
             console is built; the console rides the UDP datagram binding
             over the wired link.  Configure the SPI bus, chip-select
             pin and static IP under "Ethernet transport".

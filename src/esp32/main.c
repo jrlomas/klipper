@@ -1,6 +1,6 @@
 // Main starting point for the ESP32 port
 //
-// Two selectable architectures (RFC 0001 doc 12; Kconfig "Klipper
+// Two selectable architectures (FD-0001 doc 12; Kconfig "Klipper
 // firmware" -> architecture):
 //
 //  * "component" (stage 1): app_main() runs on core 0 and brings up

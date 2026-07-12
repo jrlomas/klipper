@@ -3,7 +3,7 @@
 // This is the only translation unit in the firmware that speaks C++;
 // it exists purely to expose lib/intentproto's datagram codec -
 // 16-bit datagram sequencing, traffic-class tag, truncated
-// HMAC-SHA256 authentication (RFC 0001 doc 07) - to the C console
+// HMAC-SHA256 authentication (FD-0001 doc 07) - to the C console
 // glue in udp_console.c.  It matches lib/intentproto/tools/
 // udp_bridge.py byte for byte.
 //

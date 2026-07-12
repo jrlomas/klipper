@@ -1,4 +1,4 @@
-/* First-class bootloader link script — STM32F072 (RFC 0001 doc 11).
+/* First-class bootloader link script — STM32F072 (FD-0001 doc 11).
  *
  * 16 KB bootloader at flash base; the application (linked with the
  * ordinary armcm_link.lds.S and CONFIG_FLASH_APPLICATION_ADDRESS =

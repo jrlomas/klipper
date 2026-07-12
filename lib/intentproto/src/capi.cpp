@@ -1,4 +1,4 @@
-// intentproto host-profile C API — implementation (RFC 0001 doc 10).
+// intentproto host-profile C API — implementation (FD-0001 doc 10).
 //
 // A thin extern "C" shim over the freestanding C++ core. Every
 // function forwards to include/intentproto/*.hpp; the only logic added

@@ -1,5 +1,5 @@
 // Polled UART transport for the first-class bootloader — STM32F4
-// USART (RFC 0001 doc 11).
+// USART (FD-0001 doc 11).
 //
 // See boot_uart_stm32f0.c for the transport rationale (UART over USB in
 // the bootloader). The F4 USART is the older SR/DR register layout

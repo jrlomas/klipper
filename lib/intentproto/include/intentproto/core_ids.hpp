@@ -1,6 +1,6 @@
 #ifndef INTENTPROTO_CORE_IDS_HPP
 #define INTENTPROTO_CORE_IDS_HPP
-// Fixed message ids for the v2 core command set (RFC 0001 docs 02,
+// Fixed message ids for the v2 core command set (FD-0001 docs 02,
 // 08, 09, 10, 11).
 //
 // In the v2 protocol the dictionary is demoted: the core command set

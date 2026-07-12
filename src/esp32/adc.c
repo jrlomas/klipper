@@ -8,7 +8,7 @@
 // polls a small state machine, returning retry delays until the
 // task has stored the result.
 //
-// Architecture split (RFC 0001 doc 12):
+// Architecture split (FD-0001 doc 12):
 //  * component: gpio_adc_setup() lazily creates the unit/task and
 //    configures channels through IDF; the sample handshake is
 //    guarded by irq_save() (a cross-core FreeRTOS spinlock there).

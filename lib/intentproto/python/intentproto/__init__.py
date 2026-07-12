@@ -1,4 +1,4 @@
-# intentproto host binding — cffi, API mode (RFC 0001 doc 10).
+# intentproto host binding — cffi, API mode (FD-0001 doc 10).
 #
 # This is the "thin Python binding generated from the headers" the
 # host profile promises: it builds the freestanding C++ core plus the

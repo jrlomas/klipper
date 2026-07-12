@@ -1,4 +1,4 @@
-# IRAM placement for the bare motion core ("IDF as modem", RFC 0001
+# IRAM placement for the bare motion core ("IDF as modem", FD-0001
 # doc 12 stage 3) - see "IRAM discipline" in docs/ESP32.md.
 #
 # A flash-cache miss stalls the requesting core for microseconds (SPI

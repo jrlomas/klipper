@@ -1,4 +1,4 @@
-// CAN carrier for the intentproto framed byte stream (RFC 0001 doc 07).
+// CAN carrier for the intentproto framed byte stream (FD-0001 doc 07).
 //
 // See can_transport.hpp for the design. This file is transport-agnostic:
 // the actual CAN hardware access is the caller's `send` hook, so the
