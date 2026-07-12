@@ -147,10 +147,14 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
 #define IP_PAIR_WTYPE(p) ::intentproto::wire_type<IP_PAIR_TYPE(p)>()
 #define IP_PACK_FIELD(p) w.put(r.IP_PAIR_NAME(p))
 
-#define IP_NARG(...) IP_NARG_(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
-#define IP_NARG_(_1, _2, _3, _4, _5, _6, _7, _8, N, ...) N
+#define IP_NARG(...)                                                        \
+    IP_NARG_(__VA_ARGS__, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3,  \
+             2, 1, 0)
+#define IP_NARG_(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13,    \
+                 _14, _15, _16, N, ...)                                     \
+    N
 
-// Comma-separated map over up to 8 pairs.
+// Comma-separated map over up to 16 pairs.
 #define IP_M1(M, a) M(a)
 #define IP_M2(M, a, ...) M(a), IP_M1(M, __VA_ARGS__)
 #define IP_M3(M, a, ...) M(a), IP_M2(M, __VA_ARGS__)
@@ -159,6 +163,14 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
 #define IP_M6(M, a, ...) M(a), IP_M5(M, __VA_ARGS__)
 #define IP_M7(M, a, ...) M(a), IP_M6(M, __VA_ARGS__)
 #define IP_M8(M, a, ...) M(a), IP_M7(M, __VA_ARGS__)
+#define IP_M9(M, a, ...) M(a), IP_M8(M, __VA_ARGS__)
+#define IP_M10(M, a, ...) M(a), IP_M9(M, __VA_ARGS__)
+#define IP_M11(M, a, ...) M(a), IP_M10(M, __VA_ARGS__)
+#define IP_M12(M, a, ...) M(a), IP_M11(M, __VA_ARGS__)
+#define IP_M13(M, a, ...) M(a), IP_M12(M, __VA_ARGS__)
+#define IP_M14(M, a, ...) M(a), IP_M13(M, __VA_ARGS__)
+#define IP_M15(M, a, ...) M(a), IP_M14(M, __VA_ARGS__)
+#define IP_M16(M, a, ...) M(a), IP_M15(M, __VA_ARGS__)
 #define IP_MAP(M, ...) IP_CAT(IP_M, IP_NARG(__VA_ARGS__))(M, __VA_ARGS__)
 
 // Semicolon-terminated map (struct fields, statements).
@@ -170,6 +182,14 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
 #define IP_S6(M, a, ...) M(a); IP_S5(M, __VA_ARGS__)
 #define IP_S7(M, a, ...) M(a); IP_S6(M, __VA_ARGS__)
 #define IP_S8(M, a, ...) M(a); IP_S7(M, __VA_ARGS__)
+#define IP_S9(M, a, ...) M(a); IP_S8(M, __VA_ARGS__)
+#define IP_S10(M, a, ...) M(a); IP_S9(M, __VA_ARGS__)
+#define IP_S11(M, a, ...) M(a); IP_S10(M, __VA_ARGS__)
+#define IP_S12(M, a, ...) M(a); IP_S11(M, __VA_ARGS__)
+#define IP_S13(M, a, ...) M(a); IP_S12(M, __VA_ARGS__)
+#define IP_S14(M, a, ...) M(a); IP_S13(M, __VA_ARGS__)
+#define IP_S15(M, a, ...) M(a); IP_S14(M, __VA_ARGS__)
+#define IP_S16(M, a, ...) M(a); IP_S15(M, __VA_ARGS__)
 #define IP_MAPS(M, ...) IP_CAT(IP_S, IP_NARG(__VA_ARGS__))(M, __VA_ARGS__)
 
 // ---------- the annotations ----------
@@ -221,6 +241,22 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
         (uint8_t)(sizeof(IP_CAT(_ip_rn_, rname)) /                          \
                   sizeof(IP_CAT(_ip_rn_, rname)[0])),                       \
         &IP_CAT(_ip_pack_, rname)};                                         \
+    }                                                                       \
+    static inline ::intentproto::Response& _ip_desc_of(const rname*) {      \
+        return IP_CAT(_ip_res_, rname);                                     \
+    }                                                                       \
+    static_assert(true, "")  /* swallow the trailing semicolon */
+
+// Response struct with no fields: KLIPPER_RESPONSE0(starting);
+// (the legacy "starting" ack-style message is a zero-parameter response;
+// the field-list maps do not accept an empty argument, so this mirrors
+// KLIPPER_METHOD0.)
+#define KLIPPER_RESPONSE0(rname)                                            \
+    struct rname {};                                                        \
+    namespace {                                                             \
+    void IP_CAT(_ip_pack_, rname)(::intentproto::Writer&, const void*) {}   \
+    ::intentproto::Response IP_CAT(_ip_res_, rname){                        \
+        #rname, nullptr, nullptr, 0, &IP_CAT(_ip_pack_, rname)};            \
     }                                                                       \
     static inline ::intentproto::Response& _ip_desc_of(const rname*) {      \
         return IP_CAT(_ip_res_, rname);                                     \
