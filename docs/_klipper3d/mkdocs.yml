@@ -28,7 +28,9 @@ plugins:
     hooks:
       on_page_markdown: "docs._klipper3d.mkdocs_hooks:transform"
   exclude:
-    glob: "README.md"
+    glob:
+      - "README.md"
+      - "helix-landing.html"
 
 # Website layout configuration (using mkdocs-material theme)
 theme:
