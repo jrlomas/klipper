@@ -2,21 +2,27 @@
 # nothing but a C++ compiler, and runs the desktop test suite.
 #
 #   make test        - build and run tests with the host compiler
+#   make capi        - build the host-profile C ABI + cffi binding and
+#                      run the C and Python round-trip tests (doc 10)
 #   make embedded    - size-check compile with arm-none-eabi-g++ (if present)
 #   make dict        - demonstrate the identify-blob build (tools/mkdict.py)
 
 CXX ?= g++
+CC ?= gcc
 CXXFLAGS ?= -std=gnu++17 -Os -g -Wall -Wextra -fno-exceptions -fno-rtti
+CFLAGS ?= -std=gnu11 -Os -g -Wall -Wextra
 CPPFLAGS += -Iinclude
 
 BUILD := build
+# src/capi.cpp is the host-profile extern "C" shim (doc 10); it carries
+# no static registration, so linking it into every test is harmless.
 SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
-	src/datagram.cpp boot/bootcore.cpp
-HDRS := $(wildcard include/intentproto/*.hpp)
+	src/datagram.cpp src/capi.cpp boot/bootcore.cpp
+HDRS := $(wildcard include/intentproto/*.hpp) include/intentproto/capi.h
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
 	test_negotiate test_extdesc test_bootcore
 
-.PHONY: all test embedded dict clean
+.PHONY: all test capi embedded dict clean
 
 all: test
 
@@ -34,6 +40,26 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 		echo "== test_extbind"; python3 tools/test_extbind.py || exit 1; \
 	else \
 		echo "== test_extbind (skipped: no python3)"; \
+	fi
+
+# Host-profile C ABI (doc 10). test_capi.c is compiled as C to prove
+# capi.h is valid C and the ABI links from a C translation unit; it
+# then links the C++ core. The cffi API-mode binding (python/) builds
+# the same sources into a Python extension and drives the same
+# host-session loopback; both are skipped politely when their
+# toolchains are absent.
+$(BUILD)/test_capi: tests/test_capi.c $(SRCS) $(HDRS) | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c tests/test_capi.c -o $(BUILD)/test_capi_c.o
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(SRCS) $(BUILD)/test_capi_c.o -o $@
+
+capi: $(BUILD)/test_capi
+	@echo "== test_capi (C ABI loopback)"; ./$(BUILD)/test_capi || exit 1
+	@if command -v python3 >/dev/null 2>&1 \
+			&& python3 -c "import cffi" >/dev/null 2>&1; then \
+		echo "== test_capi_py (cffi API mode)"; \
+		python3 python/test_capi_py.py || exit 1; \
+	else \
+		echo "== test_capi_py (skipped: no python3/cffi)"; \
 	fi
 
 # Cortex-M0 (STM32F072 floor target) compile + size report; skipped

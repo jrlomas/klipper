@@ -200,6 +200,16 @@ class FailureRecovery:
         self.execlog_size = config.getint(
             'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
         self.holds = {}
+        # Opt-in: route the execlog drain through the asyncio<->reactor
+        # bridge seam (RFC 0001 doc 05) instead of the direct reactor
+        # path. Defaults off so the working reactor path is unchanged;
+        # this is the proof-of-consumer that the seam is real, not a
+        # wholesale migration (the shutdown flight-recorder drain and
+        # every other reactor call stay on the reactor).
+        self.asyncio_drain = config.getboolean('asyncio_drain', False)
+        self.bridge = None
+        if self.asyncio_drain:
+            self.bridge = self.printer.load_object(config, 'asyncio_bridge')
         # Per-heater opt-in policy
         pconfig = config.get_printer().lookup_object('configfile')
         for section in config.get_prefix_sections(''):
@@ -406,10 +416,37 @@ class FailureRecovery:
                 hold.release()
                 gcmd.respond_info("Released hold on %s" % (name,))
 
+    async def _drain_all_coro(self):
+        # asyncio-native orchestration of the execlog drain. The MCU
+        # I/O itself is reactor-only, so each board's drain hops back
+        # into reactor context through the bridge's call_reactor seam -
+        # exercising BOTH directions of the doc-05 handoff on a real
+        # consumer (reactor -> run_coro -> here -> call_reactor ->
+        # reactor -> back here -> completion on the reactor).
+        out = []
+        for el in self.execlogs:
+            records = await self.bridge.call_reactor(
+                lambda et, el=el: el.drain())
+            out.append((el, records))
+        return out
+
+    def _drain_all(self):
+        # [(execlog, records)] for every configured board. Uses the
+        # asyncio bridge when enabled and running; any bridge failure
+        # falls back to the direct reactor drain so the working extra
+        # never regresses.
+        if (self.asyncio_drain and self.bridge is not None
+                and self.bridge.running):
+            try:
+                return self.bridge.run_coro_wait(self._drain_all_coro())
+            except Exception:
+                logging.exception("failure_recovery: asyncio drain failed;"
+                                  " falling back to direct reactor drain")
+        return [(el, el.drain()) for el in self.execlogs]
+
     def cmd_EXECLOG_DUMP(self, gcmd):
         total = 0
-        for el in self.execlogs:
-            records = el.drain()
+        for el, records in self._drain_all():
             total += len(records)
             for r in records:
                 logging.info("execlog: seq=%d type=%d src=%d clock=%d"

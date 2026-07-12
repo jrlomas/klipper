@@ -73,9 +73,24 @@ extension self-description).
 
 ```
 make test        # desktop build + test suite (any g++/clang++)
+make capi        # host-profile C ABI + cffi binding round-trip tests
 make embedded    # Cortex-M0 compile + size report (arm-none-eabi-g++)
 make dict        # example identify-blob build (tools/mkdict.py)
 ```
+
+The **host profile** (RFC 0001 doc 10) is exposed through a versioned,
+C-linkage ABI in `include/intentproto/capi.h`
+(`INTENTPROTO_ABI_VERSION` + `intentproto_abi_version()`), implemented
+as a thin `extern "C"` shim in `src/capi.cpp` over the C++ core: host
+session, framing/VLQ/CRC and framing-v2 codecs, datagram tx/rx, and
+the registry / extension-descriptor accessors. `tests/test_capi.c`
+compiles as C and drives a host-session loopback against the device
+`rx()` to prove the header is valid C and the ABI links. The Python
+binding under `python/intentproto/` is **cffi, API mode** (doc 10's
+resolved open question): it builds `src/*.cpp` + `capi.cpp` into an
+extension that `#include`s `capi.h`, so the header is the single
+source of truth. `make capi` runs both round-trip tests and skips the
+Python one politely when cffi is absent.
 
 The tests port a slice of the OpenAMS firmware's command set as the
 working example.
@@ -91,7 +106,6 @@ working example.
   rides standalone).
 * v2 extension self-description (the >= 0x80 id space of
   `core_ids.hpp`) and the connect-time host binding.
-* `extern "C"` API surface for C consumers and the host cffi binding.
 
 ## Caveats
 

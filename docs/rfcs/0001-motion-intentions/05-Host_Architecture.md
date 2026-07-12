@@ -154,6 +154,58 @@ Positions this fork takes:
   place. Rewriting the reactor first is how forks die; strangling it
   is how they ship.
 
+### The seam (implemented)
+
+That single documented seam now exists as
+[klippy/extras/asyncio_bridge.py](../../../klippy/extras/asyncio_bridge.py).
+It runs **one asyncio event loop in a dedicated daemon thread**
+alongside the greenlet reactor and exposes a small, thread-safe,
+two-way handoff — nothing in `reactor.py` is modified; the reactor is
+used exactly as a well-behaved external caller would:
+
+* **reactor → asyncio**: `bridge.run_coro(coro)` schedules a
+  coroutine on the loop with `asyncio.run_coroutine_threadsafe()` and
+  returns a `ReactorCompletion`; the coroutine's
+  `concurrent.futures.Future` done-callback relays the outcome back
+  with `reactor.async_complete()` onto that completion, which the
+  reactor greenlet `wait()`s on. `run_coro_wait(coro)` is the
+  blocking, raise-on-error convenience form.
+* **asyncio → reactor**: `bridge.call_reactor(fn)` runs `fn(eventtime)`
+  in reactor context via `reactor.register_async_callback()` (klippy's
+  existing pipe + async-queue cross-thread wake) and resolves an
+  `asyncio.Future` with the result through `loop.call_soon_threadsafe()`.
+
+Lifecycle is tied to `klippy:connect` / `klippy:disconnect`. The core
+`AsyncioBridge` takes only a reactor, so the handoff is unit-tested
+without a full printer:
+[test/asyncio_bridge_test.py](../../../test/asyncio_bridge_test.py)
+drives the real reactor and asserts both directions close (and that
+the coroutine and the reactor callback run on different threads).
+
+**Proof-of-consumer.** To show the seam is real without rewriting
+anything, the `EXECLOG_DUMP` drain in
+[failure_recovery.py](../../../klippy/extras/failure_recovery.py) has
+an **opt-in** asyncio path behind `asyncio_drain:` (default off): the
+drain orchestration runs as a coroutine on the bridge, and each
+board's MCU I/O — which is reactor-only — hops back to the reactor
+through `call_reactor`, exercising *both* directions on a live
+consumer. Any bridge failure falls back to the direct reactor drain,
+so the working extra never regresses. The shutdown flight-recorder
+drain and every other reactor call are deliberately left on the
+reactor.
+
+**Migration path.** New asyncio-native owners adopt the seam the same
+way: `trajectory_queuing`'s flush/segment-emit loop and
+`failure_recovery`'s link-loss orchestration become coroutines that
+`await bridge.call_reactor(...)` for the reactor-only touches (MCU
+command queues, clock reads, `pause_resume`) while their own logic
+runs on the loop, and reactor-context entry points reach them with
+`run_coro`/`run_coro_wait`. The library transmit machinery of
+[10-Protocol_Library.md](10-Protocol_Library.md) and the UDP transport
+of [07-Link_Transport.md](07-Link_Transport.md) are asyncio-native on
+the loop side of this same seam. No consumer is converted wholesale in
+this step; each migrates behind its own flag as it is validated.
+
 ## Buffering policy restated
 
 * `BUFFER_TIME_HIGH` (1.0 s pause wall in toolhead.py) survives as the

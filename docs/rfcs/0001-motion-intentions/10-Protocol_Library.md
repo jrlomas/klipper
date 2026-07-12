@@ -73,9 +73,25 @@ caller-owned buffers.
   log/antilog tables (~4 KB) live in flash, and working state per link
   fits in well under 1 KB.
 * **Host profile**: the same core plus convenience allocation, a
-  stable **versioned C API with real headers** (`intent_proto.h`,
-  semantic-versioned ABI), and a thin Python binding generated from
-  those headers.
+  stable **versioned C API with real headers**
+  ([lib/intentproto/include/intentproto/capi.h](../../../lib/intentproto/include/intentproto/capi.h),
+  semantic-versioned ABI — `INTENTPROTO_ABI_VERSION` plus a runtime
+  `intentproto_abi_version()` the binding checks for a major
+  mismatch), and a thin Python binding generated from those headers.
+  Both now exist: `capi.h` is a C-linkage shim
+  ([src/capi.cpp](../../../lib/intentproto/src/capi.cpp)) over the C++
+  core exposing the host session, the framing/VLQ/CRC and framing-v2
+  codecs, the datagram tx/rx binding, and the registry /
+  extension-descriptor accessors; it is validated from a pure-C
+  translation unit
+  ([tests/test_capi.c](../../../lib/intentproto/tests/test_capi.c),
+  a host-session loopback against the device `rx()`). The Python
+  binding
+  ([lib/intentproto/python/intentproto](../../../lib/intentproto/python/intentproto/__init__.py))
+  is cffi in API mode, building `src/*.cpp` + `capi.cpp` into an
+  extension that `#include`s `capi.h` — the header, not a hand-copied
+  signature, is the source of truth. `make capi` builds the shared
+  object and runs the C and Python round-trip tests.
 
 The host's transmit machinery (today's `serialqueue.c` role) becomes a
 consumer of the library rather than a second implementation of the
@@ -238,8 +254,16 @@ budget, and as part of the firmware images.
 ## Open questions
 
 * Final name and header prefix.
-* Whether the Python binding is cffi against the installed headers or
-  a generated ctypes shim (proposed: cffi, API mode).
+* ~~Whether the Python binding is cffi against the installed headers or
+  a generated ctypes shim (proposed: cffi, API mode).~~ **Resolved
+  (2026-07): cffi, API mode.** Implemented in
+  [lib/intentproto/python/intentproto](../../../lib/intentproto/python/intentproto/__init__.py):
+  cffi compiles a real C++ extension that `#include`s `capi.h`, so a
+  drifting ABI is a build error rather than a silently wrong signature.
+  The binding mirrors klippy/chelper's build-on-demand pattern (mtime
+  check, compile, cached module) but replaces its stringly-typed
+  ABI-mode `cdef` with the versioned header as the single source of
+  truth. Callbacks cross the boundary via cffi's `extern "Python"`.
 * Whether legacy-format support belongs in the MIT library at all, or
   only v2 (proposed: include it — it is what makes the library useful
   to vendors *today*, before v2 hardware exists).
