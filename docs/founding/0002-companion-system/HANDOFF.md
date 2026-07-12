@@ -217,6 +217,35 @@ Hailo later is a plug-in, not an integration.
 
 ## 6. Open questions — resolve with the user before building the affected part
 
+> **Resolved (2026-07-12, with the user, at implementation kickoff).** All
+> six are settled; the questions below are kept for the *why*. See
+> [FD-0002 §10](README.md#10-open-decisions-for-review-before-we-split--build)
+> for the canonical record.
+> 1. **Redaction — numeric-only unredacted.** Three tiers: numeric
+>    diagnostics ship raw; every string is transformed (paths → basename,
+>    free-text dropped, wall-clock → relative machine-time); secrets,
+>    network identifiers, and serials/UUIDs are **never** shareable and
+>    cannot be allowlisted. Versioned + unit-tested in the floor (A8).
+> 2. **KB trust — single project Ed25519 key now**, signature envelope
+>    already multi-signer-capable (signer list + threshold) so a
+>    web-of-trust is a later policy change, not a format break. Reuses
+>    `scripts/sign_image.py` / `keys/`. Reputation weights triage only.
+> 3. **ASR — deferred to Milestone D.** Default direction: whisper.cpp +
+>    Whisper small/base on CPU; Hailo-8/8L ASR second-class. Blocks nothing
+>    before D.
+> 4. **Runtime — llama.cpp** (deploy: CUDA+ROCm+CPU, GGUF/Q4_K_M) behind a
+>    `ModelBackend` abstraction; **Ollama** for scratch; vLLM only for
+>    throughput experiments.
+> 5. **Eval — early, stub-model-first.** Metrics: diagnosis accuracy vs a
+>    labelled case set, config-edit correctness vs golden diffs, and
+>    correct **refusal/confirm on the safety tier**. Cases are versioned
+>    data in the repo.
+> 6. **Budget — a documented deploy profile** the harness always re-tests
+>    against; `--profile deploy` refuses any model past the Qwen3-4B / ~6 GB
+>    ceiling. Dev GPUs here: AMD Radeon ~16 GB (ROCm, primary) + an 8 GB
+>    NVIDIA that also drives the display (≈5–6 GB usable, fallback) — so the
+>    profile guard, not the hardware, keeps the budget honest.
+
 **Left open from the last session:**
 1. **Redaction allowlist.** Redact-by-default; a field is shared *only* if
    explicitly allowlisted. Define the list. Is any field *ever* shared

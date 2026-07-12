@@ -414,24 +414,46 @@ base vs the intelligence tier.
   Issues with a written, fixed-vocabulary rationale for every accept and
   reject (§6a).
 
-**Still open:**
-1. **Redaction policy** — the exact **allowlist** (redact-by-default; a
-   field is shared only if explicitly on the list) for blackbox bundles.
-   Is any field *ever* shared unredacted?
-2. **KB trust model** — start with a **single project signing key**, or a
-   maintainer web-of-trust from the outset? Submitter-reputation mechanics.
-3. **ASR engine** — Whisper variant/size for the voice tier, and whether
-   the Hailo-8/8L ASR-accel tier is worth first-class support or just
-   "works on CPU."
-4. **Model runtime, eval, and Hailo-budget discipline** — the deployable
-   backend (llama.cpp vs Ollama vs vLLM), the quality **eval harness**
-   (diagnosis accuracy, config-edit correctness, safety-tier refusal), and
-   how development on a large GPU stays honest to the ~8 GB / Qwen3-4B
-   *deploy* budget. Raised because development now happens on GPU hardware
-   while deployment targets the Hailo-10H — see the
-   [Development Handoff](HANDOFF.md).
+**Settled (implementation kickoff — 2026-07-12):** the four remaining items
+are now decided; the rationale for each is in
+[HANDOFF §6](HANDOFF.md#6-open-questions--resolve-with-the-user-before-building-the-affected-part).
+- ✅ **Redaction policy — numeric-only unredacted.** Three tiers, all
+  versioned and unit-tested in the deterministic floor: *(a) always-share*
+  — versions + ABI hash, board **model**/MCU family (from the catalog, not
+  the physical serial), kinematics type, trace event ids + **numeric**
+  args, execlog numeric fields, `link_stats` counters, timesync numeric
+  state, diagnosis + confidence; *(b) transform-then-share* — file paths →
+  basename or dropped, string/free-text args dropped, wall-clock →
+  relative machine-time offsets; *(c) never-share, no allowlist override
+  possible* — secrets/keys/PSKs/tokens, hostnames/IPs/MACs,
+  serials/UUIDs, account identifiers. So *yes*, some fields ship
+  unredacted — **numeric diagnostics only**; every string is redacted and
+  secrets cannot be allowlisted at all.
+- ✅ **KB trust model — single project key now, multi-signer-ready.** One
+  project Ed25519 signing key (reusing FD-0001's image-signing:
+  `scripts/sign_image.py`, `keys/`), with a signature **envelope** that
+  already carries a signer list + threshold, so migrating to a maintainer
+  web-of-trust later is a policy change, not a format break. Submitter
+  reputation (derived from public GitHub history) weights **triage
+  priority only**, never the promotion gate.
+- ✅ **ASR engine — deferred to Milestone D, default recorded.**
+  whisper.cpp + Whisper small/base on CPU is the default direction;
+  Hailo-8/8L ASR is second-class ("works on CPU" is the floor). Revisited
+  when voice work begins; it blocks nothing earlier.
+- ✅ **Model runtime, eval, Hailo-budget.** Deploy backend **llama.cpp**
+  (CUDA + ROCm + CPU, GGUF/Q4_K_M) behind a `ModelBackend` abstraction,
+  **Ollama** for scratch iteration, vLLM only for throughput experiments.
+  **Eval harness** stood up early and stub-model-first (§8 tier 2):
+  diagnosis accuracy vs a labelled case set, config-edit correctness vs
+  golden diffs, and — the load-bearing metric — correct **refusal/confirm
+  on the safety tier**. **Budget discipline** is a documented *deploy
+  profile* the harness always re-tests against (`--profile deploy` refuses
+  any model past the Qwen3-4B / ~6 GB ceiling). The dev workstation's dev
+  GPUs are an AMD Radeon (~16 GB, ROCm, primary) with an 8 GB NVIDIA that
+  also drives the display (≈5–6 GB usable, fallback) — so the profile
+  guard, not the hardware, is what keeps the deploy budget honest.
 
-*When the open items are settled, FD-0002 splits into the numbered series
+*The open items are settled; FD-0002 splits into the numbered series
 and Milestone A (Observe + Provision) begins. Development starts from the
 [Atlas Development Handoff](HANDOFF.md), which carries everything a fresh
 instance needs to begin work — including the crucial **dev-target
