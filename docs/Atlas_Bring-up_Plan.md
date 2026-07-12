@@ -87,10 +87,11 @@ are required (§8 tier 2).
 - [ ] **Eval harness (stub).** *Do:* `python3 test/atlas_eval_test.py`.
   *Expect:* safety-tier accuracy is 100% (deterministic); diagnosis and
   config-edit metrics reflect the catalog/model. *Pass:* ALL PASS.
-- [ ] **Memory-file & RAG-index formats.** *Do:* define and round-trip
-  the per-machine memory file and the KB RAG index with a stub embedder.
-  *Expect:* stable, versioned schemas. *Pass:* round-trip is lossless.
-  *(Milestone C — not yet built.)*
+- [ ] **Memory-file & RAG-index formats.** *Do:*
+  `python3 test/atlas_memory_test.py`. *Expect:* the per-machine memory
+  file round-trips losslessly and journals applied changes; the RAG index
+  (stub embedder) retrieves the relevant grounding document. *Pass:* ALL
+  PASS. *(Real embedder swaps in behind the same contract at Milestone C.)*
 
 ## Phase 2 — Trace plane on hardware (A1)
 
