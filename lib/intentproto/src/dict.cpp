@@ -92,6 +92,10 @@ size_t constant_desc(char* out, size_t cap, const Constant& k) {
 }
 
 size_t enumeration_desc(char* out, size_t cap, const Enumeration& e) {
+    // A group marker (empty enumeration) carries no value to describe; the
+    // caller skips zero-length records so it never reaches the wire.
+    if (!e.value_name)
+        return 0;
     Appender a{out, cap, 0, false};
     a.raw(e.enum_name);
     a.ch('.');
@@ -146,6 +150,10 @@ size_t build_dictionary(char* out, size_t cap) {
         a.raw(":{");
         bool first_value = true;
         for (; e && !strcmp(e->enum_name, group); e = e->next) {
+            // A record with no value_name is a group marker only: it lets an
+            // enumeration with no values still be emitted as "name":{}.
+            if (!e->value_name)
+                continue;
             if (!first_value) a.ch(',');
             first_value = false;
             a.quoted(e->value_name);

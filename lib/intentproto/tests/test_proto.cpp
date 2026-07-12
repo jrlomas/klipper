@@ -28,6 +28,10 @@ KLIPPER_CONSTANT_STR(MCU, "oams-stm32f072rbt6");
 KLIPPER_ENUMERATION(oams_error, none, 0);
 KLIPPER_ENUMERATION(oams_error, busy, 2);
 KLIPPER_ENUMERATION(static_string_id, oams_jammed, 1);
+// A value whose display name is not a bare token, and a value-less group:
+// exercises KLIPPER_ENUMERATION_STR and KLIPPER_ENUMERATION_EMPTY.
+KLIPPER_ENUMERATION_STR(static_string_id, already_loaded, "Already loaded", 0);
+KLIPPER_ENUMERATION_EMPTY(pin);
 
 KLIPPER_RESPONSE(oams_action_status,
                  (uint8_t, action), (uint8_t, code), (uint32_t, value));
@@ -411,7 +415,9 @@ static void test_dictionary() {
 
     CHECK(strstr(json, "\"enumerations\":{"
                        "\"oams_error\":{\"none\":0,\"busy\":2},"
-                       "\"static_string_id\":{\"oams_jammed\":1}}"));
+                       "\"static_string_id\":{\"oams_jammed\":1,"
+                       "\"Already loaded\":0},"
+                       "\"pin\":{}}"));
 
     CHECK(strstr(json, "\"identify_response offset=%u data=%.*s\":0"));
     CHECK(strstr(json, "\"CLOCK_FREQ\":48000000"));

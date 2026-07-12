@@ -289,4 +289,32 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
     }                                                                       \
     static_assert(true, "")
 
+// Enumeration value whose display name is not a valid single identifier
+// token (e.g. it contains a space): KLIPPER_ENUMERATION only accepts a
+// token for `vname` because it must both stringize it (#vname) and paste
+// it into the descriptor's variable name. This variant takes an explicit
+// identifier `uid` for the variable name and a string literal `vstr` for
+// the wire/dictionary value name, so names like "Already loaded" round-trip
+// exactly. KLIPPER_ENUMERATION_STR(static_string_id, already_loaded,
+// "Already loaded", 0);
+#define KLIPPER_ENUMERATION_STR(ename, uid, vstr, value)                    \
+    namespace {                                                             \
+    ::intentproto::Enumeration IP_CAT(IP_CAT(_ip_enum_, ename),             \
+                                      IP_CAT(_, uid)){                      \
+        #ename, vstr, (int32_t)(value)};                                    \
+    }                                                                       \
+    static_assert(true, "")
+
+// Declare an enumeration that carries no values, so the dictionary emits it
+// as an empty object ("pin":{}). The value-based macros cannot express a
+// value-less group; this registers a group marker (value_name == nullptr)
+// that the dictionary builder renders as an empty object and lists no value
+// for. KLIPPER_ENUMERATION_EMPTY(pin);
+#define KLIPPER_ENUMERATION_EMPTY(ename)                                    \
+    namespace {                                                             \
+    ::intentproto::Enumeration IP_CAT(_ip_enum_empty_, ename){              \
+        #ename, nullptr, 0};                                               \
+    }                                                                       \
+    static_assert(true, "")
+
 #endif // INTENTPROTO_METHOD_HPP
