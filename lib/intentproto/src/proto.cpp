@@ -17,6 +17,7 @@ const char* format_of(ParamType t) {
     case ParamType::U32:  return "%u";
     case ParamType::I32:  return "%i";
     case ParamType::Bool: return "%c";
+    case ParamType::Buf:  return "%.*s";
     }
     return "%u";
 }
@@ -82,6 +83,7 @@ namespace {
 Command* g_commands = nullptr;
 Response* g_responses = nullptr;
 Constant* g_constants = nullptr;
+Enumeration* g_enumerations = nullptr;
 bool g_finalized = false;
 } // namespace
 
@@ -111,6 +113,11 @@ Constant::Constant(const char* n, const char* v)
     g_constants = this;
 }
 
+Enumeration::Enumeration(const char* en, const char* vn, int32_t v)
+    : enum_name(en), value_name(vn), value(v), next(g_enumerations) {
+    g_enumerations = this;
+}
+
 namespace {
 
 // Static initialization builds the lists head-first, i.e. in reverse
@@ -132,6 +139,7 @@ T* reverse_list(T* head) {
 const Command* first_command() { return g_commands; }
 const Response* first_response() { return g_responses; }
 const Constant* first_constant() { return g_constants; }
+const Enumeration* first_enumeration() { return g_enumerations; }
 
 const Command* find_command(uint32_t id) {
     for (const Command* c = g_commands; c; c = c->next)
@@ -212,7 +220,7 @@ void handle_identify(uint32_t offset, uint32_t count) {
         tx_frame(frame, w.size(), reply_seq_byte());
 }
 
-constexpr int MAX_PARAMS = 16;
+constexpr int MAX_ARG_WORDS = 16;
 
 // Dispatch one message from a block; returns false if the block must
 // be abandoned (unknown id / malformed args - without the message's
@@ -233,13 +241,27 @@ bool dispatch_one(const uint8_t** pp, const uint8_t* end) {
         g_link.stats.unknown_msgids++;
         return false;
     }
-    ArgWord args[MAX_PARAMS];
-    uint8_t n = cmd->num_params;
-    if (n > MAX_PARAMS)
-        return false;
-    for (uint8_t i = 0; i < n; i++)
-        if (!vlq_decode(pp, end, &args[i]))
+    // Integers take one ArgWord; a buf takes two (length, pointer) —
+    // see the ArgWord convention in proto.hpp.
+    ArgWord args[MAX_ARG_WORDS];
+    int w = 0;
+    for (uint8_t i = 0; i < cmd->num_params; i++) {
+        uint32_t v;
+        if (!vlq_decode(pp, end, &v))
             return false;
+        if (cmd->param_types[i] == ParamType::Buf) {
+            // v is the length prefix; the raw bytes follow in place.
+            if (w + 2 > MAX_ARG_WORDS || v > (uint32_t)(end - *pp))
+                return false;
+            args[w++] = v;
+            args[w++] = (ArgWord)(uintptr_t)*pp;
+            *pp += v;
+        } else {
+            if (w + 1 > MAX_ARG_WORDS)
+                return false;
+            args[w++] = v;
+        }
+    }
     cmd->invoke(args);
     return true;
 }
@@ -262,6 +284,7 @@ void init(const Config& cfg) {
         g_commands = reverse_list(g_commands);
         g_responses = reverse_list(g_responses);
         g_constants = reverse_list(g_constants);
+        g_enumerations = reverse_list(g_enumerations);
         uint16_t id = MSGID_FIRST_FREE;
         for (Command* c = g_commands; c; c = c->next)
             c->id = id++;

@@ -35,7 +35,17 @@ constexpr uint32_t MSGID_IDENTIFY = 1;
 constexpr uint32_t MSGID_FIRST_FREE = 2;
 
 // ---- parameter kinds carried by wire messages ----
-enum class ParamType : uint8_t { U8, I8, U16, I16, U32, I32, Bool };
+enum class ParamType : uint8_t { U8, I8, U16, I16, U32, I32, Bool, Buf };
+
+// A length-delimited byte buffer parameter (the legacy "%.*s" wire
+// type): encoded as a VLQ length followed by that many raw bytes.
+// Inside a command handler the data pointer aliases the receive
+// frame buffer and is only valid for the duration of the call — copy
+// the bytes out to keep them.
+struct buf {
+    const uint8_t* data;
+    uint32_t len;
+};
 
 // Dictionary format specifier for a parameter type ("%c", "%hi", ...).
 const char* format_of(ParamType t);
@@ -57,7 +67,12 @@ bool vlq_decode(const uint8_t** pp, const uint8_t* end, uint32_t* out);
 // heap-free linked list built by static initialization; init() freezes
 // it and assigns wire ids in definition order.
 
-using ArgWord = uint32_t;
+// Decoded arguments reach handler trampolines as an ArgWord array.
+// Convention: an integer/bool parameter occupies one word holding its
+// sign-extended 32-bit value; a buf parameter occupies TWO
+// consecutive words — the length, then the data pointer cast through
+// uintptr_t (which is why ArgWord is pointer-sized).
+using ArgWord = uintptr_t;
 
 struct Command {
     const char* name;
@@ -91,6 +106,7 @@ struct Writer {
     void put(int16_t v)  { put_u32((uint32_t)(int32_t)v); }
     void put(int32_t v)  { put_u32((uint32_t)v); }
     void put(bool v)     { put_u32(v ? 1u : 0u); }
+    void put(buf v)      { put_bytes(v.data, v.len); }
     void put_bytes(const uint8_t* d, uint32_t n) {
         put_u32(n);
         if (p + n > end) { overflow = true; return; }
@@ -120,6 +136,18 @@ struct Constant {
     Constant* next;
     Constant(const char* n, int32_t v);
     Constant(const char* n, const char* v);
+};
+
+// One named value of a dictionary enumeration. The dictionary
+// builder groups consecutive records sharing enum_name into one
+// "enumerations" object, so declare all values of an enumeration
+// together (definition order is preserved by init()).
+struct Enumeration {
+    const char* enum_name;
+    const char* value_name;
+    int32_t value;
+    Enumeration* next;
+    Enumeration(const char* en, const char* vn, int32_t v);
 };
 
 // ---- link/session ----
@@ -160,6 +188,7 @@ const Config& current_config();
 const Command* first_command();
 const Response* first_response();
 const Constant* first_constant();
+const Enumeration* first_enumeration();
 const Command* find_command(uint32_t id);
 
 // Counters for link diagnostics.

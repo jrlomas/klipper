@@ -9,8 +9,9 @@ library's two load-bearing decisions on real code:
 1. **Freestanding C++ core** ("bare" subset: no heap, no exceptions,
    no RTTI, no virtual dispatch, no STL containers) implementing the
    legacy wire protocol: CRC16 framing, VLQ codec, frame RX state
-   machine, ack/nack, block dispatch, identify serving, and the
-   dictionary builder.
+   machine, ack/nack, block dispatch, identify serving, the
+   dictionary builder, and the host-side retransmit-window session
+   (`host.hpp` — sequence assignment, in-flight window, go-back-N).
 2. **Annotation-style static registration** instead of code
    generation. Declaring a command is one macro plus the body — no
    table, no registration call, no build step, and nothing ever
@@ -31,7 +32,13 @@ KLIPPER_METHOD(oams_cmd_load_spool, (uint8_t, spool)) {
 }
 
 KLIPPER_CONSTANT(CLOCK_FREQ, 48000000);
+KLIPPER_ENUMERATION(static_string_id, oams_jammed, 1);
 ```
+
+Buffer parameters (the legacy `%.*s` wire type) are declared as
+`(intentproto::buf, data)` — a VLQ length prefix followed by raw
+bytes; inside a handler the data pointer aliases the receive buffer
+for the duration of the call.
 
 Parameter **types** are deduced from the function signature by a
 template (they can never drift from the code); parameter **names**
@@ -44,13 +51,22 @@ ids in definition order.
 The identify dictionary is a **serialization of that registry**
 (`build_dictionary()` — data to data), not a scrape of the source: a
 legacy klippy host needs the output zlib-compressed at build time
-into `Config::identify_blob`.
+into `Config::identify_blob`. `tools/mkdict.py` performs that step:
+it runs a binary built from `tools/dump_dict.cpp` linked with the
+firmware's declaration TUs and writes `identify_blob.h` plus the
+`identify.json` for inspection (`make dict` demonstrates it with
+example declarations).
+
+The fixed ids of the v2 core command set are documented as a header
+in `include/intentproto/core_ids.hpp` (ids >= 0x80 are reserved for
+extension self-description).
 
 ## Build and test
 
 ```
 make test        # desktop build + test suite (any g++/clang++)
 make embedded    # Cortex-M0 compile + size report (arm-none-eabi-g++)
+make dict        # example identify-blob build (tools/mkdict.py)
 ```
 
 The tests port a slice of the OpenAMS firmware's command set as the
@@ -58,15 +74,15 @@ working example.
 
 ## Not yet implemented (tracked in RFC 0001 doc 10)
 
-* String/buffer parameters in the declaration layer (`%.*s`) —
-  supported in identify serving only.
-* Enumerations in the dictionary.
-* Retransmit-window state for the host side; this skeleton is the
-  device side.
-* Framing v2 (BCH), traffic-class accounting, datagram/HMAC
-  transport, segment codecs — the v2 features arrive per
-  [07](../../docs/rfcs/0001-motion-intentions/07-Link_Transport.md)
-  and [02](../../docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md).
+* Segment payload codecs (`queue_traj_segment` coefficient
+  quantization, chained-position bookkeeping) per
+  [02](../../docs/rfcs/0001-motion-intentions/02-Intention_Protocol.md).
+* Wiring the v2 link layer — BCH framing, traffic classes,
+  datagram/HMAC transport exist standalone (`datagram.hpp`) — into
+  the session's negotiation path per
+  [07](../../docs/rfcs/0001-motion-intentions/07-Link_Transport.md).
+* v2 extension self-description (the >= 0x80 id space of
+  `core_ids.hpp`) and the connect-time host binding.
 * `extern "C"` API surface for C consumers and the host cffi binding.
 
 ## Caveats

@@ -55,9 +55,11 @@ constexpr ParamType wire_type() {
                   std::is_same<U, int16_t>::value ||
                   std::is_same<U, uint32_t>::value ||
                   std::is_same<U, int32_t>::value ||
-                  std::is_same<U, bool>::value,
+                  std::is_same<U, bool>::value ||
+                  std::is_same<U, buf>::value,
                   "unsupported wire parameter type");
-    return std::is_same<U, bool>::value     ? ParamType::Bool
+    return std::is_same<U, buf>::value      ? ParamType::Buf
+         : std::is_same<U, bool>::value     ? ParamType::Bool
          : std::is_same<U, uint8_t>::value  ? ParamType::U8
          : std::is_same<U, int8_t>::value   ? ParamType::I8
          : std::is_same<U, uint16_t>::value ? ParamType::U16
@@ -68,13 +70,27 @@ constexpr ParamType wire_type() {
 
 namespace detail {
 
-// Args arrive sign-extended in a 32-bit word; narrow per the
-// handler's real parameter type.
+// ArgWords a parameter occupies: integers one, buf two (length then
+// pointer — the ArgWord convention documented in proto.hpp).
 template <typename T>
-inline T decode_arg(ArgWord w) {
+constexpr size_t arg_words() {
+    return std::is_same<typename std::remove_cv<T>::type, buf>::value
+        ? 2 : 1;
+}
+
+// Args arrive sign-extended in a 32-bit value; narrow per the
+// handler's real parameter type. Takes a pointer because a buf
+// parameter spans two words.
+template <typename T>
+inline T decode_arg(const ArgWord* w) {
     if (std::is_same<typename std::remove_cv<T>::type, bool>::value)
-        return (T)(w != 0);
-    return (T)(int32_t)w;
+        return (T)(*w != 0);
+    return (T)(int32_t)(uint32_t)*w;
+}
+
+template <>
+inline buf decode_arg<buf>(const ArgWord* w) {
+    return buf{(const uint8_t*)(uintptr_t)w[1], (uint32_t)w[0]};
 }
 
 // Thunk<&fn>: deduces the handler's parameter types from its
@@ -92,10 +108,18 @@ struct ThunkImpl<F, void (*)(A...)> {
         call(args, std::index_sequence_for<A...>{});
     }
 private:
+    // ArgWord offset of parameter idx (buf parameters occupy two).
+    static constexpr size_t offset(size_t idx) {
+        constexpr size_t w[sizeof...(A) + 1] = { arg_words<A>()..., 0 };
+        size_t o = 0;
+        for (size_t j = 0; j < idx; j++)
+            o += w[j];
+        return o;
+    }
     template <size_t... I>
     static void call(const ArgWord* args, std::index_sequence<I...>) {
         (void)args;
-        F(decode_arg<A>(args[I])...);
+        F(decode_arg<A>(args + offset(I))...);
     }
 };
 
@@ -214,6 +238,18 @@ using Thunk = detail::ThunkImpl<F, decltype(F)>;
 #define KLIPPER_CONSTANT_STR(cname, value)                                  \
     namespace {                                                             \
     ::intentproto::Constant IP_CAT(_ip_const_, cname){#cname, value};       \
+    }                                                                       \
+    static_assert(true, "")
+
+// Enumeration values: KLIPPER_ENUMERATION(spi_bus, spi0, 0);
+// Declare all values of one enumeration consecutively — the
+// dictionary builder groups consecutive records sharing the
+// enumeration name into a single "enumerations" object.
+#define KLIPPER_ENUMERATION(ename, vname, value)                            \
+    namespace {                                                             \
+    ::intentproto::Enumeration IP_CAT(IP_CAT(_ip_enum_, ename),             \
+                                      IP_CAT(_, vname)){                    \
+        #ename, #vname, (int32_t)(value)};                                  \
     }                                                                       \
     static_assert(true, "")
 

@@ -88,7 +88,27 @@ size_t build_dictionary(char* out, size_t cap) {
     }
     a.ch('}');
 
-    a.raw(",\"enumerations\":{}");
+    // Consecutive records sharing an enum name form one object (the
+    // declaration macro asks for values to be declared together).
+    a.raw(",\"enumerations\":{");
+    first = true;
+    for (const Enumeration* e = first_enumeration(); e;) {
+        if (!first) a.ch(',');
+        first = false;
+        const char* group = e->enum_name;
+        a.quoted(group);
+        a.raw(":{");
+        bool first_value = true;
+        for (; e && !strcmp(e->enum_name, group); e = e->next) {
+            if (!first_value) a.ch(',');
+            first_value = false;
+            a.quoted(e->value_name);
+            a.ch(':');
+            a.num(e->value);
+        }
+        a.ch('}');
+    }
+    a.ch('}');
 
     a.raw(",\"responses\":{\"identify_response offset=%u data=%.*s\":0");
     for (const Response* r = first_response(); r; r = r->next) {

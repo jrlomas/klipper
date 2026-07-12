@@ -25,6 +25,10 @@ static int g_failures = 0;
 KLIPPER_CONSTANT(CLOCK_FREQ, 48000000);
 KLIPPER_CONSTANT_STR(MCU, "oams-stm32f072rbt6");
 
+KLIPPER_ENUMERATION(oams_error, none, 0);
+KLIPPER_ENUMERATION(oams_error, busy, 2);
+KLIPPER_ENUMERATION(static_string_id, oams_jammed, 1);
+
 KLIPPER_RESPONSE(oams_action_status,
                  (uint8_t, action), (uint8_t, code), (uint32_t, value));
 
@@ -76,6 +80,25 @@ KLIPPER_METHOD0(oams_cmd_encoder_clicks) {
     intentproto::reply(oams_encoder_clicks{123456});
 }
 
+// Buffer parameter ("%.*s"): echo the tag bytes back.
+KLIPPER_RESPONSE(oams_tag_data, (uint8_t, oid), (intentproto::buf, data));
+
+static struct {
+    int calls = 0;
+    uint8_t oid = 0xff;
+    uint8_t bytes[16];
+    uint32_t len = 0;
+} g_tag_seen;
+
+KLIPPER_METHOD(oams_cmd_write_tag, (uint8_t, oid), (intentproto::buf, data)) {
+    g_tag_seen.calls++;
+    g_tag_seen.oid = oid;
+    g_tag_seen.len = data.len;
+    if (data.len <= sizeof(g_tag_seen.bytes))
+        memcpy(g_tag_seen.bytes, data.data, data.len);
+    intentproto::reply(oams_tag_data{oid, data});
+}
+
 // ---------------- test transport ----------------
 
 static uint8_t g_tx_buf[4096];
@@ -113,6 +136,11 @@ struct HostFrame {
     explicit HostFrame(uint8_t seq_) : p(buf + 2), seq(seq_) {}
     HostFrame& put(uint32_t v) {
         p = intentproto::vlq_encode(p, v);
+        return *this;
+    }
+    HostFrame& put_raw(const uint8_t* d, size_t n) {
+        memcpy(p, d, n);
+        p += n;
         return *this;
     }
     size_t finish() {
@@ -266,6 +294,45 @@ static void test_multi_message_block_and_signs() {
     CHECK(g_seen.follower_trim == -123);
 }
 
+static void test_buf_param() {
+    tx_reset();
+    const intentproto::Command* wt = cmd_by_name("oams_cmd_write_tag");
+    CHECK(wt != nullptr);
+    CHECK(wt->num_params == 2);
+    CHECK(wt->param_types[1] == intentproto::ParamType::Buf);
+
+    static const uint8_t tag[] = {0xde, 0xad, 0xbe, 0xef, 0x7e};
+    HostFrame f(4);
+    f.put(wt->id).put(7).put(sizeof(tag)).put_raw(tag, sizeof(tag));
+    intentproto::rx(f.buf, f.finish());
+
+    CHECK(g_tag_seen.calls == 1);
+    CHECK(g_tag_seen.oid == 7);
+    CHECK(g_tag_seen.len == sizeof(tag));
+    CHECK(!memcmp(g_tag_seen.bytes, tag, sizeof(tag)));
+
+    // The response carries the buffer: length prefix then raw bytes.
+    const uint8_t* frames[4];
+    int nf = tx_frames(frames, 4);
+    CHECK(nf == 2);   // oams_tag_data + ack
+    if (nf < 2)
+        return;
+    const uint8_t *p, *end;
+    uint32_t msgid = frame_msgid(frames[0], &p, &end);
+    CHECK(msgid == res_by_name("oams_tag_data")->id);
+    CHECK(take_u32(&p, end) == 7);               // oid
+    CHECK(take_u32(&p, end) == sizeof(tag));     // buffer length prefix
+    CHECK((size_t)(end - p) == sizeof(tag));
+    CHECK(!memcmp(p, tag, sizeof(tag)));
+
+    // A length prefix running past the payload is rejected: the
+    // handler must not run (and nothing may read out of bounds).
+    HostFrame g(5);
+    g.put(wt->id).put(7).put(200);
+    intentproto::rx(g.buf, g.finish());
+    CHECK(g_tag_seen.calls == 1);
+}
+
 static void test_byte_at_a_time_rx_and_crc_nack() {
     tx_reset();
     const intentproto::Command* unload = cmd_by_name("oams_cmd_unload_spool");
@@ -337,6 +404,15 @@ static void test_dictionary() {
              st->id);
     CHECK(strstr(json, key) != nullptr);
 
+    const intentproto::Command* wt = cmd_by_name("oams_cmd_write_tag");
+    snprintf(key, sizeof(key),
+             "\"oams_cmd_write_tag oid=%%c data=%%.*s\":%u", wt->id);
+    CHECK(strstr(json, key) != nullptr);
+
+    CHECK(strstr(json, "\"enumerations\":{"
+                       "\"oams_error\":{\"none\":0,\"busy\":2},"
+                       "\"static_string_id\":{\"oams_jammed\":1}}"));
+
     CHECK(strstr(json, "\"identify_response offset=%u data=%.*s\":0"));
     CHECK(strstr(json, "\"CLOCK_FREQ\":48000000"));
     CHECK(strstr(json, "\"MCU\":\"oams-stm32f072rbt6\""));
@@ -355,6 +431,7 @@ int main() {
     test_registry();
     test_dispatch_and_reply();
     test_multi_message_block_and_signs();
+    test_buf_param();
     test_byte_at_a_time_rx_and_crc_nack();
     test_identify();
     test_dictionary();
