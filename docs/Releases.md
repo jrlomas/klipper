@@ -1,7 +1,62 @@
 # Releases
 
-History of Klipper releases. Please see
-[installation](Installation.md) for information on installing Klipper.
+Release history for HELIX, followed by the inherited Klipper release
+history it builds on. Please see [installation](Installation.md) for
+installation information.
+
+## HELIX 0.9
+
+The first HELIX release: the complete motion-and-communication redesign
+described in the [RFC 0001 canon](rfcs/0001-motion-intentions/00-Vision.md),
+built on Klipper 0.13.0.
+
+> **Maturity — read this first.** HELIX 0.9 is a **software-complete,
+> hardware-unvalidated** milestone. Every subsystem below is written,
+> host-compiles/links for its targets, and passes the off-silicon test
+> suites (protocol vectors, drift and reconciliation tests, capability
+> and codec round-trips). None of it has yet been validated on a running
+> printer. Treat 0.9 as a preview for developers and the brave: each
+> design doc marks what has run on silicon (nothing motion-critical yet)
+> and what still awaits bring-up, and every HELIX capability is opt-in,
+> with the classic Klipper paths untouched beside it. **Do not run 0.9 on
+> hardware you are not prepared to supervise closely.**
+
+Major changes in this release:
+
+* **Motion intentions.** A per-actuator opt-in (`motion_protocol:
+  trajectory`) that ships motion *segments* — where a joint should be and
+  how it's moving — to a micro-controller that owns its own clock,
+  position, and queue and synthesizes the output (`src/trajq.c`,
+  `traj_stepper.c`, `traj_pwm.c`; host `trajectory_queuing.py`,
+  `chelper/segfit.c`). The segment core is **actuator-agnostic** — steppers
+  and a sampled PWM/DAC backend today, built to admit a closed-loop
+  BLDC/FOC backend — and drift-free-chained up to **cubic and quintic
+  (jerk-/snap-limited) Bézier** curves.
+* **Pause-and-hold failure recovery.** Recoverable failures hold instead
+  of `shutdown()`: motors energized, heaters on a per-heater failsafe
+  policy, a rolling execution log, and log-reconciled resume
+  (`failure_recovery.py`, `execlog.c`, `heater_hold.c`).
+* **Machine time.** Shared machine-time beacon discipline across boards
+  (`timesync.c`, `timesync.py`).
+* **Hardware-event sensing.** Interrupt-driven endstop/probe detection
+  with comparator and ADC-watchdog sources and input-capture timestamps,
+  replacing polled sampling where the silicon allows (`trigger_source.c`,
+  stm32 backends; host `MCU_endstop` path).
+* **The intentproto protocol library.** One freestanding C++ wire-protocol
+  library with annotation-based static registration, framing v2 (BCH FEC),
+  an authenticated datagram transport, a DTLS-class session, a CAN carrier,
+  and Ed25519 image signing (`lib/intentproto`).
+* **Networks as first-class transports.** The same authenticated protocol
+  over UDP (Ethernet/WiFi), CAN, USB, and UART; a network-native ESP32
+  target with the radio quarantined on a separate core.
+* **First-class bootloader** with optional Ed25519 signed-image
+  verification, and a **unified cross-family board syscall API**.
+* **New console surface** — `HELIX_STATUS`, `TRAJECTORY_STATUS`,
+  `RESUME_MOTION`, `RECONNECT_MCU`, `FAILURE_RECOVERY_STATUS`,
+  `TIMESYNC_STATUS`, `BEZIER_MOVE`, and more (see the
+  [command reference](Helix_Commands.md)).
+* Rebrand to HELIX with a full documentation set; Klipper's copyrights,
+  attribution, and GPLv3 licensing preserved throughout.
 
 ## Klipper 0.13.0
 
