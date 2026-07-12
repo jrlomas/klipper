@@ -51,7 +51,10 @@ struct buf {
 const char* format_of(ParamType t);
 
 // ---- codecs ----
-// CRC-16/CCITT-FALSE (poly 0x1021, init 0xffff, MSB first).
+// Reflected CRC-16/MCRF4XX (poly 0x8408 = reflected 0x1021, init 0xffff,
+// LSB-first, check 0x6f91) -- this is Klipper's on-the-wire CRC. The name
+// is historical; do NOT read it as MSB-first CCITT-FALSE. See src/proto.cpp
+// and docs/Protocol_v2.md for the exact algorithm and a test vector.
 uint16_t crc16_ccitt(const uint8_t* buf, size_t len);
 
 // Variable length quantity codec (7 bits per byte, MSB continuation,
