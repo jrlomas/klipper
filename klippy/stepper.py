@@ -45,6 +45,7 @@ class MCU_stepper:
         self._reset_cmd_tag = self._get_position_cmd = None
         self._active_callbacks = []
         self._traj = None
+        self._last_traj_readback = None
         motion_protocol = config.getchoice(
             'motion_protocol', ['legacy', 'trajectory'], 'legacy')
         if motion_protocol == 'trajectory':
@@ -147,6 +148,12 @@ class MCU_stepper:
                                   step_cmd_tag, dir_cmd_tag)
     def get_oid(self):
         return self._oid
+    def get_stop_on_trigger_command_name(self):
+        # Command sent (per stepper) by MCU_trsync to arm "halt this
+        # stepper on trsync trigger" during homing/probing moves
+        if self._traj is not None:
+            return "traj_stop_on_trigger oid=%c trsync_oid=%c"
+        return "stepper_stop_on_trigger oid=%c trsync_oid=%c"
     def get_step_dist(self):
         return self._step_dist
     def get_rotation_distance(self):
@@ -193,7 +200,30 @@ class MCU_stepper:
     def _set_mcu_position(self, mcu_pos):
         mcu_pos_dist = mcu_pos * self._step_dist
         self._mcu_position_offset = mcu_pos_dist - self.get_commanded_position()
+    def _query_traj_readback(self):
+        # Read the trajectory stepper's live position accumulator.
+        # traj_position reports integer sub-units (1 microstep = 2^16)
+        params = self._get_position_cmd.send([self._oid])
+        mcu_pos = int(round(params['pos'] / 65536.))
+        clock = self._mcu.clock32_to_clock64(params['clock'])
+        self._last_traj_readback = (clock, mcu_pos)
+        return clock, mcu_pos
     def get_past_mcu_position(self, print_time):
+        if self._traj is not None:
+            # Trajectory steppers have no host-side step history to
+            # index by time.  After a trsync trigger the mcu halts
+            # with NEED_REBASE and preserves the position
+            # accumulator, so a live readback of that held
+            # accumulator IS the trigger position (sub-unit exact).
+            # Be honest: this is the held accumulator, not
+            # time-indexed history - it is only accurate for the
+            # requested print_time while the stepper has remained
+            # halted since then (as in homing/probing trigger
+            # position estimation).
+            if self._mcu.is_fileoutput():
+                return self.get_mcu_position()
+            clock, mcu_pos = self._query_traj_readback()
+            return mcu_pos
         clock = self._mcu.print_time_to_clock(print_time)
         ffi_main, ffi_lib = chelper.get_ffi()
         pos = ffi_lib.stepcompress_find_past_position(self._stepqueue, clock)
@@ -203,6 +233,21 @@ class MCU_stepper:
     def dump_steps(self, count, start_clock, end_clock):
         ffi_main, ffi_lib = chelper.get_ffi()
         data = ffi_main.new('struct pull_history_steps[]', count)
+        if self._traj is not None:
+            # No stepcompress history in trajectory mode.  Report the
+            # most recent held-accumulator readback as a single
+            # zero-step marker entry (the same convention as a
+            # set_position marker).  This is the held accumulator,
+            # not time-indexed step history.
+            if self._last_traj_readback is None or not count:
+                return (data, 0)
+            clock, mcu_pos = self._last_traj_readback
+            if start_clock >= clock or end_clock <= clock:
+                return (data, 0)
+            data[0].first_clock = data[0].last_clock = clock
+            data[0].start_position = mcu_pos
+            data[0].step_count = data[0].interval = data[0].add = 0
+            return (data, 1)
         count = ffi_lib.stepcompress_extract_old(self._stepqueue, data, count,
                                                  start_clock, end_clock)
         return (data, count)
@@ -235,15 +280,16 @@ class MCU_stepper:
     def _query_mcu_position(self):
         if self._mcu.is_fileoutput():
             return
-        params = self._get_position_cmd.send([self._oid])
-        last_pos = params['pos']
         if self._traj is not None:
-            # traj_position reports sub-units (1 microstep = 2^16)
-            last_pos = int(round(last_pos / 65536.))
+            # Readback of the mcu position accumulator (after a
+            # homing trigger this is the held trigger position)
+            clock, last_pos = self._query_traj_readback()
             self._set_mcu_position(last_pos)
             printer = self._mcu.get_printer()
             printer.send_event("stepper:sync_mcu_position", self)
             return
+        params = self._get_position_cmd.send([self._oid])
+        last_pos = params['pos']
         if self._invert_dir:
             last_pos = -last_pos
         print_time = self._mcu.estimated_print_time(params['#receive_time'])

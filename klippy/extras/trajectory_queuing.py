@@ -7,9 +7,19 @@
 # commands. The legacy queue_step path is untouched for every other
 # stepper — the two coexist per actuator on the same MCU.
 #
-# v1 limitations (documented in RFC 0001 doc 06): homing/probing an
-# opted-in stepper is not yet supported — home before opting in, or
-# keep homed axes on the legacy protocol.
+# Homing/probing (RFC 0001 doc 02 "Homing, probing, and trsync"):
+# MCU_trsync arms traj_stop_on_trigger (instead of
+# stepper_stop_on_trigger) for opted-in steppers - see
+# MCU_stepper.get_stop_on_trigger_command_name().  During the homing
+# drip the emitter keeps flushing via the normal motion_queuing flush
+# callback (drip_update_time calls _advance_flush_time, which invokes
+# it); segfit generates strictly forward from its anchor, so
+# overlapping flush calls cannot double-emit.  On trigger the MCU
+# halts with NEED_REBASE and preserves the position accumulator;
+# MCU_stepper.note_homing_end then calls note_rebase_needed (the old
+# anchor is invalid) and re-reads the held accumulator, which is the
+# sub-unit exact trigger position.  Segments emitted between trigger
+# and rebase are silently dropped by the MCU (dropped counter).
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 #

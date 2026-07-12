@@ -168,7 +168,7 @@ class MCU_trsync:
         self._response_trsync = None
         self._trsync_start_cmd = self._trsync_set_timeout_cmd = None
         self._trsync_trigger_cmd = self._trsync_query_cmd = None
-        self._stepper_stop_cmd = None
+        self._stepper_stop_cmds = {}
         self._trigger_completion = None
         self._home_end_clock = None
         mcu.register_config_callback(self._build_config)
@@ -205,8 +205,9 @@ class MCU_trsync:
             "trsync_trigger oid=%c reason=%c",
             "trsync_state oid=%c can_trigger=%c trigger_reason=%c clock=%u",
             oid=self._oid, cq=self._cmd_queue)
-        self._stepper_stop_cmd = mcu.lookup_command(
-            "stepper_stop_on_trigger oid=%c trsync_oid=%c", cq=self._cmd_queue)
+        legacy_stop = "stepper_stop_on_trigger oid=%c trsync_oid=%c"
+        self._stepper_stop_cmds = {
+            legacy_stop: mcu.lookup_command(legacy_stop, cq=self._cmd_queue)}
         # Create trdispatch_mcu object
         set_timeout_tag = mcu.lookup_command(
             "trsync_set_timeout oid=%c clock=%u").get_command_tag()
@@ -220,6 +221,16 @@ class MCU_trsync:
             self._trdispatch, mcu._serial.get_serialqueue(), # XXX
             self._cmd_queue, self._oid, set_timeout_tag, trigger_tag,
             state_tag), ffi_lib.free)
+    def _lookup_stepper_stop_cmd(self, stepper):
+        # Each stepper reports its "stop on trigger" arming command
+        # (trajectory steppers use traj_stop_on_trigger; legacy
+        # steppers use stepper_stop_on_trigger)
+        cmdname = stepper.get_stop_on_trigger_command_name()
+        scmd = self._stepper_stop_cmds.get(cmdname)
+        if scmd is None:
+            scmd = self._mcu.lookup_command(cmdname, cq=self._cmd_queue)
+            self._stepper_stop_cmds[cmdname] = scmd
+        return scmd
     def _shutdown(self):
         tc = self._trigger_completion
         if tc is not None:
@@ -259,7 +270,7 @@ class MCU_trsync:
         self._trsync_start_cmd.send([self._oid, report_clock, report_ticks,
                                      self.REASON_COMMS_TIMEOUT], reqclock=clock)
         for s in self._steppers:
-            self._stepper_stop_cmd.send([s.get_oid(), self._oid])
+            self._lookup_stepper_stop_cmd(s).send([s.get_oid(), self._oid])
         self._trsync_set_timeout_cmd.send([self._oid, expire_clock],
                                           reqclock=clock)
     def set_home_end_time(self, home_end_time):
