@@ -348,6 +348,14 @@ class TriggerDispatch:
             return err_res[0]
         return res[0]
 
+# Number and spacing of the post-edge confirmation re-reads the firmware
+# performs before it fires trsync for a hardware-triggered endstop
+# (RFC 0001 doc 09 "qualify-after-event").  A false edge costs one brief
+# re-read burst and never fires; the whole window is bounded well under
+# the firmware's QUALIFY_MAX_TICKS safety cap.
+TRIGGER_QUALIFY_COUNT = 4
+TRIGGER_QUALIFY_TIME = 0.000005
+
 class MCU_endstop:
     def __init__(self, mcu, pin_params):
         self._mcu = mcu
@@ -359,6 +367,15 @@ class MCU_endstop:
         self._mcu.register_config_callback(self._build_config)
         self._rest_ticks = 0
         self._dispatch = TriggerDispatch(mcu)
+        # Hardware interrupt trigger path (RFC 0001 doc 09).  Resolved in
+        # _build_config: a second oid drives config_trigger_gpio and the
+        # arm/disarm/query commands; the polled config_endstop above is
+        # always kept for query_endstop and as the automatic fallback.
+        self._trigger_oid = None
+        self._trigger_arm_cmd = self._trigger_disarm_cmd = None
+        self._trigger_query_cmd = None
+        self._trigger_edge = 0
+        self._hw_triggered = False
     def get_mcu(self):
         return self._mcu
     def add_stepper(self, stepper):
@@ -366,7 +383,7 @@ class MCU_endstop:
     def get_steppers(self):
         return self._dispatch.get_steppers()
     def _build_config(self):
-        # Setup config
+        # Setup config (polled path - always present for query + fallback)
         self._mcu.add_config_cmd("config_endstop oid=%d pin=%s pull_up=%d"
                                  % (self._oid, self._pin, self._pullup))
         self._mcu.add_config_cmd(
@@ -383,12 +400,62 @@ class MCU_endstop:
             "endstop_query_state oid=%c",
             "endstop_state oid=%c homing=%c next_clock=%u pin_value=%c",
             oid=self._oid, cq=cmd_queue)
+        self._build_trigger_config(cmd_queue)
+    def _build_trigger_config(self, cmd_queue):
+        # Opt into the hardware edge-interrupt detector when the firmware
+        # advertises the trigger_source command set and it is not disabled
+        # on this MCU.  Falls back silently to the polled path otherwise.
+        if not self._mcu.want_hw_endstop_trigger():
+            return
+        if not self._mcu.check_valid_response(
+                "config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c"
+                " qualify_ticks=%u qualify_count=%c"):
+            return
+        # edge = the pin level that indicates a hit (matches the polled
+        # path's pin_value for the default triggered=True homing move):
+        # triggered(1) ^ invert.
+        self._trigger_edge = 1 ^ (1 if self._invert else 0)
+        qualify_ticks = self._mcu.seconds_to_clock(TRIGGER_QUALIFY_TIME)
+        self._trigger_oid = self._mcu.create_oid()
+        self._mcu.add_config_cmd(
+            "config_trigger_gpio oid=%d pin=%s edge=%d pull_up=%d"
+            " qualify_ticks=%u qualify_count=%d"
+            % (self._trigger_oid, self._pin, self._trigger_edge,
+               self._pullup, qualify_ticks, TRIGGER_QUALIFY_COUNT))
+        self._mcu.add_config_cmd(
+            "trigger_source_disarm oid=%d" % (self._trigger_oid,),
+            on_restart=True)
+        self._trigger_arm_cmd = self._mcu.lookup_command(
+            "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c",
+            cq=cmd_queue)
+        self._trigger_disarm_cmd = self._mcu.lookup_command(
+            "trigger_source_disarm oid=%c", cq=cmd_queue)
+        self._trigger_query_cmd = self._mcu.lookup_query_command(
+            "trigger_source_query oid=%c",
+            "trigger_source_state oid=%c flags=%c clock=%u",
+            oid=self._trigger_oid, cq=cmd_queue)
+    def _use_hw_trigger(self, triggered):
+        # The trigger source's edge sense is fixed at config time to the
+        # triggered=True hit level; a homing move that instead waits for
+        # the pin to release (triggered=False) uses the polled path, which
+        # can look for either level per move.
+        return (self._trigger_oid is not None
+                and bool(triggered) == bool(self._trigger_edge ^ self._invert))
     def home_start(self, print_time, sample_time, sample_count, rest_time,
                    triggered=True):
         clock = self._mcu.print_time_to_clock(print_time)
         rest_ticks = self._mcu.print_time_to_clock(print_time+rest_time) - clock
         self._rest_ticks = rest_ticks
         trigger_completion = self._dispatch.start(print_time)
+        if self._use_hw_trigger(triggered):
+            # Hardware edge interrupt fires trsync directly - no polling.
+            self._hw_triggered = True
+            self._trigger_arm_cmd.send(
+                [self._trigger_oid, self._dispatch.get_oid(),
+                 MCU_trsync.REASON_ENDSTOP_HIT, 1],
+                reqclock=clock)
+            return trigger_completion
+        self._hw_triggered = False
         self._home_cmd.send(
             [self._oid, clock, self._mcu.seconds_to_clock(sample_time),
              sample_count, rest_ticks, triggered ^ self._invert,
@@ -397,7 +464,10 @@ class MCU_endstop:
         return trigger_completion
     def home_wait(self, home_end_time):
         self._dispatch.wait_end(home_end_time)
-        self._home_cmd.send([self._oid, 0, 0, 0, 0, 0, 0, 0])
+        if self._hw_triggered:
+            self._trigger_disarm_cmd.send([self._trigger_oid])
+        else:
+            self._home_cmd.send([self._oid, 0, 0, 0, 0, 0, 0, 0])
         res = self._dispatch.stop()
         if res >= MCU_trsync.REASON_COMMS_TIMEOUT:
             cmderr = self._mcu.get_printer().command_error
@@ -406,6 +476,13 @@ class MCU_endstop:
             return 0.
         if self._mcu.is_fileoutput():
             return home_end_time
+        if self._hw_triggered:
+            # The firmware latched the exact edge tick (a hardware
+            # input-capture timestamp when the pin is wired to one, else
+            # the ISR-entry read); no rest_ticks back-dating needed.
+            params = self._trigger_query_cmd.send([self._trigger_oid])
+            tclock = self._mcu.clock32_to_clock64(params['clock'])
+            return self._mcu.clock_to_print_time(tclock)
         params = self._query_cmd.send([self._oid])
         next_clock = self._mcu.clock32_to_clock64(params['next_clock'])
         return self._mcu.clock_to_print_time(next_clock - self._rest_ticks)
@@ -1409,6 +1486,13 @@ class MCU:
         self._serial = self._conn_helper.get_serial()
         self._config_helper = MCUConfigHelper(self, self._conn_helper)
         self._stats_helper = MCUStatsHelper(self, self._conn_helper)
+        # Interrupt-driven homing (RFC 0001 doc 09): when the firmware
+        # exposes the trigger_source command set, endstop/probe detection
+        # runs off a hardware edge interrupt instead of a polled timer
+        # list.  Enabled by default and auto-disabled when the firmware
+        # lacks the commands; set False to force the legacy polled path.
+        self._hw_endstop_trigger = config.getboolean(
+            'hardware_endstop_trigger', True)
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():
@@ -1421,6 +1505,8 @@ class MCU:
         return self._printer
     def is_fileoutput(self):
         return self._printer.get_start_args().get('debugoutput') is not None
+    def want_hw_endstop_trigger(self):
+        return self._hw_endstop_trigger
     # MCU Configuration wrappers
     def setup_pin(self, pin_type, pin_params):
         return self._config_helper.setup_pin(pin_type, pin_params)

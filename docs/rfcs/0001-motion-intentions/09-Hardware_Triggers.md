@@ -140,6 +140,30 @@ polled sampling otherwise. Nothing in the machine configuration needs
 to change between a board with COMP and one without — only the
 achieved latency does.
 
+### Host integration (implemented)
+
+`MCU_endstop` (`klippy/mcu.py`) now selects the detection path
+automatically. When the firmware's dictionary advertises the
+`trigger_source` command set (i.e. `CONFIG_WANT_TRIGGER_SOURCE` was
+built for that board), each digital endstop/probe configures **both** a
+polled `config_endstop` (kept for `query_endstop` and as the fallback)
+and a hardware `config_trigger_gpio` on the same pin. A normal homing
+move (`triggered=True`) then arms the edge interrupt with
+`trigger_source_arm` — attaching it to the same trsync dispatch the
+polled path used, so the coordinated-stop fan-out is unchanged — and
+reads the latched edge tick back from `trigger_source_query` (a
+hardware input-capture timestamp where the port wired one, else the
+ISR-entry read), with no `rest_ticks` back-dating. A move that instead
+waits for the pin to *release* (`triggered=False`) stays on the polled
+path, whose edge sense is chosen per move; a board without the
+`trigger_source` commands (e.g. a code-size-constrained target) also
+falls back silently. This covers every consumer of the digital endstop
+interface — cartesian/CoreXY homing, trajectory-stepper homing, `probe`,
+and `bltouch` — because they all drive `home_start`/`home_wait`
+polymorphically. Set
+`[mcu] hardware_endstop_trigger: False` to force the legacy polled path
+on a given MCU.
+
 ## Open questions
 
 * Whether qualification parameters (`qualify_ticks/count`) should have

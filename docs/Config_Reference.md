@@ -71,6 +71,19 @@ serial:
 #   the RECONNECT_MCU command. This option is opt-in and is not
 #   supported on the primary [mcu]; it may only be set on secondary
 #   micro-controllers. The default is 'shutdown'.
+#hardware_endstop_trigger: True
+#   Use hardware edge interrupts for endstop/probe detection during
+#   homing instead of the legacy polled software timer, when the
+#   micro-controller's firmware supports it (RFC 0001
+#   [doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)).
+#   With this enabled (the default) a homing move arms an on-chip edge
+#   interrupt that stops motion in microseconds and latches the exact
+#   trigger tick, rather than sampling the pin on a timer. It is applied
+#   automatically to every digital endstop and probe on this MCU and
+#   falls back to the polled path when the firmware lacks the feature
+#   (for example a code-size-constrained board) or for a homing move
+#   that waits for the pin to release. Set this to False to force the
+#   legacy polled path on this micro-controller. The default is True.
 ```
 
 ### [mcu my_extra_mcu]
