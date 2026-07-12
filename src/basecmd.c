@@ -61,7 +61,9 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
 static struct move_node *move_free_list;
 static void *move_list;
 static uint16_t move_count;
+#if CONFIG_WANT_TRAFFIC_CLASSES
 static uint16_t move_free_count, move_reserve_count;
+#endif
 static uint8_t move_item_size;
 
 // Is the config and move queue finalized?
@@ -79,7 +81,9 @@ move_free(void *m)
     struct move_node *mf = m;
     mf->next = move_free_list;
     move_free_list = mf;
+#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count++;
+#endif
 }
 
 // Allocate runtime storage
@@ -91,11 +95,14 @@ move_alloc(void)
     if (!mf)
         shutdown("Move queue overflow");
     move_free_list = mf->next;
+#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count--;
+#endif
     irq_restore(flag);
     return mf;
 }
 
+#if CONFIG_WANT_TRAFFIC_CLASSES
 // As move_alloc(), but return NULL (instead of shutdown) rather than
 // dip into the reserve held for motion-critical callers
 void *
@@ -112,6 +119,7 @@ move_alloc_soft(void)
     irq_restore(flag);
     return mf;
 }
+#endif
 
 // Check if a move_queue is empty
 int
@@ -183,7 +191,9 @@ move_reset(void)
     struct move_node *mf = move_list + (move_count - 1)*move_item_size;
     mf->next = NULL;
     move_free_list = move_list;
+#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count = move_count;
+#endif
 }
 DECL_SHUTDOWN(move_reset);
 
@@ -198,6 +208,7 @@ move_finalize(void)
     move_reset();
 }
 
+#if CONFIG_WANT_TRAFFIC_CLASSES
 // Set number of free move nodes held back from move_alloc_soft() callers
 void
 command_move_reserve(uint32_t *args)
@@ -208,6 +219,7 @@ command_move_reserve(uint32_t *args)
     irq_restore(flag);
 }
 DECL_COMMAND(command_move_reserve, "move_reserve count=%hu");
+#endif
 
 
 /****************************************************************
@@ -302,7 +314,9 @@ config_reset(uint32_t *args)
     move_free_list = NULL;
     move_list = NULL;
     move_count = move_item_size = 0;
+#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count = move_reserve_count = 0;
+#endif
     alloc_init();
     sched_timer_reset();
     sched_clear_shutdown();

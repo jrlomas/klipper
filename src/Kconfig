@@ -193,6 +193,10 @@ config NEED_SOS_FILTER
     bool
     depends on WANT_TRIGGER_ANALOG
     default y
+config WANT_TRAFFIC_CLASSES
+    bool
+    depends on HAVE_GPIO
+    default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_TRAJECTORY
     bool
     depends on HAVE_GPIO && !MACH_AVR
@@ -287,6 +291,9 @@ comment "Other features"
 config WANT_TRIGGER_ANALOG
     bool "Support for homing/probing events using analog sensors"
     depends on WANT_ADC || WANT_HX71X || WANT_ADS1220 || WANT_ADS131M0X || WANT_LDC1612
+config WANT_TRAFFIC_CLASSES
+    bool "Support traffic-class prompt outputs (degrade instead of shutdown)"
+    depends on HAVE_GPIO
 config WANT_TRAJECTORY
     bool "Support trajectory intention segments"
     depends on HAVE_GPIO && !MACH_AVR
