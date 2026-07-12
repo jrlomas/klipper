@@ -14,6 +14,7 @@
 #include "command.h" // shutdown
 #include "execlog.h" // execlog_append
 #include "sched.h" // sched_wake_task
+#include "timesync.h" // timesync_ticks_to_local
 #include "trajq.h" // trajq_setup
 
 static struct task_wake traj_event_wake;
@@ -185,6 +186,14 @@ void
 trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
                     , int32_t velocity, int32_t accel)
 {
+    if (!timesync_class0_ok()) {
+        // Machine-time discipline stale - refuse ingest (RFC 0001 doc 01)
+        tq->dropped++;
+        return;
+    }
+    // Segment durations arrive in machine time (identity when
+    // timesync is unconfigured)
+    duration = timesync_ticks_to_local(duration);
     if (!duration)
         shutdown("Invalid traj segment");
     if (duration > TRAJ_MAX_DURATION && (velocity || accel))
@@ -229,6 +238,9 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
 void
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
 {
+    // The anchor is a machine-time instant (RFC 0001 doc 01);
+    // identity when timesync is unconfigured
+    clock = timesync_clock_to_local(clock);
     irq_disable();
     if (tq->flags & TQF_ACTIVE) {
         irq_enable();

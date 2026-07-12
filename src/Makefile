@@ -31,6 +31,6 @@ src-$(CONFIG_WANT_SENSOR_ANGLE) += sensor_angle.c
 src-$(CONFIG_NEED_SENSOR_BULK) += sensor_bulk.c
 src-$(CONFIG_NEED_SOS_FILTER) += sos_filter.c
 src-$(CONFIG_WANT_TRIGGER_ANALOG) += trigger_analog.c
-src-$(CONFIG_WANT_TRAJECTORY) += trajq.c traj_stepper.c execlog.c
+src-$(CONFIG_WANT_TRAJECTORY) += trajq.c traj_stepper.c execlog.c timesync.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += trigger_source.c
 src-$(CONFIG_WANT_HEATER_HOLD) += heater_hold.c

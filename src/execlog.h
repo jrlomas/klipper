@@ -12,6 +12,7 @@ enum {
     EL_REBASE = 5,   // host re-anchored: pos = new anchor
     EL_HEATER = 6,   // failsafe policy transition: aux = state<<16|target
     EL_FAULT = 7,    // anything else: aux = code
+    EL_DISCIPLINE = 8, // clock sync adjustment: pos = offset err, aux = rate
 };
 
 // Append a record; safe from irq, timer, and task context. A no-op

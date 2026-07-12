@@ -1,5 +1,17 @@
 # Micro-controller clock synchronization
 #
+# Machine-time authority (RFC 0001 doc 01): machine time is defined as
+# the primary MCU's free-running counter, extended to 64 bits with an
+# epoch established at connect. The regression below no longer makes
+# the host the timekeeper - it estimates host-time -> machine-time so
+# the host can plan far enough ahead (the math is unchanged; only its
+# role is renamed). The -3 sigma conservative bias that previously
+# protected command schedule times now protects segment arrival
+# deadlines. The same min-RTT-anchored estimate, run per-link against
+# each secondary MCU, is what stamps `local_est` on relayed sync
+# beacons (see klippy/extras/timesync.py); the secondary's on-board
+# discipline filter (src/timesync.c) does the rest.
+#
 # Copyright (C) 2016-2018  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -133,6 +145,19 @@ class ClockSync:
         return float(reqclock - clock)/freq + sample_time
     def estimated_print_time(self, eventtime):
         return self.clock_to_print_time(self.get_clock(eventtime))
+    # Machine-time authority helpers (RFC 0001 doc 01). On the link to
+    # the primary MCU this clock *is* machine time; on a link to a
+    # secondary it is that board's local clock. The beacon relay
+    # bridges the two through host time:
+    #   machine_clock --primary link--> systime --secondary link-->
+    #   local_est
+    # Measurement quality on each hop is anchored by the smallest
+    # observed round-trip (min_half_rtt), which is unaffected by mean
+    # latency - the property that makes host-relayed beacons viable.
+    def machine_time_to_systime(self, machine_clock):
+        return self.estimate_clock_systime(machine_clock)
+    def systime_to_local_clock(self, systime):
+        return self.get_clock(systime)
     # misc commands
     def clock32_to_clock64(self, clock32):
         last_clock = self.last_clock
