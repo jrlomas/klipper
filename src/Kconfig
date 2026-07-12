@@ -216,6 +216,16 @@ config WANT_TRAJECTORY_HIGHER_ORDER
     bool
     depends on WANT_TRAJECTORY
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_TRACE
+    # Structured trace plane (Atlas / FD-0002 §3): a registered,
+    # machine-time-stamped event channel rendered to human strings on
+    # the host via the data dictionary. Near-zero cost when a
+    # subsystem's level is off; the ring is host-allocated, so the
+    # firmware footprint is just code plus a small per-subsystem level
+    # array — designed to fit the constrained F072.
+    bool
+    depends on HAVE_GPIO
+    default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_SYSCALL_API
     # Unified cross-family board syscall table (FD-0001 doc 13): one
     # versioned function-pointer surface, wrapping the existing board.h
