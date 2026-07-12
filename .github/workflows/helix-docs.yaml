@@ -20,6 +20,11 @@ on:
     branches:
       - master
       - main
+      # Preview the site from the HELIX development branch before it is
+      # merged to the default branch. (The manual "Run workflow" button
+      # only appears for workflows on the default branch, so this push
+      # trigger is how the branch builds on its own.)
+      - claude/software-redesign-impl-finn0j
     paths:
       - docs/**
       - .github/workflows/helix-docs.yaml
