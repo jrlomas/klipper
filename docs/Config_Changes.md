@@ -8,6 +8,23 @@ All dates in this document are approximate.
 
 ## Changes
 
+20260712: The RFC 0001 "motion intentions" features are now available
+as opt-in, backwards-compatible config options; the default behavior is
+unchanged and no action is required to keep an existing config working.
+New optional config sections `[failure_recovery]`, `[timesync]`, and
+`[asyncio_bridge]` were added. The `[mcu]` section gained an optional
+`on_comm_timeout` option (secondary micro-controllers only); `[stepper]`
+sections gained `motion_protocol` (plus `motion_tolerance`,
+`motion_sample_time`, and `motion_underrun_decel`); and heater sections
+(`[extruder]`, `[heater_bed]`, etc.) gained an optional `failure_policy`
+(plus `hold_max_temp`, `hold_max_duration`, and `hold_ping_timeout`).
+New G-Code commands `FAILURE_RECOVERY_STATUS`, `ENGAGE_HEATER_HOLD`,
+`RELEASE_HEATER_HOLD`, `EXECLOG_DUMP`, `RECONNECT_MCU`, and
+`TIMESYNC_STATUS` are registered only when the corresponding section is
+enabled. See the [Config Reference](Config_Reference.md),
+[G-Codes](G-Codes.md), and RFC 0001
+[docs](rfcs/0001-motion-intentions/README.md) for details.
+
 20260525: The internal implementation of "probe:z_virtual_endstop" has
 changed. Most users will not observe a change in behavior. Previously
 it was technically possible to mix "probe:z_virtual_endstop" with

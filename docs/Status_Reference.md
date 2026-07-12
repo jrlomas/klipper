@@ -546,6 +546,21 @@ objects:
   temperature seen by the sensor since the Klipper host software was
   last restarted.
 
+## timesync
+
+The following information is available in the
+[timesync](Config_Reference.md#timesync) object (RFC 0001 doc 01):
+- `machine_time`: The primary micro-controller's estimated print time
+  (in seconds), exposed so external clients may synchronize to machine
+  time. `None` until the beacon loop is active.
+- `mcus.<mcu_name>.converged`: True once the named secondary micro-
+  controller's discipline filter reports it is within the configured
+  `converge_window`.
+- `mcus.<mcu_name>.last_err_ticks`: The last measured synchronization
+  error for that micro-controller, in its own clock ticks.
+- `mcus.<mcu_name>.rate`: The raw clock-rate correction factor applied
+  by that micro-controller's discipline filter.
+
 ## tmc drivers
 
 The following information is available in

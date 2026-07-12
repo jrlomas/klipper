@@ -291,3 +291,141 @@ scheduling new queue_step commands accordingly.
 * `spi_send oid=%c data=%*s` : This command is similar to
   "spi_transfer", but it does not generate a "spi_transfer_response"
   message.
+
+### Trajectory intention commands
+
+These commands implement the per-actuator "trajectory intention" motion
+path from RFC 0001
+([doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)). They
+are used only for steppers configured with `motion_protocol: trajectory`
+and coexist with the legacy queue_step path.
+
+* `config_traj_stepper oid=%c step_pin=%c dir_pin=%c invert_step=%c
+  invert_dir=%c step_pulse_ticks=%u underrun_decel=%u` : Creates a
+  trajectory stepper object. The step/dir pins, invert flags, and
+  step_pulse_ticks mirror config_stepper; 'underrun_decel' is the
+  deceleration (in wire units) used to synthesize a controlled stop if
+  the segment queue underruns.
+
+* `queue_traj_segment oid=%c flags=%c duration=%u velocity=%i
+  accel=%i` : Appends a constant-acceleration motion segment lasting
+  'duration' clock ticks with the given starting 'velocity' and
+  'accel'. 'flags' carries per-segment options.
+
+* `traj_hold oid=%c duration=%u` : Appends a stationary (hold) segment
+  of the given 'duration'.
+
+* `trajectory_rebase oid=%c clock=%u pos=%i` : Anchors the chained
+  position stream, declaring that position 'pos' (in sub-units) is
+  reached at the given 'clock' time. Sent before the first segment of a
+  motion and whenever the accumulator must be re-anchored.
+
+* `traj_get_position oid=%c` : Generates a "traj_position oid=%c
+  clock=%u pos=%i" response with the current interpolated position.
+
+* `traj_query oid=%c` : Generates a "traj_status oid=%c flags=%c
+  queued=%hu dropped=%hu horizon_clock=%u pos=%i" response reporting
+  queue state.
+
+* `traj_stop_on_trigger oid=%c trsync_oid=%c` : Arms the stepper to
+  halt (preserving its position accumulator) when the given trsync
+  triggers. Used for homing and probing.
+
+The micro-controller emits a "traj_underrun oid=%c clock=%u pos=%i"
+response if the segment queue runs dry.
+
+### Execution log commands
+
+The execution log ("flight recorder") retains a ring of what the
+micro-controller actually executed so failures can be analyzed and
+resumed (RFC 0001
+[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md)).
+
+* `config_execlog oid=%c size=%hu` : Creates an execution-log object
+  retaining 'size' records.
+
+* `execlog_query oid=%c` : Generates an "execlog_status oid=%c
+  next_seq=%u oldest_seq=%u dropped=%u" response describing the current
+  ring contents.
+
+* `execlog_dump oid=%c seq=%u count=%c` : Reliably pulls up to 'count'
+  retained records starting at sequence 'seq'; each is returned as an
+  "execlog_data oid=%c seq=%u type=%c src=%c clock=%u pos=%i aux=%u"
+  response.
+
+* `execlog_stream oid=%c max_per_wake=%c` : Enables/disables
+  best-effort live streaming of new records, bounded to 'max_per_wake'
+  records per task wake.
+
+### Heater failsafe hold commands
+
+The autonomous bang-bang heater holder keeps a heater at a safe
+temperature if the host or link goes away (RFC 0001 doc 08). Used for
+heaters configured with `failure_policy: hold`.
+
+* `config_heater_hold oid=%c heater_pin=%u sensor_pin=%u
+  invert_sense=%c` : Creates a heater-hold object bound to the given
+  heater output pin and analog sensor pin.
+
+* `heater_hold_setup oid=%c target=%hu ceiling=%hu band=%hu
+  min_valid=%hu max_valid=%hu ping_timeout=%u sample_ticks=%u
+  max_samples=%u max_deviation=%c` : Arms (or, with sample_ticks=0,
+  disarms) the policy. Temperatures are given in raw ADC counts; the
+  holder maintains 'target' within 'band', never exceeds 'ceiling',
+  runs for at most 'max_samples' samples, and self-engages if no ping
+  arrives within 'ping_timeout' ticks.
+
+* `heater_hold_ping oid=%c` : Host liveness ping; resets the ping
+  timeout.
+
+* `heater_hold_engage oid=%c` : Explicitly engages the hold.
+
+* `heater_hold_release oid=%c` : Releases the hold and stops driving
+  the pin.
+
+* `heater_hold_query oid=%c` : Generates a "heater_hold_state oid=%c
+  state=%c adc=%hu samples=%u" response.
+
+### Machine-time sync commands
+
+The primary micro-controller is the machine's time authority; the host
+relays its beacons so secondary boards can discipline their clocks (RFC
+0001 [doc 01](rfcs/0001-motion-intentions/01-Time_Model.md)).
+
+* `sync_beacon_read` : Requests a beacon from the primary; it responds
+  with "sync_beacon seq=%c clock=%u".
+
+* `sync_beacon_relay seq=%c machine_clock=%u local_est=%u` : Delivers a
+  relayed beacon to a secondary - the primary's 'machine_clock' and the
+  host's estimate of the secondary's local clock at that instant.
+
+* `timesync_setup freewheel_ticks=%u converge_window=%u` : Configures a
+  secondary's discipline filter with its freewheel budget and
+  convergence-error window.
+
+* `timesync_query` : Generates a "timesync_state flags=%c prime_count=%c
+  rate=%u last_err=%i machine_ref=%u local_ref=%u" response describing
+  the filter state.
+
+### Hardware trigger commands
+
+Hardware-event trigger sources deliver endstop/probe-style events
+without host polling (RFC 0001
+[doc 09](rfcs/0001-motion-intentions/09-Hardware_Triggers.md)).
+
+* `config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c qualify_ticks=%u
+  qualify_count=%c` : Creates a GPIO edge trigger source with an
+  optional qualification window (debounce).
+
+* `config_trigger_adc_watchdog oid=%c pin=%u high=%hu low=%hu` : Creates
+  an analog watchdog trigger source that fires when a sampled ADC value
+  leaves the [low, high] range.
+
+* `trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c` : Arms
+  the source to signal the given trsync with 'reason' on the next event;
+  'capture' requests an input-capture timestamp.
+
+* `trigger_source_disarm oid=%c` : Disarms the source.
+
+* `trigger_source_query oid=%c` : Generates a "trigger_source_state
+  oid=%c flags=%c clock=%u" response with the latest event state.

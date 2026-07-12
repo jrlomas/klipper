@@ -58,6 +58,19 @@ serial:
 #   sending a Klipper command to the micro-controller so that it can
 #   reset itself. The default is 'arduino' if the micro-controller
 #   communicates over a serial port, 'command' otherwise.
+#on_comm_timeout: shutdown
+#   Policy for a lost communication link to this micro-controller (RFC
+#   0001 [doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md)).
+#   The default 'shutdown' keeps the stock behavior - a lost link takes
+#   the whole machine into a shutdown state. Setting this to 'pause'
+#   turns a lost link into a host-side "pause-and-hold" instead: a
+#   "mcu:comm_pause" event is emitted, the print is paused (requires
+#   the [failure_recovery] and [pause_resume] sections), motion already
+#   sent toward this board continues autonomously on the micro-
+#   controller and then holds, and the operator may re-handshake with
+#   the RECONNECT_MCU command. This option is opt-in and is not
+#   supported on the primary [mcu]; it may only be set on secondary
+#   micro-controllers. The default is 'shutdown'.
 ```
 
 ### [mcu my_extra_mcu]
@@ -72,6 +85,83 @@ pins such as "extra_mcu:ar9" may then be used elsewhere in the config
 ```
 [mcu my_extra_mcu]
 # See the "mcu" section for configuration parameters.
+```
+
+### [failure_recovery]
+
+Failure-recovery orchestration from RFC 0001
+[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md). This is
+an opt-in module - if the section is not present, none of its behavior
+is active and the stock Klipper failure handling is unchanged. When
+enabled it configures the per-board execution log ("flight recorder"),
+plumbs the per-heater failsafe hold policy (see the `failure_policy`
+options in the [extruder]/[heater_bed] sections), and reacts to the
+`mcu:comm_pause` event produced by an mcu set to `on_comm_timeout:
+pause`. See the [command reference](G-Codes.md#failure_recovery) for
+the associated G-Code commands.
+
+```
+[failure_recovery]
+#execlog_size: 256
+#   Number of records retained in each micro-controller's execution
+#   log ring buffer. Must be between 16 and 4096. The default is 256.
+#execlog_mcus: mcu
+#   Comma separated list of micro-controller names (as used in the
+#   [mcu] / [mcu my_name] sections) on which to configure an execution
+#   log. Boards that do not provide the execlog firmware support are
+#   skipped with a log message. The default is "mcu".
+#asyncio_drain: False
+#   If true, route the execution-log drain through the [asyncio_bridge]
+#   seam (RFC 0001 doc 05) instead of the direct reactor path. This is
+#   an advanced/experimental option; on any bridge error it falls back
+#   to the direct drain. The default is False.
+```
+
+### [timesync]
+
+Machine-time beacon discipline from RFC 0001
+[doc 01](rfcs/0001-motion-intentions/01-Time_Model.md). This opt-in
+module relays clock-sync beacons from the primary micro-controller so
+that secondary boards discipline their clocks to "machine time". If
+the section is not present, no beacons are relayed and clock
+synchronization behaves exactly as in stock Klipper. See the
+[command reference](G-Codes.md#timesync) for the associated G-Code
+command and [status reference](Status_Reference.md#timesync) for the
+exposed printer object.
+
+```
+[timesync]
+#beacon_interval: 0.9839
+#   Interval (in seconds) between machine-time beacons once discipline
+#   has converged. The default is 0.9839 (matching the stock clock
+#   query cadence).
+#freewheel_time: 5.0
+#   Time (in seconds) a secondary micro-controller will freewheel on
+#   its last machine-time estimate after beacons stop arriving before
+#   flagging a loss. The default is 5.0.
+#converge_window: 0.000010
+#   Inter-micro-controller synchronization error target (in seconds).
+#   A secondary reports "converged" once its discipline filter is
+#   within this window. The default is 0.000010 (10us).
+```
+
+### [asyncio_bridge]
+
+The asyncio&lt;-&gt;reactor bridge seam from RFC 0001
+[doc 05](rfcs/0001-motion-intentions/05-Host_Architecture.md). This
+module is normally loaded automatically on demand (for example by
+`[failure_recovery] asyncio_drain: True`); the section only needs to
+be declared to tune its timeouts. It is opt-in and has no effect on
+the stock motion path.
+
+```
+[asyncio_bridge]
+#start_timeout: 5.0
+#   Maximum time (in seconds) to wait for the background asyncio event
+#   loop thread to start. The default is 5.0.
+#stop_timeout: 5.0
+#   Maximum time (in seconds) to wait for the background asyncio event
+#   loop thread to stop. The default is 5.0.
 ```
 
 ## Common kinematic settings
@@ -212,6 +302,33 @@ position_max:
 #   better to use the default than to specify this parameter. The
 #   default is true if position_endstop is near position_max and false
 #   if near position_min.
+#motion_protocol: legacy
+#   Selects how motion for this stepper is delivered to the micro-
+#   controller (RFC 0001
+#   [doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)).
+#   The default 'legacy' uses the stock pre-computed step-pulse
+#   (queue_step) path. Setting this to 'trajectory' opts this single
+#   actuator into the trajectory-intention path, in which the host
+#   ships motion segments and the micro-controller synthesizes the
+#   steps. The two paths coexist per actuator on the same micro-
+#   controller, so this may be enabled selectively. The remaining
+#   'motion_*' options below only apply when this is 'trajectory'. The
+#   default is 'legacy'.
+#motion_tolerance:
+#   Only used when motion_protocol is 'trajectory'. Maximum position
+#   deviation (in sub-units, where one microstep is 65536 sub-units)
+#   the host-side segment fitter may introduce when approximating the
+#   commanded trajectory. The default is 32768 sub-units (half a
+#   microstep).
+#motion_sample_time: 0.001
+#   Only used when motion_protocol is 'trajectory'. Time step (in
+#   seconds) the segment fitter uses when sampling the commanded
+#   trajectory. The default is 0.001.
+#motion_underrun_decel: 5000
+#   Only used when motion_protocol is 'trajectory'. Deceleration (in
+#   mm/s^2) the micro-controller applies to bring the actuator to a
+#   controlled stop should its segment queue underrun (for example on
+#   link loss). The default is 5000.
 ```
 
 ### Cartesian Kinematics
@@ -1032,6 +1149,29 @@ max_temp:
 #   heater and sensor hardware failures. Set this range just wide
 #   enough so that reasonable temperatures do not result in an error.
 #   These parameters must be provided.
+#failure_policy: off
+#   Failsafe hold policy for this heater during a failure/link loss
+#   (RFC 0001
+#   [doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md);
+#   requires the [failure_recovery] section). The default 'off' keeps
+#   the stock watchdog behavior. Setting this to 'hold' arms an
+#   autonomous micro-controller bang-bang holder that keeps the heater
+#   at a safe temperature if the host or link goes away. The remaining
+#   'hold_*' options below only apply when this is 'hold'. The default
+#   is 'off'.
+#hold_max_temp: 110
+#   Only used when failure_policy is 'hold'. Ceiling temperature (in
+#   Celsius) the autonomous holder will maintain and never exceed. Must
+#   not exceed the heater's max_temp. The default is 110.
+#hold_max_duration: 3600
+#   Only used when failure_policy is 'hold'. Maximum time (in seconds)
+#   the autonomous holder will keep the heater warm before releasing
+#   it. The default is 3600.
+#hold_ping_timeout: 5.0
+#   Only used when failure_policy is 'hold'. If the host stops sending
+#   liveness pings for longer than this time (in seconds), the micro-
+#   controller-side holder self-engages. Must be greater than 1. The
+#   default is 5.0.
 ```
 
 ### [heater_bed]
@@ -1048,6 +1188,13 @@ control:
 min_temp:
 max_temp:
 #   See the "extruder" section for a description of the above parameters.
+#failure_policy: off
+#hold_max_temp: 110
+#hold_max_duration: 3600
+#hold_ping_timeout: 5.0
+#   Opt-in failsafe hold policy (RFC 0001 doc 08). See the "extruder"
+#   section for a description of these parameters. Requires the
+#   [failure_recovery] section. The default is 'off' (stock behavior).
 ```
 
 ## Bed level support

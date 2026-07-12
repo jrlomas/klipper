@@ -494,6 +494,45 @@ MOTION_QUEUE (as defined in an [extruder](Config_Reference.md#extruder)
 config section). If MOTION_QUEUE is an empty string then the stepper
 will be desynchronized from all extruder movement.
 
+### [failure_recovery]
+
+The following commands are available when a
+[failure_recovery config section](Config_Reference.md#failure_recovery)
+is enabled. See RFC 0001
+[doc 08](rfcs/0001-motion-intentions/08-Failure_Recovery.md) for the
+design rationale.
+
+#### FAILURE_RECOVERY_STATUS
+`FAILURE_RECOVERY_STATUS`: Reports the current failure-recovery state -
+the configured heater holds (policy, ceiling, duration, and whether
+each is currently engaged) and any micro-controllers presently in the
+paused-link state.
+
+#### ENGAGE_HEATER_HOLD
+`ENGAGE_HEATER_HOLD [HEATER=<name>]`: Manually engages the autonomous
+failsafe hold on the configured heater(s). If `HEATER` is omitted the
+hold is engaged on every heater configured with `failure_policy: hold`.
+Intended for testing and recovery workflows.
+
+#### RELEASE_HEATER_HOLD
+`RELEASE_HEATER_HOLD [HEATER=<name>]`: Releases the autonomous failsafe
+hold and returns the heater(s) to host control. If `HEATER` is omitted
+the hold is released on every configured heater.
+
+#### EXECLOG_DUMP
+`EXECLOG_DUMP`: Drains the retained micro-controller execution logs
+(the "flight recorder") of every configured board and writes the
+records to the Klipper log file.
+
+#### RECONNECT_MCU
+`RECONNECT_MCU MCU=<name>`: Attempts to re-handshake with a micro-
+controller that lost its link and entered the paused-link state (see
+the `on_comm_timeout: pause` option). If the board never rebooted its
+clock is re-synced and the print may be resumed with `RESUME`; if it
+rebooted or its config CRC differs a full `RESTART` is required
+instead. Heater holds are not auto-released - restore heater targets or
+resume the print to return heaters to host control.
+
 ### [fan_generic]
 
 The following command is available when a
@@ -1614,6 +1653,20 @@ This command is only available during drift calibration.
 `TEMPERATURE_PROBE_ENABLE ENABLE=[0|1]`: Sets temperature drift
 compensation on or off. If ENABLE is set to 0, drift compensation
 will be disabled, if set to 1 it is enabled.
+
+### [timesync]
+
+The following command is available when a
+[timesync config section](Config_Reference.md#timesync) is enabled. See
+RFC 0001
+[doc 01](rfcs/0001-motion-intentions/01-Time_Model.md) for the design
+rationale.
+
+#### TIMESYNC_STATUS
+`TIMESYNC_STATUS`: Reports the machine-time beacon discipline state for
+each disciplined secondary micro-controller - whether it has converged,
+its current synchronization error (in microseconds), and its clock rate
+correction (in ppm).
 
 ### [tmcXXXX]
 
