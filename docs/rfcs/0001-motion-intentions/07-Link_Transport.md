@@ -1,6 +1,6 @@
 # RFC 0001: Link Layer and Transports
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 This document specifies a **backwards-compatible** framing extension
 that replaces the 16-bit CRC with BCH forward error correction, and a

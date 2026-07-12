@@ -1,13 +1,23 @@
 # RFC 0001: Motion Intentions — Vision
 
-Status: Draft / Discussion
+Status: Adopted -- realized in HELIX 0.9
 
-This document introduces a proposed architectural evolution of Klipper:
-moving the host↔MCU contract from *pre-computed step pulses* to
-*per-joint trajectory intentions*, making the primary micro-controller
-the machine's time authority, and separating time-critical motion
-traffic from commands and telemetry that must never be able to halt a
-print.
+> **These documents are no longer proposals — they are the design
+> record of what HELIX built.** The RFC 0001 set was written to *argue*
+> the architecture; the architecture now *exists*, implemented in the
+> HELIX 0.9 codebase (software complete; hardware bring-up pending — see
+> [Releases](../../Releases.md)). Each document's status line reflects
+> its implementation state. The text is preserved in its original
+> reasoning-first form, because the *why* is exactly what a reader of an
+> evolved codebase most needs; read "we propose" as "HELIX does, and
+> here is the argument for why."
+
+This document introduces the architectural evolution of Klipper that
+HELIX carries out: moving the host↔MCU contract from *pre-computed step
+pulses* to *per-joint trajectory intentions*, making the primary
+micro-controller the machine's time authority, and separating
+time-critical motion traffic from commands and telemetry that must never
+be able to halt a print.
 
 It is the entry point of an RFC set — see [README.md](README.md) for
 the reading order and glossary.

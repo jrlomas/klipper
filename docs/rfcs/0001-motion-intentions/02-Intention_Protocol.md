@@ -1,6 +1,6 @@
 # RFC 0001: The Intention Protocol
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 This is the core document of the RFC set. It defines what a trajectory
 *intention* (segment) is, its wire encoding, how a stepper realizes it

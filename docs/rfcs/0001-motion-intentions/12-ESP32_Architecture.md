@@ -1,6 +1,6 @@
 # RFC 0001: ESP32 Architecture Stance
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has

@@ -1,6 +1,6 @@
 # RFC 0001: Time Model
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 This document defines **machine time** — the timeline every intention
 is scheduled against — and moves its authority from the host's

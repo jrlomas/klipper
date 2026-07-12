@@ -133,7 +133,7 @@ nav:
     - Benchmarks.md
     - CONTRIBUTING.md
     - Packaging.md
-  - Design Proposals:
+  - Design &amp; Architecture (RFC 0001):
     - rfcs/0001-motion-intentions/README.md
     - rfcs/0001-motion-intentions/00-Vision.md
     - rfcs/0001-motion-intentions/01-Time_Model.md

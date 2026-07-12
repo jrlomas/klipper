@@ -1,6 +1,6 @@
 # RFC 0001: Hardware Triggers
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 Klipper made MCUs deliberately dumb, and nowhere is the cost clearer
 than in how the firmware *senses*: endstops are polled by software

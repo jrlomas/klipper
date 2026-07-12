@@ -1,6 +1,6 @@
 # RFC 0001: First-Class Bootloader
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 In the current ecosystem the bootloader is an afterthought: Katapult
 is a separate project, separately built, separately flashed, with its

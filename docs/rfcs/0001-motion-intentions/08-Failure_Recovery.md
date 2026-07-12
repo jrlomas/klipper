@@ -1,6 +1,6 @@
 # RFC 0001: Failure Recovery — Pause, Hold, Resume
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 Klipper's failure philosophy today is binary: any error — a late
 timer, a lost message, a homing timeout — ends in `shutdown()`, which

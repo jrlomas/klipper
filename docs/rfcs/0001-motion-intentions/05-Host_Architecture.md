@@ -1,6 +1,6 @@
 # RFC 0001: Host Architecture
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 This document maps the redesign onto the existing host code
 (`klippy/` and `klippy/chelper/`): what survives untouched, what is

@@ -1,6 +1,6 @@
 # RFC 0001: The Unified Board Syscall API
 
-Status: Draft / Implemented (v1.0)
+Status: Implemented in HELIX 0.9 (board syscall ABI v1.0)
 
 ## Why this exists
 

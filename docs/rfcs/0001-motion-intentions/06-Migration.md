@@ -1,6 +1,6 @@
 # RFC 0001: Migration, Validation, and Risks
 
-Status: Draft / Discussion
+Status: Adopted -- the migration path HELIX 0.9 followed
 
 A redesign of this size earns trust incrementally or not at all. This
 document defines how old and new coexist, how equivalence is proven

@@ -1,6 +1,6 @@
 # RFC 0001: Actuator Backends
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 The intention protocol ([02-Intention_Protocol.md](02-Intention_Protocol.md))
 deliberately says nothing about motors. This document defines the

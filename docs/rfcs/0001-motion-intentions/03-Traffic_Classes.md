@@ -1,6 +1,6 @@
 # RFC 0001: Traffic Classes
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 Today, one mechanism carries everything between host and MCU, and one
 timer list executes everything on the MCU — so a decorative LED update

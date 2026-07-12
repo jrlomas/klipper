@@ -1,6 +1,6 @@
 # RFC 0001: The Protocol Library
 
-Status: Draft / Discussion
+Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
 Today the wire protocol is implemented **twice**: once in the firmware
 (`src/command.c`, `src/msgblock` constants) and once in the host's C

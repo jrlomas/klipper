@@ -20,6 +20,12 @@ built on Klipper 0.13.0.
 > and what still awaits bring-up, and every HELIX capability is opt-in,
 > with the classic Klipper paths untouched beside it. **Do not run 0.9 on
 > hardware you are not prepared to supervise closely.**
+>
+> **Road to 1.0.** 0.9 is the software body of work. Once it has been
+> brought up on real hardware and the problems found in running it are
+> corrected, that validated state becomes **HELIX 1.0** — the initial
+> production release. Until then the version stays at 0.9 to make the
+> "not yet proven on a printer" status impossible to miss.
 
 Major changes in this release:
 
