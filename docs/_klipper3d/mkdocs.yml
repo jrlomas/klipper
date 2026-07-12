@@ -143,6 +143,7 @@ nav:
     - rfcs/0001-motion-intentions/09-Hardware_Triggers.md
     - rfcs/0001-motion-intentions/10-Protocol_Library.md
     - rfcs/0001-motion-intentions/11-Bootloader.md
+    - rfcs/0001-motion-intentions/12-ESP32_Architecture.md
   - Device Specific Documents:
     - Example_Configs.md
     - SDCard_Updates.md
