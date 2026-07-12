@@ -126,6 +126,7 @@ nav:
     - Code_Overview.md
     - Kinematics.md
     - Protocol.md
+    - Protocol_v2.md
     - API_Server.md
     - MCU_Commands.md
     - CANBUS_protocol.md

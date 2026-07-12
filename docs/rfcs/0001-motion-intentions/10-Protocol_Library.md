@@ -2,6 +2,12 @@
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
+> For the full, implementation-grounded reference of the v2 wire
+> protocol this library implements — framing, codecs, the annotation
+> layer, negotiation, datagrams, and session security — see
+> [Protocol v2](../../Protocol_v2.md). This document is the library's
+> design rationale and scope.
+
 Today the wire protocol is implemented **twice**: once in the firmware
 (`src/command.c`, `src/msgblock` constants) and once in the host's C
 helper (`klippy/chelper/msgblock.c`, `serialqueue.c`) — two disjoint
@@ -264,13 +270,17 @@ budget, and as part of the firmware images.
   check, compile, cached module) but replaces its stringly-typed
   ABI-mode `cdef` with the versioned header as the single source of
   truth. Callbacks cross the boundary via cffi's `extern "Python"`.
-* Whether legacy-format support belongs in the MIT library at all, or
-  only v2 (proposed: include it — it is what makes the library useful
-  to vendors *today*, before v2 hardware exists).
+* ~~Whether legacy-format support belongs in the MIT library at all, or
+  only v2.~~ **Resolved: legacy framing is included** — it is what makes
+  the library useful to vendors *today*, before v2 hardware exists.
 * Dictionary generation for non-C firmwares (Rust/MicroPython
   vendors): provide a JSON schema for the dictionary format.
-* Declaration layer: string/buffer parameters (`%.*s`) in commands;
-  enumerations; whether a guard against declaring the same method in
-  two translation units is worth the machinery.
-* The exact fixed-id allocation for the v2 core command set (which
-  ids are spec-frozen vs. left to the extension space).
+* Declaration layer: string/buffer parameters (`%.*s`) and enumerations
+  are **implemented** (`intentproto::buf`; the `KLIPPER_ENUMERATION*`
+  macros). A guard against declaring the same method in two translation
+  units is deliberately not added — documented as a caveat instead.
+* ~~The exact fixed-id allocation for the v2 core command set.~~
+  **Resolved: frozen in
+  [core_ids.hpp](../../../lib/intentproto/include/intentproto/core_ids.hpp)**
+  — ids 2..36 are the spec-frozen core space, ≥ `0x80` is the
+  self-describing extension space.

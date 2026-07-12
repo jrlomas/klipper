@@ -2,6 +2,11 @@
 
 Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 
+> For the full, implementation-grounded treatment of the wire protocol
+> this RFC introduces, see [Protocol v2](../../Protocol_v2.md). This
+> document is the original design rationale; the values below have been
+> reconciled with the shipped code.
+
 This document specifies a **backwards-compatible** framing extension
 that replaces the 16-bit CRC with BCH forward error correction, and a
 UDP datagram transport that makes WiFi-attached MCUs (ESP32 class)
@@ -36,12 +41,12 @@ requests retransmission. New-format frames are therefore safe to
 ## Negotiation
 
 1. Framing v2 capability is advertised in the data dictionary
-   downloaded at `identify` time (e.g.
-   `DECL_CONSTANT_STR("LINK_FEC", "bch10_t3")`), which itself is
-   always transferred in legacy framing.
+   downloaded at `identify` time — the integer constant
+   `FRAMING_V2 = 1`, registered by the library's `init()` itself — which
+   is always transferred in legacy framing.
 2. After reading the dictionary, the host enables v2 by setting a
-   reserved seq-byte bit (proposed: **0x80 = extended trailer**) on
-   frames it sends; the MCU mirrors the bit on its responses.
+   reserved seq-byte bit (**`FRAME_V2_FLAG = 0x80`**, the extended-trailer
+   marker) on frames it sends; the MCU mirrors the bit on its responses.
 3. Legacy CRC16 framing remains the default, the bootstrap format,
    and the **permanent fallback** — a v2-capable MCU accepts both
    formats at all times (the seq bit tells it which trailer to check
@@ -68,7 +73,7 @@ place:
   | t (errors corrected) | parity | trailer vs CRC16 |
   | --- | --- | --- |
   | 2 | 20 bits → 3 bytes | +1 byte |
-  | **3 (proposed)** | 30 bits → 4 bytes | +2 bytes |
+  | **3 (implemented)** | 30 bits → 4 bytes | +2 bytes |
   | 4 | 40 bits → 5 bytes | +3 bytes |
 
   t=3 corrects any 3 bit-errors per frame and *detects* well beyond
@@ -103,8 +108,10 @@ negotiable layers:
 2. **Packet-level erasure FEC (UDP transport, below)** — recovers
    *lost datagrams* without waiting out a retransmit timeout: after
    every k data datagrams, send parity datagram(s) computed across
-   the block (XOR for 1-loss recovery; Reed–Solomon over GF(2⁸) for
-   burst tolerance — choice flagged open). A lost datagram inside a
+   the block. The implemented codec is **XOR parity for single-loss
+   recovery** (`DGF_PARITY` datagrams in `datagram.cpp`); Reed–Solomon
+   over GF(2⁸) for burst tolerance remains a possible future extension.
+   A lost datagram inside a
    protected block is reconstructed on arrival of the block's parity,
    costing bandwidth (1/k) instead of latency (an RTO).
 
@@ -232,12 +239,13 @@ design item — the *requirement* is not.
 
 ## Open questions
 
-* BCH t parameter (t=3 proposed) and whether it should be
-  link-configurable.
-* Erasure layer code: XOR (k+1, simple) vs Reed–Solomon (burst
-  tolerant); and the default k.
+* BCH t parameter is **settled at t=3** (implemented); whether it
+  should additionally be link-configurable is still open.
+* Erasure layer code: **XOR single-loss recovery is implemented**;
+  Reed–Solomon (burst tolerant) and the default k remain open.
 * PSK provisioning flow and storage (the authentication requirement
   itself is settled above).
-* Whether framing v2 should also lift `MESSAGE_MAX` (64) for
-  high-MTU transports, or keep frame size and batch instead
-  (proposed: keep 64, batch datagrams).
+* Framing v2 keeps `MESSAGE_MAX` at 64 and batches datagrams instead
+  of lifting the frame size (implemented: `DATAGRAM_MAX` batches whole
+  frames). Lifting the frame ceiling for high-MTU transports remains a
+  possible future extension.

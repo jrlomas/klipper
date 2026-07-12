@@ -2,6 +2,8 @@
 
 The single protocol library of the motion-intentions fork — see
 [RFC 0001, doc 10](../../docs/rfcs/0001-motion-intentions/10-Protocol_Library.md).
+For the full wire-protocol reference this library implements, see
+[Protocol v2](../../docs/Protocol_v2.md).
 
 **Status: prototype.** This is the working skeleton that validates the
 library's two load-bearing decisions on real code:
