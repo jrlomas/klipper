@@ -111,8 +111,10 @@
   .brand {
     font-family: var(--mono); font-weight: 700; letter-spacing: 0.42em;
     font-size: 15px; color: var(--text); padding-left: 4px;
+    display: flex; align-items: center; gap: 12px;
   }
   .brand b { color: var(--accent); font-weight: 700; }
+  .brand .coil { flex: none; }
   .bar-links { display: flex; gap: 22px; align-items: center; }
   .bar-links a {
     font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em;
@@ -141,6 +143,8 @@
     z-index: 1; pointer-events: none;
   }
   .hero-in { position: relative; z-index: 2; }
+  .hero-mark { display: block; margin-bottom: 6px;
+    filter: drop-shadow(0 0 18px var(--accent-glow)); }
   .hero h1 {
     font-family: var(--mono);
     font-weight: 700;
@@ -327,7 +331,22 @@
 
 <header class="bar">
   <div class="bar-in">
-    <div class="brand">HE<b>L</b>IX</div>
+    <div class="brand">
+      <svg class="coil" viewBox="0 0 120 120" width="22" height="22" aria-hidden="true">
+        <line x1="60" y1="16" x2="60" y2="104" stroke="var(--accent)" stroke-opacity="0.18" stroke-width="3"/>
+        <g fill="none" stroke-linecap="round">
+          <g stroke="var(--accent)" stroke-opacity="0.30" stroke-width="7">
+            <path d="M28 26 A32 11 0 0 0 92 26"/><path d="M28 45 A32 11 0 0 0 92 45"/>
+            <path d="M28 64 A32 11 0 0 0 92 64"/><path d="M28 83 A32 11 0 0 0 92 83"/>
+          </g>
+          <g stroke="var(--accent)" stroke-width="9">
+            <path d="M28 26 A32 11 0 0 1 92 26"/><path d="M28 45 A32 11 0 0 1 92 45"/>
+            <path d="M28 64 A32 11 0 0 1 92 64"/><path d="M28 83 A32 11 0 0 1 92 83"/>
+          </g>
+        </g>
+      </svg>
+      HE<b>L</b>IX
+    </div>
     <nav class="bar-links">
       <a href="#pivot" class="nav-hide">The idea</a>
       <a href="#pillars" class="nav-hide">Pillars</a>
@@ -341,6 +360,19 @@
   <section class="hero" aria-label="HELIX">
     <canvas id="helix" aria-hidden="true"></canvas>
     <div class="wrap hero-in">
+      <svg class="hero-mark" viewBox="0 0 120 120" width="76" height="76" aria-hidden="true">
+        <line x1="60" y1="16" x2="60" y2="104" stroke="var(--accent)" stroke-opacity="0.18" stroke-width="2.5"/>
+        <g fill="none" stroke-linecap="round">
+          <g stroke="var(--accent)" stroke-opacity="0.28" stroke-width="6.5">
+            <path d="M28 26 A32 11 0 0 0 92 26"/><path d="M28 45 A32 11 0 0 0 92 45"/>
+            <path d="M28 64 A32 11 0 0 0 92 64"/><path d="M28 83 A32 11 0 0 0 92 83"/>
+          </g>
+          <g stroke="var(--accent)" stroke-width="8.5">
+            <path d="M28 26 A32 11 0 0 1 92 26"/><path d="M28 45 A32 11 0 0 1 92 45"/>
+            <path d="M28 64 A32 11 0 0 1 92 64"/><path d="M28 83 A32 11 0 0 1 92 83"/>
+          </g>
+        </g>
+      </svg>
       <p class="eyebrow">Motion &amp; communication firmware</p>
       <h1>HELIX</h1>
       <p class="tag">Motion firmware that trusts its micro-controllers.</p>
@@ -352,9 +384,9 @@
         <a class="btn ghost" href="#pillars">What changed</a>
       </div>
       <div class="ticker" role="list">
-        <div role="listitem">Motion segments<b>quintic Bézier</b></div>
-        <div role="listitem">Chained integration<b>drift-free</b></div>
-        <div role="listitem">Endstop stops<b>µs, in hardware</b></div>
+        <div role="listitem">Actuators<b>stepper · PWM · BLDC</b></div>
+        <div role="listitem">Motion<b>quintic Bézier</b></div>
+        <div role="listitem">Sensing<b>events + DMA</b></div>
         <div role="listitem">Transports<b>UDP · CAN · USB</b></div>
       </div>
     </div>
@@ -409,11 +441,12 @@
         <article class="pillar">
           <span class="idx">01 · Motion</span>
           <h3>Intentions, not step streams</h3>
-          <p class="change">step firehose → <em>per-joint polynomial queues</em></p>
-          <p>Short polynomial segments — up to jerk- and snap-limited quintic
-            Bézier — integrated on-board against its own clock, chained with
-            zero positional drift.</p>
-          <a class="doc" href="rfcs/0001-motion-intentions/02-Intention_Protocol.md">RFC 0001 · doc 02 ↗</a>
+          <p class="change">stepper-only pulses → <em>actuator-agnostic segments</em></p>
+          <p>A segment says <em>where the joint should be</em>, not which pulses
+            to send — so the actuator is a swappable backend: steppers and
+            PWM/DAC today, a closed-loop <strong>BLDC/FOC</strong> servo joint
+            tomorrow, on one queue. Up to quintic Bézier, zero drift.</p>
+          <a class="doc" href="rfcs/0001-motion-intentions/02-Intention_Protocol.md">RFC 0001 · docs 02–04 ↗</a>
         </article>
         <article class="pillar">
           <span class="idx">02 · Time</span>
@@ -443,11 +476,13 @@
         </article>
         <article class="pillar">
           <span class="idx">05 · Triggers</span>
-          <h3>Stops that happen in hardware</h3>
-          <p class="change">polled endstops → <em>edge-interrupt stops</em></p>
-          <p>Homing and probing fire a coordinated stop from an on-chip edge
-            interrupt and latch the exact trigger tick — falling back to
-            polling only where the silicon can't.</p>
+          <h3>Hardware events — a capability unlock</h3>
+          <p class="change">polling → <em>interrupts, comparators, DMA</em></p>
+          <p>µs stops are the surface. Events off the timer list make things
+            polling made <em>impossible</em> in a motion loop: catching an
+            overrun the instant it happens, DMA-driven ADC oversampling,
+            analog window triggers — reachable now, not a fight with the
+            scheduler.</p>
           <a class="doc" href="rfcs/0001-motion-intentions/09-Hardware_Triggers.md">RFC 0001 · doc 09 ↗</a>
         </article>
         <article class="pillar">
