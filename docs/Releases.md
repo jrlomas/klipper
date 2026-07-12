@@ -25,7 +25,9 @@ built on Klipper 0.13.0.
 > brought up on real hardware and the problems found in running it are
 > corrected, that validated state becomes **HELIX 1.0** — the initial
 > production release. Until then the version stays at 0.9 to make the
-> "not yet proven on a printer" status impossible to miss.
+> "not yet proven on a printer" status impossible to miss. The exact,
+> checkable acceptance path from 0.9 to 1.0 is the
+> [HELIX Test &amp; Bring-up Plan](Helix_Test_Plan.md).
 
 Major changes in this release:
 
