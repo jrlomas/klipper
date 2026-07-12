@@ -561,6 +561,17 @@ The following information is available in the
 - `mcus.<mcu_name>.rate`: The raw clock-rate correction factor applied
   by that micro-controller's discipline filter.
 
+## trajectory_queuing
+
+The following information is available in the
+[trajectory_queuing](Config_Reference.md#trajectory_queuing) object
+(RFC 0001 doc 02), present whenever any stepper uses
+`motion_protocol: trajectory`:
+- `trajectory_steppers`: a list, one entry per trajectory actuator, each
+  a dictionary with `name`, `oid`, `anchored`, `need_rebase`, `su_per_mm`,
+  `commanded_pos_su`, `last_intention_pos_su`, `higher_order` (whether the
+  firmware supports cubic/quintic segments), and `homing_volatile`.
+
 ## tmc drivers
 
 The following information is available in

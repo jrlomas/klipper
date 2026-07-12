@@ -1668,6 +1668,53 @@ each disciplined secondary micro-controller - whether it has converged,
 its current synchronization error (in microseconds), and its clock rate
 correction (in ppm).
 
+### [trajectory_queuing]
+
+The following commands are available when at least one stepper opts into
+the trajectory-intention motion path (`motion_protocol: trajectory`). See
+RFC 0001
+[doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md) for the
+design rationale.
+
+#### TRAJECTORY_STATUS
+`TRAJECTORY_STATUS`: Reports the live state of every actuator on the
+trajectory-intention motion path - whether the joint is currently
+anchored, whether it awaits a rebase, its commanded position, its
+sub-unit resolution, and whether its firmware supports the higher-order
+(cubic/quintic) segment commands.
+
+#### BEZIER_MOVE
+`BEZIER_MOVE STEPPER=<name> DURATION=<seconds> P0=<mm> P1=<mm> P2=<mm>
+P3=<mm> [P4=<mm> P5=<mm>]`: Drives a single trajectory joint along a
+cubic (four control points) or quintic (six control points) Bezier curve,
+defined by absolute joint positions in millimeters over `DURATION`. `P0`
+must equal the joint's current position (it is the curve anchor).
+
+This is an **advanced commissioning command**, disabled by default. Like
+`FORCE_MOVE`, it bypasses the kinematic planner and drives one actuator
+directly, so it leaves the toolhead's kinematic position stale - correct
+it with `SET_KINEMATIC_POSITION` afterward, and re-home if in doubt.
+Enable it with `enable_bezier_move: True` in the `[trajectory_queuing]`
+config section, and only use it on an idle machine. It requires firmware
+built with cubic/quintic support (`WANT_TRAJECTORY_HIGHER_ORDER`).
+
+### [helix_status]
+
+`HELIX_STATUS` is available whenever any HELIX subsystem is configured,
+or explicitly via a `[helix_status]` config section.
+
+#### HELIX_STATUS
+`HELIX_STATUS`: Reports which HELIX capabilities this machine is actually
+running. For each micro-controller it reads the served data dictionary
+and lists the fork-specific firmware features that board was built with
+(trajectory motion, cubic/quintic segments, the PWM/DAC sampled backend,
+hardware trigger sources, heater failsafe hold, the execution log, and
+framing v2 FEC); it then lists the host-side subsystems that are loaded
+(the trajectory motion emitter, failure recovery, machine-time
+discipline) and any configured trajectory joints. It is pure
+introspection - a quick answer to "what does this printer support, and
+what is turned on?"
+
 ### [tmcXXXX]
 
 The following commands are available when any of the

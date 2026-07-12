@@ -260,6 +260,66 @@ class TrajectoryStepper:
         self.anchored = False
         self.need_rebase = True
 
+    def commanded_pos_su(self):
+        # Current commanded joint position in sub-units, from the host
+        # kinematics (the ground truth an idle re-anchor uses).
+        sk = self.mcu_stepper.get_stepper_kinematics()
+        pos_mm = self.ffi_lib.itersolve_get_commanded_pos(sk)
+        return int(round(pos_mm * self.su_per_mm))
+
+    def describe(self):
+        # Console-facing snapshot of this joint's trajectory state.
+        li = self.last_intention()
+        return {
+            'name': self.name,
+            'oid': self.oid,
+            'anchored': bool(self.anchored),
+            'need_rebase': bool(self.need_rebase),
+            'su_per_mm': self.su_per_mm,
+            'commanded_pos_su': self.commanded_pos_su(),
+            'last_intention_pos_su': (li[2] if li else None),
+            'higher_order': self.cubic_cmd is not None,
+            'homing_volatile': bool(self.homing_volatile),
+        }
+
+    def bezier_move(self, duration_s, ctrl_su):
+        # Advanced/commissioning primitive: drive THIS joint alone along a
+        # cubic (4 control points) or quintic (6) Bezier, bypassing the
+        # kinematic planner (like FORCE_MOVE).  Requires the caller to have
+        # flushed and be holding a print_time; anchors at ctrl_su[0], emits
+        # the segment, and syncs the stepper's position to the exact end.
+        # The toolhead kinematic position is intentionally NOT updated - the
+        # caller must correct it (SET_KINEMATIC_POSITION) afterward, exactly
+        # as FORCE_MOVE requires.  Returns the end position in sub-units.
+        if self.cubic_cmd is None:
+            raise self.mcu.error(
+                "Firmware for %s lacks higher-order trajectory support"
+                % (self.name,))
+        toolhead = self.owner.printer.lookup_object('toolhead')
+        toolhead.flush_step_generation()
+        print_time = toolhead.get_last_move_time()
+        # Anchor a hair in the future so the rebase clock is not in the past.
+        anchor_time = print_time + 0.100
+        clock = self.mcu.print_time_to_clock(anchor_time)
+        duration = int(round(duration_s * self.mcu.seconds_to_clock(1.)))
+        if duration <= 0:
+            raise self.mcu.error("BEZIER_MOVE duration must be positive")
+        anchor_su = int(ctrl_su[0])
+        # Rebase this joint at the first control point, then emit.
+        self.note_rebase_needed()
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_su])
+        self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
+                                       anchor_su << 32)
+        self.anchored = False   # standalone emit; not fitter-driven
+        end_delta = self.queue_bezier_segment(duration, ctrl_su)
+        end_su = anchor_su + int(end_delta >> 32)
+        toolhead.dwell(duration_s + 0.150)
+        toolhead.flush_step_generation()
+        # Keep klippy's stepper bookkeeping consistent with the hardware.
+        self.mcu_stepper.sync_to_held_position(end_su)
+        self.note_rebase_needed()
+        return end_su
+
     def _anchor(self, print_time):
         sk = self.mcu_stepper.get_stepper_kinematics()
         pos_mm = self.ffi_lib.itersolve_get_commanded_pos(sk)
@@ -415,6 +475,79 @@ class TrajectoryQueuing:
         self.steppers = []
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
+        # Advanced single-joint Bezier move is opt-in and hazardous (it
+        # bypasses the kinematic planner and desyncs the toolhead
+        # position), exactly like [force_move] enable_force_move.
+        self.enable_bezier_move = config.getboolean('enable_bezier_move',
+                                                    False)
+        # Make the machine-wide HELIX_STATUS command available whenever the
+        # trajectory subsystem is configured (it also loads standalone via
+        # a [helix_status] section).
+        self.printer.load_object(config, 'helix_status')
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_command('TRAJECTORY_STATUS', self.cmd_TRAJECTORY_STATUS,
+                               desc=self.cmd_TRAJECTORY_STATUS_help)
+        if self.enable_bezier_move:
+            gcode.register_command('BEZIER_MOVE', self.cmd_BEZIER_MOVE,
+                                   desc=self.cmd_BEZIER_MOVE_help)
+
+    def get_status(self, eventtime=None):
+        return {'trajectory_steppers': [ts.describe() for ts in self.steppers]}
+
+    cmd_TRAJECTORY_STATUS_help = ("Report the state of every actuator on the"
+                                  " trajectory-intention motion path")
+    def cmd_TRAJECTORY_STATUS(self, gcmd):
+        if not self.steppers:
+            gcmd.respond_info("No steppers use 'motion_protocol: trajectory'")
+            return
+        lines = []
+        for ts in self.steppers:
+            d = ts.describe()
+            lines.append(
+                "%s: anchored=%d need_rebase=%d higher_order=%d"
+                " pos=%d su (%.4f mm) su/mm=%.1f%s"
+                % (d['name'], d['anchored'], d['need_rebase'],
+                   d['higher_order'], d['commanded_pos_su'],
+                   d['commanded_pos_su'] / d['su_per_mm'], d['su_per_mm'],
+                   " [homing volatile]" if d['homing_volatile'] else ""))
+        gcmd.respond_info("\n".join(lines))
+
+    cmd_BEZIER_MOVE_help = ("Drive one trajectory joint along a cubic/quintic"
+                            " Bezier (advanced; bypasses kinematics)")
+    def cmd_BEZIER_MOVE(self, gcmd):
+        name = gcmd.get('STEPPER')
+        ts = None
+        for cand in self.steppers:
+            if cand.name == name:
+                ts = cand
+                break
+        if ts is None:
+            raise gcmd.error("'%s' is not a trajectory stepper (needs"
+                             " 'motion_protocol: trajectory')" % (name,))
+        duration = gcmd.get_float('DURATION', above=0.)
+        # Control points P0..P3 (cubic) or P0..P5 (quintic), absolute joint
+        # positions in mm; P0 must be the current position (the anchor).
+        pts_mm = []
+        for i in range(6):
+            v = gcmd.get_float('P%d' % (i,), None)
+            if v is None:
+                break
+            pts_mm.append(v)
+        if len(pts_mm) not in (4, 6):
+            raise gcmd.error("BEZIER_MOVE needs P0..P3 (cubic) or P0..P5"
+                             " (quintic); got %d points" % (len(pts_mm),))
+        ctrl_su = [int(round(p * ts.su_per_mm)) for p in pts_mm]
+        cur = ts.commanded_pos_su()
+        if abs(ctrl_su[0] - cur) > 1:
+            raise gcmd.error("P0 (%.4f mm) must equal the current position"
+                             " (%.4f mm) - anchor the move where the joint is"
+                             % (pts_mm[0], cur / ts.su_per_mm))
+        ctrl_su[0] = cur
+        end_su = ts.bezier_move(duration, ctrl_su)
+        gcmd.respond_info(
+            "BEZIER_MOVE %s: %d-point Bezier over %.3fs, ended at %.4f mm."
+            " Kinematic position is now stale - run SET_KINEMATIC_POSITION."
+            % (name, len(pts_mm), duration, end_su / ts.su_per_mm))
 
     def register_stepper(self, mcu_stepper, config):
         ts = TrajectoryStepper(self, mcu_stepper, config)

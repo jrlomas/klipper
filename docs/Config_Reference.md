@@ -177,6 +177,42 @@ the stock motion path.
 #   loop thread to stop. The default is 5.0.
 ```
 
+### [trajectory_queuing]
+
+Owns the actuators that opt into the trajectory-intention motion path
+(`motion_protocol: trajectory`, RFC 0001
+[doc 02](rfcs/0001-motion-intentions/02-Intention_Protocol.md)). It is
+normally loaded automatically as soon as one stepper enables that path;
+the section only needs to be declared to set the option below. It exposes
+the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
+[command reference](G-Codes.md#trajectory_queuing).
+
+```
+[trajectory_queuing]
+#enable_bezier_move: False
+#   Enables the BEZIER_MOVE command, an advanced commissioning tool that
+#   drives a single trajectory joint along a cubic/quintic Bezier curve,
+#   bypassing the kinematic planner. Like [force_move] enable_force_move
+#   this is hazardous - it leaves the toolhead kinematic position stale
+#   (correct it with SET_KINEMATIC_POSITION) - and is intended only for
+#   testing on an idle machine. Requires firmware built with cubic/quintic
+#   support. The default is False.
+```
+
+### [helix_status]
+
+Enables the `HELIX_STATUS` command, a machine-wide introspection report
+of which HELIX capabilities each micro-controller's firmware was built
+with and which host subsystems are loaded (see the
+[command reference](G-Codes.md#helix_status)). The command is also made
+available automatically whenever the trajectory motion subsystem is
+configured, so this section is only needed to expose it on a machine that
+has no other HELIX section. It has no options.
+
+```
+[helix_status]
+```
+
 ## Common kinematic settings
 
 ### [printer]
