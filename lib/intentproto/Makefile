@@ -25,7 +25,15 @@ TESTS := test_proto test_host test_hmac test_bch test_datagram \
 	test_negotiate test_extdesc test_wide test_bootcore test_session_sec \
 	test_can_transport test_sha512 test_ed25519
 
-.PHONY: all test capi embedded dict clean
+.PHONY: all test capi embedded dict clean bootsim
+
+# Desktop bootloader simulator for end-to-end flasher tests (needs zlib).
+bootsim: $(BUILD)/bootsim
+$(BUILD)/bootsim: tools/bootsim.cpp $(SRCS) $(HDRS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) src/proto.cpp src/dict.cpp \
+		src/datagram.cpp src/bch.cpp src/hmac.cpp src/sha512.cpp \
+		src/ed25519.cpp boot/bootcore.cpp \
+		tools/bootsim.cpp -lz -o $@
 
 all: test
 
