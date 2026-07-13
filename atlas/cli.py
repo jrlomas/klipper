@@ -21,7 +21,7 @@ from .daemon import AtlasDaemon, DEFAULT_HEARTBEAT, DEFAULT_MAX_EVENTS
 from .assistant import AssistantRuntime
 from .ipc import request as assistant_request
 from .kb import assemble_bundle, render_issue
-from .memory import MachineMemory
+from .memory import MachineMemoryStore
 from .model import LlamaCppBackend
 from .view import LiveTail, TimelineFilter, render
 
@@ -117,6 +117,8 @@ def _cmd_bundle(args) -> int:
 def _cmd_serve(args) -> int:
     state_dir = os.path.dirname(os.path.abspath(
         os.path.expanduser(args.state_file)))
+    memory_store = MachineMemoryStore(
+        args.memory_file or os.path.join(state_dir, "memory.json"))
     assistant = None
     if args.model:
         model_path = os.path.abspath(os.path.expanduser(args.model))
@@ -128,15 +130,9 @@ def _cmd_serve(args) -> int:
         if not backend.available():
             raise RuntimeError(
                 "configured model or llama.cpp runtime is unavailable")
-        memory = None
-        if args.memory_file:
-            memory_path = os.path.abspath(os.path.expanduser(
-                args.memory_file))
-            if os.path.exists(memory_path):
-                with open(memory_path, encoding="utf-8") as handle:
-                    memory = MachineMemory.from_json(handle.read())
         assistant = AssistantRuntime(
-            backend, memory=memory, config_path=args.printer_config)
+            backend, memory=memory_store.memory,
+            config_path=args.printer_config)
     daemon = AtlasDaemon(
         log_path=args.logfile, state_path=args.state_file,
         catalog_path=args.catalog, interval=args.interval,
@@ -147,7 +143,8 @@ def _cmd_serve(args) -> int:
         baseline_path=args.baseline_file or os.path.join(
             state_dir, "baselines.json"), assistant=assistant,
         assistant_socket=(args.assistant_socket or os.path.join(
-            state_dir, "assistant.sock")) if assistant else None)
+            state_dir, "assistant.sock")) if assistant else None,
+        memory_store=memory_store)
     if args.once:
         state = daemon.poll_once(force=True)
         print(json.dumps(state, indent=2, sort_keys=True))

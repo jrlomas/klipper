@@ -3,9 +3,9 @@
 # The model interprets grounded by retrieval over the failure-pattern
 # catalog and the machine's own memory, so answers are about *this*
 # machine, not the internet's average printer. The index format and the
-# retrieval are deterministic and testable; the StubEmbedder (stable
-# token hashing, no weights) stands in for a real embedding model until
-# Milestone C, so the whole pipeline is exercised on CPU today.
+# retrieval are deterministic and testable. TokenHashEmbedder uses stable
+# token hashing without separate weights: a small, auditable retriever that
+# remains available on the base tier while the LLM interprets its results.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -26,15 +26,15 @@ class RagDocument:
     metadata: dict = field(default_factory=dict)
 
 
-class StubEmbedder:
+class TokenHashEmbedder:
     """Deterministic bag-of-hashed-tokens embedder (no weights).
 
     Stable across processes (hashlib, not the salted builtin hash), so an
-    index built now retrieves identically later. A real sentence embedder
-    swaps in behind the same embed() contract at Milestone C.
+    index built now retrieves identically later and remains available when
+    the intelligence-tier accelerator is absent.
     """
 
-    name = "stub-hash"
+    name = "token-hash-v1"
 
     def __init__(self, dim: int = 256):
         self.dim = dim
@@ -62,7 +62,7 @@ class RagIndex:
     """An embedded document store with top-k cosine retrieval."""
 
     def __init__(self, embedder=None):
-        self.embedder = embedder or StubEmbedder()
+        self.embedder = embedder or TokenHashEmbedder()
         self.docs: list = []
         self._vectors: list = []
 
@@ -106,4 +106,22 @@ def kb_documents(patterns=None, memory=None) -> list:
                 source="memory",
                 text="past incident: %s" % d.get("summary", ""),
                 metadata={"case_hash": d.get("case_hash", "")}))
+        for name, baseline in sorted(memory.baselines.items()):
+            docs.append(RagDocument(
+                id="baseline:%s" % name, source="memory",
+                text="machine baseline %s: %s" % (
+                    name, _baseline_text(baseline))))
     return docs
+
+
+def _baseline_text(value):
+    if isinstance(value, dict):
+        return "; ".join("%s=%s" % (key, _baseline_text(item))
+                         for key, item in sorted(value.items()))
+    if isinstance(value, list):
+        return ", ".join(_baseline_text(item) for item in value)
+    return str(value)
+
+
+# Compatibility for callers written while the contract was stub-first.
+StubEmbedder = TokenHashEmbedder

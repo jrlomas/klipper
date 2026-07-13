@@ -76,6 +76,7 @@ class AssistantRuntime:
             "model": (os.path.basename(self.backend.model_path)
                       if getattr(self.backend, "model_path", None) else ""),
             "grounding_documents": len(self.rag),
+            "machine_memory": self.memory is not None,
             "request_count": self._request_count,
             "busy": self._lock.locked(),
             "last_completed_at": self._last_completed_at,

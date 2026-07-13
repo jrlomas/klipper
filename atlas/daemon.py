@@ -115,7 +115,8 @@ class AtlasDaemon:
                  interval: float = 0.5, max_events: int = DEFAULT_MAX_EVENTS,
                  heartbeat: float = DEFAULT_HEARTBEAT, patterns=None,
                  wall_clock=None, telemetry_paths=None, history_path=None,
-                 baseline_path=None, assistant=None, assistant_socket=None):
+                 baseline_path=None, assistant=None, assistant_socket=None,
+                 memory_store=None):
         if interval <= 0:
             raise ValueError("interval must be positive")
         if heartbeat <= 0:
@@ -132,6 +133,7 @@ class AtlasDaemon:
         self.history = (IncidentStore(history_path, wall_clock=wall_clock or time.time)
                         if history_path else None)
         self.monitor = BaselineMonitor(baseline_path) if baseline_path else None
+        self.memory_store = memory_store
         self.assistant = assistant
         self.assistant_socket = (os.path.abspath(os.path.expanduser(
             assistant_socket)) if assistant_socket else None)
@@ -148,6 +150,7 @@ class AtlasDaemon:
         self._generation = 0
         self._catalog_error = ""
         self._source_error = ""
+        self._memory_error = ""
         self._last_rotations = 0
         self._last_source_available = False
         if not self._fixed_patterns:
@@ -187,7 +190,8 @@ class AtlasDaemon:
 
     def _error_text(self) -> str:
         return "; ".join(error for error in
-                         (self._catalog_error, self._source_error) if error)
+                         (self._catalog_error, self._source_error,
+                          self._memory_error) if error)
 
     def _service_status(self) -> dict:
         available = (self.follower.source_available
@@ -273,9 +277,24 @@ class AtlasDaemon:
         self._last_source_available = source_available
         self._generation += 1
         diagnosis = Matcher(self.patterns).diagnose(self.follower.timeline)
-        if (self.history is not None
-                and any(event.sev_rank() >= 4 for event in new_events)):
+        incident = any(event.sev_rank() >= 4 for event in new_events)
+        if self.history is not None and incident:
             self.history.record(diagnosis)
+        if self.memory_store is not None and new_events:
+            try:
+                memory_changed = False
+                if incident:
+                    memory_changed = self.memory_store.record_diagnosis(
+                        diagnosis)
+                if self.monitor is not None:
+                    memory_changed = self.memory_store.sync_baselines(
+                        self.monitor.stats) or memory_changed
+                if memory_changed and self.assistant is not None:
+                    self.assistant.update_grounding(
+                        self.patterns, self.memory_store.memory)
+                self._memory_error = ""
+            except Exception as exc:
+                self._memory_error = "machine memory update failed: %s" % exc
         incidents = self.history.recent() if self.history else []
         monitor_state = {
             "enabled": self.monitor is not None,

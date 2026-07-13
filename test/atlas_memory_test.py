@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # Standalone unit test for the Atlas memory + RAG formats (FD-0002 §6,§7;
-# Milestone C prep). Checks the per-machine memory file round-trips
+# Milestone C). Checks the per-machine memory file round-trips
 # losslessly and journals applied changes, and that the RAG index (with a
-# deterministic stub embedder) retrieves the relevant grounding document.
+# deterministic token-hash retriever) retrieves relevant grounding.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import os
+import stat
 import sys
+import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
 
 from atlas.apply import ApplyPipeline, Proposal  # noqa: E402
 from atlas.diagnosis import load_patterns  # noqa: E402
-from atlas.memory import (MachineMemory, RagIndex, StubEmbedder,  # noqa
-                          kb_documents)
+from atlas.memory import (MachineMemory, MachineMemoryStore, RagIndex,  # noqa
+                          TokenHashEmbedder, kb_documents)
 
 CFG = ("[printer]\nmax_velocity: 300\n\n"
        "[gcode_macro X]\ndescription: hi\n")
@@ -56,12 +59,35 @@ def test_add_quirk_is_idempotent():
     print("PASS: duplicate quirks are not double-recorded")
 
 
-def test_stub_embedder_is_deterministic():
-    e = StubEmbedder()
+def test_private_atomic_memory_store():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "memory.json")
+        store = MachineMemoryStore(path, wall_clock=lambda: 100.0)
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        machine_id = store.memory.machine_id
+        diagnosis = SimpleNamespace(
+            best=SimpleNamespace(pattern_id="timer", cause="missed deadline"),
+            case=None)
+        assert store.record_diagnosis(diagnosis) is True
+        assert store.record_diagnosis(diagnosis) is False
+        assert store.sync_baselines({"mcu.error_us": {
+            "count": 5, "mean": 2.0, "m2": 0.5}}) is True
+        reopened = MachineMemoryStore(path)
+        assert reopened.memory.machine_id == machine_id
+        assert len(reopened.memory.diagnoses) == 1
+        assert reopened.memory.baselines["monitor"][
+            "mcu.error_us"]["count"] == 5
+        assert not [name for name in os.listdir(tmp) if name.endswith(".tmp")]
+    print("PASS: daemon memory is private, atomic, durable, and deduplicated")
+
+
+def test_token_hash_embedder_is_deterministic():
+    e = TokenHashEmbedder()
     v1, v2 = e.embed("timer too close"), e.embed("timer too close")
     assert v1 == v2                                # stable across calls
     assert abs(sum(x * x for x in v1) - 1.0) < 1e-9  # L2-normalized
-    print("PASS: stub embedder is deterministic and normalized")
+    assert e.name == "token-hash-v1"
+    print("PASS: token-hash retriever is deterministic and normalized")
 
 
 def test_rag_retrieves_relevant_pattern():
@@ -88,6 +114,10 @@ def test_rag_grounds_on_machine_memory():
     index = RagIndex().build(kb_documents(memory=m))
     hits = index.query("flaky cable problems", k=1)
     assert hits and hits[0][0].source == "memory"
+    m.set_baseline("monitor", {"mcu.error_us": {"mean": 22.0}})
+    index = RagIndex().build(kb_documents(memory=m))
+    hits = index.query("machine baseline error_us", k=2)
+    assert any(hit.id == "baseline:monitor" for hit, _ in hits)
     print("PASS: RAG grounds on the machine's own memory (quirks)")
 
 
@@ -113,7 +143,8 @@ def main():
     test_memory_round_trip()
     test_memory_records_applied_change()
     test_add_quirk_is_idempotent()
-    test_stub_embedder_is_deterministic()
+    test_private_atomic_memory_store()
+    test_token_hash_embedder_is_deterministic()
     test_rag_retrieves_relevant_pattern()
     test_rag_grounds_on_machine_memory()
     test_rag_query_orders_by_relevance()

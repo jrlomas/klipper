@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 from atlas.daemon import AtlasDaemon  # noqa: E402
 from atlas.history import IncidentStore  # noqa: E402
 from atlas.monitor import BaselineMonitor  # noqa: E402
+from atlas.memory import MachineMemoryStore  # noqa: E402
 from atlas.observe import StructuredCollector, StructuredTail  # noqa: E402
 from atlas.timeline import Timeline  # noqa: E402
 
@@ -128,13 +129,18 @@ def test_daemon_unifies_structured_monitor_and_history():
             log, os.path.join(tmp, "status.json"), tmp, patterns=[],
             telemetry_paths=[telemetry],
             history_path=os.path.join(tmp, "incidents.sqlite3"),
-            baseline_path=os.path.join(tmp, "baselines.json"))
+            baseline_path=os.path.join(tmp, "baselines.json"),
+            memory_store=MachineMemoryStore(
+                os.path.join(tmp, "memory.json")))
         state = daemon.poll_once()
         kinds = {event["kind"] for event in state["timeline"]["events"]}
         assert {"link_stats", "trace", "anomaly"}.issubset(kinds)
         assert state["monitor"]["alerts"]
         assert state["service"]["incident_count"] == 1
         assert state["incidents"][0]["incident_key"].startswith("case:")
+        memory = MachineMemoryStore(os.path.join(tmp, "memory.json")).memory
+        assert memory.diagnoses
+        assert memory.baselines["monitor"]["mcu.crc_errors"]["count"] == 5
         daemon.close()
         print("PASS: daemon publishes unified telemetry, drift, and durable "
               "incidents")
