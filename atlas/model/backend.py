@@ -32,8 +32,8 @@ class ModelBackend:
     def available(self) -> bool:                     # pragma: no cover
         raise NotImplementedError
 
-    def generate(self, prompt, schema=None, tools=None,
-                 max_tokens=512) -> Completion:      # pragma: no cover
+    def generate(self, prompt, schema=None, tools=None, max_tokens=512,
+                 system=None) -> Completion:         # pragma: no cover
         raise NotImplementedError
 
 
@@ -57,10 +57,10 @@ class StubBackend(ModelBackend):
     def available(self) -> bool:
         return True
 
-    def generate(self, prompt, schema=None, tools=None,
-                 max_tokens=512) -> Completion:
+    def generate(self, prompt, schema=None, tools=None, max_tokens=512,
+                 system=None) -> Completion:
         self.calls.append({"prompt": prompt, "schema": schema,
-                           "tools": tools})
+                           "tools": tools, "system": system})
         text = self.default
         for needle, resp in self.responses.items():
             if needle in prompt:
@@ -82,14 +82,19 @@ class LlamaCppBackend(ModelBackend):
 
     def __init__(self, model_path=None, accelerator="cpu",
                  profile: DeployProfile = DEPLOY, params_b=4.0,
-                 quant="Q4_K_M"):
+                 quant="Q4_K_M", n_ctx=8192, system=None, llama=None):
         self.model_path = model_path
         self.accelerator = accelerator
         self.profile = profile
         self.params_b = params_b
         self.quant = quant
+        self.n_ctx = n_ctx
+        self.system = system
+        self._llama = llama            # injectable for tests
 
     def available(self) -> bool:
+        if self._llama is not None:
+            return True
         try:
             import llama_cpp  # noqa: F401
             return True
@@ -101,11 +106,54 @@ class LlamaCppBackend(ModelBackend):
         return self.profile.check(self.profile.model, self.params_b,
                                   self.quant)
 
-    def generate(self, prompt, schema=None, tools=None,
-                 max_tokens=512) -> Completion:      # pragma: no cover
-        raise NotImplementedError(
-            "llama.cpp inference lands in Milestone C; the interface and "
-            "budget guard are in place now.")
+    def _ensure_loaded(self):
+        if self._llama is None:
+            if not self.model_path:
+                raise RuntimeError("LlamaCppBackend needs a model_path")
+            from llama_cpp import Llama
+            # n_gpu_layers=-1 offloads to CUDA/ROCm when the build supports
+            # it; a CPU build ignores it. Kept behind the one interface.
+            n_gpu = -1 if self.accelerator in ("cuda", "rocm") else 0
+            self._llama = Llama(model_path=self.model_path, n_ctx=self.n_ctx,
+                                n_gpu_layers=n_gpu, verbose=False)
+        return self._llama
+
+    def generate(self, prompt, schema=None, tools=None, max_tokens=512,
+                 system=None) -> Completion:
+        """Run a chat completion, mapping schema->JSON grammar and
+        tools->tool-calling. Returns a normalized Completion.
+        """
+        import json
+
+        llama = self._ensure_loaded()
+        messages = [{"role": "system",
+                     "content": system or self.system
+                     or "You are Atlas, a local 3D-printer companion."},
+                    {"role": "user", "content": prompt}]
+        kwargs = {"messages": messages, "max_tokens": max_tokens,
+                  "temperature": 0.2}
+        if schema is not None:
+            kwargs["response_format"] = {"type": "json_object",
+                                         "schema": schema}
+        if tools is not None:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        out = llama.create_chat_completion(**kwargs)
+        msg = out["choices"][0]["message"]
+        text = msg.get("content") or ""
+        calls = []
+        for tc in (msg.get("tool_calls") or []):
+            fn = tc.get("function", {})
+            args = fn.get("arguments", "{}")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {"_raw": args}
+            calls.append({"name": fn.get("name"), "arguments": args})
+        return Completion(text=text, tool_calls=calls,
+                          backend="%s:%s" % (self.name, self.accelerator))
 
 
 class HailoBackend(ModelBackend):

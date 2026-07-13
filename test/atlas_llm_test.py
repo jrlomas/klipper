@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+# Standalone unit test for the Atlas LLM integration (FD-0002 §7).
+# Uses an injected fake llama object and a stub backend so the mapping
+# (schema->JSON grammar, tools->tool-calling, tool-call parsing) and the
+# model->apply safety flow are fully tested with no weights. A separate
+# real-model smoke test (scripts/atlas_llm_smoke.py) validates end-to-end
+# inference in a venv.
+#
+# Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                ".."))
+
+from atlas.apply import ApplyPipeline, RiskTier  # noqa: E402
+from atlas.decode import decode_klippy_log  # noqa: E402
+from atlas.model import (LlamaCppBackend, StubBackend,  # noqa: E402
+                         interpret_incident, propose_config_edit, prompts)
+
+CFG = ("[printer]\nmax_velocity: 300\n\n"
+       "[extruder]\nmax_temp: 250\n\n"
+       "[gcode_macro X]\ndescription: hi\n")
+
+
+class FakeLlama:
+    """Minimal stand-in for llama_cpp.Llama (records kwargs)."""
+
+    def __init__(self, response):
+        self.response = response
+        self.last_kwargs = None
+
+    def create_chat_completion(self, **kwargs):
+        self.last_kwargs = kwargs
+        return self.response
+
+
+def _msg(content="", tool_calls=None):
+    return {"choices": [{"message": {"content": content,
+                                     "tool_calls": tool_calls or []}}]}
+
+
+def test_generate_extracts_text():
+    fake = FakeLlama(_msg(content="it is a timer fault"))
+    b = LlamaCppBackend(llama=fake, accelerator="rocm")
+    out = b.generate("why?")
+    assert out.text == "it is a timer fault"
+    assert out.backend == "llama.cpp:rocm"
+    # system + user messages were sent
+    roles = [m["role"] for m in fake.last_kwargs["messages"]]
+    assert roles == ["system", "user"]
+    print("PASS: generate() extracts assistant text and sends system+user")
+
+
+def test_generate_passes_schema_and_tools():
+    fake = FakeLlama(_msg(content="{}"))
+    b = LlamaCppBackend(llama=fake)
+    b.generate("x", schema={"type": "object"},
+               tools=[prompts.TOOL_PROPOSE_CONFIG_EDIT])
+    kw = fake.last_kwargs
+    assert kw["response_format"]["type"] == "json_object"
+    assert kw["response_format"]["schema"] == {"type": "object"}
+    assert kw["tools"] and kw["tool_choice"] == "auto"
+    print("PASS: schema maps to JSON grammar; tools map to tool-calling")
+
+
+def test_generate_parses_tool_calls():
+    args = {"rationale": "lower it", "after_config": CFG}
+    fake = FakeLlama(_msg(tool_calls=[{"function": {
+        "name": "propose_config_edit", "arguments": json.dumps(args)}}]))
+    b = LlamaCppBackend(llama=fake)
+    out = b.generate("edit")
+    assert len(out.tool_calls) == 1
+    call = out.tool_calls[0]
+    assert call["name"] == "propose_config_edit"
+    assert call["arguments"]["rationale"] == "lower it"   # JSON-decoded
+    print("PASS: tool calls parsed with JSON-decoded arguments")
+
+
+def test_generate_tolerates_bad_tool_json():
+    fake = FakeLlama(_msg(tool_calls=[{"function": {
+        "name": "x", "arguments": "{not json"}}]))
+    out = LlamaCppBackend(llama=fake).generate("edit")
+    assert out.tool_calls[0]["arguments"]["_raw"] == "{not json"
+    print("PASS: malformed tool-call JSON is captured, not crashed on")
+
+
+# -- the model -> apply safety flow (with a stub backend) ----------------
+
+def _editor_backend(after_config):
+    return StubBackend(tool_calls=[{
+        "name": "propose_config_edit",
+        "arguments": {"rationale": "as requested", "after_config": after_config}
+    }])
+
+
+def test_propose_edit_returns_proposal():
+    after = CFG.replace("max_velocity: 300", "max_velocity: 250")
+    proposal = propose_config_edit(_editor_backend(after),
+                                   "lower max_velocity", CFG)
+    assert proposal is not None
+    assert proposal.before == CFG and proposal.after == after
+    assert proposal.source == "model"
+    print("PASS: a model tool-call becomes an apply Proposal")
+
+
+def test_propose_edit_none_when_no_tool_call():
+    # A model that just chats (no tool call) yields no proposal.
+    proposal = propose_config_edit(StubBackend(default="I think..."),
+                                   "do something", CFG)
+    assert proposal is None
+    print("PASS: no tool call -> no proposal (never guesses)")
+
+
+def test_model_edit_flows_through_safety_gate():
+    # A model-proposed SAFETY edit must still require confirmation — the
+    # gate does not trust the model.
+    hot = CFG.replace("max_temp: 250", "max_temp: 300")
+    proposal = propose_config_edit(_editor_backend(hot), "raise temp", CFG)
+    res = ApplyPipeline().process(proposal)
+    assert res.tier == RiskTier.SAFETY
+    assert res.needs_confirmation and not res.applied
+    print("PASS: a model-proposed safety edit is gated, not auto-applied")
+
+
+def test_model_cosmetic_edit_auto_applies():
+    desc = CFG.replace("description: hi", "description: hello")
+    proposal = propose_config_edit(_editor_backend(desc), "reword", CFG)
+    res = ApplyPipeline().process(proposal)
+    assert res.tier == RiskTier.COSMETIC and res.applied
+    print("PASS: a model-proposed cosmetic edit auto-applies")
+
+
+def test_interpret_incident_text_and_structured():
+    tl = decode_klippy_log(
+        "Start printer at X (100.0 5.0)\n"
+        "MCU 'mcu' shutdown: Timer too close\n")
+    # prose
+    text = interpret_incident(StubBackend(default="host overload"), tl)
+    assert text == "host overload"
+    # structured
+    payload = json.dumps({"explanation": "e", "likely_cause": "host",
+                          "suggested_fix": "reduce load", "confidence": 0.7})
+    got = interpret_incident(StubBackend(default=payload), tl, structured=True)
+    assert got["likely_cause"] == "host" and got["confidence"] == 0.7
+    print("PASS: interpret_incident returns prose and structured JSON")
+
+
+def main():
+    test_generate_extracts_text()
+    test_generate_passes_schema_and_tools()
+    test_generate_parses_tool_calls()
+    test_generate_tolerates_bad_tool_json()
+    test_propose_edit_returns_proposal()
+    test_propose_edit_none_when_no_tool_call()
+    test_model_edit_flows_through_safety_gate()
+    test_model_cosmetic_edit_auto_applies()
+    test_interpret_incident_text_and_structured()
+    print("ALL PASS")
+
+
+if __name__ == "__main__":
+    main()
