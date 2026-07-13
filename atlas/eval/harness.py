@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from ..apply import RiskTier, classify_changeset, diff_configs
 from ..decode import decode_klippy_log
 from ..diagnosis import Matcher
-from ..model import DEPLOY, StubBackend
+from ..model import DEPLOY, StubBackend, propose_config_edit
 
 
 @dataclass
@@ -50,9 +50,9 @@ class EvalReport:
     results: list = field(default_factory=list)
     backend: str = ""
     profile: str = ""
-    # §8: model/accelerator results are "authored on GPU, validated on
-    # Hailo" — the split must never blur.
-    provenance: str = "authored on GPU, validated on Hailo"
+    # Set by EvalHarness from the backend actually exercised. Never label a
+    # CPU/stub run as GPU-authored or Hailo-validated.
+    provenance: str = "accelerator not recorded"
 
     def by_kind(self, kind) -> list:
         return [r for r in self.results if r.kind == kind]
@@ -92,7 +92,8 @@ class EvalHarness:
 
     def run(self, cases) -> EvalReport:
         report = EvalReport(backend=self.backend.name,
-                            profile=self.profile.name)
+                            profile=self.profile.name,
+                            provenance=_provenance(self.backend))
         for case in cases:
             report.results.append(self._run_one(case))
         return report
@@ -118,13 +119,16 @@ class EvalHarness:
                           "expected %s, got %s" % (case.expect, got))
 
     def _config_edit(self, case) -> CaseResult:
-        # The model drafts the edited config; correctness = its change set
-        # equals the golden change set. With a stub returning the golden,
-        # this exercises the draft->diff->compare plumbing (tier 2); with a
-        # real model it measures edit quality (tier 3).
-        completion = self.backend.generate(
-            prompt="%s\n\n%s" % (case.request, case.before))
-        produced = completion.text
+        # Exercise the production tool contract, not raw prose. A model that
+        # declines or emits malformed output gets an honest miss; a valid
+        # proposal is still compared as a semantic change set so harmless
+        # formatting differences do not affect the score.
+        proposal = propose_config_edit(self.backend, case.request,
+                                       case.before)
+        if proposal is None:
+            return CaseResult(case.id, case.kind, False,
+                              "no valid propose_config_edit tool call")
+        produced = proposal.after
         got = _changeset_key(diff_configs(case.before, produced))
         want = _changeset_key(diff_configs(case.before, case.expect_after))
         ok = got == want
@@ -142,3 +146,14 @@ class EvalHarness:
 
 def _changeset_key(changes) -> set:
     return {(c.section, c.key, c.op, c.new) for c in changes}
+
+
+def _provenance(backend) -> str:
+    accelerator = getattr(backend, "accelerator", "none")
+    if accelerator == "hailo":
+        return "validated on Hailo"
+    if accelerator in ("cuda", "rocm"):
+        return "authored on GPU; Hailo validation pending"
+    if accelerator == "cpu" and backend.name == "llama.cpp":
+        return "workstation CPU preflight; GPU/Hailo validation pending"
+    return "deterministic/stub contract; model accelerator not exercised"

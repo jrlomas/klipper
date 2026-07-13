@@ -102,7 +102,7 @@ def test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools():
             stdout = json.dumps({
                 "name": "propose_config_edit",
                 "arguments": {"after_config": CFG, "rationale": "test"},
-            })
+            }) + " [end of text]"
 
         def runner(argv, **kwargs):
             seen["argv"] = argv
@@ -115,13 +115,54 @@ def test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools():
                                   cli_runner=runner)
         backend._binding_available = lambda: False
         out = backend.generate(
-            "change this private config", tools=[prompts.TOOL_PROPOSE_CONFIG_EDIT])
+            "change this private config",
+            tools=[prompts.TOOL_PROPOSE_CONFIG_EDIT])
         assert out.tool_calls[0]["name"] == "propose_config_edit"
         assert "User:\nchange this private config" in seen["prompt"]
         assert "change this private config" not in seen["argv"]
         assert "Available tools" in seen["prompt"]
+        schema = json.loads(seen["argv"][seen["argv"].index(
+            "--json-schema") + 1])
+        assert schema["properties"]["name"]["enum"] == [
+            "propose_config_edit"]
+        assert schema["properties"]["arguments"]["required"] == [
+            "rationale", "after_config"]
         assert seen["kwargs"]["timeout"] == 300
-    print("PASS: CLI fallback uses private prompt files and normalizes tool JSON")
+    print("PASS: CLI fallback privately prompts and grammar-constrains tools")
+
+
+def test_qwen_cli_uses_native_non_thinking_framing():
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = os.path.join(tmp, "llama-completion")
+        model = os.path.join(tmp, "Qwen3-4B-Q4_K_M.gguf")
+        open(cli, "w").close()
+        open(model, "w").close()
+        os.chmod(cli, 0o700)
+        seen = {}
+
+        class Result:
+            stdout = "answer"
+
+        def runner(argv, **kwargs):
+            prompt_file = argv[argv.index("--file") + 1]
+            seen["prompt"] = open(prompt_file).read()
+            return Result()
+
+        backend = LlamaCppBackend(model_path=model, cli_path=cli,
+                                  cli_runner=runner)
+        backend._binding_available = lambda: False
+        backend.generate("diagnose")
+        assert "<|im_start|>system" in seen["prompt"]
+        assert "diagnose\n/no_think<|im_end|>" in seen["prompt"]
+    print("PASS: pinned Qwen CLI uses native bounded-latency framing")
+
+
+def test_generate_strips_reasoning_wrapper():
+    fake = FakeLlama(_msg(content=(
+        "<think>\nprivate reasoning\n</think>\nvisible answer")))
+    out = LlamaCppBackend(llama=fake).generate("diagnose")
+    assert out.text == "visible answer"
+    print("PASS: reasoning wrappers are not exposed as Atlas output")
 
 
 # -- the model -> apply safety flow (with a stub backend) ----------------
@@ -191,6 +232,8 @@ def main():
     test_generate_parses_tool_calls()
     test_generate_tolerates_bad_tool_json()
     test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools()
+    test_qwen_cli_uses_native_non_thinking_framing()
+    test_generate_strips_reasoning_wrapper()
     test_propose_edit_returns_proposal()
     test_propose_edit_none_when_no_tool_call()
     test_model_edit_flows_through_safety_gate()

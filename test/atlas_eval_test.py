@@ -17,14 +17,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
 from atlas.apply import RiskTier  # noqa: E402
 from atlas.diagnosis import load_patterns  # noqa: E402
 from atlas.eval import EvalHarness, SafetyCase, SAMPLE_CASES  # noqa: E402
-from atlas.eval.samples import SAMPLE_PATTERNS, _CFG, _CFG_ACCEL  # noqa: E402
-from atlas.model import StubBackend  # noqa: E402
+from atlas.eval.samples import (SAMPLE_PATTERNS, _CFG, _CFG_ACCEL,  # noqa: E402
+                                _CFG_DESC, _CFG_HOT, _CFG_VELOCITY)
+from atlas.model import Completion, StubBackend  # noqa: E402
 
 
 def _good_backend():
-    # A stub that, for the sample edit request, returns the golden config.
-    return StubBackend(responses={"lower max_accel": _CFG_ACCEL},
-                       default="")
+    # The eval must exercise the same structured tool contract as production.
+    class GoldenBackend(StubBackend):
+        def generate(self, prompt, **kwargs):
+            goldens = {
+                "lower max_accel": _CFG_ACCEL,
+                "lower max_velocity": _CFG_VELOCITY,
+                "START macro description": _CFG_DESC,
+                "extruder max_temp": _CFG_HOT,
+            }
+            after = next(value for needle, value in goldens.items()
+                         if needle in prompt)
+            return Completion(text="", tool_calls=[{
+                "name": "propose_config_edit",
+                "arguments": {"after_config": after,
+                              "rationale": "test"},
+            }], backend=self.name, stub=True)
+    return GoldenBackend()
 
 
 def test_safety_metric_perfect_deterministically():
@@ -66,7 +81,8 @@ def test_config_edit_wrong_with_bad_model():
     harness = EvalHarness(backend=StubBackend(default="[printer]\n"))
     report = harness.run([c for c in SAMPLE_CASES if c.kind == "config_edit"])
     assert report.accuracy("config_edit") == 0.0
-    print("PASS: config-edit correctness 0%% when the model is wrong")
+    assert "no valid" in report.results[0].detail
+    print("PASS: missing structured proposal scores 0%%, never guesses")
 
 
 def test_full_report_and_provenance():
@@ -77,7 +93,7 @@ def test_full_report_and_provenance():
     assert set(m) == {"diagnosis", "config_edit", "safety"}
     assert report.overall() == 1.0
     assert report.profile == "deploy"          # reported against deploy
-    assert "Hailo" in report.provenance        # §8 authored/validated split
+    assert "not exercised" in report.provenance
     assert "overall" in report.summary()
     print("PASS: full report covers all three metrics, tagged to deploy")
 

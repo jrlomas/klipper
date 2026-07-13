@@ -21,6 +21,17 @@ from dataclasses import dataclass, field
 from .profile import DEPLOY, DeployProfile
 
 
+def _clean_model_text(text):
+    """Remove transport/reasoning wrappers from user-visible output."""
+    text = (text or "").strip()
+    marker = "[end of text]"
+    if text.endswith(marker):
+        text = text[:-len(marker)].rstrip()
+    if text.startswith("<think>") and "</think>" in text:
+        text = text.split("</think>", 1)[1].lstrip()
+    return text
+
+
 @dataclass
 class Completion:
     text: str
@@ -172,7 +183,7 @@ class LlamaCppBackend(ModelBackend):
 
         out = llama.create_chat_completion(**kwargs)
         msg = out["choices"][0]["message"]
-        text = msg.get("content") or ""
+        text = _clean_model_text(msg.get("content"))
         calls = []
         for tc in (msg.get("tool_calls") or []):
             fn = tc.get("function", {})
@@ -195,14 +206,48 @@ class LlamaCppBackend(ModelBackend):
         system_text = (system or self.system
                        or "You are Atlas, a local 3D-printer companion.")
         tool_mode = tools is not None
+        effective_schema = schema
         if tool_mode:
+            tool_names = [t.get("function", {}).get("name") for t in tools]
+            tool_names = [name for name in tool_names if name]
             system_text += (
                 "\nAvailable tools (JSON):\n%s\nTo call a tool, output only "
                 "a JSON object with keys name and arguments. Do not claim "
                 "an action occurred unless you emit that object."
                 % json.dumps(tools, sort_keys=True))
-        combined_prompt = "%s\n\nUser:\n%s\n\nAssistant:\n" % (
-            system_text, prompt)
+            # llama-completion has no native tool-call transport. Constrain
+            # its output to the same normalized envelope used by the Python
+            # binding so malformed prose cannot masquerade as a tool call.
+            effective_schema = {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": tool_names},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": False,
+            }
+            if len(tools) == 1:
+                parameters = tools[0].get("function", {}).get("parameters")
+                if isinstance(parameters, dict):
+                    effective_schema["properties"]["arguments"] = parameters
+        if "qwen" in os.path.basename(self.model_path).lower():
+            # Qwen2/3's native ChatML framing materially improves instruction
+            # and JSON adherence on the non-chat llama-completion transport.
+            # Atlas uses the non-thinking mode for bounded local latency. For
+            # grammar-constrained output, prefill Qwen's empty reasoning block
+            # so the first generated token can satisfy the JSON grammar.
+            user_text = prompt + "\n/no_think"
+            assistant_prefix = ("<think>\n\n</think>\n\n"
+                                if effective_schema else "")
+            combined_prompt = (
+                "<|im_start|>system\n%s<|im_end|>\n"
+                "<|im_start|>user\n%s<|im_end|>\n"
+                "<|im_start|>assistant\n%s" % (system_text, user_text,
+                                                assistant_prefix))
+        else:
+            combined_prompt = "%s\n\nUser:\n%s\n\nAssistant:\n" % (
+                system_text, prompt)
         with tempfile.TemporaryDirectory(prefix="atlas-llama-") as tmp:
             prompt_path = os.path.join(tmp, "prompt.txt")
             with open(prompt_path, "w", encoding="utf-8") as handle:
@@ -216,13 +261,13 @@ class LlamaCppBackend(ModelBackend):
             ]
             if self.accelerator == "cpu":
                 argv.extend(["--device", "none", "--gpu-layers", "0"])
-            if schema is not None:
-                argv.extend(["--json-schema", json.dumps(schema,
-                                                          sort_keys=True)])
+            if effective_schema is not None:
+                argv.extend(["--json-schema", json.dumps(
+                    effective_schema, sort_keys=True)])
             result = self.cli_runner(
                 argv, check=True, capture_output=True, text=True,
                 timeout=self.timeout)
-        text = result.stdout.strip()
+        text = _clean_model_text(result.stdout)
         calls = []
         if tool_mode:
             try:
