@@ -22,9 +22,10 @@ Status: **Split into the numbered series; the deterministic floor
 (Milestone A) and the first patterns (Milestone B) are realized in the
 [`atlas/`](../../../atlas/) package + [`src/trace.c`](../../../src/trace.c);
 the Milestone C contracts and pinned Qwen3-4B workstation path are
-CPU-validated; Pi 5 + Hailo-10H deployment remains hardware bring-up.
-157 semantic checks across 20 test suites, all green.** Each document's own
-status line records its precise state.
+CPU-validated; Pi 5 + Hailo-10H deployment remains hardware bring-up. The
+complete deterministic Atlas workstation suite is green; its runner, rather
+than this document, is the source of truth for the exact check count.** Each
+document's own status line records its precise state.
 
 ## The documents
 

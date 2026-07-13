@@ -5,8 +5,9 @@ model workstation path are CPU-validated; deploy hardware is pending.** The
 `atlas/` package plus [`src/trace.c`](../../../src/trace.c) implement the
 deterministic floor; the first curated failure patterns are seeded; the
 model-layer contracts (risk classifier, `ModelBackend`, eval harness,
-memory + RAG) exist and pass their suites. **157 semantic checks across 20 test
-suites, all green.** Every open decision this document once flagged is now
+memory + RAG) exist and pass their suites. The complete deterministic Atlas
+workstation suite is green; the test runner is the source of truth for the
+exact check count. Every open decision this document once flagged is now
 settled.
 
 This is the closing document of the FD-0002 series: where the project was

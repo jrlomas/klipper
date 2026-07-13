@@ -66,7 +66,9 @@ result is in [`docs/Atlas_Model_Eval.md`](../docs/Atlas_Model_Eval.md).
 The standard suite mocks the model so it runs without weights.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **157 semantic checks across 20 suites**, all green.
+— the complete deterministic Atlas workstation suite, all green. Exact check
+counts are intentionally left to the test runner so this status line cannot
+go stale when coverage grows.
 
 ## Try it on a real log
 

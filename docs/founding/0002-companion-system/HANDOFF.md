@@ -40,12 +40,15 @@
 
 ## 1. Where things are
 
-**Three repositories**, all developed on branch
-**`claude/software-redesign-impl-finn0j`**:
+**Four repositories** participate in the current checkpoint. Atlas/Helix
+changes are published on **`claude/software-redesign-impl-finn0j`** where a
+repository needed them; the unchanged OpenAMS host-extra repository remains
+on its normal default branch:
 
 | Repo | Role |
 | --- | --- |
 | `jrlomas/klipper` | The HELIX host + MCU firmware + `lib/intentproto` + **all the docs** (this file lives here). The primary repo. |
+| `jrlomas/mainsail` | The Mainsail fork containing the Atlas and OpenAMS panels. Its feature branch is merged with `mainsail-crew/develop` before each checkpoint. |
 | `OpenAMSOrg/klipper_openams` | OAMS host extras (`oams.py`, `oams_manager.py`, `fps.py`, `hdc1080.py`). |
 | `OpenAMSOrg/mainboard-firmware` | OAMS mainboard firmware (STM32F072, 16 KB RAM — the constrained target). |
 

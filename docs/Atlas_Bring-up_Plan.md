@@ -97,8 +97,10 @@ and gates every commit. No hardware, no GPU, no model.
   automated by `test_rendered_issue_drops_planted_free_text_secrets`.
 - [x] **Mainsail Atlas/OpenAMS panels.** *Do:* run the Mainsail unit suite,
   lint, and production build. *Expect:* the panels consume the Moonraker
-  boundary without recomputing Atlas facts. *Pass:* 46/46 unit files, lint,
-  build, and distribution zip all green on 2026-07-13.
+  boundary without recomputing Atlas facts. *Pass:* 46 tests across 7 test
+  files, lint, formatting, build, and distribution zip all green on
+  2026-07-13 after merging `mainsail-crew/develop` at `e9e33c11`; published
+  to `jrlomas/mainsail` at `fe5d30a9`.
 
 ## Phase 1 — Contracts (any CPU, stub model)
 

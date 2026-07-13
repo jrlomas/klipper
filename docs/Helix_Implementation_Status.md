@@ -7,6 +7,21 @@ run in workstation verification, target integration that remains, and tests
 that require boards or a printer. It supersedes the earlier blanket
 "software complete" label; that label was not supported by the tree.
 
+## Checkpoint
+
+The reviewed workstation state is committed and published, not just present
+in a local working tree:
+
+| Repository | Published checkpoint | Notes |
+| --- | --- | --- |
+| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (reviewed implementation base `bf63504e`) | Includes the Helix transport/security review; this document is committed on top as the final status checkpoint. |
+| `jrlomas/mainsail` | `fe5d30a9` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; unit tests, lint, formatting, and production build pass. |
+| `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
+| `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
+
+These hashes identify the software checkpoint before the next Atlas model
+work. They do not convert any unchecked target or hardware item into a pass.
+
 ## Verified on this workstation
 
 * The standalone `intentproto` C/C++ suite, C ABI, CFFI API, extension
@@ -23,7 +38,8 @@ that require boards or a printer. It supersedes the earlier blanket
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
   unsigned-image refusal, and bad-signature rejection.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
-  and OpenAMS panels pass 46 unit tests, lint, and a production build.
+  and OpenAMS panels pass 46 unit tests across 7 test files, lint, formatting,
+  and a production build after merging the current upstream `develop` branch.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.
