@@ -199,6 +199,30 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 #   support. The default is False.
 ```
 
+### [trajectory_pwm]
+
+Defines a sampled PWM/DAC actuator on the trajectory-intention path. Each
+section is named (for example, `[trajectory_pwm laser]`). The host API may
+queue segments directly or use `feed_value_trajectory(print_time, duration,
+value_at)` to preflight and emit a bounded scalar value function; physical
+waveform verification is covered by the HELIX bring-up plan.
+
+```
+[trajectory_pwm laser]
+pin:
+#   PWM-capable output pin. This parameter must be provided.
+#cycle_time: 0.100
+#   Hardware PWM cycle time in seconds.
+#motion_sample_time: 0.001
+#   MCU output sampling cadence and default host scalar sampling interval.
+#full_scale: 1.0
+#   Native trajectory value that maps to 100 percent duty.
+#shutdown_value: 0.0
+#   Fraction of full-scale output used on machine shutdown (0.0 to 1.0).
+#motion_underrun_decel: 5000.0
+#   Native-units-per-second-squared deceleration used on queue underrun.
+```
+
 ### [helix_status]
 
 Enables the `HELIX_STATUS` command, a machine-wide introspection report

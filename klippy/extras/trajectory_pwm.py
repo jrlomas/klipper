@@ -9,24 +9,80 @@
 # the position anchor (trajectory_rebase) and the segment/hold command
 # surface.
 #
-# Scope (this pass): the config object plus full command wiring so a
-# caller can rebase() the anchor and queue segments directly - the
-# natural interface for laser/spindle raster where power tracks a
-# commanded value trajectory.  A host fitter integration (reuse the
-# segfit sampler over a value trajectory, mirroring
-# trajectory_queuing.py's TrajectoryStepper.flush) is the remaining
-# step and is documented as a hook below (feed_value_trajectory).
+# Callers may queue protocol segments directly or feed a scalar value
+# function through feed_value_trajectory().  The latter samples and
+# quantizes the whole trajectory before touching the MCU, corrects each
+# span from the exact fixed-point accumulator, and terminates in a hold.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging
+import logging, math
 
 SUBUNITS = 65536.
 DEFAULT_SAMPLE_TIME = 0.001
 DEFAULT_CYCLE_TIME = 0.100
 DEFAULT_UNDERRUN_DECEL = 5000.  # native units/s^2
+MAX_SEGMENT_DURATION = 1 << 26
+MAX_VALUE_SEGMENTS = 256
+
+
+def _round_away(value):
+    return (int(math.floor(value + .5)) if value >= 0.
+            else -int(math.floor(-value + .5)))
+
+
+def plan_value_trajectory(duration, value_at, frequency,
+                          sample_time=DEFAULT_SAMPLE_TIME):
+    """Preflight a scalar trajectory into quadratic-protocol segments.
+
+    ``value_at`` is called with offsets in seconds from zero through
+    ``duration``. The emitted spans linearly interpolate those samples.
+    Every span starts from the exact Q32.32 accumulator produced by the
+    prior quantized span, so rounding error is corrected instead of
+    accumulating unchecked. No MCU command is sent by this pure helper.
+    """
+    duration = float(duration)
+    frequency = float(frequency)
+    sample_time = float(sample_time)
+    if duration <= 0. or frequency <= 0. or sample_time <= 0.:
+        raise ValueError("duration, frequency, and sample_time must be positive")
+    span_count = max(1, int(math.ceil(duration / sample_time)))
+    span_count = min(span_count, max(1, int(math.floor(duration * frequency))))
+    if span_count > MAX_VALUE_SEGMENTS:
+        raise ValueError("value trajectory exceeds the 256-segment batch limit")
+    offsets = [duration * i / span_count for i in range(span_count + 1)]
+    ticks = [_round_away(offset * frequency) for offset in offsets]
+    values = []
+    for offset in offsets:
+        value = float(value_at(offset))
+        if not math.isfinite(value):
+            raise ValueError("value trajectory returned a non-finite value")
+        pos = _round_away(value * SUBUNITS)
+        if pos < -2147483648 or pos > 2147483647:
+            raise ValueError("value trajectory exceeds the signed wire range")
+        values.append(pos)
+
+    acc = values[0] << 32
+    segments = []
+    for index in range(1, len(values)):
+        span_ticks = ticks[index] - ticks[index - 1]
+        if span_ticks <= 0 or span_ticks >= MAX_SEGMENT_DURATION:
+            raise ValueError("value trajectory produced an invalid segment duration")
+        target = values[index] << 32
+        velocity = _round_away((target - acc) / float(span_ticks << 16))
+        if velocity < -2147483648 or velocity > 2147483647:
+            raise ValueError("value trajectory exceeds the velocity wire range")
+        acc += (velocity * span_ticks) << 16
+        segments.append((span_ticks, velocity, 0))
+    return {
+        'start_pos': values[0],
+        'end_pos': values[-1],
+        'end_acc': acc,
+        'end_error_su': (acc - (values[-1] << 32)) / float(1 << 32),
+        'segments': segments,
+    }
 
 
 def subunit_to_duty(pos_su, scale, max_value):
@@ -72,6 +128,7 @@ class TrajectoryPWM:
         self.queue_cmd = self.hold_cmd = None
         self.rebase_cmd = self.get_pos_cmd = None
         self.need_rebase = True
+        self.last_plan = None
         self.mcu.register_config_callback(self._build_config)
 
     def _build_config(self):
@@ -130,14 +187,32 @@ class TrajectoryPWM:
         params = self.get_pos_cmd.send([self.oid])
         return params['pos'] / SUBUNITS
 
-    def feed_value_trajectory(self, *args, **kwargs):
-        # Fitter hook (remaining step): sample a value trajectory
-        # through the C segfit fitter (as trajectory_queuing.py does for
-        # steppers) and ship the resulting segments via queue_segment().
-        # Left unimplemented in this pass - laser/spindle callers drive
-        # rebase()/queue_segment() directly.
-        raise self.printer.command_error(
-            "trajectory_pwm fitter integration not yet wired")
+    def feed_value_trajectory(self, print_time, duration, value_at,
+                              sample_time=None):
+        """Queue a time-indexed native-unit value function.
+
+        The complete plan is evaluated and range-checked before rebase, so
+        a bad callback cannot leave a partially emitted trajectory. The
+        final hold is intentional: without it, a non-zero terminal slope
+        would correctly look like an underrun to the shared segment core.
+        """
+        if sample_time is None:
+            sample_time = self.sample_time
+        frequency = self.mcu.seconds_to_clock(1.)
+        try:
+            plan = plan_value_trajectory(
+                duration, value_at, frequency, sample_time)
+        except (TypeError, ValueError) as exc:
+            raise self.printer.command_error(
+                "invalid trajectory_pwm value trajectory: %s" % (exc,))
+        self.rebase(print_time, plan['start_pos'] / SUBUNITS)
+        for span_ticks, velocity, accel in plan['segments']:
+            self.queue_segment(span_ticks, velocity, accel)
+        # A one-sample terminal hold drains to an intentional idle state.
+        terminal_ticks = plan['segments'][-1][0]
+        self.hold(terminal_ticks)
+        self.last_plan = plan
+        return plan
 
     def _handle_underrun(self, params):
         self.need_rebase = True
@@ -145,7 +220,14 @@ class TrajectoryPWM:
                         self.name, params['clock'], params['pos'])
 
     def get_status(self, eventtime):
-        return {'name': self.name, 'need_rebase': self.need_rebase}
+        return {
+            'name': self.name,
+            'need_rebase': self.need_rebase,
+            'last_segment_count': (len(self.last_plan['segments'])
+                                   if self.last_plan else 0),
+            'last_endpoint_error_su': (self.last_plan['end_error_su']
+                                       if self.last_plan else None),
+        }
 
 
 def load_config_prefix(config):

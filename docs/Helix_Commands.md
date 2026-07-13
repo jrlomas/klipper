@@ -53,6 +53,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 | Section | Summary |
 | --- | --- |
 | `[trajectory_queuing]` | Owns trajectory actuators; `enable_bezier_move: True` enables `BEZIER_MOVE`. Usually auto-loaded. |
+| `[trajectory_pwm <name>]` | Sampled PWM/DAC trajectory actuator; supports direct segments and a bounded, preflighted scalar value-function feed. |
 | `[failure_recovery]` | Enables pause-and-hold and the recovery commands. |
 | `[helix_status]` | Enables `HELIX_STATUS` (also auto-loaded with the trajectory subsystem). |
 | `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`). |

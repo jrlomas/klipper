@@ -52,6 +52,9 @@ OpenAMS peripheral).
   fitter each flush window, emits segments, keeps the host intention
   twin. `chelper/segfit.c` — the C segment fitter (host side of the
   drift-free integration; **must** stay bit-identical to `trajq.c`).
+* `extras/trajectory_pwm.py` — configures sampled PWM/DAC actuators and
+  preflights scalar value functions into bounded, drift-corrected segment
+  batches with an intentional terminal hold.
 * `extras/failure_recovery.py` — pause-and-hold orchestration and resume
   reconciliation.
 * `extras/timesync.py` — beacon relay and discipline reporting.
