@@ -1,0 +1,63 @@
+# Communication / link failure patterns (Milestone B seed catalog).
+
+- id: comms-timeout-lost
+  version: 1
+  signature:
+    fault_class: [comm_lost]
+  cause: >
+    The host stopped hearing from an MCU (lost communication). Typically a
+    physical link problem — a loose or damaged USB/CAN cable, a bad
+    connector, EMI on the wire, or CAN termination/bitrate wrong — or the
+    board reset/browned out.
+  fix: >
+    Reseat and inspect the USB/CAN cabling and connectors; check CAN bus
+    termination (120 ohm at both ends) and that the bitrate matches; keep
+    signal wires away from steppers and the heated bed harness; confirm
+    the board's power is stable.
+  provenance: seed
+  confidence: 0.6
+
+- id: mcu-missed-scheduling
+  version: 1
+  signature:
+    fault_class: [missed_scheduling]
+  cause: >
+    The MCU missed the scheduled time for the next step block — generally
+    an intermittent communication failure between host and MCU, so a
+    refill arrived too late.
+  fix: >
+    Check the link quality (cabling, USB hub, CAN termination); look for
+    host overload or USB contention; reduce link jitter before raising any
+    timing margins.
+  provenance: seed
+  confidence: 0.55
+
+- id: protocol-version-mismatch
+  version: 1
+  signature:
+    event_kind: [protocol_error]
+  cause: >
+    The host and an MCU disagree on the wire protocol — almost always the
+    firmware on the MCU is a different version than the host software.
+  fix: >
+    Recompile and reflash the MCU firmware from the same source tree as
+    the host, then FIRMWARE_RESTART. Atlas fleet coherence (A7) can derive
+    the protocol hash and offer the signed flash that brings the board
+    into lockstep.
+  provenance: seed
+  confidence: 0.7
+
+- id: flaky-wire-crc-storm
+  version: 1
+  signature:
+    field_min: {section: mcu, key: bytes_retransmit, value: 1000}
+  cause: >
+    A high retransmit count on the link indicates a marginal connection:
+    CRC errors are forcing frequent retransmits. Often a failing cable or
+    connector, missing/incorrect CAN termination, or electrical noise.
+  fix: >
+    Reseat/replace the cable and connectors; verify CAN termination and
+    bitrate; route the bus away from noise sources. Rising retransmits
+    over time is an early warning before an outright comms loss.
+  provenance: seed
+  confidence: 0.5

@@ -1,0 +1,51 @@
+# Motion / timing failure patterns (Milestone B seed catalog).
+
+- id: mcu-timer-too-close
+  version: 1
+  signature:
+    fault_class: [timer_too_close]
+  cause: >
+    The MCU was asked to act on a timer whose deadline had already passed.
+    This usually indicates the host computer is overloaded — other
+    processes consuming CPU, high swap usage, disk errors, overheating, or
+    unstable voltage on the host — not a fault in the printer itself.
+  fix: >
+    Reduce host load: check for runaway processes, swap pressure, SD-card
+    or disk errors, and host thermals/undervoltage. On a Pi, confirm
+    adequate power and cooling. It is a host problem far more often than a
+    firmware one.
+  provenance: seed
+  confidence: 0.6
+
+- id: stepper-commanded-too-fast
+  version: 1
+  signature:
+    fault_class: [rescheduled_in_past, stepper_too_far_past]
+  cause: >
+    The MCU was asked to step faster than it can physically achieve, so a
+    step ended up scheduled in the past. Usually a too-high max_velocity
+    or max_accel for the kinematics, or a rotation_distance/microsteps
+    value that inflates the required step rate.
+  fix: >
+    Lower max_velocity/max_accel, or reduce microsteps; verify
+    rotation_distance and gear_ratio are correct for the hardware. These
+    are safety-tier config changes — Atlas will ask you to confirm them.
+  provenance: seed
+  confidence: 0.6
+
+- id: queue-underrun-helix
+  version: 1
+  signature:
+    summary_regex: "step_underrun"
+  cause: >
+    A HELIX motion queue ran dry mid-motion: the host did not refill the
+    per-actuator segment queue before the horizon elapsed, so the MCU
+    synthesized a controlled deceleration and reported an underrun. Points
+    at host stalls or a link too slow/jittery to keep the queue fed.
+  fix: >
+    Investigate host scheduling latency and link throughput/jitter around
+    the underrun timestamp; a deeper refill watermark or a faster/cleaner
+    link keeps the queue fed. Unlike legacy Klipper this is a resumable
+    pause, not a shutdown — but repeated underruns degrade print quality.
+  provenance: seed
+  confidence: 0.6

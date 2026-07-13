@@ -4,12 +4,19 @@ This directory holds the deterministic failure-pattern catalog — the
 `signature → cause → fix` knowledge Atlas matches against a decoded
 timeline (FD-0002 §4, §6).
 
-**Milestone A ships it empty, on purpose.** The diagnosis harness runs
-and reports with zero patterns here: it matches nothing, says so plainly,
-and *captures the case* as a candidate for the knowledge base. An empty
-catalog is a starting condition, not a blocker — the first curated
-patterns arrive in Milestone B, through the public GitHub-Issues
-lifecycle (FD-0002 §6a).
+**Milestone A shipped it empty, on purpose.** The diagnosis harness runs
+and reports with zero patterns: it matches nothing, says so plainly, and
+*captures the case* as a candidate for the knowledge base. An empty
+catalog is a starting condition, not a blocker.
+
+**Milestone B seeds the first curated patterns** (this catalog):
+`thermal.yaml`, `comms.yaml`, `motion.yaml` — thermal runaway / ADC out
+of range, lost comms / missed scheduling / protocol mismatch / CRC
+storms, and timer-too-close / stepper-too-fast / HELIX queue underrun.
+Each is verified against a representative log in
+`test/atlas_patterns_test.py`. Further patterns arrive through the public
+GitHub-Issues lifecycle (FD-0002 §6a); the only path to the fleet remains
+a reviewed, merged, Ed25519-signed change.
 
 ## Pattern format
 

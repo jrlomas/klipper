@@ -1,0 +1,35 @@
+# Thermal failure patterns (Milestone B seed catalog).
+# Signatures key on the fault_class values the A4 decoder emits.
+
+- id: thermal-runaway-heater
+  version: 1
+  signature:
+    fault_class: [heater_not_heating]
+  cause: >
+    A heater did not reach its target temperature within the expected
+    time. Usually a loose or failed thermistor, a bad heater cartridge or
+    wiring, an under-powered PSU, or a PID that is badly mistuned for the
+    hardware — Klipper's runaway protection then shuts the printer down.
+  fix: >
+    Check the thermistor is seated and its wiring is intact; verify the
+    heater cartridge and its connector; confirm the PSU can supply the
+    heater; then re-run PID_CALIBRATE for that heater. Do not raise
+    max_temp or disable verify_heater to work around it.
+  provenance: seed
+  confidence: 0.6
+
+- id: adc-out-of-range
+  version: 1
+  signature:
+    fault_class: [adc_out_of_range]
+  cause: >
+    A temperature reading went outside the configured min_temp/max_temp
+    window. Most often a thermistor that has come loose or open-circuit
+    (reads as a wild temperature), the wrong sensor_type configured, or a
+    genuinely over/under-temperature heater.
+  fix: >
+    Inspect the thermistor and its connector for a loose or broken
+    contact; confirm sensor_type matches the physical thermistor; check
+    the reading at room temperature is sane before reheating.
+  provenance: seed
+  confidence: 0.6
