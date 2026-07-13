@@ -55,6 +55,8 @@ base vs the intelligence tier.
   daemon-owned assistant behind mode-private IPC, authenticated Moonraker
   endpoints, terminal commands, and the Mainsail companion panel. A live CPU
   run proved grounded Q&A and a safety-classified, non-applied config preview.
+  The daemon also owns the atomic private machine-memory file, mirrors learned
+  baselines/diagnoses into it, and refreshes deterministic retrieval.
   GPU, Hailo, and live-machine apply results remain explicitly unclaimed.
 - **Milestone D — Companion at scale.** Proactive baselines + anomaly
   detection maturing; the users-as-trainers loop running at fleet scale;

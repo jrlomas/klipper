@@ -127,9 +127,12 @@ are required (§8 tier 2).
   config-edit metrics reflect the catalog/model. *Pass:* ALL PASS.
 - [x] **Memory-file & RAG-index formats.** *Do:*
   `python3 test/atlas_memory_test.py`. *Expect:* the per-machine memory
-  file round-trips losslessly and journals applied changes; the RAG index
-  (stub embedder) retrieves the relevant grounding document. *Pass:* ALL
-  PASS. *(Real embedder swaps in behind the same contract at Milestone C.)*
+  file is atomically created mode-private, round-trips losslessly, mirrors
+  baselines/diagnoses, and journals applied changes; the deterministic
+  token-hash RAG index retrieves relevant patterns, quirks, prior incidents,
+  and machine baselines on every compute tier. *Pass:* ALL PASS. A staged
+  daemon run created `memory.json` at `0600` with one diagnosis and its monitor
+  baseline mirrored.
 - [x] **Assistant service contract.** *Do:*
   `python3 test/atlas_assistant_test.py` and
   `python3 test/atlas_moonraker_test.py`. *Expect:* an explicit real backend,

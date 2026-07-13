@@ -96,7 +96,9 @@ engine that drives it is the deterministic floor that exists now.
 
 The daemon supplies the live deterministic rule-evaluation loop, status
 publication, bounded durable incident history, and persistent per-machine
-baselines for link/timesync metrics. The baseline monitor requires a minimum
-healthy sample set, uses deterministic variance thresholds, and does not let an
-outlier teach itself into the baseline. Fleet-scale baseline maturation remains
-Milestone D work.
+baselines for link/timesync metrics. Its monitor keeps a focused atomic
+baseline file and mirrors the same facts into the mode-private machine memory
+that grounds RAG; diagnoses are deduplicated there as well. The baseline
+monitor requires a minimum healthy sample set, uses deterministic variance
+thresholds, and does not let an outlier teach itself into the baseline.
+Fleet-scale baseline maturation remains Milestone D work.

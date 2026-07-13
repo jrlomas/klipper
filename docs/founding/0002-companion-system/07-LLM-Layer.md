@@ -46,6 +46,14 @@ is where the health monitor's baselines live
 ([04-Diagnosis-Engine.md](04-Diagnosis-Engine.md)) — one store, read by
 both.
 
+That is now the live daemon path, not only a serialization contract. Atlas
+creates the file mode-private and atomically, retains one opaque local machine
+token, mirrors learned monitor baselines and deduplicated diagnoses, and
+rebuilds retrieval when memory changes. Retrieval uses a deterministic
+token-hash index so grounding remains available on the base tier without a
+second model; the local LLM performs the non-deterministic interpretation of
+the retrieved facts.
+
 ## Generate & control — behind the risk tier
 
 "Change the display menu so it does X." "Add a macro that…". "Verify my

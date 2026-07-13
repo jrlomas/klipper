@@ -63,6 +63,9 @@ Mainsail companion panel. Mainsail's 46 unit tests, lint, formatting check,
 production build, and distribution zip passed with the assistant UI. The
 panel keeps conversation locally, sends at most eight prior messages, shows
 the deterministic risk result, and offers no apply control at this stage.
+The daemon memory seam was separately staged: it created a `0600` atomic
+`memory.json`, recorded the observed diagnosis once, mirrored the monitor
+baseline, and made both available to deterministic RAG retrieval.
 
 ## Provenance and remaining validation
 
