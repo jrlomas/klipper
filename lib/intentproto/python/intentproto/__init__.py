@@ -309,6 +309,44 @@ def vlq_decode(data, pos=0):
     return out[0], pos + n
 
 
+# Framing-v2 (BCH-trailer console frame) — the *stateless transform*
+# primitives. These carry a payload+seq and replace the legacy CRC with a
+# BCH(t=3) error-correcting trailer; they do NOT run a session/ARQ. They
+# exist so a host bridge can re-frame a stock v1 frame's payload as a v2
+# frame (and back) without reimplementing BCH — the C library is the
+# single source of truth for the code. See FRAME_V2_OVERHEAD == 7.
+FRAME_V2_OVERHEAD = 7
+
+
+def frame_v2_encode(payload, seq):
+    # Return the BCH-framed v2 frame bytes for the given payload + 4-bit
+    # style seq byte (the caller passes the whole seq byte, e.g. the v1
+    # frame's seq | FRAME_V2_FLAG is set internally by the C encoder).
+    ffi, lib = _ensure_ready()
+    payload = bytes(payload)
+    out = ffi.new("uint8_t[]", len(payload) + FRAME_V2_OVERHEAD + 4)
+    n = lib.ip_frame_v2_encode(out, payload, len(payload), seq & 0xff)
+    if n == 0:
+        raise ValueError("frame_v2_encode failed (payload too large?)")
+    return bytes(ffi.buffer(out, n))
+
+
+def frame_v2_decode(frame):
+    # Decode (and BCH-correct in place) one complete v2 frame. Returns
+    # (payload_bytes, seq, corrected) or raises ValueError if the frame is
+    # not a valid/decodable v2 frame.
+    ffi, lib = _ensure_ready()
+    buf = ffi.new("uint8_t[]", bytes(frame))
+    off = ffi.new("size_t *")
+    seq = ffi.new("uint8_t *")
+    corr = ffi.new("int *")
+    n = lib.ip_frame_v2_decode(buf, len(frame), off, seq, corr)
+    if n < 0:
+        raise ValueError("frame_v2_decode failed (uncorrectable/malformed)")
+    payload = bytes(ffi.buffer(buf + off[0], n))
+    return payload, seq[0], corr[0]
+
+
 class HostSession(object):
     # A retransmit-window host session (host.hpp) behind the C ABI.
     #   on_write(frame_bytes)     - transport transmit hook (required)
@@ -430,6 +468,7 @@ class Device(object):
 __all__ = [
     "get_ffi", "build", "abi_version", "version_string",
     "crc16_ccitt", "vlq_encode", "vlq_decode",
+    "frame_v2_encode", "frame_v2_decode", "FRAME_V2_OVERHEAD",
     "HostSession", "Device",
     "FRAMING_LEGACY", "FRAMING_PROBING",
     "CLASS_SCHEDULED", "CLASS_PROMPT", "CLASS_TELEMETRY",
