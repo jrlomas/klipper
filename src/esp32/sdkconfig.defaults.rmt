@@ -1,0 +1,7 @@
+# Overlay defaults for the component architecture's hardware-timed RMT
+# stepper backend (FD-0001 doc 12). Build with:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.rmt" \
+#       set-target esp32 && idf.py build
+
+CONFIG_KLIPPER_ARCH_COMPONENT=y
+CONFIG_KLIPPER_RMT_STEP=y

@@ -16,6 +16,14 @@
 #define KLIPPER_ARCH_MODEM 0
 #endif
 
+// Kconfig booleans that are disabled are absent from sdkconfig.h, so expose a
+// C value for code that needs to pass the setting to the transport glue.
+#ifdef CONFIG_KLIPPER_TRUST_NETWORK
+#define KLIPPER_TRUST_NETWORK 1
+#else
+#define KLIPPER_TRUST_NETWORK 0
+#endif
+
 // Place a function in IRAM (mapped by the IDF linker's *(.iram1
 // .iram1.*) rule in both architectures).  Code that runs on the
 // motion core's hot path must never fault into the flash cache: a

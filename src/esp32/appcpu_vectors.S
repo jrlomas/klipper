@@ -40,6 +40,10 @@
 
 #if defined(__XTENSA__)
 
+// EXCSAVE_1 is a configured Xtensa special-register number, not an assembler
+// register alias.  Pull in the target definitions used by ESP-IDF's vectors.
+#include "xtensa/config/specreg.h"
+
 /****************************************************************
  * Core-1 stack (private; DRAM)
  ****************************************************************/

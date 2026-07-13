@@ -119,7 +119,7 @@ app_main(void)
     }
 
     load_psk();
-    if (!psk_len && !CONFIG_KLIPPER_TRUST_NETWORK) {
+    if (!psk_len && !KLIPPER_TRUST_NETWORK) {
         // Authentication is mandatory on network transports
         for (;;) {
             ESP_LOGE(TAG, "no PSK provisioned (NVS klipper/udp_psk or"
@@ -128,7 +128,7 @@ app_main(void)
             vTaskDelay(pdMS_TO_TICKS(5000));
         }
     }
-    if (CONFIG_KLIPPER_TRUST_NETWORK && !psk_len)
+    if (KLIPPER_TRUST_NETWORK && !psk_len)
         ESP_LOGW(TAG, "running UNAUTHENTICATED (trust_network confession)");
 
     // Network bringup on core 0.  In the modem architecture this
@@ -142,7 +142,7 @@ app_main(void)
     // the datagram shuttle, then release the bare core
     memcpy(esp32_shmem.psk, psk_buf, psk_len);
     esp32_shmem.psk_len = psk_len;
-    esp32_shmem.trust_network = CONFIG_KLIPPER_TRUST_NETWORK;
+    esp32_shmem.trust_network = KLIPPER_TRUST_NETWORK;
     esp32_adc_modem_init();
     if (esp32_modem_start(CONFIG_KLIPPER_UDP_PORT) < 0)
         return;
