@@ -88,6 +88,9 @@
 // Per-socket buffer geometry (chip default: 2KiB tx + 2KiB rx each)
 #define W5500_BUF_SIZE 2048
 #define W5500_BUF_MASK (W5500_BUF_SIZE - 1)
+#define W5500_CMD_TIMEOUT_US 2000
+#define W5500_REOPEN_US 1000000
+#define W5500_HEALTH_US 250000
 
 /****************************************************************
  * SPI plumbing
@@ -95,7 +98,17 @@
 
 static struct spi_config w5500_spi;
 static struct gpio_out w5500_cs;
-static uint8_t w5500_ready;
+static uint8_t w5500_ready, w5500_configured;
+static uint32_t w5500_ip, w5500_netmask, w5500_gateway;
+static uint16_t w5500_port;
+static uint32_t w5500_reopen_next, w5500_health_next;
+
+// Peer bookkeeping: the source of the most recently received datagram,
+// and the last source that passed authentication (only the latter is
+// ever transmitted to). A hardware reopen clears the authenticated peer.
+static uint32_t rx_candidate_ip, tx_peer_ip;
+static uint16_t rx_candidate_port, tx_peer_port;
+static uint8_t have_peer;
 
 // One variable-length SPI frame: 3-byte address+control header then
 // 'len' data bytes, chip-select held low for the whole frame.  For a
@@ -162,7 +175,8 @@ static uint16_t
 w5500_rd16(uint16_t addr, uint8_t bsb)
 {
     uint16_t prev = 0xffff;
-    for (;;) {
+    uint_fast8_t retries = 8;
+    while (retries--) {
         uint8_t b[2];
         w5500_rd(addr, bsb, b, 2);
         uint16_t v = ((uint16_t)b[0] << 8) | b[1];
@@ -170,6 +184,9 @@ w5500_rd16(uint16_t addr, uint8_t bsb)
             return v;
         prev = v;
     }
+    // A counter that never stabilizes is treated conservatively by its
+    // caller; most paths will retry on the next cooperative task pass.
+    return prev;
 }
 
 static void
@@ -208,44 +225,46 @@ w5500_buf_write(uint16_t ptr, const uint8_t *src, uint16_t len)
  * Socket engine
  ****************************************************************/
 
-// Peer bookkeeping: the source of the most recently received datagram,
-// and the last source that passed authentication (only the latter is
-// ever transmitted to)
-static uint32_t rx_candidate_ip, tx_peer_ip;
-static uint16_t rx_candidate_port, tx_peer_port;
-static uint8_t have_peer;
-
-static void
+static int
 w5500_cmd(uint8_t cmd)
 {
     w5500_wr8(W5500_Sn_CR, W5500_BSB_S0_REG, cmd);
     // Sn_CR self-clears when the command engine has accepted it
-    while (w5500_rd8(W5500_Sn_CR, W5500_BSB_S0_REG))
-        ;
+    uint32_t deadline = timer_read_time()
+                        + timer_from_us(W5500_CMD_TIMEOUT_US);
+    while (w5500_rd8(W5500_Sn_CR, W5500_BSB_S0_REG)) {
+        if (timer_is_before(deadline, timer_read_time())) {
+            w5500_ready = 0;
+            return -1;
+        }
+    }
+    return 0;
 }
 
-int
-w5500_open(uint32_t spi_bus, uint32_t cs_pin, uint8_t spi_mode
-           , uint32_t spi_rate, uint32_t ip, uint32_t netmask
-           , uint32_t gateway, uint16_t port)
+static int
+w5500_hw_open(void)
 {
-    w5500_spi = spi_setup(spi_bus, spi_mode, spi_rate);
-    w5500_cs = gpio_out_setup(cs_pin, 1);
     w5500_ready = 1;
+    have_peer = 0;
 
     // Software reset and settle
     w5500_wr8(W5500_MR, W5500_BSB_COMMON, W5500_MR_RST);
-    uint32_t start = timer_read_time();
-    while (w5500_rd8(W5500_MR, W5500_BSB_COMMON) & W5500_MR_RST)
-        if (timer_is_before(start + timer_from_us(2000), timer_read_time()))
-            break;
+    uint32_t deadline = timer_read_time()
+                        + timer_from_us(W5500_CMD_TIMEOUT_US);
+    while (w5500_rd8(W5500_MR, W5500_BSB_COMMON) & W5500_MR_RST) {
+        if (timer_is_before(deadline, timer_read_time())) {
+            w5500_ready = 0;
+            return -1;
+        }
+    }
 
     // A locally-administered MAC derived from the static IP keeps the
     // address stable and unique on a segment without a provisioning step
+    uint32_t ip = w5500_ip;
     uint8_t mac[6] = { 0x02, 0x00, ip >> 24, ip >> 16, ip >> 8, ip };
     w5500_wr(W5500_SHAR, W5500_BSB_COMMON, mac, sizeof(mac));
-    w5500_wr32(W5500_GAR, W5500_BSB_COMMON, gateway);
-    w5500_wr32(W5500_SUBR, W5500_BSB_COMMON, netmask);
+    w5500_wr32(W5500_GAR, W5500_BSB_COMMON, w5500_gateway);
+    w5500_wr32(W5500_SUBR, W5500_BSB_COMMON, w5500_netmask);
     w5500_wr32(W5500_SIPR, W5500_BSB_COMMON, ip);
 
     if (w5500_rd8(W5500_VERSIONR, W5500_BSB_COMMON) != 0x04) {
@@ -255,19 +274,37 @@ w5500_open(uint32_t spi_bus, uint32_t cs_pin, uint8_t spi_mode
 
     // Open socket 0 as UDP bound to the listen port
     w5500_wr8(W5500_Sn_MR, W5500_BSB_S0_REG, W5500_Sn_MR_UDP);
-    w5500_wr16(W5500_Sn_PORT, W5500_BSB_S0_REG, port);
-    w5500_cmd(W5500_Sn_CR_OPEN);
+    w5500_wr16(W5500_Sn_PORT, W5500_BSB_S0_REG, w5500_port);
+    if (w5500_cmd(W5500_Sn_CR_OPEN))
+        return -1;
     if (w5500_rd8(W5500_Sn_SR, W5500_BSB_S0_REG) != W5500_Sn_SR_UDP) {
         w5500_ready = 0;
         return -1;
     }
+    w5500_health_next = timer_read_time() + timer_from_us(W5500_HEALTH_US);
     return 0;
+}
+
+int
+w5500_open(uint32_t spi_bus, uint32_t cs_pin, uint8_t spi_mode
+           , uint32_t spi_rate, uint32_t ip, uint32_t netmask
+           , uint32_t gateway, uint16_t port)
+{
+    w5500_spi = spi_setup(spi_bus, spi_mode, spi_rate);
+    w5500_cs = gpio_out_setup(cs_pin, 1);
+    w5500_ip = ip;
+    w5500_netmask = netmask;
+    w5500_gateway = gateway;
+    w5500_port = port;
+    w5500_configured = 1;
+    return w5500_hw_open();
 }
 
 // Drain one received UDP datagram (strip the 8-byte packet-info header)
 static int32_t
 w5500_recv(void *ctx, uint8_t *buf, uint32_t cap)
 {
+    (void)ctx;
     if (!w5500_ready)
         return 0;
     uint16_t rsr = w5500_rd16(W5500_Sn_RX_RSR, W5500_BSB_S0_REG);
@@ -279,8 +316,8 @@ w5500_recv(void *ctx, uint8_t *buf, uint32_t cap)
     uint8_t ph[8];
     w5500_buf_read(rd, ph, sizeof(ph));
     uint16_t dlen = ((uint16_t)ph[6] << 8) | ph[7];
-    uint16_t total = 8 + dlen;
-    if (total > rsr) {
+    uint32_t total = 8u + dlen;
+    if (dlen > W5500_BUF_SIZE - 8 || total > rsr) {
         // Corrupt/partial - resynchronise by draining the whole buffer
         w5500_wr16(W5500_Sn_RX_RD, W5500_BSB_S0_REG, rd + rsr);
         w5500_cmd(W5500_Sn_CR_RECV);
@@ -293,8 +330,10 @@ w5500_recv(void *ctx, uint8_t *buf, uint32_t cap)
     w5500_buf_read(rd + 8, buf, got);
 
     // Consume the full record even if we truncated the copy
-    w5500_wr16(W5500_Sn_RX_RD, W5500_BSB_S0_REG, rd + total);
-    w5500_cmd(W5500_Sn_CR_RECV);
+    w5500_wr16(W5500_Sn_RX_RD, W5500_BSB_S0_REG,
+               rd + (uint16_t)total);
+    if (w5500_cmd(W5500_Sn_CR_RECV))
+        return 0;
 
     rx_candidate_ip = ((uint32_t)ph[0] << 24) | ((uint32_t)ph[1] << 16)
                       | ((uint32_t)ph[2] << 8) | ph[3];
@@ -307,6 +346,7 @@ w5500_recv(void *ctx, uint8_t *buf, uint32_t cap)
 static void
 w5500_rx_accepted(void *ctx)
 {
+    (void)ctx;
     tx_peer_ip = rx_candidate_ip;
     tx_peer_port = rx_candidate_port;
     have_peer = 1;
@@ -315,7 +355,7 @@ w5500_rx_accepted(void *ctx)
 static void
 w5500_send_to(uint32_t ip, uint16_t port, const uint8_t *data, uint32_t len)
 {
-    if (!w5500_ready || !len)
+    if (!w5500_ready || !len || len > W5500_BUF_SIZE)
         return;
     uint16_t fsr = w5500_rd16(W5500_Sn_TX_FSR, W5500_BSB_S0_REG);
     if (fsr < len)
@@ -331,6 +371,7 @@ w5500_send_to(uint32_t ip, uint16_t port, const uint8_t *data, uint32_t len)
 static void
 w5500_send(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     if (have_peer)
         w5500_send_to(tx_peer_ip, tx_peer_port, data, len);
 }
@@ -338,6 +379,7 @@ w5500_send(void *ctx, const uint8_t *data, uint32_t len)
 static void
 w5500_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     w5500_send_to(rx_candidate_ip, rx_candidate_port, data, len);
 }
 
@@ -357,9 +399,24 @@ static uint32_t w5500_poll_next;
 void
 w5500_task(void)
 {
-    if (!w5500_ready)
-        return;
     uint32_t now = timer_read_time();
+    if (!w5500_ready) {
+        if (w5500_configured && timer_is_before(w5500_reopen_next, now)) {
+            w5500_reopen_next = now + timer_from_us(W5500_REOPEN_US);
+            w5500_hw_open();
+        }
+        return;
+    }
+    if (timer_is_before(w5500_health_next, now)) {
+        w5500_health_next = now + timer_from_us(W5500_HEALTH_US);
+        if (w5500_rd8(W5500_VERSIONR, W5500_BSB_COMMON) != 0x04
+            || w5500_rd8(W5500_Sn_SR, W5500_BSB_S0_REG)
+               != W5500_Sn_SR_UDP) {
+            w5500_ready = 0;
+            w5500_reopen_next = now;
+            return;
+        }
+    }
     if (!timer_is_before(w5500_poll_next, now))
         return;
     w5500_poll_next = now + timer_from_us(500);
