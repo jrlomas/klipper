@@ -686,6 +686,12 @@ __all__ = [
     "SEG_POLY_CUBIC", "SEG_POLY_QUINTIC",
     "SEG_KIND_NONE", "SEG_KIND_SEGMENT", "SEG_KIND_HOLD",
     "HostSession", "Device", "SecureSession",
+    "ExtBinding", "Message", "HostSessionTransport", "bind_host_session",
     "FRAMING_LEGACY", "FRAMING_PROBING",
     "CLASS_SCHEDULED", "CLASS_PROMPT", "CLASS_TELEMETRY",
 ]
+
+# Connect-time extension binding (doc 10). Imported last so the module's
+# vlq_encode/vlq_decode/CLASS_SCHEDULED it depends on are already defined.
+from .extbind import (  # noqa: E402
+    ExtBinding, Message, HostSessionTransport, bind_host_session)

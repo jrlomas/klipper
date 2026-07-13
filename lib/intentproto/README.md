@@ -171,14 +171,30 @@ firmware's own `traj_kernel` golden vectors are re-checked by
 `tests/test_segment.cpp`. Exposed through the C ABI (`ip_segment_*`) and
 the Python binding (`intentproto.segment_*` / `SegmentChain`).
 
+## Connect-time extension binding (FD-0001 doc 10)
+
+A v2 peer serves its command/response/constant registry as **data** over
+two library-owned meta-commands (`list_extensions` / `list_constants`,
+`proto.cpp` + `core_ids.hpp`) — no zlib dictionary round-trip. The host
+binds to it at connect: `intentproto.ExtBinding` streams the descriptors
+into typed encoders and parsers, so after `query()` a caller does
+`ext.encode_command(name, **kwargs)` and `ext.parse_response(payload)`,
+and reads `ext.constants` / `ext.enums`. Extension commands live in the
+`>= 0x80` id space (`MSGID_EXTENSION_BASE`); the meta-commands self-
+describe all the way down.
+
+The packaged API (`python/intentproto/extbind.py`) reuses the C-backed
+VLQ codec and adds `HostSessionTransport` / `bind_host_session()` to drive
+the enumeration over a real `HostSession`; `python/test_extbind_py.py`
+proves it against an in-process device. `tools/extbind.py` remains as a
+dependency-free (stdlib-only) reference of the same protocol.
+
 ## Not yet implemented (tracked in FD-0001 doc 10)
 
 * Binding the datagram/HMAC transport (`datagram.hpp`) to the
   sessions' framed byte streams (framing v2 and traffic classes are
   wired into the negotiation path; the UDP datagram layer still
   rides standalone).
-* v2 extension self-description (the >= 0x80 id space of
-  `core_ids.hpp`) and the connect-time host binding.
 
 ## Caveats
 

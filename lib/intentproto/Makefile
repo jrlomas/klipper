@@ -72,8 +72,11 @@ capi: $(BUILD)/test_capi
 			&& python3 -c "import cffi" >/dev/null 2>&1; then \
 		echo "== test_capi_py (cffi API mode)"; \
 		python3 python/test_capi_py.py || exit 1; \
+		echo "== test_extbind_py (packaged extension binding)"; \
+		python3 python/test_extbind_py.py || exit 1; \
 	else \
 		echo "== test_capi_py (skipped: no python3/cffi)"; \
+		echo "== test_extbind_py (skipped: no python3/cffi)"; \
 	fi
 
 # Cortex-M0 (STM32F072 floor target) compile + size report; skipped
