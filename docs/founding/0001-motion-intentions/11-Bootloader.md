@@ -16,12 +16,24 @@ bootloader is part of the *firmware image*, from the beginning.
   containing bootloader + application. First installation is the only
   time a programmer/DFU is ever required; everything after is
   in-band.
-* **The bootloader speaks the protocol.** It links the same MIT
-  protocol library ([10-Protocol_Library.md](10-Protocol_Library.md))
-  as the application — same framing, same dictionary mechanism, same
-  Class-1 command semantics, same HMAC on network transports. A host
-  that can talk to the application can talk to the bootloader with
-  the same code path. No separate flashing tool, no second protocol.
+* **The bootloader speaks the protocol.** It links the MIT protocol
+  library ([10-Protocol_Library.md](10-Protocol_Library.md)) — same
+  framing, same dictionary mechanism, same Class-1 command semantics,
+  same HMAC on network transports. A host that can talk to the
+  application can talk to the bootloader with the same code path. No
+  separate flashing tool, no second protocol.
+
+  > **Note (envelope architecture).** The bootloader is the **one
+  > in-repo, on-device image that links intentproto's full v1 core**
+  > (`proto.cpp` + `dict.cpp`) rather than stock `command.c` — it is a
+  > freestanding image and cannot link the application's command layer,
+  > so it is the sanctioned exception to the quarantine rule in
+  > [Upstream_Tracking](../../Upstream_Tracking.md). The application
+  > firmware, by contrast, keeps stock Klipper's v1 path; the bootloader
+  > and application therefore reach the *same wire behaviour* by two
+  > different implementations that are held in agreement by the shared
+  > wire specification and the library's conformance tests — not by
+  > sharing code with the application.
 * **Unbrickable by construction.** The bootloader region is never
   erased in-band. The application is CRC-verified at boot; a failed
   or interrupted update simply leaves the board in the bootloader,

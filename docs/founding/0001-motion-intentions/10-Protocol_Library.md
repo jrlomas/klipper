@@ -8,6 +8,24 @@ Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
 > [Protocol v2](../../Protocol_v2.md). This document is the library's
 > design rationale and scope.
 
+> **As-built (HELIX 0.9) — read this first.** This document argues for
+> *one* protocol library consumed by everything. The shipped reality is a
+> deliberate **envelope architecture**, chosen precisely so HELIX tracks
+> upstream Klipper cleanly (see [Upstream_Tracking](../../Upstream_Tracking.md)):
+> the **application firmware and the klippy host run stock Klipper's v1
+> protocol path unchanged** — `src/command.c` and `klippy/msgproto.py` are
+> byte-identical to upstream, and every HELIX command is an ordinary
+> `DECL_COMMAND`. The library is **not** the application's command
+> dispatcher. Where the library *is* the protocol core is: (1) the
+> in-repo **bootloader** ([11-Bootloader.md](11-Bootloader.md)), a
+> freestanding image that cannot link `command.c`; (2) **third-party
+> firmware** such as the OpenAMS mainboard-firmware (the intended MIT use);
+> (3) the **host v2 binding** (cffi); and (4) the in-app **v2 datagram
+> carrier** that wraps stock v1 frames on network transports. The scope
+> and rationale below describe the library's *capability*; treat "consumed
+> by our firmware" as "available to, and used as an additive envelope by,
+> our firmware" — not as a replacement of the stock command path.
+
 Today the wire protocol is implemented **twice**: once in the firmware
 (`src/command.c`, `src/msgblock` constants) and once in the host's C
 helper (`klippy/chelper/msgblock.c`, `serialqueue.c`) — two disjoint
@@ -99,13 +117,18 @@ caller-owned buffers.
   signature, is the source of truth. `make capi` builds the shared
   object and runs the C and Python round-trip tests.
 
-The host's transmit machinery (today's `serialqueue.c` role) becomes a
-consumer of the library rather than a second implementation of the
-protocol; the differ ([06-Migration.md](06-Migration.md)) uses the
-library as its codec layer, which means the library is exercised by
-every validation run from day one. Fuzzing the frame parser and
-dictionary parser is part of the library's own test suite — it is the
-attack surface of the whole system.
+The host's transmit machinery (today's `serialqueue.c` role) *could*
+become a consumer of the library rather than a second implementation of
+the protocol — but under the envelope architecture it deliberately does
+**not**, so that `serialqueue.c`/`serialhdl.py`/`msgproto.py` stay stock
+and upstream-mergeable. Instead the library reaches the host through a
+thin **cffi binding** used *beside* the stock stack: for the v2 datagram
+transport today, and — when live v2 framing is wired — as an envelope
+shim that wraps/unwraps stock command blocks below `serialhdl` (see
+[Protocol v2 §12](../../Protocol_v2.md)). The library is nonetheless
+exercised by every validation run: its own desktop suite fuzzes the frame
+and dictionary parsers — the attack surface of the whole system — and the
+bootloader and third-party firmwares link it as their protocol core.
 
 ## Language and declarations (decided 2026-07)
 

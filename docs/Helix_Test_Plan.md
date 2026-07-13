@@ -109,11 +109,14 @@ workstation, no amount of hardware poking will save you.
   Expect: all link.
   Pass: no build breaks introduced by the fork.
 
-- [ ] **0.8 — Loopback protocol soak (nano_udp).**
-  Do: run `test/nano_udp/run.sh` (host ↔ minimal device over UDP loopback).
-  Expect: identify handshake, framing-v2 latch, and datagram auth all
-  succeed over the socket path with no real hardware.
-  Pass: clean run, no CRC/BCH/HMAC errors in the summary.
+- [ ] **0.8 — nano_udp stack unit test.**
+  Do: run `test/nano_udp/run.sh`.
+  Expect: the minimal UDP/IP stack (`src/generic/nano_udp.c`, the RMII
+  path) parses/builds datagrams correctly. **Note:** this test compiles
+  *only* `nano_udp.c` — it does **not** exercise intentproto framing-v2 or
+  datagram auth (those are covered by `test_datagram` / `test_negotiate` /
+  `test_host` in 0.1).
+  Pass: clean run.
 
 ---
 
@@ -162,11 +165,19 @@ Prove the wire before you trust it to carry motion.
 - [ ] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute.
-- [ ] **2.3 — Framing-v2 latch.** Force a v2 frame; confirm the link
-  latches to the BCH trailer and stays there (device never
-  auto-downgrades until reset).
-  Pass: `HELIX_STATUS`/link diagnostics show v2 active; `bch_corrected`
-  may be >0 on a noisy link, `bch_errors` stays 0.
+- [ ] **2.3 — v2 transport (as-built scope).** Two separate things carry
+  the "v2" name; test what actually runs (see [Protocol v2](Protocol_v2.md)
+  "as-built"):
+  - *Datagram carrier (app boards, network transports):* on a UDP/Ethernet
+    board, confirm authenticated datagrams flow and erasure-FEC recovers
+    injected loss — `link_stats` shows `bch_corrected` rising and
+    `bch_errors`/auth-failures at 0. (The payload is stock v1 frames.)
+  - *Console-v2 framing latch:* **not** available on a stock klipper
+    **application** board in 0.9 (`proto.cpp` is not linked; no
+    `FRAMING_V2` advertised). Exercise the latch against the **bootloader
+    session** or the desktop `test_negotiate`, not the app console.
+  Pass: datagram auth+FEC clean on the app board; console-v2 latch verified
+  against the bootloader/library, not claimed for the app.
 - [ ] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
   Pass: a legacy-only host session is clean.
@@ -312,7 +323,8 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   shut down; host sees it paused (`FAILURE_RECOVERY_STATUS`).
   Pass: no shutdown; heaters stay on per policy.
 - [ ] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
-  Pass: re-handshake succeeds; link back to v2.
+  Pass: re-handshake succeeds; link re-established (datagram auth restored
+  where the transport uses it).
 - [ ] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
   Expect: each joint reconciles from its execution log to exactly where it
   stopped; the print continues; a joint marked
@@ -349,6 +361,19 @@ Phases 3/7/8 over each real transport.
 - [ ] **9.5 — Datagram loss tolerance.** Inject packet loss on 9.3/9.4.
   Pass: FEC + retransmit hide it up to the documented loss rate; beyond
   that it degrades to a clean pause, never a crash.
+- [ ] **9.6 — Mixed fleet: firehose + intent time agreement.** On a machine
+  with at least one **stock-Klipper (firehose) board** and one **HELIX
+  intent board** driving *independent* actuators (regime 1 of
+  [FD-0001 doc 14](founding/0001-motion-intentions/14-Heterogeneous_Fleets.md)),
+  schedule a coordinated timed event ("at T, board A pulses and board B
+  starts a move") and scope both.
+  Expect: both act at the same instant — `clocksync` (firehose) and the
+  machine-time beacon (intent) both map the host's print-time to the same
+  physical moment.
+  Pass: edges land within the time-model tolerance; the config-time
+  validator (when built) rejects a coordination *group* split across
+  paradigms. Record whether a coordinated group was (correctly) kept
+  single-paradigm.
 
 ---
 

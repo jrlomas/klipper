@@ -40,6 +40,7 @@ status line records its precise implementation state.
 | [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Implemented — HELIX 0.9 |
 | [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Implemented — HELIX 0.9 (runtime bring-up pending) |
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
+| [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Design — timing substrate exists; host enforcement future |
 
 ## Reading order
 

@@ -1,0 +1,55 @@
+# HELIX upstream-tracking guard.
+#
+# Enforces that HELIX tracks upstream Klipper cleanly: the v1-protocol stock
+# files stay byte-identical to the recorded upstream baseline, and the
+# intentproto v1-reimplementation TUs never leak into application firmware.
+# See docs/Upstream_Tracking.md.
+name: Upstream guard
+on:
+  push:
+    paths:
+      - 'src/command.c'
+      - 'src/generic/crc16_ccitt.c'
+      - 'klippy/serialhdl.py'
+      - 'klippy/msgproto.py'
+      - 'src/**/Makefile'
+      - 'src/esp32/main/CMakeLists.txt'
+      - 'scripts/upstream_stock.manifest'
+      - 'scripts/check_upstream_stock.py'
+      - '.github/workflows/upstream-guard.yaml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # The gate: stock files match the recorded baseline (offline, exact)
+      # and no application build links proto/dict/host.
+      - name: Stock + quarantine guard
+        run: python3 scripts/check_upstream_stock.py
+
+      # Best-effort authenticity: surface whether the recorded stock files
+      # still match upstream Klipper's current default branch. Purely
+      # INFORMATIONAL — the hash gate above is the enforced invariant. A DIFF
+      # here only means upstream has moved on and there is a merge to do; it is
+      # never a build failure by itself.
+      - name: Compare stock files to upstream (informational)
+        continue-on-error: true
+        run: |
+          set -eu
+          repo=$(python3 -c "import json;print(json.load(open('scripts/upstream_stock.manifest'))['upstream']['repo'])")
+          echo "Upstream: $repo (default branch)"
+          git clone --depth 1 "$repo" /tmp/upstream 2>/dev/null \
+            || { echo "note: could not fetch upstream; skipping live diff"; exit 0; }
+          for f in src/command.c src/generic/crc16_ccitt.c klippy/serialhdl.py klippy/msgproto.py; do
+            if [ -f "/tmp/upstream/$f" ]; then
+              if diff -q "$f" "/tmp/upstream/$f" >/dev/null; then
+                echo "OK    $f still matches upstream"
+              else
+                echo "DIFF  $f differs from upstream default branch — an upstream merge is pending (not a failure)"
+              fi
+            fi
+          done

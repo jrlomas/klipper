@@ -128,6 +128,7 @@ nav:
     - Kinematics.md
     - Protocol.md
     - Protocol_v2.md
+    - Upstream_Tracking.md
     - API_Server.md
     - MCU_Commands.md
     - CANBUS_protocol.md
@@ -152,6 +153,7 @@ nav:
       - founding/0001-motion-intentions/11-Bootloader.md
       - founding/0001-motion-intentions/12-ESP32_Architecture.md
       - founding/0001-motion-intentions/13-Syscall_API.md
+      - founding/0001-motion-intentions/14-Heterogeneous_Fleets.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
       - founding/0002-companion-system/HANDOFF.md
