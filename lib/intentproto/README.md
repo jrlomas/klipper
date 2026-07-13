@@ -189,12 +189,19 @@ the enumeration over a real `HostSession`; `python/test_extbind_py.py`
 proves it against an in-process device. `tools/extbind.py` remains as a
 dependency-free (stdlib-only) reference of the same protocol.
 
-## Not yet implemented (tracked in FD-0001 doc 10)
+## Feature-complete
 
-* Binding the datagram/HMAC transport (`datagram.hpp`) to the
-  sessions' framed byte streams (framing v2 and traffic classes are
-  wired into the negotiation path; the UDP datagram layer still
-  rides standalone).
+Every FD-0001 doc-10 library surface is now implemented and tested:
+framing v2 (BCH), traffic classes, the UDP datagram layer with its
+truncated-HMAC authentication and XOR erasure FEC, the DTLS-class
+session upgrade, extension self-description with the host `ExtBinding`,
+the trajectory segment codec, Ed25519 signed images in `boot/bootcore`,
+the `extern "C"`/cffi host binding, and the CAN carrier. The datagram
+transport is bound to a `HostSession`'s framed byte stream by
+`DatagramCarrier` (`datagram_carrier.hpp`) — the host-side complement of
+the device's `udp_console.c` — so a host can run a full ARQ session over
+UDP without re-implementing the datagram accounting (test:
+`tests/test_datagram_carrier.cpp`).
 
 ## Caveats
 
