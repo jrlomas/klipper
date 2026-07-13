@@ -84,6 +84,52 @@ class TestDatagramSessionLive(unittest.TestCase):
             sk.sendto(bytes(bad), board)
             with self.assertRaises(socket.timeout):
                 sk.recvfrom(2048)  # tampered datagram dropped by the board
+
+            # ---- DoS hardening: a hostile ClientHello must not reset
+            # the LIVE session's keys. Send a fresh hello (attacker has
+            # no PSK for the fin), then prove the original session still
+            # authenticates end-to-end.
+            time.sleep(0.3)  # clear the handshake rate gate
+            attacker = ip.SecureSession(True, b'wrong-psk-entirely',
+                                        b'mallory')
+            sk2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk2.settimeout(1.0)
+            try:
+                sk2.sendto(attacker.start(), board)
+                try:
+                    sh2, _ = sk2.recvfrom(2048)
+                    # A pending ServerHello may arrive; completing needs
+                    # the PSK, which mallory lacks.
+                    self.assertIsNone(attacker.on_handshake(sh2))
+                except socket.timeout:
+                    pass  # or the gate dropped it entirely - also fine
+            finally:
+                sk2.close()
+            sk.sendto(host.encode(frame, cls=1), board)
+            dg, _ = sk.recvfrom(2048)
+            frames, _cls = host.decode(dg)  # live keys survived the hello
+            self.assertTrue(frames)
+
+            # ---- legitimate re-handshake (host restart): a NEW session
+            # with the real PSK must be adopted and serve traffic.
+            time.sleep(0.3)  # clear the handshake rate gate
+            host2 = ip.SecureSession(True, PSK, b'klippy-host-2')
+            sk3 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk3.settimeout(3.0)
+            try:
+                sk3.sendto(host2.start(), board)
+                sh, _ = sk3.recvfrom(2048)
+                fin = host2.on_handshake(sh)
+                self.assertTrue(fin)
+                sk3.sendto(fin, board)
+                self.assertTrue(host2.established)
+                self.assertEqual(host2.peer_id(), b'helix-board')
+                sk3.sendto(host2.encode(frame, cls=1), board)
+                dg, _ = sk3.recvfrom(2048)
+                frames, _cls = host2.decode(dg)
+                self.assertTrue(frames)  # the adopted session serves
+            finally:
+                sk3.close()
         finally:
             sk.close()
 

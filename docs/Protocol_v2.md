@@ -714,6 +714,25 @@ epoch's `tx_key`.
 A live `SecureSession` (both directions, keys, epochs, replay window)
 costs **264 bytes of RAM per link** on the STM32F072 floor.
 
+### Handshake hardening (as built)
+
+The responder's handshake surface is hardened against unauthenticated
+UDP traffic: a ClientHello can never reset a **live** session (while
+established, hellos drive a *pending* handshake that replaces the live
+keys only when its ClientFin proves PSK knowledge — this is also how a
+restarted klippy reconnects without a board reboot); ClientHellos are
+rate-limited (4/s) while a session is live, and ClientFins are never
+gated so a legitimate reconnect cannot livelock; every accepted hello
+re-derives from a fresh responder nonce, so a replayed old handshake
+cannot re-derive old session keys; and a handshake message that produces
+no reply never moves the reply peer. The residual exposure — a briefly
+redirected reply peer during a hostile hello burst — self-heals on the
+next authenticated datagram from the real host. All of this is exercised
+live by
+[test/datagram_session_live_test.py](../test/datagram_session_live_test.py)
+(hostile hello against a live session, then a legitimate adopted
+re-handshake).
+
 ### As built: both ends are wired
 
 The session is no longer library-only. **On the board**, a datagram

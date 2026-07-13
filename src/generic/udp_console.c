@@ -193,6 +193,8 @@ udp_console_task(void)
         const uint8_t *frames;
         int32_t flen;
 #if CONFIG_WANT_DATAGRAM_SESSION
+        // Handshake rate gate while a session is live (see below).
+        static uint32_t sess_hs_gate;
         // Route by datagram kind. A handshake message is answered by the
         // session; a session datagram is decrypted-authenticated by it;
         // anything else falls to the static path (bootstrap / a host that
@@ -200,20 +202,38 @@ udp_console_task(void)
         // is only trusted once established, so a long static link whose
         // seq high byte happens to set bit 4 is never mis-routed.
         int kind = udpsess_msg_type(rx_dgram, got);
-        if (kind == 1) {
+        if (kind == 1 || kind == 3) {
+            // DoS hardening: while a session is LIVE, unauthenticated
+            // ClientHellos are rate-limited (a reconnecting host needs
+            // one) and can never reset the live keys
+            // (udpsess_on_handshake drives a separate pending handshake,
+            // adopted only on a PSK-proving ClientFin). ClientFins are
+            // never gated - gating the completion message would livelock
+            // a legitimate reconnect. The residual exposure is a briefly
+            // redirected reply peer, self-healed by the next
+            // authenticated rx.
+            if (kind == 1 && udpsess_established()) {
+                uint32_t now = timer_read_time();
+                if (sess_hs_gate
+                    && timer_is_before(now, sess_hs_gate)) {
+                    continue;
+                }
+                sess_hs_gate = now + timer_from_us(250000);
+            }
             uint32_t rlen = udpsess_on_handshake(rx_dgram, got, tx_dgram,
                                                  sizeof(tx_dgram));
+            if (!rlen)
+                // Ignored/failed/final handshake message: never move the
+                // reply peer for a message that produced no reply.
+                continue;
             // Commit the reply peer BEFORE sending: the ServerHello must
             // reach the source of the ClientHello, and udp_send only
             // targets the accepted peer. The handshake still completes
             // only if the peer proves PSK knowledge (the ClientFin MAC),
-            // so an unauthenticated ClientHello cannot forge commands; it
-            // can, on a hostile path, redirect the reply peer — a DoS to
-            // be hardened later (rate-limit / pin the established peer).
+            // so an unauthenticated ClientHello cannot forge commands.
             if (udp_ops->rx_accepted)
                 udp_ops->rx_accepted(udp_ops_ctx);
-            if (rlen)
-                udp_ops->send(udp_ops_ctx, tx_dgram, rlen);
+            udp_ops->send(udp_ops_ctx, tx_dgram, rlen);
             continue;
         }
         if (kind == 2 && udpsess_established()) {
