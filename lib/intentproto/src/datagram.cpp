@@ -89,6 +89,8 @@ size_t
 datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
                 size_t len, TrafficClass cls)
 {
+    if (tx->k && tx->k != 2)
+        return 0;
     if (len + DATAGRAM_HEADER + DATAGRAM_TAG > DATAGRAM_MAX)
         return 0;
     if (tx->k && len + DATAGRAM_HEADER > DATAGRAM_FEC_MAX_BODY)
@@ -97,6 +99,11 @@ datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
     out[0] = (uint8_t)(seq >> 8);
     out[1] = (uint8_t)seq;
     out[2] = (uint8_t)cls & DGF_CLASS_MASK;
+    if (tx->k) {
+        out[2] |= DGF_FEC_DATA;
+        if (!tx->sent_since_parity)
+            out[2] |= DGF_FEC_START;
+    }
     memcpy(out + DATAGRAM_HEADER, frames, len);
     size_t body = DATAGRAM_HEADER + len;
     ClassStats* st = &tx->stats[(int)cls];
@@ -120,7 +127,7 @@ datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
 size_t
 datagram_parity_flush(DatagramTx* tx, uint8_t* out)
 {
-    if (!tx->k || tx->sent_since_parity < tx->k)
+    if (tx->k != 2 || tx->sent_since_parity < tx->k)
         return 0;
     uint16_t seq = tx->next_seq++;
     out[0] = (uint8_t)(seq >> 8);
@@ -161,9 +168,13 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
         len = body;
     }
     uint16_t seq = (uint16_t)((data[0] << 8) | data[1]);
+    bool fec_data = (flags & DGF_FEC_DATA) != 0;
+    bool fec_start = (flags & DGF_FEC_START) != 0;
     if (!rx->synced) {
         rx->synced = true;
-        rx->expect_seq = seq;
+        // A protected second packet without its block-start packet proves
+        // exactly one preceding loss even at initial synchronization.
+        rx->expect_seq = (fec_data && !fec_start) ? (uint16_t)(seq - 1) : seq;
     }
     int16_t delta = (int16_t)(seq - rx->expect_seq);
     if (delta < 0) {
@@ -184,12 +195,21 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
         if (!(flags & DGF_PARITY_LENGTHS)) {
             rx->holding = false;
             rx->held_len = rx->held_len_xor = 0;
+            rx->deferred_len = 0;
+            rx->block_received = 0;
+            rx->block_gap = false;
+            rx->ready_recovered = rx->ready_deferred = false;
             return 0;
         }
-        if (rx->holding && delta == 1) {
+        uint8_t protected_count = flags & DGF_CLASS_MASK;
+        if (rx->holding && protected_count == 2
+            && rx->block_received == 1) {
             if (len < DATAGRAM_HEADER + 2) {
                 rx->holding = false;
                 rx->held_len = rx->held_len_xor = 0;
+                rx->deferred_len = 0;
+                rx->block_received = 0;
+                rx->block_gap = false;
                 return -2;
             }
             uint16_t block_len_xor = ((uint16_t)data[DATAGRAM_HEADER] << 8)
@@ -200,6 +220,9 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
                 || lost_len > sizeof(rx->held)) {
                 rx->holding = false;
                 rx->held_len = rx->held_len_xor = 0;
+                rx->deferred_len = 0;
+                rx->block_received = 0;
+                rx->block_gap = false;
                 return -2;
             }
             size_t i;
@@ -207,23 +230,61 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
                 rx->held[i] ^= data[DATAGRAM_HEADER + 2 + i];
             rx->held_len = lost_len;
             // rx->held now contains the missing datagram (hdr+frames)
+            rx->ready_recovered = true;
+            rx->ready_deferred = rx->deferred_len != 0;
             return 0;
         }
         rx->holding = false;
         rx->held_len = 0;
         rx->held_len_xor = 0;
+        rx->deferred_len = 0;
+        rx->block_received = 0;
+        rx->block_gap = false;
+        rx->ready_recovered = rx->ready_deferred = false;
         return 0;
     }
 
-    // Fold into the survivors buffer for potential parity recovery
-    if (!rx->holding) {
+    if (!fec_data) {
+        // A non-FEC packet terminates any incomplete protected block.
+        rx->holding = false;
+        rx->held_len = rx->held_len_xor = 0;
+        rx->deferred_len = 0;
+        rx->block_received = 0;
+        rx->block_gap = false;
+    } else if (fec_start) {
+        // Start a new pair block. A sequence gap here represents the prior
+        // block's lost parity, not a missing member of this block.
         memset(rx->held, 0, sizeof(rx->held));
         rx->held_len = 0;
         rx->held_len_xor = 0;
         rx->holding = true;
+        rx->deferred_len = 0;
+        rx->block_received = 0;
+        rx->block_gap = false;
+        rx->ready_recovered = rx->ready_deferred = false;
+    } else if (!rx->holding) {
+        // The block start was lost (including at initial synchronization).
+        memset(rx->held, 0, sizeof(rx->held));
+        rx->held_len = 0;
+        rx->held_len_xor = 0;
+        rx->holding = true;
+        rx->deferred_len = 0;
+        rx->block_received = 0;
+        rx->block_gap = true;
     }
-    xor_into(rx->held, &rx->held_len, data, len);
-    rx->held_len_xor ^= (uint16_t)len;
+    if (fec_data) {
+        if (delta > 0 && !fec_start)
+            rx->block_gap = true;
+        xor_into(rx->held, &rx->held_len, data, len);
+        rx->held_len_xor ^= (uint16_t)len;
+        rx->block_received++;
+        if (rx->block_gap) {
+            if (len > sizeof(rx->deferred))
+                return -2;
+            memcpy(rx->deferred, data, len);
+            rx->deferred_len = len;
+        }
+    }
 
     TrafficClass c = (TrafficClass)(flags & DGF_CLASS_MASK);
     ClassStats* st = &rx->stats[(int)c <= 2 ? (int)c : 2];
@@ -231,19 +292,54 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
     st->rx_bytes += (uint32_t)(len - DATAGRAM_HEADER);
     *frames = data + DATAGRAM_HEADER;
     *cls = c;
-    return (int)(len - DATAGRAM_HEADER);
+    return (fec_data && rx->block_gap) ? 0
+        : (int)(len - DATAGRAM_HEADER);
+}
+
+bool
+datagram_authenticates(const DatagramRx* rx, const uint8_t* data, size_t len)
+{
+    if (!rx->psk_len || len < DATAGRAM_HEADER + DATAGRAM_TAG
+        || !(data[2] & DGF_AUTH))
+        return false;
+    size_t body = len - DATAGRAM_TAG;
+    uint8_t tag[DATAGRAM_TAG];
+    hmac_sha256_tag(rx->psk, rx->psk_len, data, body, tag);
+    return hmac_tag_equal(tag, data + body);
 }
 
 size_t
 datagram_take_recovered(DatagramRx* rx, uint8_t* out, size_t cap)
 {
-    if (!rx->holding || !rx->held_len || rx->held_len > cap)
-        return 0;
-    size_t n = rx->held_len;
-    memcpy(out, rx->held, n);
-    rx->holding = false;
-    rx->held_len = 0;
-    return n;
+    if (rx->ready_recovered) {
+        if (!rx->held_len || rx->held_len > cap)
+            return 0;
+        size_t n = rx->held_len;
+        memcpy(out, rx->held, n);
+        rx->ready_recovered = false;
+        if (!rx->ready_deferred) {
+            rx->holding = false;
+            rx->held_len = 0;
+            rx->held_len_xor = 0;
+            rx->block_received = 0;
+            rx->block_gap = false;
+        }
+        return n;
+    }
+    if (rx->ready_deferred) {
+        if (!rx->deferred_len || rx->deferred_len > cap)
+            return 0;
+        size_t n = rx->deferred_len;
+        memcpy(out, rx->deferred, n);
+        rx->ready_deferred = false;
+        rx->holding = false;
+        rx->held_len = rx->held_len_xor = 0;
+        rx->deferred_len = 0;
+        rx->block_received = 0;
+        rx->block_gap = false;
+        return n;
+    }
+    return 0;
 }
 
 } // namespace intentproto

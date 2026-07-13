@@ -128,6 +128,9 @@ esp32_udp_port_setup(uint16_t port, const uint8_t *psk, uint32_t psk_len)
         ESP_LOGE(TAG, "bind(%d) failed", port);
         return -1;
     }
+#if CONFIG_KLIPPER_FEC_PAIR
+    udp_console_set_fec_k(2);
+#endif
     udp_console_init(&esp32_udp_ops, NULL, psk, psk_len);
     xTaskCreatePinnedToCore(udp_rx_task, "klipper_udp_rx", 4096, NULL
                             , 10, NULL, 0);

@@ -28,12 +28,6 @@ static_assert(UDPDG_TAG == intentproto::DATAGRAM_TAG
 
 static intentproto::DatagramTx DGTx;
 static intentproto::DatagramRx DGRx;
-// Set by udpdg_decode when the datagram it just consumed was a parity
-// that reconstructed a single lost datagram into DGRx.held; cleared by
-// udpdg_take_recovered.  This gates take_recovered so it only fires on
-// a genuine reconstruction, never on the survivors accumulator that is
-// otherwise sitting in DGRx.held mid-block.
-static bool RecoveryPending;
 
 extern "C" void
 udpdg_init(const uint8_t *psk, uint32_t psk_len, uint8_t fec_k)
@@ -48,7 +42,6 @@ udpdg_init(const uint8_t *psk, uint32_t psk_len, uint8_t fec_k)
     // ARQ - is preserved unchanged.
     intentproto::datagram_tx_init(&DGTx, psk, psk_len, fec_k);
     intentproto::datagram_rx_init(&DGRx, psk, psk_len);
-    RecoveryPending = false;
 }
 
 extern "C" uint32_t
@@ -68,20 +61,8 @@ extern "C" int32_t
 udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames)
 {
     intentproto::TrafficClass cls;
-    bool was_parity = len >= intentproto::DATAGRAM_HEADER
-        && (data[2] & intentproto::DGF_PARITY);
-    uint32_t lost_before = DGRx.lost;
-    int32_t r = (int32_t)intentproto::datagram_decode(
+    return (int32_t)intentproto::datagram_decode(
         &DGRx, data, len, frames, &cls);
-    // A single-loss reconstruction is exactly: a parity datagram was
-    // consumed (r==0), it accounted the missing datagram this call
-    // (lost advanced), and the survivors+parity XOR now sits in held.
-    // That combination excludes the no-loss parity (held cleared) and
-    // a stale/duplicate parity (lost unchanged), so we never mistake
-    // the mid-block survivors accumulator for a reconstruction.
-    RecoveryPending = (r == 0 && was_parity && DGRx.lost > lost_before
-                       && DGRx.holding && DGRx.held_len);
-    return r;
 }
 
 extern "C" int
@@ -92,19 +73,12 @@ udpdg_is_authenticated_static(uint8_t *data, uint32_t len)
     // never claim a packet here.
     if (!DGRx.psk_len)
         return 0;
-    intentproto::DatagramRx probe = DGRx;
-    const uint8_t *frames;
-    intentproto::TrafficClass cls;
-    return intentproto::datagram_decode(
-        &probe, data, len, &frames, &cls) >= 0 ? 1 : 0;
+    return intentproto::datagram_authenticates(&DGRx, data, len) ? 1 : 0;
 }
 
 extern "C" uint32_t
 udpdg_take_recovered(uint8_t *out, uint32_t cap)
 {
-    if (!RecoveryPending)
-        return 0;
-    RecoveryPending = false;
     return (uint32_t)intentproto::datagram_take_recovered(&DGRx, out, cap);
 }
 

@@ -10,7 +10,7 @@
 #   board_address: 192.168.1.50:41414   # datagram mode
 #   listen_port: 41414                  # datagram mode
 #   psk_file: ~/printer_data/config/toolhead.psk
-#   fec_k: 4
+#   fec_k: 2                         # pair-block FEC; 0 disables
 #   session: True                       # datagram mode: DTLS-class session
 #   board_id: helix-board               # identity the board MUST present
 #                                       # (handshake rejected on mismatch)
@@ -55,6 +55,10 @@ class IntentprotoTransport:
                 " psk_file, or trust_network: True for an isolated segment"
                 % (self.name,))
         self.fec_k = config.getint('fec_k', 0, minval=0)
+        if self.fec_k not in (0, 2):
+            raise config.error(
+                "intentproto_transport %s: fec_k must be 0 or 2"
+                % (self.name,))
         self._serial = None
         self._bridge = None
         if self.mode == 'datagram':

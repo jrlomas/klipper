@@ -108,6 +108,9 @@ shmem_console_poll(void)
 void
 shmem_console_init(void)
 {
+#if CONFIG_KLIPPER_FEC_PAIR
+    udp_console_set_fec_k(2);
+#endif
     udp_console_init(&shmem_console_ops, NULL
                      , esp32_shmem.psk, esp32_shmem.psk_len);
 }

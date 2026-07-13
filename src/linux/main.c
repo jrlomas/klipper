@@ -101,6 +101,10 @@ main(int argc, char **argv)
             return -1;
         }
     }
+    if (fec_k != 0 && fec_k != 2) {
+        fprintf(stderr, "fec_k must be 0 (off) or 2 (pair blocks)\n");
+        return -1;
+    }
 
     // Initial setup
     if (realtime) {

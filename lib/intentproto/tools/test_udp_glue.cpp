@@ -90,6 +90,24 @@ main(int argc, char **argv)
     // A second take must not re-emit the same reconstruction
     CHECK(udpdg_take_recovered(rec, sizeof(rec)) == 0);
 
+    // Reset and lose the FIRST packet. The second must be deferred until
+    // parity, then the glue exposes recovered-first followed by survivor.
+    udpdg_init(PSK, sizeof(PSK), 2);
+    n1 = udpdg_encode(d1, f1, sizeof(f1));
+    CHECK(udpdg_parity_flush(dp) == 0);
+    n2 = udpdg_encode(d2, f2, sizeof(f2));
+    np = udpdg_parity_flush(dp);
+    CHECK(n1 > 0 && n2 > 0 && np > 0);
+    CHECK(udpdg_decode(d2, n2, &frames) == 0);
+    CHECK(udpdg_decode(dp, np, &frames) == 0);
+    rn = udpdg_take_recovered(rec, sizeof(rec));
+    CHECK(rn == UDPDG_HEADER + sizeof(f1));
+    CHECK(!memcmp(rec + UDPDG_HEADER, f1, sizeof(f1)));
+    rn = udpdg_take_recovered(rec, sizeof(rec));
+    CHECK(rn == UDPDG_HEADER + sizeof(f2));
+    CHECK(!memcmp(rec + UDPDG_HEADER, f2, sizeof(f2)));
+    CHECK(udpdg_take_recovered(rec, sizeof(rec)) == 0);
+
     // Fixtures for the Python wire-identity cross check: the survivor
     // datagram, the parity datagram, and the dropped datagram's frames.
     dump(dir, "udp_glue_survivor.bin", d1, n1);

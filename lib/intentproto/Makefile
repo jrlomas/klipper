@@ -51,6 +51,8 @@ test: $(addprefix $(BUILD)/,$(TESTS))
 	@for t in $(TESTS); do echo "== $$t"; ./$(BUILD)/$$t || exit 1; done
 	@if command -v python3 >/dev/null 2>&1; then \
 		echo "== test_extbind"; python3 tools/test_extbind.py || exit 1; \
+		echo "== test_udp_bridge_fec"; \
+		python3 tools/test_udp_bridge_fec.py || exit 1; \
 		echo "== test_ed25519_e2e (python signer <-> C verifier)"; \
 		python3 tools/test_ed25519_e2e.py || exit 1; \
 	else \

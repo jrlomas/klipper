@@ -38,6 +38,10 @@ work. They do not convert any unchecked target or hardware item into a pass.
   bounded scalar-function preflight/terminal-hold test.
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
   unsigned-image refusal, and bad-signature rejection.
+* Static datagram FEC uses bounded pair blocks: tests drop either the first or
+  second packet, reconstruct it from authenticated parity, and prove recovered
+  frames reach the consumer in original order. Unsupported block sizes are
+  rejected instead of silently weakening that guarantee.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
   and OpenAMS panels pass 46 unit tests across 7 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.

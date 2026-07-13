@@ -18,9 +18,8 @@ struct udpdg_stats {
 
 // Initialize the datagram codec.  psk_len==0 selects the explicitly
 // unauthenticated trust_network mode; the psk buffer must remain
-// valid for the life of the link (it is not copied).  fec_k selects
-// the XOR erasure block size (a parity datagram every k data
-// datagrams); 0 disables the erasure layer entirely.
+// valid for the life of the link (it is not copied). fec_k=2 selects
+// bounded XOR pair protection; 0 disables it and other values are invalid.
 void udpdg_init(const uint8_t *psk, uint32_t psk_len, uint8_t fec_k);
 // Wrap whole klipper frames into a sealed datagram written to 'out'
 // (which must hold len + UDPDG_OVERHEAD bytes).  Returns datagram
@@ -38,10 +37,9 @@ int32_t udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
 // Non-mutating probe used by the session router. Returns 1 only when a
 // PSK-authenticated static datagram validates under the configured key.
 int udpdg_is_authenticated_static(uint8_t *data, uint32_t len);
-// When the just-decoded datagram was a parity that reconstructed a
-// single lost datagram of its block, copy the recovered datagram
-// (whole: UDPDG_HEADER header + frames) into 'out' and return its
-// length, else 0.  Call once after every udpdg_decode that returns 0.
+// After parity reconstructed a loss, copy the next ready datagram (whole:
+// UDPDG_HEADER + frames) into 'out'. Call until it returns 0: first-packet
+// loss yields recovered-first followed by the deferred survivor.
 // The recovered bytes are XOR-derived from already-authenticated
 // survivors and parity, so they are post-auth trusted (there is no
 // per-datagram tag to re-check on a reconstruction).

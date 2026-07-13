@@ -231,9 +231,9 @@ One section per bridged micro-controller.
 #   Explicitly run the link unauthenticated. Only acceptable on a
 #   physically isolated network segment. The default is False.
 #fec_k: 0
-#   XOR erasure coding block size: emit one parity datagram every k
-#   data datagrams and recover a single lost datagram per block. Must
-#   match the board's setting. 0 disables the erasure layer. The
+#   XOR erasure coding: 2 protects each data pair with one parity datagram
+#   and recovers either single loss in original order. Must match the board's
+#   setting. 0 disables the erasure layer; other values are rejected. The
 #   default is 0.
 #session: False
 #   Datagram mode: establish the DTLS-class authenticated session

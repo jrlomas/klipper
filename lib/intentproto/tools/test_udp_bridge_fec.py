@@ -54,25 +54,20 @@ def deliver(rx, dgram):
 
 
 def test_tail_loss_recovers(psk):
-    for k in (2, 3, 4, 8):
-        frames = make_frames(k)
-        dgrams, parity = tx_block(psk, k, frames)
-        rx = ub.DatagramCodec(psk, k)
-        got = []
-        # Deliver every data datagram except the last, then the parity.
-        for d in dgrams[:-1]:
-            got += deliver(rx, d)
-        recovered = deliver(rx, parity)
-        check(recovered == [frames[-1]],
-              "k=%d tail loss: recovered %r != %r"
-              % (k, recovered, [frames[-1]]))
-        check(got == frames[:-1], "k=%d survivors delivered verbatim" % k)
-        check(rx.rx_lost == 1, "k=%d exactly one loss accounted" % k)
+    k = 2
+    frames = make_frames(k)
+    dgrams, parity = tx_block(psk, k, frames)
+    rx = ub.DatagramCodec(psk, k)
+    got = deliver(rx, dgrams[0])
+    recovered = deliver(rx, parity)
+    check(recovered == [frames[-1]], "tail loss recovered")
+    check(got == frames[:-1], "survivor delivered verbatim")
+    check(rx.rx_lost == 1, "exactly one loss accounted")
 
 
 def test_no_loss_no_phantom(psk):
     # A complete block must yield the k frames and NO phantom recovery.
-    k = 4
+    k = 2
     frames = make_frames(k)
     dgrams, parity = tx_block(psk, k, frames)
     rx = ub.DatagramCodec(psk, k)
@@ -84,31 +79,23 @@ def test_no_loss_no_phantom(psk):
     check(rx.rx_lost == 0, "no-loss block: zero loss counted")
 
 
-def test_midblock_loss_matches_library(psk):
-    # The library reconstructs the tail-loss case; a mid-block loss is
-    # detected (counted) but not reconstructed by the single-loss XOR
-    # code.  Assert that documented behaviour so the bridge and the C
-    # layer stay in lockstep rather than silently diverging.
-    k = 4
+def test_first_loss_recovers_in_order(psk):
+    k = 2
     frames = make_frames(k)
     dgrams, parity = tx_block(psk, k, frames)
     rx = ub.DatagramCodec(psk, k)
-    got = deliver(rx, dgrams[0])
-    # drop dgrams[1]
-    for d in dgrams[2:]:
-        got += deliver(rx, d)
+    check(deliver(rx, dgrams[1]) == [], "second packet deferred after gap")
     recovered = deliver(rx, parity)
-    check(recovered == [], "mid-block loss not reconstructed (library parity)")
-    check(rx.rx_lost == 1, "mid-block loss still counted")
+    check(recovered == frames, "first loss recovered before survivor")
+    check(rx.rx_lost == 1, "first loss accounted")
 
 
 def test_two_losses_no_false_recovery(psk):
-    k = 4
+    k = 2
     frames = make_frames(k)
     dgrams, parity = tx_block(psk, k, frames)
     rx = ub.DatagramCodec(psk, k)
-    got = deliver(rx, dgrams[0]) + deliver(rx, dgrams[1])
-    # drop dgrams[2] and dgrams[3]
+    # Drop both protected datagrams.
     recovered = deliver(rx, parity)
     check(recovered == [], "two losses: no false single-loss recovery")
 
@@ -143,12 +130,17 @@ def test_wire_identity_with_c():
 
 
 def main():
+    try:
+        ub.DatagramCodec(PSK, 3)
+        check(False, "unsupported fec_k accepted")
+    except ValueError:
+        pass
     for psk in (PSK, None):  # authenticated and trust-network modes
         label = "auth" if psk else "trust-network"
         print("== erasure recovery (%s)" % label)
         test_tail_loss_recovers(psk)
         test_no_loss_no_phantom(psk)
-        test_midblock_loss_matches_library(psk)
+        test_first_loss_recovers_in_order(psk)
         test_two_losses_no_false_recovery(psk)
     test_wire_identity_with_c()
     if FAIL:

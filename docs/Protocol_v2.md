@@ -589,7 +589,8 @@ constexpr uint8_t DGF_PARITY      = 0x04; // bit 2: XOR parity datagram
 constexpr uint8_t DGF_AUTH        = 0x08; // bit 3: authenticated
 constexpr uint8_t DGF_SESSION     = 0x10; // bit 4: session-protected (§9)
 constexpr uint8_t DGF_PARITY_LENGTHS = 0x20; // bit 5: length-aware parity
-// bits 6-7 reserved
+constexpr uint8_t DGF_FEC_DATA    = 0x40; // bit 6: protected data
+constexpr uint8_t DGF_FEC_START   = 0x80; // bit 7: first packet in pair
 ```
 
 * **Datagram sequence.** A 16-bit sequence prepended per datagram
@@ -598,20 +599,22 @@ constexpr uint8_t DGF_PARITY_LENGTHS = 0x20; // bit 5: length-aware parity
   sized for wired RTTs). The receiver syncs on the first datagram, then
   counts `lost` (positive gaps) and `reordered` (a stale/duplicate
   sequence, dropped).
-* **XOR erasure FEC.** With `fec_k > 0`, the tx side folds every data
-  datagram (header + frames, pre-auth) into a running XOR accumulator
-  and, after each block of `k`, emits a **parity datagram** (`DGF_PARITY`).
+* **XOR erasure FEC.** With `fec_k = 2`, the tx side marks and folds each
+  protected data pair (header + frames, pre-auth) into a running XOR
+  accumulator and emits a **parity datagram** (`DGF_PARITY`) after the pair.
   Its body is `[u16 xor_of_protected_lengths][xor_bytes...]`; the explicit
   `DGF_PARITY_LENGTHS` format bit makes older parity bodies degrade cleanly
   to ARQ instead of being misparsed by a new receiver. FEC-enabled data
   bodies are limited to 1459 bytes so the two-byte length field and HMAC
   remain within the 1472-byte UDP payload ceiling.
-  If exactly one datagram of a block is lost, the receiver XORs the
-  survivors it held against the parity to **reconstruct the missing
-  datagram without waiting out a retransmit timeout** — trading
-  bandwidth (1/k) for latency (an RTO). This is single-loss recovery
-  (`datagram_parity_flush`, and the `rx->held` survivor buffer);
-  `datagram_take_recovered()` fetches the rebuilt datagram.
+  `DGF_FEC_DATA` and `DGF_FEC_START` make a lost first packet visible even
+  at initial synchronization. If either packet is lost, the receiver XORs
+  the survivor against parity to **reconstruct the missing datagram without
+  waiting out a retransmit timeout**. When the first packet was missing, the
+  second is held until parity and then released after the reconstruction, so
+  frames remain in order. Pair blocks deliberately trade 50% bandwidth for
+  a fixed one-datagram MCU RAM bound; `0` disables FEC and other `k` values
+  fail closed rather than making an unbounded recovery promise.
 * **Authentication floor.** Outside an explicit `trust_network` mode
   (selected by passing `psk_len == 0`), **every datagram is
   authenticated**: `seal()` appends a truncated 8-byte HMAC-SHA256 over

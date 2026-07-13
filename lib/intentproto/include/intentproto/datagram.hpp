@@ -49,7 +49,8 @@ struct ClassStats {
 //        bit 3 = authenticated, bit 4 = session-protected (the
 //        optional session-security upgrade, session_sec.hpp; the
 //        static-PSK path here never sets or inspects it), bit 5 marks
-//        length-aware XOR parity. Bits 6-7 remain reserved.
+//        length-aware XOR parity. Bit 6 marks FEC-protected data and
+//        bit 7 marks the first data datagram in a pair block.
 constexpr size_t DATAGRAM_HEADER = 3;
 constexpr size_t DATAGRAM_TAG = 8;
 constexpr size_t DATAGRAM_MAX = 1472; // typical UDP payload MTU
@@ -61,6 +62,8 @@ constexpr uint8_t DGF_PARITY = 0x04;
 constexpr uint8_t DGF_AUTH = 0x08;
 constexpr uint8_t DGF_SESSION = 0x10;
 constexpr uint8_t DGF_PARITY_LENGTHS = 0x20;
+constexpr uint8_t DGF_FEC_DATA = 0x40;
+constexpr uint8_t DGF_FEC_START = 0x80;
 
 struct DatagramTx {
     const uint8_t* psk;
@@ -88,6 +91,14 @@ struct DatagramRx {
     uint16_t held_len_xor;
     uint16_t held_seq;
     bool holding;
+    // Pair-block in-order recovery. Only the second packet can need
+    // deferral, so the RAM bound is one additional datagram.
+    uint8_t deferred[DATAGRAM_MAX];
+    size_t deferred_len;
+    uint8_t block_received;
+    bool block_gap;
+    bool ready_recovered;
+    bool ready_deferred;
 };
 
 void datagram_tx_init(DatagramTx* tx, const uint8_t* psk, size_t psk_len,
@@ -99,7 +110,9 @@ void datagram_rx_init(DatagramRx* rx, const uint8_t* psk, size_t psk_len);
 size_t datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
                        size_t len, TrafficClass cls);
 // If FEC is on and due, emits a parity datagram into out and returns
-// its size, else 0. Call after each datagram_encode.
+// its size, else 0. The implemented bounded format accepts fec_k=2;
+// zero disables FEC and other values make datagram_encode fail.
+// Call after each datagram_encode.
 size_t datagram_parity_flush(DatagramTx* tx, uint8_t* out);
 
 // Authenticate + sequence-check a received datagram. On success
@@ -109,6 +122,10 @@ size_t datagram_parity_flush(DatagramTx* tx, uint8_t* out);
 // malformed, 0 for consumed-internally.
 int datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
                     const uint8_t** frames, TrafficClass* cls);
+// Non-mutating authentication probe for routers that must distinguish a
+// static datagram from another envelope before choosing a state machine.
+bool datagram_authenticates(const DatagramRx* rx, const uint8_t* data,
+                            size_t len);
 // After a decode that detected a single loss recovered by parity,
 // fetch the reconstructed datagram (returns length or 0).
 size_t datagram_take_recovered(DatagramRx* rx, uint8_t* out, size_t cap);

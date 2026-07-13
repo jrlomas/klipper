@@ -25,12 +25,9 @@ struct udp_console_ops {
     void (*rx_accepted)(void *ctx);
 };
 
-// Select the XOR erasure block size before udp_console_init: a parity
-// datagram is emitted every fec_k data datagrams and a single lost
-// datagram inside a protected block is reconstructed on the receive
-// side.  0 (the default when this is never called) leaves the erasure
-// layer off, preserving pure-ARQ behaviour.  A port that wants FEC
-// (e.g. the linux mcu's CLI flag) calls this first.
+// Select XOR erasure pair protection before udp_console_init: fec_k=2
+// emits parity after each pair and reconstructs either single loss in order.
+// 0 leaves the erasure layer off; other values fail closed at encode.
 void udp_console_set_fec_k(uint8_t fec_k);
 void udp_console_init(const struct udp_console_ops *ops, void *ctx
                       , const uint8_t *psk, uint32_t psk_len);

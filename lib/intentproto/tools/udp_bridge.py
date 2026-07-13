@@ -39,6 +39,8 @@ DGF_CLASS_MASK = 0x03
 DGF_PARITY = 0x04
 DGF_AUTH = 0x08
 DGF_PARITY_LENGTHS = 0x20
+DGF_FEC_DATA = 0x40
+DGF_FEC_START = 0x80
 DATAGRAM_FEC_MAX_BODY = DATAGRAM_MAX - DATAGRAM_HEADER - 2 - DATAGRAM_TAG
 # Batch serial bytes briefly to amortize per-datagram overhead
 BATCH_DELAY = 0.002
@@ -64,6 +66,8 @@ class DatagramCodec:
     # lost inside a protected block is reconstructed from the block's
     # survivors and parity. fec_k == 0 leaves the erasure layer off.
     def __init__(self, psk, fec_k=0):
+        if fec_k not in (0, 2):
+            raise ValueError("fec_k must be 0 (off) or 2 (pair blocks)")
         self.psk = psk
         self.tx_seq = 0
         self.expect_seq = None
@@ -80,10 +84,17 @@ class DatagramCodec:
         self.rx_held = bytearray()
         self.rx_len_xor = 0
         self.holding = False
+        self.rx_block_received = 0
+        self.rx_block_gap = False
+        self.rx_deferred = None
 
     def encode(self, payload, cls=0):
         seq = self.tx_seq & 0xffff
         flags = cls & DGF_CLASS_MASK
+        if self.k:
+            flags |= DGF_FEC_DATA
+            if self.sent_since_parity == 0:
+                flags |= DGF_FEC_START
         if self.psk:
             flags |= DGF_AUTH
         head = bytes([(seq >> 8) & 0xff, seq & 0xff, flags])
@@ -147,8 +158,11 @@ class DatagramCodec:
                 return []
             data = body
         seq = (data[0] << 8) | data[1]
+        fec_data = bool(flags & DGF_FEC_DATA)
+        fec_start = bool(flags & DGF_FEC_START)
         if self.expect_seq is None:
-            self.expect_seq = seq
+            self.expect_seq = ((seq - 1) & 0xffff
+                               if fec_data and not fec_start else seq)
         delta = (seq - self.expect_seq) & 0xffff
         if delta > 0x8000:
             self.rx_reordered += 1  # stale duplicate / reorder
@@ -163,15 +177,20 @@ class DatagramCodec:
                 self.holding = False
                 self.rx_held = bytearray()
                 self.rx_len_xor = 0
+                self.rx_block_received = 0
+                self.rx_block_gap = False
+                self.rx_deferred = None
                 return out
-            # Single-loss recovery: exactly one datagram of the block
-            # was lost (the one right before this parity) iff a block is
-            # open and this parity is the immediate successor (delta==1).
-            if self.holding and delta == 1:
+            protected_count = flags & DGF_CLASS_MASK
+            if (self.holding and protected_count == 2
+                    and self.rx_block_received == 1):
                 if len(data) < DATAGRAM_HEADER + 2:
                     self.holding = False
                     self.rx_held = bytearray()
                     self.rx_len_xor = 0
+                    self.rx_block_received = 0
+                    self.rx_block_gap = False
+                    self.rx_deferred = None
                     return []
                 block_len_xor = ((data[DATAGRAM_HEADER] << 8)
                                  | data[DATAGRAM_HEADER + 1])
@@ -181,6 +200,9 @@ class DatagramCodec:
                     self.holding = False
                     self.rx_held = bytearray()
                     self.rx_len_xor = 0
+                    self.rx_block_received = 0
+                    self.rx_block_gap = False
+                    self.rx_deferred = None
                     return []
                 _xor_into(self.rx_held, parity[:lost_len])
                 del self.rx_held[lost_len:]
@@ -188,18 +210,49 @@ class DatagramCodec:
                 recovered = bytes(self.rx_held[DATAGRAM_HEADER:])
                 if recovered:
                     out.append(recovered)
+                if self.rx_deferred is not None:
+                    out.append(self.rx_deferred[DATAGRAM_HEADER:])
             self.holding = False
             self.rx_held = bytearray()
             self.rx_len_xor = 0
+            self.rx_block_received = 0
+            self.rx_block_gap = False
+            self.rx_deferred = None
             return out
 
-        # Data datagram: fold [seq, flags, payload] into the survivors
-        if not self.holding:
+        if not fec_data:
+            self.holding = False
+            self.rx_held = bytearray()
+            self.rx_len_xor = 0
+            self.rx_block_received = 0
+            self.rx_block_gap = False
+            self.rx_deferred = None
+            return [data[DATAGRAM_HEADER:]]
+
+        # Pair-block data: stream in-order packets immediately, but defer
+        # the second survivor after a gap until parity reconstructs first.
+        if fec_start:
             self.rx_held = bytearray()
             self.rx_len_xor = 0
             self.holding = True
+            self.rx_block_received = 0
+            self.rx_block_gap = False
+            self.rx_deferred = None
+        elif not self.holding:
+            self.rx_held = bytearray()
+            self.rx_len_xor = 0
+            self.holding = True
+            self.rx_block_received = 0
+            self.rx_block_gap = True
+            self.rx_deferred = None
+        if delta > 0 and not fec_start:
+            self.rx_block_gap = True
         _xor_into(self.rx_held, data)
         self.rx_len_xor ^= len(data)
+        self.rx_block_received += 1
+        if self.rx_block_gap:
+            self.rx_deferred = bytes(data)
+            return []
         return [data[DATAGRAM_HEADER:]]
 
 
@@ -307,10 +360,9 @@ def main():
                    " unless --trust-network)")
     p.add_argument("--trust-network", action="store_true",
                    help="explicitly run unauthenticated")
-    p.add_argument("--fec-k", type=int, default=0, help="XOR erasure block"
-                   " size: send a parity datagram every k data datagrams and"
-                   " reconstruct a single lost datagram per block (0 = off,"
-                   " must match the board's -f)")
+    p.add_argument("--fec-k", type=int, choices=(0, 2), default=0,
+                   help="XOR erasure pair blocks (2 = on, 0 = off; must"
+                   " match the board's -f)")
     p.add_argument("--listen-port", type=int, default=41414)
     p.add_argument("-v", action="store_true", help="verbose")
     args = p.parse_args()

@@ -13,9 +13,9 @@
 //    wrapped and sealed into one datagram
 //
 // Erasure FEC (FD-0001 doc 07, "two layers"): when a port selects a
-// non-zero fec_k (udp_console_set_fec_k), the tx side emits a parity
-// datagram after every k data datagrams and the rx side reconstructs a
-// single datagram lost inside a protected block the moment that block's
+// fec_k=2 (udp_console_set_fec_k), the tx side emits a parity datagram
+// after every data pair and the rx side reconstructs either single loss
+// the moment that pair's
 // parity arrives - no retransmit-timeout wait.  Reassembly is in-order
 // and single-loss: the reconstructed datagram's frames are unwrapped
 // and fed to the SAME command_find_and_dispatch() path as a normally
@@ -264,9 +264,9 @@ udp_console_task(void)
             // the recovered datagram's frames (past its header) into the
             // same dispatch stream, in block order, so the lost command
             // takes effect without waiting out an ARQ retransmit.
-            uint32_t rlen = udpdg_take_recovered(rx_recovered
-                                                 , sizeof(rx_recovered));
-            if (rlen > UDPDG_HEADER)
+            uint32_t rlen;
+            while ((rlen = udpdg_take_recovered(
+                        rx_recovered, sizeof(rx_recovered))) > UDPDG_HEADER)
                 rx_append(rx_recovered + UDPDG_HEADER, rlen - UDPDG_HEADER);
         }
     }

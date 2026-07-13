@@ -237,7 +237,8 @@ typedef struct ip_datagram_tx ip_datagram_tx;
 typedef struct ip_datagram_rx ip_datagram_rx;
 
 /* psk NULL / psk_len 0 selects trust_network (unauthenticated) mode.
- * fec_k > 0 emits an XOR parity datagram every k datagrams. */
+ * fec_k 2 emits one XOR parity datagram per protected pair; 0 disables
+ * FEC. Other values are invalid and make encode return 0. */
 ip_datagram_tx *ip_datagram_tx_create(const uint8_t *psk, size_t psk_len,
                                       uint8_t fec_k);
 void ip_datagram_tx_free(ip_datagram_tx *tx);
@@ -259,8 +260,9 @@ size_t ip_datagram_parity_flush(ip_datagram_tx *tx, uint8_t *out);
  * datagram). */
 int ip_datagram_decode(ip_datagram_rx *rx, uint8_t *data, size_t len,
                        size_t *frames_off, int *cls);
-/* After a decode that recovered a lost datagram via parity, copy the
- * reconstructed datagram into out; returns its length or 0. */
+/* After a decode that recovered a lost datagram via parity, copy the next
+ * ready datagram into out; call until 0 because first-packet loss yields
+ * recovered-first followed by the deferred survivor. */
 size_t ip_datagram_take_recovered(ip_datagram_rx *rx, uint8_t *out,
                                   size_t cap);
 

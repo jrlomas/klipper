@@ -73,6 +73,16 @@ config KLIPPER_UDP_PORT
         UDP port the datagram console listens on.  The host side is
         lib/intentproto/tools/udp_bridge.py --board <ip>:<port>.
 
+config KLIPPER_FEC_PAIR
+    bool "Protect each UDP data pair with XOR parity"
+    default n
+    help
+        Set fec_k=2 on the shared datagram console. Either single packet
+        loss in a pair is reconstructed and released in order, at the cost
+        of one parity packet per two data packets and one deferred-datagram
+        RAM buffer. The host must also use --fec-k 2. Leave disabled until
+        measurement shows the target WiFi loss profile benefits.
+
 config KLIPPER_PSK
     string "Pre-shared key (build-time fallback)"
     default ""

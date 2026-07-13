@@ -115,6 +115,40 @@ static void check_datagram_loss_recovery(size_t survivor_len,
     (void)n2;
 }
 
+static void test_datagram_first_loss_recovery_in_order() {
+    DatagramTx tx;
+    DatagramRx rx;
+    datagram_tx_init(&tx, PSK, sizeof(PSK), 2);
+    datagram_rx_init(&rx, PSK, sizeof(PSK));
+    uint8_t first[9], second[13];
+    memset(first, 0x31, sizeof(first));
+    memset(second, 0x32, sizeof(second));
+    uint8_t d1[DATAGRAM_MAX], d2[DATAGRAM_MAX], parity[DATAGRAM_MAX];
+    size_t n1 = datagram_encode(&tx, d1, first, sizeof(first),
+                                TrafficClass::Scheduled);
+    CHECK(n1 > 0);
+    CHECK(datagram_parity_flush(&tx, parity) == 0);
+    size_t n2 = datagram_encode(&tx, d2, second, sizeof(second),
+                                TrafficClass::Scheduled);
+    size_t np = datagram_parity_flush(&tx, parity);
+    CHECK(n2 > 0 && np > 0);
+
+    // Lose the block-start packet. The second packet must be deferred,
+    // then parity releases recovered-first followed by the survivor.
+    const uint8_t* out;
+    TrafficClass cls;
+    CHECK(datagram_decode(&rx, d2, n2, &out, &cls) == 0);
+    CHECK(datagram_decode(&rx, parity, np, &out, &cls) == 0);
+    uint8_t ready[DATAGRAM_MAX];
+    size_t rn = datagram_take_recovered(&rx, ready, sizeof(ready));
+    CHECK(rn == DATAGRAM_HEADER + sizeof(first));
+    CHECK(!memcmp(ready + DATAGRAM_HEADER, first, sizeof(first)));
+    rn = datagram_take_recovered(&rx, ready, sizeof(ready));
+    CHECK(rn == DATAGRAM_HEADER + sizeof(second));
+    CHECK(!memcmp(ready + DATAGRAM_HEADER, second, sizeof(second)));
+    CHECK(datagram_take_recovered(&rx, ready, sizeof(ready)) == 0);
+}
+
 static void test_datagram_loss_recovery() {
     // Recover byte-exact length/content whether the missing datagram is
     // larger or smaller than the surviving one.
@@ -138,6 +172,13 @@ static void test_datagram_fec_bounds_and_version() {
                           TrafficClass::Scheduled) == 0);
     CHECK(tx.next_seq == 0);
     CHECK(tx.sent_since_parity == 0);
+
+    // Pair blocks are the bounded embedded format; other k values fail
+    // closed instead of making a recovery promise they cannot keep.
+    datagram_tx_init(&tx, PSK, sizeof(PSK), 3);
+    CHECK(datagram_encode(&tx, dg, frames, 8,
+                          TrafficClass::Scheduled) == 0);
+    CHECK(tx.next_seq == 0);
 
     // An older parity body without the explicit length-format bit is
     // consumed without recovery; v1 ARQ remains the compatibility path.
@@ -178,6 +219,7 @@ int main() {
     test_frame_v2();
     test_datagram_auth_roundtrip();
     test_datagram_loss_recovery();
+    test_datagram_first_loss_recovery_in_order();
     test_datagram_fec_bounds_and_version();
     test_datagram_trust_network();
     if (g_failures) {

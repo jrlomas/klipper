@@ -52,12 +52,12 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   identical glue serves ESP32 WiFi, ESP32 Ethernet (RMII - replace
   the WiFi bringup with `esp_eth`, the binding is unchanged), and the
   linux mcu.
-* Datagram-level erasure FEC (XOR parity) exists in lib/intentproto
-  but is not yet enabled by the glue: single-loss recovery delivers
-  the recovered datagram out of order, which the in-order frame
-  dispatcher would nak anyway.  Loss recovery is currently the frame
-  layer's ARQ; enabling parity needs a small in-order reassembly
-  buffer (future work).
+* Datagram-level erasure FEC (XOR parity) is implemented as bounded
+  pair blocks (`fec_k=2`): either single loss is reconstructed and a
+  later survivor is deferred until it can be released in order. The
+  linux MCU exposes it with `-f 2`; ESP32 exposes
+  `CONFIG_KLIPPER_FEC_PAIR`. It remains off by default until measured
+  on the target WiFi link, so the default recovery path is frame ARQ.
 
 ## Core pinning (FD-0001 doc 07) - component architecture
 
@@ -653,8 +653,8 @@ rough order:
   reinstating `rmt_step.c` on the bare core.
 * Keepalive datagrams during idle (NAT/AP state) and lwIP socket
   reconnect handling.
-* Enable datagram erasure FEC once the glue grows in-order block
-  reassembly.
+* Measure whether the optional `fec_k=2` path's 50% packet overhead helps
+  the target WiFi loss profile.
 * On-silicon bring-up of the RMT step backend (see the
   [RMT step bring-up checklist](#rmt-step-bring-up-checklist)); PCNT
   step verification as a homing-position cross-check; FOC backend
