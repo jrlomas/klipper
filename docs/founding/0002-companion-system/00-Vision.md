@@ -117,7 +117,8 @@ readable rationale ([05-Knowledge-Base.md](05-Knowledge-Base.md)).
 
 The first three planes are deterministic, CPU-only, and **already built** —
 the Milestone A floor. The fourth sits above them: its safety contracts,
-llama.cpp transport, and pinned Qwen3-4B workstation preflight are realized;
-GPU authorship and Pi 5 + Hailo-10H validation remain. The roadmap that got
+llama.cpp transport, daemon/API/terminal/Mainsail assistant seam, and pinned
+Qwen3-4B workstation preflight are realized; GPU authorship, live-machine
+apply, and Pi 5 + Hailo-10H validation remain. The roadmap that got
 us here and the settled decisions behind it are in
 [08-Roadmap.md](08-Roadmap.md).

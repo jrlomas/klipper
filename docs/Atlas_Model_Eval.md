@@ -40,6 +40,30 @@ The separate real-model smoke decoded and interpreted a timer fault, proposed
 through the deterministic apply gate. It was classified `CONSEQUENTIAL` and
 applied with the reversible path, as designed.
 
+## Always-on assistant integration
+
+The production-shaped workstation seam was also exercised on 2026-07-13:
+
+1. `atlas serve` started with the pinned GGUF, explicit
+   `llama-completion`, a temporary `klippy.log`, read-only `printer.cfg`, and
+   a mode-private assistant Unix socket.
+2. `atlas assistant ask` traversed CLI → socket → daemon → llama.cpp and
+   returned a grounded explanation of the observed `Timer too close` shutdown
+   in about 25 seconds on CPU.
+3. `atlas assistant propose` requested only
+   `extruder.max_temp: 280 → 270`. Qwen returned exactly that one-key edit in
+   about 29 seconds; the non-LLM classifier labelled it `SAFETY`, selected
+   `confirm`, issued an expiring proposal token, and reported `applied: false`.
+4. The original config SHA-256 remained
+   `91728f4c8ca605d6fd2461e2a5eb93c3e3013ef62b1187e886a9bfd500f34ff8`,
+   proving the workstation preview did not mutate it.
+
+The same API is wired through authenticated Moonraker endpoints and the
+Mainsail companion panel. Mainsail's 46 unit tests, lint, formatting check,
+production build, and distribution zip passed with the assistant UI. The
+panel keeps conversation locally, sends at most eight prior messages, shows
+the deterministic risk result, and offers no apply control at this stage.
+
 ## Provenance and remaining validation
 
 This run is labelled **workstation CPU preflight; GPU/Hailo validation
@@ -48,3 +72,6 @@ llama.cpp build could not initialize a supported GPU runtime and the NVIDIA
 driver was unavailable to `nvidia-smi`; no GPU result is claimed. The same
 labelled suite must still run on the development GPU and, last, on the Pi 5 +
 Hailo-10H target with memory and latency recorded.
+Live config mutation/reload/undo also remains a board-rig acceptance item; the
+workstation result proves drafting and the safety preview, not real-machine
+application.

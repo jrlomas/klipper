@@ -51,8 +51,11 @@ base vs the intelligence tier.
   ([`atlas/eval/`](../../../atlas/eval/)), and the memory + RAG index
   ([`atlas/memory/`](../../../atlas/memory/)) — with the backend wired to
   llama.cpp. The official pinned Qwen3-4B Q4_K_M passes the real-model
-  workstation smoke and all 9 labelled eval cases; GPU and Hailo results
-  remain explicitly unclaimed.
+  workstation smoke and all 9 labelled eval cases. It also runs as a
+  daemon-owned assistant behind mode-private IPC, authenticated Moonraker
+  endpoints, terminal commands, and the Mainsail companion panel. A live CPU
+  run proved grounded Q&A and a safety-classified, non-applied config preview.
+  GPU, Hailo, and live-machine apply results remain explicitly unclaimed.
 - **Milestone D — Companion at scale.** Proactive baselines + anomaly
   detection maturing; the users-as-trainers loop running at fleet scale;
   voice (future). Both tiers; intelligence tier for voice/NL.
@@ -128,11 +131,13 @@ recorded here as the settled record; the rationale for the last four is in
 
 The open items are settled; FD-0002 has split into this numbered series;
 Milestones A and B are realized. Milestone C's safety contracts, pinned
-llama.cpp runtime, structured action path, and workstation quality preflight
-are green. What remains is hardware-bound: GPU authorship, Pi 5 + Hailo-10H
-compilation and validation, and live-machine trials. Voice remains Milestone
-D. The floor is honest, the contracts are proven, and the model can draft
-behind the deterministic gate without being trusted to decide safety.
+llama.cpp runtime, grounded conversational service, structured preview path,
+Moonraker boundary, terminal client, Mainsail face, and workstation quality
+preflight are green. What remains is hardware-bound: GPU authorship, Pi 5 +
+Hailo-10H compilation and validation, and live-machine apply/reload/undo
+trials. Voice remains Milestone D. The floor is honest, the service is usable,
+and the model drafts behind the deterministic gate without being trusted to
+decide safety.
 
 For the bring-up ladder and the current status of every task, see the
 [Atlas Bring-up Plan](../../Atlas_Bring-up_Plan.md) and the

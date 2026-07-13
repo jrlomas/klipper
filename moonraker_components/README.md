@@ -9,6 +9,9 @@ It registers authenticated HTTP/JSON-RPC endpoints:
 - `GET /server/atlas/status` (`server.atlas.status`)
 - `GET /server/atlas/incidents` (`server.atlas.incidents`)
 - `GET /server/atlas/health` (`server.atlas.health`)
+- `POST /server/atlas/assistant/ask` (`server.atlas.assistant.ask`)
+- `POST /server/atlas/assistant/interpret` (`server.atlas.assistant.interpret`)
+- `POST /server/atlas/assistant/propose` (`server.atlas.assistant.propose`)
 - websocket notification `notify_atlas_status_update`
 
 Install it as `moonraker/components/atlas.py`, then add:
@@ -18,7 +21,12 @@ Install it as `moonraker/components/atlas.py`, then add:
 state_file: ~/.local/state/atlas/status.json
 poll_interval: 0.5
 stale_after: 15
+assistant_socket: ~/.local/state/atlas/assistant.sock
+assistant_timeout: 300
 ```
 
 The Atlas service heartbeat defaults to five seconds, so a 15-second stale
 threshold tolerates two missed heartbeats without masking a stopped daemon.
+The assistant endpoints are bounded relays to the daemon's mode-private Unix
+socket. Moonraker does not load weights, construct prompts, diagnose a second
+time, or decide the risk of a proposed edit.

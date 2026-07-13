@@ -23,8 +23,9 @@ honesty; Atlas gives it a mind.
 | --- | --- | --- |
 | `../src/trace.{c,h}` | **A1** structured trace plane (firmware) — `LOG*` macros, IRAM ring, Class-2 stream, dictionary-registered events, F072-fit | ✅ authored¹ |
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
-| `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract | ✅ |
-| `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health endpoints, stale detection, and websocket updates | ✅ |
+| `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract and owns the optional local-model runtime | ✅ |
+| `assistant.py` / `ipc.py` | serialized, size-bounded assistant service over a mode-private Unix socket; grounded chat, interpretation, and expiring deterministic config previews | ✅ workstation |
+| `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health and assistant relay endpoints, stale detection, and websocket updates | ✅ |
 | `observe.py` | rotation-safe JSONL ingestion for trace, execution, link-stat, and timesync events on exact machine time | ✅ |
 | `history.py` / `monitor.py` | bounded SQLite incident history plus persistent per-machine drift baselines | ✅ |
 | `decode/trace.py` | **A2** host trace collector — decode trace records via the dictionary onto the merged timeline | ✅ |
@@ -53,6 +54,15 @@ bring-up work (HANDOFF §5):
 | `eval/` | the eval harness — diagnosis accuracy, structured config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first or against real GGUF weights, always reported against the deploy profile and actual accelerator provenance. |
 | `memory/` | the per-machine **memory file** (quirks, baselines, journaled changes) + the **RAG index** over the KB + memory, with a deterministic stub embedder for grounding. |
 
+The workstation path is a usable product seam, not only a model helper:
+the daemon hosts inference, Moonraker relays authenticated typed requests,
+the Mainsail Atlas panel provides bounded conversational chat and config
+previews, and `atlas assistant` provides the same operations from a terminal.
+The assistant refuses to start with an implicit stub or a missing model. Live
+config mutation remains disabled at this workstation checkpoint: proposals are
+classified, hashed, given a short-lived token, and shown as previews. Applying,
+reloading, rollback, and undo on a real printer remain Phase 4 board-rig work.
+
 **Milestone B** seeds the first curated failure patterns —
 [`diagnosis/patterns/`](diagnosis/patterns/) (thermal/comms/motion, 9
 patterns), verified in `test/atlas_patterns_test.py`.
@@ -65,7 +75,7 @@ the labelled suite against the pinned weights. The recorded workstation
 result is in [`docs/Atlas_Model_Eval.md`](../docs/Atlas_Model_Eval.md).
 The standard suite mocks the model so it runs without weights.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,assistant,moonraker,install,observe,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
 — the complete deterministic Atlas workstation suite, all green. Exact check
 counts are intentionally left to the test runner so this status line cannot
 go stale when coverage grows.
@@ -101,6 +111,24 @@ rendered by the Mainsail Atlas panel. An idle heartbeat lets consumers tell a
 quiet service from a stopped one. The component in `moonraker_components/`
 validates and exposes this state without recomputing Atlas facts.
 
+To enable the local assistant, set `ATLAS_MODEL` and `ATLAS_LLAMA_CLI` in
+the mode-private `atlas.env` written by the installer. For a direct run:
+
+```console
+$ python3 -m atlas.cli serve ~/printer_data/logs/klippy.log \
+    --state-file ~/.local/state/atlas/status.json \
+    --model /models/Qwen3-4B-Q4_K_M.gguf \
+    --llama-cli /opt/llama.cpp/bin/llama-completion \
+    --printer-config ~/printer_data/config/printer.cfg
+$ python3 -m atlas.cli assistant ask "Why did the printer stop?"
+$ python3 -m atlas.cli assistant interpret
+$ python3 -m atlas.cli assistant propose "Rename the START_PRINT macro"
+```
+
+Questions are grounded in the current timeline, the active pattern catalog,
+and optional machine memory. Conversation context is carried by the client,
+bounded to eight messages / 16 KiB, and is not persisted by the daemon.
+
 Install the daemon, its hardened systemd service, and the Moonraker component
 on a standard Klipper host with:
 
@@ -122,6 +150,7 @@ $ python3 test/atlas_daemon_test.py
 $ python3 test/atlas_moonraker_test.py
 $ python3 test/atlas_install_test.py
 $ python3 test/atlas_observe_test.py
+$ python3 test/atlas_assistant_test.py
 ```
 
 These are part of the deterministic floor and run on any CPU with only

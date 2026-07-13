@@ -1,8 +1,8 @@
 # FD-0002 · 07 — Plane 4: The LLM as Interpreter *and* Actuator
 
-Status: **Contracts and pinned-model workstation path realized; deploy
-hardware pending.** The deterministic safety contracts the model plugs into
-are **built and CPU-tested**: the non-LLM risk
+Status: **End-to-end pinned-model workstation assistant realized; deploy
+hardware and live-machine apply pending.** The deterministic safety contracts
+the model plugs into are **built and CPU-tested**: the non-LLM risk
 classifier + draft→validate→classify→apply pipeline in
 [`atlas/apply/`](../../../atlas/apply/), the `ModelBackend` abstraction +
 deploy-profile budget guard in [`atlas/model/`](../../../atlas/model/), the
@@ -11,7 +11,10 @@ memory file + RAG index in [`atlas/memory/`](../../../atlas/memory/). The
 model backend is wired to **llama.cpp** and the official pinned
 **Qwen3-4B Q4_K_M** passes the workstation CPU smoke and labelled suite.
 The deploy target remains Pi 5 + Hailo-10H; GPU authorship, target model
-compilation, target metrics, and live-machine integration remain open.
+compilation, target metrics, and live-machine mutation remain open. On the
+workstation, daemon-owned inference, private IPC, authenticated Moonraker
+relays, terminal commands, and the Mainsail companion interface are built and
+tested together.
 
 This is the plane other printer stacks are not even considering: a machine
 you can *ask*, and (carefully) *tell*. But the entire value of the plane
@@ -127,11 +130,20 @@ see [08-Roadmap.md](08-Roadmap.md).
 
 The daemon and API boundary are now realized in
 [`atlas/daemon.py`](../../../atlas/daemon.py): live merged-timeline ownership,
-deterministic diagnosis, and an atomic versioned state snapshot with an idle
-heartbeat. The deliberately boring Moonraker component in
+deterministic diagnosis, the serialized local-model runtime, mode-private IPC,
+and an atomic versioned state snapshot with an idle heartbeat. The deliberately
+boring Moonraker component in
 [`moonraker_components/atlas.py`](../../../moonraker_components/atlas.py)
-validates and exposes that contract, reports staleness, and does not become a
-second diagnosis implementation.
+validates and exposes that contract, reports staleness, relays typed assistant
+requests, and does not become a second diagnosis implementation. The Mainsail
+Atlas panel supplies bounded conversational context and renders classified
+config previews; no model prompt or safety decision is implemented in the UI.
+
+The workstation service intentionally stops at preview for config changes.
+It returns an expiring token plus exact deterministic diff/risk metadata and
+never silently serves the stub backend. Real file mutation, Klippy reload,
+rollback, and restart-safe undo are still accepted on the Phase 4 board rig,
+where a failed reload can be observed rather than simulated.
 
 Deployment is equally explicit:
 [`scripts/install-atlas.sh`](../../../scripts/install-atlas.sh) installs a

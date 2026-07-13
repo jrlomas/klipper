@@ -21,8 +21,9 @@ below, and the deterministic substrate exists in code.
 Status: **Split into the numbered series; the deterministic floor
 (Milestone A) and the first patterns (Milestone B) are realized in the
 [`atlas/`](../../../atlas/) package + [`src/trace.c`](../../../src/trace.c);
-the Milestone C contracts and pinned Qwen3-4B workstation path are
-CPU-validated; Pi 5 + Hailo-10H deployment remains hardware bring-up. The
+the Milestone C contracts and end-to-end Qwen3-4B workstation assistant are
+CPU-validated; Pi 5 + Hailo-10H deployment and live-machine apply remain
+hardware bring-up. The
 complete deterministic Atlas workstation suite is green; its runner, rather
 than this document, is the source of truth for the exact check count.** Each
 document's own status line records its precise state.
@@ -40,7 +41,7 @@ Read in order, or jump by interest. Each is self-contained.
 | [04-Diagnosis-Engine.md](04-Diagnosis-Engine.md) | The deterministic pattern catalog, the empty-catalog principle, and the proactive health monitor | Realized (Milestone A); patterns seeded (Milestone B) |
 | [05-Knowledge-Base.md](05-Knowledge-Base.md) | The shared brain: KB contents, report pipeline, redaction, the §6a lifecycle state machine + label vocabulary, trust & anti-poisoning | Framework realized in the Atlas floor (Milestone A) |
 | [06-Provisioning-Fleet-Coherence.md](06-Provisioning-Fleet-Coherence.md) | Plane 3: the board catalog, one-touch provisioning, and fleet coherence as one signed mechanism | Realized in the Atlas floor (Milestone A) |
-| [07-LLM-Layer.md](07-LLM-Layer.md) | Plane 4: interpret + generate/control, the risk tiers, the eval harness, voice, and the ecosystem seams | Contracts + pinned-model workstation path realized; target pending |
+| [07-LLM-Layer.md](07-LLM-Layer.md) | Plane 4: interpret + generate/control, the risk tiers, the eval harness, voice, and the ecosystem seams | End-to-end workstation assistant realized; target/apply pending |
 | [08-Roadmap.md](08-Roadmap.md) | The A–D milestones with their current state, and every (now settled) open decision | Milestones A/B realized; C workstation path green |
 
 ## Reading order

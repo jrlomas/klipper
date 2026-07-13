@@ -130,6 +130,14 @@ are required (§8 tier 2).
   file round-trips losslessly and journals applied changes; the RAG index
   (stub embedder) retrieves the relevant grounding document. *Pass:* ALL
   PASS. *(Real embedder swaps in behind the same contract at Milestone C.)*
+- [x] **Assistant service contract.** *Do:*
+  `python3 test/atlas_assistant_test.py` and
+  `python3 test/atlas_moonraker_test.py`. *Expect:* an explicit real backend,
+  bounded serialized inference, a mode-private Unix socket, authenticated thin
+  API relays, bounded conversational context, and expiring config previews
+  whose risk is classified outside the model. *Pass:* ALL PASS. Stub serving,
+  oversized prompts/history, unknown operations, and implicit config mutation
+  are refused.
 
 ## Phase 2 — Trace plane on hardware (A1)
 
@@ -175,6 +183,15 @@ F072** it was designed to fit.
   interpretation, structured config proposal, and deterministic apply path
   passed. See [Atlas Model Evaluation](Atlas_Model_Eval.md). This is not the
   required GPU or Hailo result.
+- [x] **Workstation assistant end to end.** *Do:* run the pinned model behind
+  `atlas serve`, ask through the private socket, and request a safety-affecting
+  config edit. *Pass:* the grounded answer returned through the live daemon;
+  the exact `extruder.max_temp: 280 → 270` draft was classified `SAFETY`,
+  required confirmation, returned `applied: false`, and left the source config
+  hash unchanged. The authenticated Moonraker endpoints, terminal client, and
+  Mainsail companion UI are built and green. See
+  [Atlas Model Evaluation](Atlas_Model_Eval.md). This proves workstation
+  integration, not live-machine apply.
 - [ ] **Model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
   *Expect:* diagnosis accuracy and config-edit correctness above the
