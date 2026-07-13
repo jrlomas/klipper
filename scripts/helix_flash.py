@@ -326,8 +326,19 @@ def main():
         if args.sign_file:
             with open(args.sign_file, "rb") as f:
                 sig = f.read()
-            proto.send('flash_sign', sig)
-            check_result(proto.wait_response('flash_result'), 5)
+            if len(sig) != 64:
+                raise FlashError("--sign-file must be a 64-byte detached"
+                                 " Ed25519 signature (got %d bytes)"
+                                 % (len(sig),))
+            # Chunked like flash_data: the whole signature plus command
+            # overhead cannot fit one frame's payload.
+            got = 0
+            for off in range(0, len(sig), 32):
+                proto.send('flash_sign', off, sig[off:off + 32])
+                got = check_result(proto.wait_response('flash_result'), 5)
+            if got != len(sig):
+                raise FlashError("board holds %d of %d signature bytes"
+                                 % (got, len(sig)))
             print("signature accepted")
 
         proto.send('flash_verify')

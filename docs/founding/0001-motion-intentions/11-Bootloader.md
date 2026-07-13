@@ -117,8 +117,11 @@ combined`) computes the signature during/after assembly and sets the
 flag; the very first boot of a freshly programmed board therefore finds
 a signed, valid app with no in-band step.
 
-**Verify flow.** In-band, the host sends the signature with a
-`flash_sign` command; `flash_verify` then gates on BOTH the CRC and the
+**Verify flow.** In-band, the host sends the signature with
+`flash_sign offset=%u data=%.*s` — chunked exactly like `flash_data`,
+because a whole 64-byte signature plus command overhead cannot fit one
+64-byte frame's payload (`bootcore_sign_data` enforces contiguous
+chunks); `flash_verify` then gates on BOTH the CRC and the
 signature (`bootcore_verify` then `bootcore_verify_signature`), and
 `set_app_valid(1)` — which persists the flag + signature into the info
 page — runs only if both pass. At every boot the port re-checks the

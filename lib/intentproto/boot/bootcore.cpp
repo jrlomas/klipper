@@ -48,6 +48,7 @@ bootcore_begin(BootCore* bc, uint32_t size, uint32_t crc)
     bc->image_size = size;
     bc->image_crc = crc;
     bc->received = 0;
+    bc->sig_received = 0;  // a new transfer restarts the chunked signature
     bc->state = BootState::Receiving;
     return BOOT_OK;
 }
@@ -118,6 +119,26 @@ bootcore_set_signature(BootCore* bc, const uint8_t sig[BOOT_SIG_SIZE])
         && bc->state != BootState::Verified)
         return fail(bc, BOOT_ERR_STATE);
     memcpy(bc->signature, sig, BOOT_SIG_SIZE);
+    bc->sig_received = BOOT_SIG_SIZE;
+    return BOOT_OK;
+}
+
+int
+bootcore_sign_data(BootCore* bc, uint32_t offset, const uint8_t* data,
+                   size_t len)
+{
+    // The wire carrier for the signature: contiguous chunks, exactly
+    // like flash_data, because a whole 64-byte signature plus command
+    // overhead cannot fit one 64-byte frame's payload.
+    if (bc->state != BootState::Receiving
+        && bc->state != BootState::Verified)
+        return fail(bc, BOOT_ERR_STATE);
+    if (offset != bc->sig_received)
+        return fail(bc, BOOT_ERR_ORDER);
+    if (!len || offset + len > BOOT_SIG_SIZE)
+        return fail(bc, BOOT_ERR_RANGE);
+    memcpy(bc->signature + offset, data, len);
+    bc->sig_received = offset + (uint32_t)len;
     return BOOT_OK;
 }
 
@@ -142,6 +163,11 @@ bootcore_verify_signature(BootCore* bc, const uint8_t pub_key[32])
     // bytes the CRC covered.
     if (bc->state != BootState::Verified)
         return fail(bc, BOOT_ERR_STATE);
+    // A missing or partially-shipped signature reads as ERR_SIG - the
+    // image is not (yet) validly signed - which tells a host operator
+    // "supply --sign-file", not "protocol misuse".
+    if (bc->sig_received != BOOT_SIG_SIZE)
+        return fail(bc, BOOT_ERR_SIG);
     if (!bootcore_app_sig_ok(ops, bc->image_size, bc->signature, pub_key))
         return fail(bc, BOOT_ERR_SIG);
     // Record the image as signed; set_app_valid persists the flag and

@@ -145,15 +145,15 @@ KLIPPER_METHOD(flash_data, (uint32_t, offset), (buf, data))
 }
 
 #ifdef CONFIG_WANT_SIGNED_IMAGES
-// flash_sign data=<64-byte Ed25519 signature> — the host supplies the
-// signature over the exact application image (the CRC'd bytes) before
-// flash_verify. Only present in a signing-enabled bootloader.
-KLIPPER_METHOD(flash_sign, (buf, data))
+// flash_sign offset=%u data=%.*s — the host supplies the 64-byte
+// Ed25519 signature over the exact application image (the CRC'd bytes)
+// before flash_verify. Chunked like flash_data: the whole signature
+// plus command overhead cannot fit one frame's payload, so it arrives
+// in contiguous pieces. Only present in a signing-enabled bootloader.
+KLIPPER_METHOD(flash_sign, (uint32_t, offset), (buf, data))
 {
-    int rc = (data.len == BOOT_SIG_SIZE)
-                 ? bootcore_set_signature(&g_bc, data.data)
-                 : BOOT_ERR_RANGE;
-    reply(flash_result{OP_SIGN, (uint8_t)rc, (uint32_t)data.len});
+    int rc = bootcore_sign_data(&g_bc, offset, data.data, data.len);
+    reply(flash_result{OP_SIGN, (uint8_t)rc, g_bc.sig_received});
 }
 #endif
 

@@ -69,6 +69,7 @@ struct BootCore {
     // alongside the validity record. Zero on an unsigned update.
     uint32_t flags;
     uint8_t signature[BOOT_SIG_SIZE];
+    uint32_t sig_received;  // chunked flash_sign high-water mark
 };
 
 enum {
@@ -118,6 +119,16 @@ int bootcore_app_crc_ok(const FlashOps* ops, uint32_t size, uint32_t crc);
 // signature is verified by bootcore_verify_signature and persisted by
 // the port's set_app_valid alongside the validity record.
 int bootcore_set_signature(BootCore* bc, const uint8_t sig[BOOT_SIG_SIZE]);
+
+// flash_sign offset=%u data=%.*s — the wire carrier for the signature.
+// A 64-byte signature plus msgid/len overhead cannot fit one 64-byte
+// frame's payload (PAYLOAD_MAX is 59), so the host ships it in
+// contiguous chunks exactly like flash_data (offset == chunk high-water
+// mark, BOOT_ERR_ORDER otherwise). A new bootcore_begin resets the
+// accumulator. Equivalent to bootcore_set_signature once all
+// BOOT_SIG_SIZE bytes have arrived.
+int bootcore_sign_data(BootCore* bc, uint32_t offset, const uint8_t* data,
+                       size_t len);
 
 // After bootcore_verify (CRC ok, state Verified): verify the stashed
 // signature over the flashed image against pub_key. On success sets
