@@ -15,9 +15,11 @@ from .redact import (redact_fields, redact_event, redact_value,
 from .bundle import BlackboxBundle, assemble_bundle
 from .issue import (render_issue, STATE_LABELS, ACCEPT_REASONS,
                     REJECT_REASONS, ALL_LABELS)
+from .store import ConsentError, KnowledgeOutbox, SignedCatalogInstaller
 
 __all__ = [
     "redact_fields", "redact_event", "redact_value", "RedactionPolicy",
     "DEFAULT_POLICY", "BlackboxBundle", "assemble_bundle", "render_issue",
     "STATE_LABELS", "ACCEPT_REASONS", "REJECT_REASONS", "ALL_LABELS",
+    "ConsentError", "KnowledgeOutbox", "SignedCatalogInstaller",
 ]

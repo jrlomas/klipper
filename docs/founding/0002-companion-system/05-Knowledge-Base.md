@@ -10,6 +10,13 @@ and the GitHub-Issue **intake + label vocabulary**
 The lifecycle governance runs on GitHub Issues. Assemble a redacted,
 submittable bundle with `python3 -m atlas.cli bundle /path/to/klippy.log --issue`.
 
+The local trust plumbing is realized in
+[`atlas/kb/store.py`](../../../atlas/kb/store.py): short-lived single-use consent
+bound to one redacted content hash, a deduplicating submission outbox, structured
+feedback, and Ed25519-verified catalog activation with safe extraction and
+rollback. Network submission remains an explicit Moonraker/API action; creating
+a bundle alone can never enqueue or transmit it.
+
 This is the part that makes the repository a **shared brain** rather than a
 pile of source. It is also the part with the sharpest trust, privacy, and
 security questions, so it is *specified*, not hand-waved. Two things live

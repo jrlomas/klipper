@@ -15,6 +15,14 @@ the same trust discipline HELIX applies to firmware images.
 | `redact.py` | the numeric-only redaction pass (floor-tested) | ✓ |
 | `bundle.py` | the blackbox bundle format | ✓ |
 | `issue.py` | GitHub-Issue intake + label vocabulary | ✓ |
+| `store.py` | single-use per-incident consent outbox, feedback ledger, signed catalog activation + rollback | ✓ |
+
+Nothing transmits merely because a bundle exists. `KnowledgeOutbox` issues a
+short-lived token bound to one redacted content hash; enqueue atomically consumes
+it once. A network/API worker may claim that local queue, but cannot manufacture
+consent. Catalog updates are Ed25519-verified before safe extraction and atomic
+activation, retain one rollback generation, and reject links/path traversal even
+inside a correctly signed archive.
 | `../../.github/ISSUE_TEMPLATE/atlas-case.yml` | the structured case form | ✓ |
 
 Model configuration + memory files (system prompts, RAG index build,

@@ -86,6 +86,11 @@ and gates every commit. No hardware, no GPU, no model.
 - [ ] **KB + redaction (A8).** *Do:* `python3 test/atlas_kb_test.py`.
   *Expect:* the numeric-only redaction pass never leaks a secret, path,
   or serial. *Pass:* ALL PASS.
+- [ ] **KB consent + signed pulls.** *Do:*
+  `python3 test/atlas_kb_store_test.py`. *Expect:* per-incident consent is
+  short-lived and single-use; duplicate cases coalesce; feedback is structured;
+  signed catalogs activate atomically, reject tamper/traversal, and roll back.
+  *Pass:* ALL PASS.
 - [ ] **Redaction adversarial review.** *Do:* hand a bundle containing
   planted secrets/paths/serials through `assemble_bundle`. *Expect:* none
   survive. *Pass:* the rendered issue body contains zero planted values.
