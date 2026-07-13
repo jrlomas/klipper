@@ -4,12 +4,18 @@
 # weights), llama.cpp (the deployable path — CUDA + ROCm + CPU builds,
 # GGUF/Q4_K_M), and Hailo (the deploy target). The interface is fixed
 # now so dropping Qwen3-4B onto the Hailo later is a plug-in, not an
-# integration. Real inference lands in Milestone C; the availability
-# probes and the profile enforcement are real today.
+# integration. The llama.cpp binding and non-interactive binary transports
+# are real today; deploy-model quality and Hailo execution land with the
+# pinned Milestone C weights and target hardware.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 
 from .profile import DEPLOY, DeployProfile
@@ -73,8 +79,8 @@ class StubBackend(ModelBackend):
 class LlamaCppBackend(ModelBackend):
     """The deployable path: llama.cpp with a GGUF model.
 
-    Availability is probed (the python binding or a built binary); actual
-    generation lands in Milestone C. accelerator distinguishes the CUDA /
+    Availability is probed (the Python binding or llama-completion binary)
+    and both paths generate today. accelerator distinguishes the CUDA /
     ROCm / CPU builds behind one interface.
     """
 
@@ -82,7 +88,8 @@ class LlamaCppBackend(ModelBackend):
 
     def __init__(self, model_path=None, accelerator="cpu",
                  profile: DeployProfile = DEPLOY, params_b=4.0,
-                 quant="Q4_K_M", n_ctx=8192, system=None, llama=None):
+                 quant="Q4_K_M", n_ctx=8192, system=None, llama=None,
+                 cli_path=None, cli_runner=None, timeout=300):
         self.model_path = model_path
         self.accelerator = accelerator
         self.profile = profile
@@ -91,15 +98,38 @@ class LlamaCppBackend(ModelBackend):
         self.n_ctx = n_ctx
         self.system = system
         self._llama = llama            # injectable for tests
+        self.cli_path = cli_path
+        self.cli_runner = cli_runner or subprocess.run
+        self.timeout = timeout
 
-    def available(self) -> bool:
-        if self._llama is not None:
-            return True
+    @staticmethod
+    def _binding_available() -> bool:
         try:
             import llama_cpp  # noqa: F401
             return True
         except ImportError:
             return False
+
+    def _find_cli(self):
+        candidate = (self.cli_path or shutil.which("llama-completion")
+                     or shutil.which("llama-cli"))
+        # Current llama.cpp reserves non-interactive, file-fed generation
+        # for llama-completion. Accept a llama-cli path as a convenient
+        # locator when the sibling completion binary is installed.
+        if candidate and os.path.basename(candidate) == "llama-cli":
+            completion = os.path.join(os.path.dirname(candidate),
+                                      "llama-completion")
+            if os.path.isfile(completion):
+                candidate = completion
+        if candidate and os.path.isfile(candidate) and os.access(candidate,
+                                                                    os.X_OK):
+            return os.path.abspath(candidate)
+        return None
+
+    def available(self) -> bool:
+        if self._llama is not None:
+            return True
+        return self._binding_available() or self._find_cli() is not None
 
     def enforce_budget(self) -> int:
         # A backend on the deployable path must fit the profile budget.
@@ -123,8 +153,9 @@ class LlamaCppBackend(ModelBackend):
         """Run a chat completion, mapping schema->JSON grammar and
         tools->tool-calling. Returns a normalized Completion.
         """
-        import json
-
+        if self._llama is None and not self._binding_available():
+            return self._generate_cli(prompt, schema, tools, max_tokens,
+                                      system)
         llama = self._ensure_loaded()
         messages = [{"role": "system",
                      "content": system or self.system
@@ -152,6 +183,59 @@ class LlamaCppBackend(ModelBackend):
                 except ValueError:
                     args = {"_raw": args}
             calls.append({"name": fn.get("name"), "arguments": args})
+        return Completion(text=text, tool_calls=calls,
+                          backend="%s:%s" % (self.name, self.accelerator))
+
+    def _generate_cli(self, prompt, schema, tools, max_tokens, system):
+        cli = self._find_cli()
+        if cli is None:
+            raise RuntimeError("llama.cpp CLI is unavailable")
+        if not self.model_path:
+            raise RuntimeError("LlamaCppBackend needs a model_path")
+        system_text = (system or self.system
+                       or "You are Atlas, a local 3D-printer companion.")
+        tool_mode = tools is not None
+        if tool_mode:
+            system_text += (
+                "\nAvailable tools (JSON):\n%s\nTo call a tool, output only "
+                "a JSON object with keys name and arguments. Do not claim "
+                "an action occurred unless you emit that object."
+                % json.dumps(tools, sort_keys=True))
+        combined_prompt = "%s\n\nUser:\n%s\n\nAssistant:\n" % (
+            system_text, prompt)
+        with tempfile.TemporaryDirectory(prefix="atlas-llama-") as tmp:
+            prompt_path = os.path.join(tmp, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as handle:
+                handle.write(combined_prompt)
+            os.chmod(prompt_path, 0o600)
+            argv = [
+                cli, "--offline", "--model", os.path.abspath(self.model_path),
+                "--ctx-size", str(self.n_ctx), "--predict", str(max_tokens),
+                "--temp", "0.2", "--simple-io", "--no-display-prompt",
+                "--no-conversation", "--file", prompt_path,
+            ]
+            if self.accelerator == "cpu":
+                argv.extend(["--device", "none", "--gpu-layers", "0"])
+            if schema is not None:
+                argv.extend(["--json-schema", json.dumps(schema,
+                                                          sort_keys=True)])
+            result = self.cli_runner(
+                argv, check=True, capture_output=True, text=True,
+                timeout=self.timeout)
+        text = result.stdout.strip()
+        calls = []
+        if tool_mode:
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict) and isinstance(parsed.get("name"), str):
+                arguments = parsed.get("arguments", {})
+                if not isinstance(arguments, dict):
+                    arguments = {"_raw": arguments}
+                calls.append({"name": parsed["name"],
+                              "arguments": arguments})
+                text = ""
         return Completion(text=text, tool_calls=calls,
                           backend="%s:%s" % (self.name, self.accelerator))
 

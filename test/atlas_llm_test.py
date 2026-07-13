@@ -12,6 +12,7 @@
 import json
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
@@ -88,6 +89,41 @@ def test_generate_tolerates_bad_tool_json():
     print("PASS: malformed tool-call JSON is captured, not crashed on")
 
 
+def test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools():
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = os.path.join(tmp, "llama-completion")
+        model = os.path.join(tmp, "model.gguf")
+        open(cli, "w").close()
+        open(model, "w").close()
+        os.chmod(cli, 0o700)
+        seen = {}
+
+        class Result:
+            stdout = json.dumps({
+                "name": "propose_config_edit",
+                "arguments": {"after_config": CFG, "rationale": "test"},
+            })
+
+        def runner(argv, **kwargs):
+            seen["argv"] = argv
+            seen["kwargs"] = kwargs
+            prompt_file = argv[argv.index("--file") + 1]
+            seen["prompt"] = open(prompt_file).read()
+            return Result()
+
+        backend = LlamaCppBackend(model_path=model, cli_path=cli,
+                                  cli_runner=runner)
+        backend._binding_available = lambda: False
+        out = backend.generate(
+            "change this private config", tools=[prompts.TOOL_PROPOSE_CONFIG_EDIT])
+        assert out.tool_calls[0]["name"] == "propose_config_edit"
+        assert "User:\nchange this private config" in seen["prompt"]
+        assert "change this private config" not in seen["argv"]
+        assert "Available tools" in seen["prompt"]
+        assert seen["kwargs"]["timeout"] == 300
+    print("PASS: CLI fallback uses private prompt files and normalizes tool JSON")
+
+
 # -- the model -> apply safety flow (with a stub backend) ----------------
 
 def _editor_backend(after_config):
@@ -154,6 +190,7 @@ def main():
     test_generate_passes_schema_and_tools()
     test_generate_parses_tool_calls()
     test_generate_tolerates_bad_tool_json()
+    test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools()
     test_propose_edit_returns_proposal()
     test_propose_edit_none_when_no_tool_call()
     test_model_edit_flows_through_safety_gate()

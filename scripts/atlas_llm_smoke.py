@@ -16,7 +16,7 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import os
+import argparse, os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
@@ -31,11 +31,11 @@ CFG = ("[printer]\nkinematics: corexy\nmax_velocity: 300\nmax_accel: 3000\n\n"
        "[gcode_macro START]\ndescription: Start a print\n")
 
 
-def main(model_path):
+def main(model_path, cli_path=None):
     print("Loading %s ..." % model_path)
     backend = LlamaCppBackend(model_path=model_path, accelerator="cpu",
-                              n_ctx=4096)
-    assert backend.available(), "llama_cpp not importable"
+                              n_ctx=4096, cli_path=cli_path)
+    assert backend.available(), "neither llama_cpp nor llama-cli is available"
 
     # 1) interpret a real decoded incident
     tl = decode_klippy_log(
@@ -45,6 +45,7 @@ def main(model_path):
     text = interpret_incident(backend, tl)
     print(text.strip()[:600])
     assert text.strip(), "empty interpretation"
+    assert "available commands:" not in text, "captured CLI UI, not inference"
 
     # 2) propose a config edit via the tool, then run it through the gate
     print("\n[propose_config_edit] 'lower max_accel to 2000' ->")
@@ -65,7 +66,8 @@ def main(model_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: atlas_llm_smoke.py /path/to/model.gguf")
-        sys.exit(2)
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("model", help="local GGUF model")
+    parser.add_argument("--cli", help="path to llama-cli when not on PATH")
+    args = parser.parse_args()
+    main(args.model, args.cli)
