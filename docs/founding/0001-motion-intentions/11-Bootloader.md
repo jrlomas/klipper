@@ -1,6 +1,8 @@
 # FD-0001: First-Class Bootloader
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Canonical Klipper bootloader/update path implemented and
+workstation-tested in HELIX 0.9; per-target hardware proof remains, and the
+downstream OAMS port is staged but not yet registered in its CAN dispatcher.
 
 In the current ecosystem the bootloader is an afterthought: Katapult
 is a separate project, separately built, separately flashed, with its

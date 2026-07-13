@@ -1,6 +1,7 @@
 # FD-0001: Failure Recovery — Pause, Hold, Resume
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Core implemented and workstation-tested in HELIX 0.9; hardware and
+live-printer recovery validation pending.
 
 Klipper's failure philosophy today is binary: any error — a late
 timer, a lost message, a homing timeout — ends in `shutdown()`, which

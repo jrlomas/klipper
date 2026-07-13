@@ -92,7 +92,8 @@ def test_bad_update_retains_last_good_state():
         assert reader.state["service"]["generation"] == 7
         assert "unsupported schema_version" in reader.last_error
         assert reader.health(15.0)["healthy"] is False
-        print("PASS: corrupt/incompatible updates never replace last-good facts")
+        print("PASS: corrupt/incompatible updates never replace "
+              "last-good facts")
 
 
 def test_size_limit():

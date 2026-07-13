@@ -1,6 +1,8 @@
 # FD-0001: Actuator Backends
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Stepper and sampled PWM/DAC backends are implemented and
+workstation-tested in HELIX 0.9; FOC is an extension contract and hardware
+bring-up remains pending.
 
 The intention protocol ([02-Intention_Protocol.md](02-Intention_Protocol.md))
 deliberately says nothing about motors. This document defines the

@@ -1,6 +1,7 @@
 # FD-0001: The Intention Protocol
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Core implemented and workstation-tested in HELIX 0.9; hardware
+bring-up pending.
 
 This is the core document of the founding document. It defines what a trajectory
 *intention* (segment) is, its wire encoding, how a stepper realizes it

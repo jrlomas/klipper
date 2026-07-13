@@ -8,7 +8,8 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
 from atlas.daemon import AtlasDaemon  # noqa: E402
 from atlas.history import IncidentStore  # noqa: E402
@@ -53,10 +54,12 @@ def test_structured_tail_handles_partial_rotation_and_bad_data():
             handle.write(first[10:] + "\nnot-json\n")
         assert len(tail.poll()) == 1
         assert tail.errors == 1 and tail.last_error
-        path.write_text(json.dumps(_record("trace", 2, {"event": "two"})) + "\n")
+        record = json.dumps(_record("trace", 2, {"event": "two"}))
+        path.write_text(record + "\n")
         assert len(tail.poll()) == 1
         assert tail.rotations == 1
-        print("PASS: structured tail survives partial lines, rejection, and rotation")
+        print("PASS: structured tail survives partial lines, rejection, "
+              "and rotation")
 
 
 def _diagnosis(pattern):
@@ -79,10 +82,13 @@ def test_incident_store_deduplicates_persists_and_retains():
         store.record(_diagnosis("p3"))
         assert len(store) == 2
         store.close()
-        reopened = IncidentStore(path, max_incidents=2, wall_clock=lambda: now[0])
-        assert [item["matched_pattern"] for item in reopened.recent()] == ["p3", "p2"]
+        reopened = IncidentStore(
+            path, max_incidents=2, wall_clock=lambda: now[0])
+        patterns = [item["matched_pattern"] for item in reopened.recent()]
+        assert patterns == ["p3", "p2"]
         reopened.close()
-        print("PASS: incident history deduplicates, persists, and enforces retention")
+        print("PASS: incident history deduplicates, persists, and enforces "
+              "retention")
 
 
 def test_monitor_learns_persists_and_flags_drift():
@@ -130,7 +136,8 @@ def test_daemon_unifies_structured_monitor_and_history():
         assert state["service"]["incident_count"] == 1
         assert state["incidents"][0]["incident_key"].startswith("case:")
         daemon.close()
-        print("PASS: daemon publishes unified telemetry, drift, and durable incidents")
+        print("PASS: daemon publishes unified telemetry, drift, and durable "
+              "incidents")
 
 
 def main():

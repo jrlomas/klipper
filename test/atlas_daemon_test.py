@@ -63,7 +63,8 @@ def test_daemon_publishes_incrementally():
         assert published == second
         assert not [name for name in os.listdir(os.path.dirname(state_path))
                     if name.endswith(".tmp")]
-        print("PASS: daemon follows appended events and atomically publishes state")
+        print("PASS: daemon follows appended events and atomically publishes "
+              "state")
 
 
 def test_waits_for_log_to_appear():
@@ -84,7 +85,8 @@ def test_waits_for_log_to_appear():
             fh.write(START)
         running = daemon.poll_once()
         assert running["timeline"]["events"]
-        print("PASS: service starts before klippy.log and attaches when it appears")
+        print("PASS: service starts before klippy.log and attaches when it "
+              "appears")
 
 
 def test_rotation_and_bounded_timeline():
@@ -137,7 +139,8 @@ def test_idle_heartbeat_proves_liveness():
         assert heartbeat is not first
         assert heartbeat["service"]["generation"] == 2
         assert heartbeat["service"]["updated_at"] == 105.0
-        print("PASS: idle heartbeat distinguishes a quiet daemon from a dead one")
+        print("PASS: idle heartbeat distinguishes a quiet daemon from a "
+              "dead one")
 
 
 def test_source_failure_degrades_without_losing_state():

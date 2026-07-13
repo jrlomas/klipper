@@ -53,7 +53,8 @@ def plan_value_trajectory(duration, value_at, frequency,
     frequency = float(frequency)
     sample_time = float(sample_time)
     if duration <= 0. or frequency <= 0. or sample_time <= 0.:
-        raise ValueError("duration, frequency, and sample_time must be positive")
+        raise ValueError(
+            "duration, frequency, and sample_time must be positive")
     span_count = max(1, int(math.ceil(duration / sample_time)))
     span_count = min(span_count, max(1, int(math.floor(duration * frequency))))
     if span_count > MAX_VALUE_SEGMENTS:
@@ -75,7 +76,8 @@ def plan_value_trajectory(duration, value_at, frequency,
     for index in range(1, len(values)):
         span_ticks = ticks[index] - ticks[index - 1]
         if span_ticks <= 0 or span_ticks >= MAX_SEGMENT_DURATION:
-            raise ValueError("value trajectory produced an invalid segment duration")
+            raise ValueError(
+                "value trajectory produced an invalid segment duration")
         target = values[index] << 32
         velocity = _round_away((target - acc) / float(span_ticks << 16))
         if velocity < -2147483648 or velocity > 2147483647:

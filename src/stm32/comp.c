@@ -1,8 +1,10 @@
-// Window Comparator functions on STM32G0B1 - using COMP1/COMP2 and COMP2/COMP3 peripherals
+// Window Comparator functions on STM32G0B1, using COMP1/COMP2 and
+// COMP2/COMP3 peripherals.
 // Implements window comparators that trigger when input voltage is within
 // a specified range defined by upper and lower thresholds.
 // Supports PA1 (COMP1/COMP2) and PA3 (COMP2/COMP3) configurations.
-// Features IRQ management to prevent continuous triggering when outside thresholds.
+// Features IRQ management to prevent continuous triggering when outside
+// thresholds.
 //
 // Copyright (C) 2025 JR Lomas (discord:knight_rad.iant) <lomas.jr@gmail.com>
 //
@@ -38,16 +40,16 @@ static comp_config_t *comp_config = NULL;
 static void setup_dac(uint8_t dac_channel, uint16_t value) {
     // Enable DAC clock
     RCC->APBENR1 |= RCC_APBENR1_DAC1EN;
-    
+
     // Clamp to 12 bits
     value &= 0x0FFF;
 
     // Configure DAC channel: enable first, then write DHR and trigger
-    // Ensure DAC mode selects internal-only routing (avoid driving external PA4/PA5)
+    // Select internal-only routing to avoid driving external PA4/PA5.
     // Set MODE1 and MODE2 to a non-zero value that routes internal outputs to
     // internal peripherals (see reference manual for exact MODE values).
-     /* clear then set MODE fields for both channels to 0b111 using header constants
-         (this prefers internal routing to on-chip peripherals and avoids driving PA4/PA5)
+     /* Clear then set MODE fields for both channels to 0b111 using header
+        constants. This routes to on-chip peripherals without driving PA4/PA5.
      */
      DAC1->MCR &= ~(DAC_MCR_MODE1_Msk | DAC_MCR_MODE2_Msk);
      DAC1->MCR |= (DAC_MCR_MODE1_0 | DAC_MCR_MODE1_1 | DAC_MCR_MODE1_2 |
@@ -77,81 +79,124 @@ static void setup_dac(uint8_t dac_channel, uint16_t value) {
 #define HYSTERESIS_SETTING HYSTERESIS_HIGH
 
 // Configure COMP as window comparator (internal triggering only)
-static void setup_comp_window_comparator(uint32_t input_pin, uint16_t upper_threshold, uint16_t lower_threshold) {
+static void
+setup_comp_window_comparator(uint32_t input_pin, uint16_t upper_threshold,
+                             uint16_t lower_threshold)
+{
     // Enable COMP clock via SYSCFG
     RCC->APBENR2 |= RCC_APBENR2_SYSCFGEN;
-    
+
     if (input_pin == GPIO('A', 1)) {
         // Configure COMP1/COMP2 window comparator with PA1 input
         gpio_peripheral(GPIO('A', 1), GPIO_ANALOG, 0); // INP
-    
-        
+
+
         // Configure COMP1 (upper threshold comparator)
         uint32_t csr1 = 0;
-    
-        csr1 |= (0b10 << COMP_CSR_INPSEL_Pos) & COMP_CSR_INPSEL_Msk; // INP = PA1
-        csr1 |= (0b100 << COMP_CSR_INMSEL_Pos) & COMP_CSR_INMSEL_Msk; // INM = DAC Chan 1
-        csr1 |= (0b0 << COMP_CSR_WINMODE_Pos) & COMP_CSR_WINMODE_Msk; // Single mode for COMP2
-        csr1 |= (0b1 << COMP_CSR_WINOUT_Pos) & COMP_CSR_WINOUT_Msk; // Enable COMP1 XOR COMP2 value
-        csr1 |= (0b0 << COMP_CSR_BLANKING_Pos) & COMP_CSR_BLANKING_Msk; // No blanking
-        csr1 |= (0b0 << COMP_CSR_POLARITY_Pos) & COMP_CSR_POLARITY_Msk; // No polarity inversion
-        csr1 |= (0b00 << COMP_CSR_PWRMODE_Pos) & COMP_CSR_PWRMODE_Msk; // High speed
-        csr1 |= (HYSTERESIS_SETTING << COMP_CSR_HYST_Pos) & COMP_CSR_HYST_Msk;
+
+        // PA1 input, DAC channel 1 threshold, single mode, XOR output,
+        // no blanking or polarity inversion, high-speed operation.
+        csr1 |= ((0b10 << COMP_CSR_INPSEL_Pos)
+                 & COMP_CSR_INPSEL_Msk);
+        csr1 |= ((0b100 << COMP_CSR_INMSEL_Pos)
+                 & COMP_CSR_INMSEL_Msk);
+        csr1 |= ((0b0 << COMP_CSR_WINMODE_Pos)
+                 & COMP_CSR_WINMODE_Msk);
+        csr1 |= ((0b1 << COMP_CSR_WINOUT_Pos)
+                 & COMP_CSR_WINOUT_Msk);
+        csr1 |= ((0b0 << COMP_CSR_BLANKING_Pos)
+                 & COMP_CSR_BLANKING_Msk);
+        csr1 |= ((0b0 << COMP_CSR_POLARITY_Pos)
+                 & COMP_CSR_POLARITY_Msk);
+        csr1 |= ((0b00 << COMP_CSR_PWRMODE_Pos)
+                 & COMP_CSR_PWRMODE_Msk);
+        csr1 |= ((HYSTERESIS_SETTING << COMP_CSR_HYST_Pos)
+                 & COMP_CSR_HYST_Msk);
     // Do NOT enable COMP1 here; enable after EXTI/NVIC is configured
     COMP1->CSR = csr1;
-        
+
         // Configure COMP2 (lower threshold comparator)
         uint32_t csr2 = 0;
 
-        csr2 |= (0b10 << COMP_CSR_INPSEL_Pos) & COMP_CSR_INPSEL_Msk; // INP = PA3 <- but overwritten by window mode
-        csr2 |= (0b0101 << COMP_CSR_INMSEL_Pos) & COMP_CSR_INMSEL_Msk; // INM = DAC Chan 2
-        csr2 |= (0b1 << COMP_CSR_WINMODE_Pos) & COMP_CSR_WINMODE_Msk; // Window mode for COMP2
-        csr2 |= (0b0 << COMP_CSR_WINOUT_Pos) & COMP_CSR_WINOUT_Msk; // Enable COMP2 value
-        csr2 |= (0b0 << COMP_CSR_BLANKING_Pos) & COMP_CSR_BLANKING_Msk; // No blanking
-        csr2 |= (0b1 << COMP_CSR_POLARITY_Pos) & COMP_CSR_POLARITY_Msk; // Polarity-inverted (since it is the lower threshold)
-        csr2 |= (0b00 << COMP_CSR_PWRMODE_Pos) & COMP_CSR_PWRMODE_Msk; // High speed
-        csr2 |= (HYSTERESIS_SETTING << COMP_CSR_HYST_Pos) & COMP_CSR_HYST_Msk;
+        // PA3 selection is overwritten by window mode; use DAC channel 2,
+        // inverted polarity, no blanking, and high-speed operation.
+        csr2 |= ((0b10 << COMP_CSR_INPSEL_Pos)
+                 & COMP_CSR_INPSEL_Msk);
+        csr2 |= ((0b0101 << COMP_CSR_INMSEL_Pos)
+                 & COMP_CSR_INMSEL_Msk);
+        csr2 |= ((0b1 << COMP_CSR_WINMODE_Pos)
+                 & COMP_CSR_WINMODE_Msk);
+        csr2 |= ((0b0 << COMP_CSR_WINOUT_Pos)
+                 & COMP_CSR_WINOUT_Msk);
+        csr2 |= ((0b0 << COMP_CSR_BLANKING_Pos)
+                 & COMP_CSR_BLANKING_Msk);
+        csr2 |= ((0b1 << COMP_CSR_POLARITY_Pos)
+                 & COMP_CSR_POLARITY_Msk);
+        csr2 |= ((0b00 << COMP_CSR_PWRMODE_Pos)
+                 & COMP_CSR_PWRMODE_Msk);
+        csr2 |= ((HYSTERESIS_SETTING << COMP_CSR_HYST_Pos)
+                 & COMP_CSR_HYST_Msk);
     // Do NOT enable COMP2 here; enable after EXTI/NVIC is configured
     COMP2->CSR = csr2;
-        
+
     } else if (input_pin == GPIO('A', 3)) {
         // Configure COMP2/COMP3 window comparator with PA3 input
         gpio_peripheral(GPIO('A', 3), GPIO_ANALOG, 0); // INP
-        
+
         // Configure COMP2 (upper threshold comparator)
         uint32_t csr2 = 0;
 
-        csr2 |= (0b10 << COMP_CSR_INPSEL_Pos) & COMP_CSR_INPSEL_Msk; // INP = PA3
-        csr2 |= (0b100 << COMP_CSR_INMSEL_Pos) & COMP_CSR_INMSEL_Msk; // INM = DAC Chan 1
-        csr2 |= (0b0 << COMP_CSR_WINMODE_Pos) & COMP_CSR_WINMODE_Msk; // Single mode for COMP2
-        csr2 |= (0b1 << COMP_CSR_WINOUT_Pos) & COMP_CSR_WINOUT_Msk; // Enable COMP2 XOR COMP3 value
-        csr2 |= (0b0 << COMP_CSR_BLANKING_Pos) & COMP_CSR_BLANKING_Msk; // No blanking
-        csr2 |= (0b0 << COMP_CSR_POLARITY_Pos) & COMP_CSR_POLARITY_Msk; // No polarity inversion
-        csr2 |= (0b00 << COMP_CSR_PWRMODE_Pos) & COMP_CSR_PWRMODE_Msk; // High speed
-        csr2 |= (HYSTERESIS_SETTING << COMP_CSR_HYST_Pos) & COMP_CSR_HYST_Msk;
+        // PA3 input, DAC channel 1 threshold, single mode, XOR output,
+        // no blanking or polarity inversion, high-speed operation.
+        csr2 |= ((0b10 << COMP_CSR_INPSEL_Pos)
+                 & COMP_CSR_INPSEL_Msk);
+        csr2 |= ((0b100 << COMP_CSR_INMSEL_Pos)
+                 & COMP_CSR_INMSEL_Msk);
+        csr2 |= ((0b0 << COMP_CSR_WINMODE_Pos)
+                 & COMP_CSR_WINMODE_Msk);
+        csr2 |= ((0b1 << COMP_CSR_WINOUT_Pos)
+                 & COMP_CSR_WINOUT_Msk);
+        csr2 |= ((0b0 << COMP_CSR_BLANKING_Pos)
+                 & COMP_CSR_BLANKING_Msk);
+        csr2 |= ((0b0 << COMP_CSR_POLARITY_Pos)
+                 & COMP_CSR_POLARITY_Msk);
+        csr2 |= ((0b00 << COMP_CSR_PWRMODE_Pos)
+                 & COMP_CSR_PWRMODE_Msk);
+        csr2 |= ((HYSTERESIS_SETTING << COMP_CSR_HYST_Pos)
+                 & COMP_CSR_HYST_Msk);
     // Do NOT enable COMP2 here; enable after EXTI/NVIC is configured
     COMP2->CSR = csr2;
-        
+
         // Configure COMP3 (lower threshold comparator)
         uint32_t csr3 = 0;
-        csr3 |= (0b00 << COMP_CSR_INPSEL_Pos) & COMP_CSR_INPSEL_Msk; // INP = PB0 <- but overwritten by window mode
-        csr3 |= (0b0101 << COMP_CSR_INMSEL_Pos) & COMP_CSR_INMSEL_Msk; // INM = DAC Chan 2
-        csr3 |= (0b1 << COMP_CSR_WINMODE_Pos) & COMP_CSR_WINMODE_Msk; // Window mode for COMP3
-        csr3 |= (0b0 << COMP_CSR_WINOUT_Pos) & COMP_CSR_WINOUT_Msk; // Enable COMP3 value
-        csr3 |= (0b0 << COMP_CSR_BLANKING_Pos) & COMP_CSR_BLANKING_Msk; // No blanking
-        csr3 |= (0b1 << COMP_CSR_POLARITY_Pos) & COMP_CSR_POLARITY_Msk; // Polarity-inverted (since it is the lower threshold)
-        csr3 |= (0b00 << COMP_CSR_PWRMODE_Pos) & COMP_CSR_PWRMODE_Msk; // High speed
-        csr3 |= (HYSTERESIS_SETTING << COMP_CSR_HYST_Pos) & COMP_CSR_HYST_Msk;
+        // PB0 selection is overwritten by window mode; use DAC channel 2,
+        // inverted polarity, no blanking, and high-speed operation.
+        csr3 |= ((0b00 << COMP_CSR_INPSEL_Pos)
+                 & COMP_CSR_INPSEL_Msk);
+        csr3 |= ((0b0101 << COMP_CSR_INMSEL_Pos)
+                 & COMP_CSR_INMSEL_Msk);
+        csr3 |= ((0b1 << COMP_CSR_WINMODE_Pos)
+                 & COMP_CSR_WINMODE_Msk);
+        csr3 |= ((0b0 << COMP_CSR_WINOUT_Pos)
+                 & COMP_CSR_WINOUT_Msk);
+        csr3 |= ((0b0 << COMP_CSR_BLANKING_Pos)
+                 & COMP_CSR_BLANKING_Msk);
+        csr3 |= ((0b1 << COMP_CSR_POLARITY_Pos)
+                 & COMP_CSR_POLARITY_Msk);
+        csr3 |= ((0b00 << COMP_CSR_PWRMODE_Pos)
+                 & COMP_CSR_PWRMODE_Msk);
+        csr3 |= ((HYSTERESIS_SETTING << COMP_CSR_HYST_Pos)
+                 & COMP_CSR_HYST_Msk);
     // Do NOT enable COMP3 here; enable after EXTI/NVIC is configured
     COMP3->CSR = csr3;
-        
+
     } else {
         shutdown("Window comparator input must be PA1 or PA3");
         return;
     }
 }
 
-// Enable the comparator pair after EXTI/NVIC are configured (per reference sequence)
+// Enable the pair after EXTI/NVIC setup, as required by the reference sequence.
 static void enable_comp_pair(uint32_t input_pin) {
     if (input_pin == GPIO('A', 1)) {
         COMP1->CSR |= COMP_CSR_EN_Msk;
@@ -165,13 +210,13 @@ static void enable_comp_pair(uint32_t input_pin) {
 // Map COMP output to EXTI line for interrupt generation (window comparator)
 static void setup_comp_window_exti(uint32_t input_pin) {
     irqstatus_t flag = irq_save();
-    
+
     if (input_pin == GPIO('A', 1)) {
         // For COMP1/COMP2 window comparator
         // COMP1 → EXTI17, COMP2 → EXTI18
         uint32_t exti17_mask = (1U << 17); // COMP1
         uint32_t exti18_mask = (1U << 18); // COMP2
-        
+
         // Clear any pending interrupts
         EXTI->RPR1 = exti17_mask | exti18_mask;
         EXTI->FPR1 = exti17_mask | exti18_mask;
@@ -190,7 +235,7 @@ static void setup_comp_window_exti(uint32_t input_pin) {
         // COMP2 → EXTI18, COMP3 → EXTI20
         uint32_t exti18_mask = (1U << 18); // COMP2
         uint32_t exti20_mask = (1U << 20); // COMP3
-        
+
         // Clear any pending interrupts
         EXTI->RPR1 = exti18_mask | exti20_mask;
         EXTI->FPR1 = exti18_mask | exti20_mask;
@@ -203,11 +248,11 @@ static void setup_comp_window_exti(uint32_t input_pin) {
         // Enable interrupts
         EXTI->IMR1 |= exti18_mask | exti20_mask;
     }
-    
+
     // Enable NVIC interrupt for ADC1_COMP with low priority (3)
     NVIC_SetPriority(ADC1_COMP_IRQn, 3);
     NVIC_EnableIRQ(ADC1_COMP_IRQn);
-    
+
     irq_restore(flag);
 }
 
@@ -253,18 +298,18 @@ void WindowComparatorIRQHandler(void) {
             // Read both comparator outputs
             uint8_t comp1_out = (COMP1->CSR & COMP_CSR_VALUE) ? 1 : 0;
             uint8_t comp2_out = (COMP2->CSR & COMP_CSR_VALUE) ? 1 : 0;
-            
+
             // Check which comparator triggered
             if (comp1_out == 1) {
                 // Upper threshold exceeded
                 sendf("comp_upper_trigger pin=%u", comp_config->gpio_pin);
             }
-            
+
             if (comp2_out == 1) {
                 // Below lower threshold
                 sendf("comp_lower_trigger pin=%u", comp_config->gpio_pin);
             }
-            
+
         } else if (comp_config->comp_pair == 1) { // COMP2/COMP3 pair
             EXTI->RPR1 = exti18_mask | exti20_mask;
 
@@ -273,13 +318,13 @@ void WindowComparatorIRQHandler(void) {
             uint8_t comp3_out = (COMP3->CSR & COMP_CSR_VALUE) ? 1 : 0;
 
             //sendf("comp comp2_out=%u comp3_out=%u", comp2_out, comp3_out);
-            
+
             // Check which comparator triggered
             if (comp2_out == 1) {
                 // Upper threshold exceeded
                 sendf("comp_upper_trigger pin=%u", comp_config->gpio_pin);
             }
-            
+
             if (comp3_out == 1) {
                 // Below lower threshold
                 sendf("comp_lower_trigger pin=%u", comp_config->gpio_pin);
@@ -314,7 +359,7 @@ DECL_INIT(init_comp);
 void command_config_comp(uint32_t *args) {
     if (comp_config != NULL)
         shutdown("Only one window comparator is supported");
-    
+
     comp_config = oid_alloc(args[0], command_config_comp, sizeof(*comp_config));
     comp_config->oid = args[0];
     comp_config->gpio_pin = args[1];
@@ -335,36 +380,40 @@ void command_config_comp(uint32_t *args) {
         shutdown("Upper threshold must be greater than lower threshold");
     }
 
-    setup_dac(1, comp_config->upper_threshold); // DAC1 Channel 1 for upper threshold
-    setup_dac(2, comp_config->lower_threshold); // DAC1 Channel 2 for lower threshold
+    // DAC1 channels 1 and 2 provide the upper and lower thresholds.
+    setup_dac(1, comp_config->upper_threshold);
+    setup_dac(2, comp_config->lower_threshold);
 
     // Setup window comparator
-    setup_comp_window_comparator(comp_config->gpio_pin, comp_config->upper_threshold, comp_config->lower_threshold);
+    setup_comp_window_comparator(comp_config->gpio_pin,
+                                 comp_config->upper_threshold,
+                                 comp_config->lower_threshold);
 
     // Setup EXTI interrupts for window comparator
     setup_comp_window_exti(comp_config->gpio_pin);
 
-    // Enable comparator pair AFTER EXTI/NVIC are configured (per reference sequence)
+    // Enable the pair after EXTI/NVIC setup, per the reference sequence.
     enable_comp_pair(comp_config->gpio_pin);
 }
-DECL_COMMAND(command_config_comp, "config_comp oid=%c pin=%u upper=%u lower=%u");
+DECL_COMMAND(command_config_comp,
+             "config_comp oid=%c pin=%u upper=%u lower=%u");
 
 // Command to query current comparator states and IRQ status
 void command_comp_query_state(uint32_t *args) {
     // Not used, as only one comparator is supported
     //uint8_t oid = args[0];
-    
+
     // Find the configuration by OID
     comp_config_t *comp = comp_config;
     if (!comp) {
         shutdown("Invalid comp OID");
         return;
     }
-    
+
     // Read current comparator states
     uint8_t in_window = read_window_comp_value(comp->gpio_pin);
     uint8_t upper_comp_out, lower_comp_out;
-    
+
     if (comp->comp_pair == 0) {
         // COMP1/COMP2 pair
         upper_comp_out = (COMP1->CSR & COMP_CSR_VALUE) ? 1 : 0;
@@ -374,7 +423,7 @@ void command_comp_query_state(uint32_t *args) {
         upper_comp_out = (COMP2->CSR & COMP_CSR_VALUE) ? 1 : 0;
         lower_comp_out = (COMP3->CSR & COMP_CSR_VALUE) ? 1 : 0;
     }
-    
+
     sendf("comp_state oid=%c pin=%u in_window=%c upper_out=%c lower_out=%c",
           comp->oid, comp->gpio_pin, in_window, upper_comp_out, lower_comp_out);
 }
@@ -417,12 +466,14 @@ DECL_INIT(init_comp);
 void command_config_comp(uint32_t *args) {
     shutdown("COMP not supported on this chip");
 }
-DECL_COMMAND(command_config_comp, "config_comp oid=%c pin=%u upper=%u lower=%u");
+DECL_COMMAND(command_config_comp,
+             "config_comp oid=%c pin=%u upper=%u lower=%u");
 
 void command_comp_set_irq(uint32_t *args) {
     shutdown("IRQ management removed - fixed edge triggering enabled");
 }
-DECL_COMMAND(command_comp_set_irq, "comp_set_irq oid=%c upper_enable=%c lower_enable=%c");
+DECL_COMMAND(command_comp_set_irq,
+             "comp_set_irq oid=%c upper_enable=%c lower_enable=%c");
 
 void command_comp_reset_irq(uint32_t *args) {
     shutdown("IRQ management removed - fixed edge triggering enabled");

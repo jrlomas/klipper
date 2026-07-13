@@ -19,26 +19,28 @@ and Ethernet boards.
 
 ## The documents
 
-All are **implemented in HELIX 0.9** (software complete; hardware
-bring-up pending — see [Releases](../../Releases.md) and the
-[Test &amp; Bring-up Plan](../../Helix_Test_Plan.md)). Each document's own
-status line records its precise implementation state.
+HELIX 0.9 implements the core architecture, but it is not uniformly
+software-complete: several target and host-integration seams remain before
+hardware bring-up. See [Releases](../../Releases.md), the
+[implementation status audit](../../Helix_Implementation_Status.md), and the
+[Test &amp; Bring-up Plan](../../Helix_Test_Plan.md). Each document's own
+status line records its more precise state.
 
 | Document | Contents | Status |
 | --- | --- | --- |
 | [00-Vision.md](00-Vision.md) | Problem, premises, non-goals, prior art | Implemented — HELIX 0.9 |
-| [01-Time_Model.md](01-Time_Model.md) | Machine time, primary-MCU authority, beacon sync, budgets | Implemented — HELIX 0.9 |
+| [01-Time_Model.md](01-Time_Model.md) | Machine time, primary-MCU authority, beacon sync, budgets | Implemented off-silicon; hardware timing validation pending |
 | [02-Intention_Protocol.md](02-Intention_Protocol.md) | Segment semantics, wire format, FPU-free execution, queue/refill, underrun | Implemented — HELIX 0.9 |
 | [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Implemented — HELIX 0.9 |
 | [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Implemented — HELIX 0.9 |
-| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Implemented — HELIX 0.9 |
+| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Core implemented off-silicon |
 | [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Adopted — HELIX 0.9 |
-| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Implemented — HELIX 0.9 |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Core implemented; RMII/ESP32 target integration remains |
 | [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Implemented — HELIX 0.9 |
-| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Implemented — HELIX 0.9 |
+| [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Framework implemented; per-target wiring and hardware proof remain |
 | [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Implemented — HELIX 0.9 |
 | [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Implemented — HELIX 0.9 |
-| [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Implemented — HELIX 0.9 (runtime bring-up pending) |
+| [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Partial — host/stub proof only; Xtensa build and runtime work pending |
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
 | [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Design — timing substrate exists; host enforcement future |
 

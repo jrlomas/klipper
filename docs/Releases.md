@@ -10,23 +10,23 @@ The first HELIX release: the complete motion-and-communication redesign
 described in the [FD-0001 canon](founding/0001-motion-intentions/00-Vision.md),
 built on Klipper 0.13.0.
 
-> **Maturity — read this first.** HELIX 0.9 is a **software-complete,
-> hardware-unvalidated** milestone. Every subsystem below is written,
-> host-compiles/links for its targets, and passes the off-silicon test
-> suites (protocol vectors, drift and reconciliation tests, capability
-> and codec round-trips). None of it has yet been validated on a running
-> printer. Treat 0.9 as a preview for developers and the brave: each
-> design doc marks what has run on silicon (nothing motion-critical yet)
-> and what still awaits bring-up, and every HELIX capability is opt-in,
-> with the classic Klipper paths untouched beside it. **Do not run 0.9 on
-> hardware you are not prepared to supervise closely.**
+> **Maturity — read this first.** HELIX 0.9 is a **workstation-validated
+> development milestone, not a software-complete release**. Its core
+> protocol, host, linuxprocess firmware, trajectory, recovery, and tooling
+> paths pass the off-silicon suites. Target-specific integration remains:
+> the time-sync Class-0 convergence gate, native-RMII board details, the
+> first real Xtensa/ESP32 build and runtime bring-up, and downstream OAMS
+> updater registration. None of the motion-critical paths has yet been
+> validated on a running printer. Treat 0.9 as a developer preview; every
+> capability is opt-in and classic Klipper remains beside it. **Do not run
+> 0.9 on hardware you are not prepared to supervise closely.** See the
+> [implementation status audit](Helix_Implementation_Status.md) for the
+> verified boundary.
 >
-> **Road to 1.0.** 0.9 is the software body of work. Once it has been
-> brought up on real hardware and the problems found in running it are
-> corrected, that validated state becomes **HELIX 1.0** — the initial
-> production release. Until then the version stays at 0.9 to make the
-> "not yet proven on a printer" status impossible to miss. The exact,
-> checkable acceptance path from 0.9 to 1.0 is the
+> **Road to 1.0.** Close the remaining integration seams, then bring the
+> result up on real hardware and correct what that exposes. That validated
+> state becomes **HELIX 1.0** — the initial production release. Until then
+> the version stays at 0.9. The exact, checkable acceptance path is the
 > [HELIX Test &amp; Bring-up Plan](Helix_Test_Plan.md).
 
 Major changes in this release:

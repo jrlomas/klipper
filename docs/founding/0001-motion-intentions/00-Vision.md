@@ -5,7 +5,7 @@ Status: Adopted -- realized in HELIX 0.9
 > **These documents are no longer proposals — they are the design
 > record of what HELIX built.** The FD-0001 set was written to *argue*
 > the architecture; the architecture now *exists*, implemented in the
-> HELIX 0.9 codebase (software complete; hardware bring-up pending — see
+> HELIX 0.9 codebase (core implemented; integration and hardware bring-up pending — see
 > [Releases](../../Releases.md)). Each document's status line reflects
 > its implementation state. The text is preserved in its original
 > reasoning-first form, because the *why* is exactly what a reader of an

@@ -29,8 +29,9 @@ and the glossary.
 
 [FD-0001](../0001-motion-intentions/00-Vision.md) made the machine
 **honest** — a micro-controller that owns its clock, its position, and its
-queue, and that records what it actually did in an execution log. That was
-the hard part, and it is done (HELIX 0.9, software-complete). FD-0002
+queue, and that records what it actually did in an execution log. That core
+exists and is workstation-validated in HELIX 0.9; target integration and
+hardware qualification remain before 1.0. FD-0002
 makes the machine **intelligent**: it takes the honest data FD-0001
 already produces and builds the layer that *reads* it.
 

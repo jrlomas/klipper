@@ -169,7 +169,8 @@ def test_on_disk_catalog_optional():
     cat = builtin_catalog()
     ids = {b.id for b in cat}
     assert "custom" in ids                    # hatch always present
-    assert len(cat) >= 2                       # at least one real board + custom
+    # At least one real board plus the custom entry.
+    assert len(cat) >= 2
     for b in cat:
         assert b.id and b.mcu is not None
     print("PASS: on-disk board catalog loads (%d entries incl. custom)"

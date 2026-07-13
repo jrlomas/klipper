@@ -6,7 +6,8 @@ import pathlib
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
 from atlas.apply import (PersistentApplyPipeline, Proposal,  # noqa: E402
                          StaleConfigError)
@@ -24,7 +25,8 @@ def test_real_apply_persists_and_undo_survives_restart():
         reloads = []
         after = CFG.replace("old", "new")
         pipe = PersistentApplyPipeline(config, journal,
-                                       reload_callback=lambda: reloads.append(1))
+                                       reload_callback=(
+                                           lambda: reloads.append(1)))
         result = pipe.apply(Proposal(CFG, after, rationale="operator request"))
         assert result.applied and config.read_text() == after
         assert (config.stat().st_mode & 0o777) == 0o640
@@ -34,7 +36,8 @@ def test_real_apply_persists_and_undo_survives_restart():
         assert pipe.entries()[0]["rationale"] == "operator request"
         pipe.close()
         reopened = PersistentApplyPipeline(config, journal,
-                                            reload_callback=lambda: reloads.append(1))
+                                            reload_callback=(
+                                                lambda: reloads.append(1)))
         assert reopened.undo() == CFG
         assert config.read_text() == CFG
         assert reopened.entries()[0]["reverted"] == 1
@@ -48,7 +51,8 @@ def test_safety_and_compare_swap_gates():
         config = pathlib.Path(tmp) / "printer.cfg"
         config.write_text(CFG)
         pipe = PersistentApplyPipeline(config, pathlib.Path(tmp) / "journal.db")
-        safety = CFG.replace("[printer]\n", "[printer]\nrotation_distance: 40\n")
+        safety = CFG.replace(
+            "[printer]\n", "[printer]\nrotation_distance: 40\n")
         pending = pipe.apply(Proposal(CFG, safety))
         assert pending.needs_confirmation and not pending.applied
         assert config.read_text() == CFG and not pipe.entries()
@@ -83,7 +87,8 @@ def test_reload_failure_rolls_back_without_journal():
         assert config.read_text() == CFG
         assert pipe.entries() == []
         pipe.close()
-        print("PASS: reload failure rolls the file back and leaves no false audit")
+        print("PASS: reload failure rolls the file back and leaves no "
+              "false audit")
 
 
 def test_external_validator_runs_before_write():

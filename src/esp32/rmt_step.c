@@ -230,7 +230,8 @@ rmt_step_wrap_hazard(uint8_t wr, uint8_t rd)
 static uint_fast8_t IRAM_ATTR
 rmt_read_offset(uint8_t ch)
 {
-    return (uint_fast8_t)((RMT.status_ch[ch] & 0x3FF) - (uint32_t)ch * RMT_ITEMS)
+    return (uint_fast8_t)((RMT.status_ch[ch] & 0x3FF)
+                          - (uint32_t)ch * RMT_ITEMS)
         % RMT_ITEMS;
 }
 

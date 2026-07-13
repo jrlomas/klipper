@@ -1,4 +1,5 @@
-# Loopback test for the host v2 transport transform (klippy/intentproto_transport).
+# Loopback test for the host v2 transport transform
+# (klippy/intentproto_transport.py).
 #
 # Proves the v1<->v2 framing transform is lossless in both directions and
 # preserves the exact v1 frame (so v1's ARQ rides through v2 untouched),
@@ -141,8 +142,11 @@ class TestBridge(unittest.TestCase):
         try:
             klippy = os.open(link, os.O_RDWR)
             try:
-                frames = [v1_frame(b"", 0), v1_frame(bytes(range(20)), 3),
-                          v1_frame(bytes((i * 5) & 0xff for i in range(40)), 15)]
+                frames = [
+                    v1_frame(b"", 0),
+                    v1_frame(bytes(range(20)), 3),
+                    v1_frame(bytes((i * 5) & 0xff for i in range(40)), 15),
+                ]
                 # host -> wire
                 os.write(klippy, b"".join(frames))
                 time.sleep(0.2)

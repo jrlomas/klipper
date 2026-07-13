@@ -1,6 +1,7 @@
 # FD-0001: Traffic Classes
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Core implemented and workstation-tested in HELIX 0.9; hardware
+bring-up pending.
 
 Today, one mechanism carries everything between host and MCU, and one
 timer list executes everything on the MCU — so a decorative LED update

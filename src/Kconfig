@@ -294,9 +294,10 @@ config WANT_DATAGRAM_SESSION
         the static-PSK datagram floor: HKDF per-session keys, epoch key
         rotation, per-board identity, and a replay window (auth-only).
         The board is the responder; a host that never opens a session
-        keeps using the static-PSK path (permanent fallback). Requires a
-        PSK. Pulls in the session + SHA-512 code, so it is code-size
-        sensitive. Off by default.
+        keeps using the static-PSK path. Once negotiated, data traffic is
+        pinned to the session to prevent downgrade. Requires a PSK. Pulls
+        in the session + SHA-512 code, so it is code-size sensitive. Off
+        by default.
 
 config DATAGRAM_SESSION_ID
     string "Per-board identity carried in the session handshake"

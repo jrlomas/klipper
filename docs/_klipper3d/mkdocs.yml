@@ -85,6 +85,7 @@ nav:
     - Helix_User_Guide.md
     - Helix_Developer_Guide.md
     - Helix_Commands.md
+    - Helix_Implementation_Status.md
     - Helix_Test_Plan.md
   - Overview.md
   - Features.md

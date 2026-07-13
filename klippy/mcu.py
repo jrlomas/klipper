@@ -1595,7 +1595,8 @@ class MCU:
           data dictionary) is preserved rather than renegotiated,
           "re-running identify" takes the form of boot-detection
           probes: get_uptime (true 64-bit clock - a reboot makes it go
-          backwards), get_config (the founding document's is_config/is_shutdown flags
+          backwards), get_config (the founding document's
+          is_config/is_shutdown flags
           and config CRC - config lives in RAM, so is_config=1 with a
           matching CRC proves the same configured session), plus any
           'starting'/'shutdown' messages observed while paused.

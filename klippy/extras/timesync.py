@@ -34,13 +34,8 @@ TS_ENABLED = 1
 TS_PRIMED = 2
 TS_CONVERGED = 4
 
-# TODO seam (FD-0001 doc 05): mcu.py does not yet expose its
-# ClockSync object and is being reworked separately; do not edit it
-# from here. Until the host-time->machine-time estimator becomes a
-# first-class MCU interface, reach the private attribute in this one
-# place only.
 def _get_clocksync(mcu):
-    return mcu._clocksync
+    return mcu.get_clocksync()
 
 class SecondaryLink:
     def __init__(self, mcu):
@@ -160,12 +155,9 @@ class MachineTimeSync:
             logging.info(
                 "timesync: mcu '%s' flags=%d rate=%d last_err=%d ticks",
                 link.name, state['flags'], state['rate'], state['last_err'])
-    # Class-0 gating seam (doc 01 startup step 3): Class-0 traffic to
-    # a board should be enabled only after its discipline filter
-    # reports convergence.
-    # TODO seam: klippy/extras/trajectory_queuing.py is being reworked
-    # separately; once stable it should consult is_mcu_synced() before
-    # opening Class-0 ingest to a secondary.
+    # Host-visible counterpart of the firmware ingest gate. trajq.c calls
+    # timesync_class0_ok() before accepting every segment; clients can use
+    # this query to avoid sending work that a syncing secondary will refuse.
     def is_mcu_synced(self, mcu_name):
         for link in self.secondaries:
             if link.name == mcu_name:

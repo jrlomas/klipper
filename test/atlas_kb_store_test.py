@@ -10,7 +10,8 @@ import sys
 import tarfile
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
 from atlas.decode import decode_klippy_log  # noqa: E402
 from atlas.diagnosis import Matcher  # noqa: E402
@@ -50,9 +51,11 @@ def test_consent_is_incident_bound_single_use_and_deduplicated():
         outbox.record_feedback(bundle.content_hash, True, False)
         outbox.mark_sent(bundle.content_hash)
         assert outbox.queued() == []
-        assert (pathlib.Path(tmp) / "outbox.sqlite3").stat().st_mode & 0o777 == 0o600
+        mode = (pathlib.Path(tmp) / "outbox.sqlite3").stat().st_mode
+        assert mode & 0o777 == 0o600
         outbox.close()
-        print("PASS: consent is incident-bound/single-use and submissions dedup")
+        print("PASS: consent is incident-bound/single-use and submissions "
+              "dedup")
 
 
 def _archive(path, version, unsafe=False):

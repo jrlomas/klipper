@@ -45,24 +45,68 @@
 #define BSC_CAPS (BSC_CAP_GPIO | BSC_CAP_TIMER | BSC_CAP_SCHED | BSC_CAP_IRQ \
                   | BSC_BIT_ADC | BSC_BIT_PWM | BSC_BIT_SPI | BSC_BIT_I2C)
 
+// Board ports historically use different integer widths for pin identifiers
+// and PWM values. Keep the public v1.0 table's narrow, portable contract and
+// adapt each call through a function with the exact advertised type; storing
+// the native functions directly is undefined behavior when signatures differ.
+static struct gpio_out
+bsc_gpio_out_setup(uint8_t pin, uint8_t val)
+{
+    return gpio_out_setup(pin, val);
+}
+
+static void
+bsc_gpio_out_write(struct gpio_out g, uint8_t val)
+{
+    gpio_out_write(g, val);
+}
+
+static struct gpio_in
+bsc_gpio_in_setup(uint8_t pin, int8_t pull_up)
+{
+    return gpio_in_setup(pin, pull_up);
+}
+
+#if CONFIG_HAVE_GPIO_ADC
+static struct gpio_adc
+bsc_adc_setup(uint8_t pin)
+{
+    return gpio_adc_setup(pin);
+}
+#endif
+
+#if CONFIG_HAVE_GPIO_HARD_PWM
+static struct gpio_pwm
+bsc_pwm_setup(uint8_t pin, uint32_t cycle_time, uint8_t val)
+{
+    return gpio_pwm_setup(pin, cycle_time, val);
+}
+
+static void
+bsc_pwm_write(struct gpio_pwm g, uint8_t val)
+{
+    gpio_pwm_write(g, val);
+}
+#endif
+
 static const struct board_syscalls the_syscalls = {
     .abi_version = BOARD_SYSCALL_ABI_VERSION,
     .caps = BSC_CAPS,
 
-    .gpio_out_setup = gpio_out_setup,
-    .gpio_out_write = gpio_out_write,
+    .gpio_out_setup = bsc_gpio_out_setup,
+    .gpio_out_write = bsc_gpio_out_write,
     .gpio_out_toggle = gpio_out_toggle,
-    .gpio_in_setup = gpio_in_setup,
+    .gpio_in_setup = bsc_gpio_in_setup,
     .gpio_in_read = gpio_in_read,
 
 #if CONFIG_HAVE_GPIO_ADC
-    .adc_setup = gpio_adc_setup,
+    .adc_setup = bsc_adc_setup,
     .adc_sample = gpio_adc_sample,
     .adc_read = gpio_adc_read,
 #endif
 #if CONFIG_HAVE_GPIO_HARD_PWM
-    .pwm_setup = gpio_pwm_setup,
-    .pwm_write = gpio_pwm_write,
+    .pwm_setup = bsc_pwm_setup,
+    .pwm_write = bsc_pwm_write,
 #endif
 #if CONFIG_HAVE_GPIO_SPI
     .spi_setup = spi_setup,

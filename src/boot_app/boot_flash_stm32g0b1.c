@@ -86,7 +86,8 @@ boot_flash_write(uint32_t addr, const uint8_t *data, size_t len)
     for (size_t i = 0; i < len; i += 8) {
         uint32_t w0 = 0xffffffffUL, w1 = 0xffffffffUL;
         for (int b = 0; b < 4 && i + b < len; b++)
-            w0 = (w0 & ~(0xffUL << (8 * b))) | ((uint32_t)data[i + b] << (8 * b));
+            w0 = ((w0 & ~(0xffUL << (8 * b)))
+                  | ((uint32_t)data[i + b] << (8 * b)));
         for (int b = 0; b < 4 && i + 4 + b < len; b++)
             w1 = (w1 & ~(0xffUL << (8 * b)))
                  | ((uint32_t)data[i + 4 + b] << (8 * b));

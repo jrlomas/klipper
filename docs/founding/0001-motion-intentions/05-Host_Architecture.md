@@ -1,6 +1,6 @@
 # FD-0001: Host Architecture
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Core implemented in HELIX 0.9; time-sync host integration remains.
 
 This document maps the redesign onto the existing host code
 (`klippy/` and `klippy/chelper/`): what survives untouched, what is

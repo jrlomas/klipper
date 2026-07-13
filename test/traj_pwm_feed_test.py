@@ -70,7 +70,8 @@ def test_feed_preflights_then_rebases_queues_and_holds():
     assert len(pwm.queue_cmd.sent) == 3
     assert pwm.hold_cmd.sent == [[7, 1000]]
     assert pwm.need_rebase is False and pwm.last_plan is plan
-    print("PASS: feed emits one rebase, the preflighted spans, and a terminal hold")
+    print("PASS: feed emits one rebase, the preflighted spans, "
+          "and a terminal hold")
 
 
 def test_bad_callback_emits_nothing():

@@ -1,6 +1,8 @@
 # FD-0001: Time Model
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Implemented off-silicon in HELIX 0.9. The host relay uses the public
+MCU ClockSync accessor, and firmware gates every trajectory ingest on
+secondary convergence/freewheel freshness. Hardware timing validation remains.
 
 This document defines **machine time** — the timeline every intention
 is scheduled against — and moves its authority from the host's

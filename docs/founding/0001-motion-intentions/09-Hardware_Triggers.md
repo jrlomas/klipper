@@ -1,6 +1,7 @@
 # FD-0001: Hardware Triggers
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Framework implemented in HELIX 0.9; target-specific wiring and
+hardware validation remain.
 
 Klipper made MCUs deliberately dumb, and nowhere is the cost clearer
 than in how the firmware *senses*: endstops are polled by software

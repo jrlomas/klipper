@@ -1,15 +1,15 @@
 # Atlas — Development Handoff &amp; Kickoff
 
-**Purpose.** This document exists to transfer everything a fresh instance
-of the assistant needs to begin building **Atlas** (FD-0002) from a
-standing start, on a workstation with real GPUs. It is written to be
-read *first*, before touching code. If you are that instance: read this
-top to bottom, then read the two documents it points you at, then
-confirm the open questions with the user before you write anything.
+> **Historical kickoff snapshot.** This handoff records the plan used to
+> start Atlas. It is retained for rationale, but it is no longer the current
+> implementation status or task list. Start with the [FD-0002 README](README.md),
+> [roadmap](08-Roadmap.md), and the
+> [HELIX implementation audit](../../Helix_Implementation_Status.md).
 
 > **One-line orientation.** HELIX is a permanent, friendly fork of Klipper
-> that moved the host↔MCU contract from step pulses to **motion
-> intentions** (that work is *done* — HELIX 0.9, software-complete). **Atlas**
+> that is moving the host↔MCU contract from step pulses to **motion
+> intentions** (HELIX 0.9 is workstation-validated, with target integration
+> and hardware qualification still open). **Atlas**
 > is the intelligence layer we are now building *on top* of the honest data
 > HELIX already produces — a Pi-resident companion that observes,
 > understands, and acts. The project as a whole is **Helix Atlas**.
@@ -119,13 +119,15 @@ headroom experiments.
 
 ## 3. Current state — the honest truth
 
-- **HELIX 0.9** is **software-complete, hardware-unvalidated.** The
-  motion/comms redesign (FD-0001) is fully implemented and passes the
-  off-silicon suites; nothing has run on a printer. The path to 1.0 is
-  `docs/Helix_Test_Plan.md`.
-- **Atlas is at planning.** FD-0002 (its README) is written and complete
-  as a design canon. **No Atlas code exists yet.** This is greenfield on a
-  well-specified foundation.
+- **HELIX 0.9** is a **workstation-validated developer milestone.** Core
+  off-silicon suites pass, but the target-integration seams listed in the
+  [implementation audit](../../Helix_Implementation_Status.md) and all
+  hardware/printer qualification remain before 1.0.
+- **Atlas Milestones A and B are realized.** The deterministic floor lives
+  in `atlas/` plus `src/trace.c`, the initial pattern catalog is seeded, and
+  the workstation Milestone C path is validated. Pi/Hailo deployment,
+  hardware integration, and live-machine trials remain; see the
+  [current roadmap](08-Roadmap.md).
 - The `RFC → Founding Document` rename is done (FD-0001/FD-0002; the old
   `docs/rfcs/` path is now `docs/founding/`). If you see "RFC 0001"
   anywhere in *our* material, it's a miss — but leave IETF citations

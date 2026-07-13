@@ -245,8 +245,9 @@ def sign_combined(target, image, seed):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("combined", help="sign an assembled combined image")
@@ -271,7 +272,8 @@ def main():
             f.write(out)
         print("signed combined image: %s (%s, signer=%s)"
               % (args.output, args.target, backend_name()))
-        print("  application: %d bytes (crc32=0x%08x)" % (info["size"], info["crc"]))
+        print("  application: %d bytes (crc32=0x%08x)"
+              % (info["size"], info["crc"]))
         print("  pubkey     : %s" % info["pub"])
         print("  signature  : %s" % info["sig"])
     else:

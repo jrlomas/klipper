@@ -51,11 +51,13 @@ def gen_header(pub, var="helix_pubkey"):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out-dir", help="directory to write <name>.key/.pub")
     ap.add_argument("--name", default="helix_dev_signing")
-    ap.add_argument("--seed", help="32-byte private seed as hex (deterministic)")
+    ap.add_argument(
+        "--seed", help="32-byte private seed as hex (deterministic)")
     ap.add_argument("--pub", help="read an existing .pub instead of generating")
     ap.add_argument("--header", help="also write the embedded C pubkey header")
     ap.add_argument("--var", default="helix_pubkey",

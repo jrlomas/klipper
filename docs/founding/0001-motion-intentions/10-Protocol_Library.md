@@ -1,6 +1,7 @@
 # FD-0001: The Protocol Library
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Implemented and workstation-tested in HELIX 0.9; embedded target
+and hardware validation remain part of bring-up.
 
 > For the full, implementation-grounded reference of the v2 wire
 > protocol this library implements — framing, codecs, the annotation

@@ -8,7 +8,8 @@ import sys
 import tempfile
 import subprocess
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
 from atlas.fleet import BoardState, check_board, remediate_board  # noqa: E402
 from atlas.provision import (DetectedBoard, ProvisionBlocked,  # noqa: E402
@@ -36,11 +37,13 @@ def test_real_ed25519_verifier_fails_closed():
             str(pathlib.Path(__file__).resolve().parent.parent /
                 "keys" / "helix_dev_signing.key"), "-o", str(signature),
         ], check=True, capture_output=True)
-        pub = pathlib.Path(__file__).resolve().parent.parent / "keys" / "helix_dev_signing.pub"
+        pub = (pathlib.Path(__file__).resolve().parent.parent / "keys"
+               / "helix_dev_signing.pub")
         assert verify_detached(str(image), str(pub)) is True
         image.write_bytes(b"tampered")
         assert verify_detached(str(image), str(pub)) is False
-        print("PASS: real Ed25519 verification accepts signed and rejects tampered")
+        print("PASS: real Ed25519 verification accepts signed and rejects "
+              "tampered")
 
 
 def test_executor_uses_argv_signed_gate_and_private_audit():
@@ -106,7 +109,8 @@ def test_fleet_remediation_reuses_signed_executor():
         commands = remediate_board(
             report, executor, plan, image, confirmed=True)
         assert commands[-1][0] == "dfu-util"
-        print("PASS: fleet repair is the same confirmed signed provisioning job")
+        print("PASS: fleet repair is the same confirmed signed "
+              "provisioning job")
 
 
 def main():
