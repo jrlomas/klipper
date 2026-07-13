@@ -15,6 +15,7 @@
 #include "intentproto/host.hpp"
 #include "intentproto/session_sec.hpp"
 #include "intentproto/proto.hpp"
+#include "intentproto/segment.hpp"
 
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +94,59 @@ int ip_frame_v2_decode(uint8_t* frame, size_t frame_len, size_t* payload_off,
     if (n >= 0 && payload_off)
         *payload_off = (size_t)(payload - frame);
     return n;
+}
+
+// ---- trajectory segment codec (FD-0001 doc 02) ----
+
+int32_t ip_segment_quantize(double true_value, unsigned order_k) {
+    return segment_quantize(true_value, order_k);
+}
+
+int64_t ip_segment_end_delta(uint32_t duration, int32_t velocity,
+                             int32_t accel, int32_t jerk, int32_t snap,
+                             int32_t crackle) {
+    return segment_end_delta(duration, velocity, accel, jerk, snap, crackle);
+}
+
+int64_t ip_segment_chain_advance(int64_t acc, uint32_t duration,
+                                 int32_t velocity, int32_t accel,
+                                 int32_t jerk, int32_t snap, int32_t crackle,
+                                 int64_t* new_acc) {
+    SegmentChain ch{acc};
+    int64_t pos = segment_chain_advance(&ch, duration, velocity, accel, jerk,
+                                        snap, crackle);
+    if (new_acc)
+        *new_acc = ch.acc;
+    return pos;
+}
+
+size_t ip_segment_encode(uint8_t* out, size_t cap, uint8_t oid, uint8_t flags,
+                         uint32_t duration, int32_t velocity, int32_t accel,
+                         int32_t jerk, int32_t snap, int32_t crackle) {
+    return segment_encode(out, cap, oid, flags, duration, velocity, accel,
+                          jerk, snap, crackle);
+}
+
+size_t ip_segment_encode_hold(uint8_t* out, size_t cap, uint8_t oid,
+                              uint32_t duration) {
+    return segment_encode_hold(out, cap, oid, duration);
+}
+
+int ip_segment_decode(const uint8_t* in, size_t len, ip_segment* seg) {
+    SegmentPayload sp;
+    int kind = segment_decode(in, len, &sp);
+    if (seg) {
+        seg->kind = sp.kind;
+        seg->oid = sp.oid;
+        seg->flags = sp.flags;
+        seg->duration = sp.duration;
+        seg->velocity = sp.velocity;
+        seg->accel = sp.accel;
+        seg->jerk = sp.jerk;
+        seg->snap = sp.snap;
+        seg->crackle = sp.crackle;
+    }
+    return kind;
 }
 
 // ---- host session ----

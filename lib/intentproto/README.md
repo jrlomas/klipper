@@ -146,11 +146,33 @@ codec never sets or inspects it. A live `SecureSession` (both
 directions, keys, epochs and the replay window) costs 264 bytes of
 RAM per link on the STM32F072 floor.
 
+## Trajectory segment codec (FD-0001 doc 02)
+
+`segment.hpp` gives a **third-party trajectory peer** the two pieces of
+the motion-intent protocol that must be bit-exact, so it can emit
+`queue_traj_segment` payloads and track position identically to the MCU
+without vendoring klippy:
+
+* **Coefficient quantization** — `segment_quantize(true_value, order_k)`
+  maps a true per-tick polynomial derivative to its wire int32 (scale
+  `2^(16k)`, round half away from zero, saturated), matching
+  `segfit.c`'s `quantize()`/`bezier_to_wire()`.
+* **Chained-position bookkeeping** — `segment_end_delta()` and the
+  `SegmentChain` accumulator reproduce the exact truncate-toward-zero
+  Q32.32 integration of `src/trajq.c:trajq_end_delta_seg()`, so a peer's
+  end position never drifts from where the board integrates the segment.
+* **Payload codec** — `segment_encode()`/`segment_encode_hold()`/
+  `segment_decode()` build and parse the VLQ payloads (coefficient count
+  follows the flags' polynomial-order bits).
+
+The bit-identity against both klippy references (`segfit.c` and
+`trajectory_queuing.py`) is asserted by `test/segment_lib_test.py`; the
+firmware's own `traj_kernel` golden vectors are re-checked by
+`tests/test_segment.cpp`. Exposed through the C ABI (`ip_segment_*`) and
+the Python binding (`intentproto.segment_*` / `SegmentChain`).
+
 ## Not yet implemented (tracked in FD-0001 doc 10)
 
-* Segment payload codecs (`queue_traj_segment` coefficient
-  quantization, chained-position bookkeeping) per
-  [02](../../docs/founding/0001-motion-intentions/02-Intention_Protocol.md).
 * Binding the datagram/HMAC transport (`datagram.hpp`) to the
   sessions' framed byte streams (framing v2 and traffic classes are
   wired into the negotiation path; the UDP datagram layer still

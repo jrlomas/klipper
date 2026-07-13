@@ -74,6 +74,28 @@ size_t ip_frame_v2_encode(uint8_t *out, const uint8_t *payload,
 int ip_frame_v2_decode(uint8_t *frame, size_t frame_len,
                        size_t *payload_off, uint8_t *seq, int *corrected);
 
+typedef struct ip_segment {
+    int kind;
+    uint8_t oid;
+    uint8_t flags;
+    uint32_t duration;
+    int32_t velocity, accel, jerk, snap, crackle;
+} ip_segment;
+int32_t ip_segment_quantize(double true_value, unsigned order_k);
+int64_t ip_segment_end_delta(uint32_t duration, int32_t velocity,
+                             int32_t accel, int32_t jerk, int32_t snap,
+                             int32_t crackle);
+int64_t ip_segment_chain_advance(int64_t acc, uint32_t duration,
+                                 int32_t velocity, int32_t accel,
+                                 int32_t jerk, int32_t snap, int32_t crackle,
+                                 int64_t *new_acc);
+size_t ip_segment_encode(uint8_t *out, size_t cap, uint8_t oid, uint8_t flags,
+                         uint32_t duration, int32_t velocity, int32_t accel,
+                         int32_t jerk, int32_t snap, int32_t crackle);
+size_t ip_segment_encode_hold(uint8_t *out, size_t cap, uint8_t oid,
+                              uint32_t duration);
+int ip_segment_decode(const uint8_t *in, size_t len, ip_segment *seg);
+
 typedef int (*ip_write_fn)(const uint8_t *data, size_t len, void *user);
 typedef void (*ip_response_fn)(const uint8_t *payload, size_t len,
                                void *user);
@@ -371,6 +393,97 @@ def frame_v2_decode(frame):
     return payload, seq[0], corr[0]
 
 
+# ---- trajectory segment codec (FD-0001 doc 02) ----
+# Helpers for a third-party trajectory peer: coefficient quantization,
+# exact chained-position bookkeeping, and the queue_traj_segment/traj_hold
+# payload codec. The quantizer and chaining arithmetic are the C library's,
+# so a peer's end position stays bit-identical to the MCU's integration.
+SEG_HOLD_AT_END = 1 << 0
+SEG_POLY_MASK = 3 << 6
+SEG_POLY_QUADRATIC = 0 << 6
+SEG_POLY_CUBIC = 1 << 6
+SEG_POLY_QUINTIC = 2 << 6
+SEG_KIND_NONE = 0
+SEG_KIND_SEGMENT = 1
+SEG_KIND_HOLD = 2
+
+
+def segment_quantize(true_value, order_k):
+    # Quantize a true per-tick derivative to its wire int32 (scale
+    # 2^(16*order_k); order_k 1=velocity..5=crackle). Round half away from
+    # zero, saturated to int32.
+    _, lib = _ensure_ready()
+    return int(lib.ip_segment_quantize(float(true_value), int(order_k)))
+
+
+def segment_end_delta(duration, velocity, accel=0, jerk=0, snap=0, crackle=0):
+    # Exact Q32.32 sub-unit end-of-segment position delta.
+    _, lib = _ensure_ready()
+    return int(lib.ip_segment_end_delta(
+        duration & 0xffffffff, velocity, accel, jerk, snap, crackle))
+
+
+class SegmentChain(object):
+    # A running Q32.32 chained-position accumulator (the peer twin of the
+    # MCU's tq->acc). advance() returns the new integer sub-unit position.
+    def __init__(self, pos_subunits=0):
+        self._ffi, self._lib = _ensure_ready()
+        self.acc = int(pos_subunits) << 32
+
+    def set_position(self, pos_subunits):
+        self.acc = int(pos_subunits) << 32
+
+    @property
+    def position_subunits(self):
+        return self.acc >> 32
+
+    def advance(self, duration, velocity, accel=0, jerk=0, snap=0, crackle=0):
+        na = self._ffi.new("int64_t *")
+        pos = self._lib.ip_segment_chain_advance(
+            self.acc, duration & 0xffffffff, velocity, accel, jerk, snap,
+            crackle, na)
+        self.acc = int(na[0])
+        return int(pos)
+
+
+def segment_encode(oid, flags, duration, velocity, accel,
+                   jerk=0, snap=0, crackle=0):
+    # Encode a queue_traj_segment payload; the coefficient count follows
+    # the polynomial-order bits of flags. Returns the payload bytes.
+    ffi, lib = _ensure_ready()
+    out = ffi.new("uint8_t[64]")
+    n = lib.ip_segment_encode(out, 64, oid & 0xff, flags & 0xff,
+                              duration & 0xffffffff, velocity, accel,
+                              jerk, snap, crackle)
+    if n == 0:
+        raise ValueError("segment_encode failed (reserved order?)")
+    return bytes(ffi.buffer(out, n))
+
+
+def segment_encode_hold(oid, duration):
+    # Encode a traj_hold payload (oid + duration).
+    ffi, lib = _ensure_ready()
+    out = ffi.new("uint8_t[32]")
+    n = lib.ip_segment_encode_hold(out, 32, oid & 0xff, duration & 0xffffffff)
+    if n == 0:
+        raise ValueError("segment_encode_hold failed")
+    return bytes(ffi.buffer(out, n))
+
+
+def segment_decode(data):
+    # Decode a queue_traj_segment / traj_hold payload. Returns a dict with
+    # 'kind' plus fields, or None if the payload is neither.
+    ffi, lib = _ensure_ready()
+    seg = ffi.new("ip_segment *")
+    kind = lib.ip_segment_decode(bytes(data), len(data), seg)
+    if kind == SEG_KIND_NONE:
+        return None
+    return {'kind': kind, 'oid': seg.oid, 'flags': seg.flags,
+            'duration': seg.duration, 'velocity': seg.velocity,
+            'accel': seg.accel, 'jerk': seg.jerk, 'snap': seg.snap,
+            'crackle': seg.crackle}
+
+
 class SecureSession(object):
     # The DTLS-class authenticated session (session_sec.hpp) behind the
     # C ABI: HKDF session keys from the PSK + exchanged nonces, epoch
@@ -567,6 +680,11 @@ __all__ = [
     "get_ffi", "build", "abi_version", "version_string",
     "crc16_ccitt", "vlq_encode", "vlq_decode",
     "frame_v2_encode", "frame_v2_decode", "FRAME_V2_OVERHEAD",
+    "segment_quantize", "segment_end_delta", "SegmentChain",
+    "segment_encode", "segment_encode_hold", "segment_decode",
+    "SEG_HOLD_AT_END", "SEG_POLY_MASK", "SEG_POLY_QUADRATIC",
+    "SEG_POLY_CUBIC", "SEG_POLY_QUINTIC",
+    "SEG_KIND_NONE", "SEG_KIND_SEGMENT", "SEG_KIND_HOLD",
     "HostSession", "Device", "SecureSession",
     "FRAMING_LEGACY", "FRAMING_PROBING",
     "CLASS_SCHEDULED", "CLASS_PROMPT", "CLASS_TELEMETRY",
