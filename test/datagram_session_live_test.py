@@ -161,10 +161,9 @@ class TestDatagramSessionLive(unittest.TestCase):
                 sk.recvfrom(2048)  # tampered datagram dropped by the board
 
             # ---- DoS hardening: a hostile ClientHello must not reset
-            # the LIVE session's keys. Send a fresh hello (attacker has
-            # no PSK for the fin), then prove the original session still
-            # authenticates end-to-end.
-            time.sleep(0.3)  # clear the handshake rate gate
+            # the LIVE session's keys or elicit a reflected ServerHello.
+            # ClientHello itself proves PSK possession before responder
+            # state or reply routing changes.
             attacker = ip.SecureSession(True, b'wrong-psk-entirely',
                                         b'mallory')
             # Discard any already-buffered periodic packet so the one
@@ -181,24 +180,21 @@ class TestDatagramSessionLive(unittest.TestCase):
             try:
                 attacker_hello = attacker.start()
                 sk2.sendto(attacker_hello, board)
-                sh2, _ = sk2.recvfrom(2048)
-                # A ServerHello reaches the candidate without making it
-                # the authenticated tx peer. Completing needs the PSK,
-                # which mallory lacks.
-                self.assertIsNone(attacker.on_handshake(sh2))
-
-                # Immediate repeated hellos are throttled in every state,
-                # bounding reflection and handshake CPU work.
-                sk2.sendto(attacker_hello, board)
                 sk2.settimeout(0.2)
+                with self.assertRaises(socket.timeout):
+                    sk2.recvfrom(2048)
+
+                # Repeated unauthenticated hellos likewise receive nothing;
+                # they cannot occupy the half-open candidate slot.
+                sk2.sendto(attacker_hello, board)
                 with self.assertRaises(socket.timeout):
                     sk2.recvfrom(2048)
 
                 # The board emits load stats asynchronously every five
                 # seconds. They must remain routed to the authenticated
-                # host while the untrusted handshake is pending, never to
-                # the most recent ClientHello source. This is the precise
-                # regression for unauthenticated reply-peer redirection.
+                # host after the rejected handshake, never to the most
+                # recent ClientHello source. This is the precise regression
+                # for unauthenticated reply-peer redirection.
                 sk.settimeout(6.5)
                 async_dg, _ = sk.recvfrom(2048)
                 async_frames, _ = host.decode(async_dg)
@@ -214,8 +210,7 @@ class TestDatagramSessionLive(unittest.TestCase):
 
             # ---- legitimate re-handshake (host restart): a NEW session
             # with the real PSK must be adopted and serve traffic after the
-            # deliberately bounded hostile half-open handshake expires.
-            time.sleep(2.1)
+            # hostile hello was rejected before creating half-open state.
             host2 = ip.SecureSession(True, PSK, b'klippy-host-2')
             sk3 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sk3.settimeout(3.0)

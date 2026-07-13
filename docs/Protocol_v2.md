@@ -680,13 +680,16 @@ packet:
 ### The 3-message PSK handshake
 
 ```
-Initiator ── ClientHello  (type 0x51, ver, id_len, client_random, board_id) ──▶ Responder
+Initiator ── ClientHello  (type 0x51, ver=2, id_len, client_random, board_id, PSK proof) ──▶ Responder
 Initiator ◀── ServerHello (type 0x52, …, server_random, board_id, Finished MAC) ── Responder
 Initiator ── ClientFinished (type 0x53, Finished MAC) ──▶ Responder
 ```
 
 Both hellos carry a **per-board identity** (`SEC_ID_MAX = 24` bytes),
-exposed to the caller via `peer_id()`. The ServerHello's 16-byte
+exposed to the caller via `peer_id()`. ClientHello ends with a 16-byte
+HMAC-SHA256 proof over its complete prefix under the configured PSK; the
+responder verifies it in constant time before copying the nonce/identity,
+deriving keys, or emitting a reply. The ServerHello's 16-byte
 Finished MAC binds both nonces and both identities under the finished
 key; the initiator verifies it constant-time before deriving traffic
 keys, and the ClientFinished MAC proves the initiator to the responder.
@@ -723,21 +726,20 @@ costs **264 bytes of RAM per link** on the STM32F072 floor.
 ### Handshake hardening (as built)
 
 The responder's handshake surface is hardened against unauthenticated
-UDP traffic: a ClientHello can never reset a **live** session (while
-established, hellos drive a *pending* handshake that replaces the live
-keys only when its ClientFin proves PSK knowledge — this is also how a
-restarted klippy reconnects without a board reboot); ClientHellos are
-rate-limited (4/s) while a session is live, and ClientFins are never
-gated so a legitimate reconnect cannot livelock; every accepted hello
-re-derives from a fresh responder nonce, so a replayed old handshake
-cannot re-derive old session keys; and a handshake message that produces
-no reply never moves the reply peer. The residual exposure — a briefly
-redirected reply peer during a hostile hello burst — self-heals on the
-next authenticated datagram from the real host. All of this is exercised
-live by
+UDP traffic. Protocol version 2 requires a ClientHello PSK proof, so a
+spoofed/random hello receives no reply and cannot occupy half-open state or
+move the reply peer. A valid ClientHello can never reset a **live** session:
+while established, it drives a *pending* handshake that replaces the live
+keys only when ClientFin completes (this is also how a restarted klippy
+reconnects without a board reboot). A repeated valid hello is idempotent, a
+different hello cannot replace an active candidate, every accepted hello
+uses a fresh responder nonce, and incomplete state expires after two seconds.
+A peer that holds the PSK can still deny service, but it already has authority
+to authenticate command traffic; unauthenticated on-segment traffic no longer
+has that leverage. All of this is exercised live by
 [test/datagram_session_live_test.py](../test/datagram_session_live_test.py)
-(hostile hello against a live session, then a legitimate adopted
-re-handshake).
+(hostile PSK-invalid hello against a live session, then an immediate
+legitimate adopted re-handshake).
 
 ### As built: both ends are wired
 

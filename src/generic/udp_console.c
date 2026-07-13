@@ -47,7 +47,6 @@
 
 // Batch outgoing frames briefly to amortize per-datagram overhead
 #define UDP_CONSOLE_BATCH_US 2000
-#define UDP_SESSION_HELLO_GATE_US 250000
 #define UDP_SESSION_HANDSHAKE_TIMEOUT_US 2000000
 
 static const struct udp_console_ops *udp_ops;
@@ -195,8 +194,7 @@ udp_console_task(void)
         const uint8_t *frames;
         int32_t flen;
 #if CONFIG_WANT_DATAGRAM_SESSION
-        // Handshake rate gate and half-open lifetime (see below).
-        static uint32_t sess_hs_gate;
+        // Bounded half-open lifetime (see below).
         static uint32_t sess_hs_deadline;
         // Route by datagram kind. A handshake message is answered by the
         // session; a session datagram is decrypted-authenticated by it;
@@ -209,25 +207,17 @@ udp_console_task(void)
             && udpdg_is_authenticated_static(rx_dgram, got))
             kind = 0;
         if (kind == 1 || kind == 3) {
-            // DoS hardening in both startup and reconnect: ClientHellos
-            // are rate-limited, a different hello cannot replace an active
-            // candidate, and half-open state expires. ClientFins are never
-            // gated. ServerHello is sent directly to the candidate without
-            // changing the authenticated tx peer; that peer is committed
-            // only after a PSK-proving ClientFin.
+            // DoS hardening in both startup and reconnect: ClientHello has
+            // already been PSK-authenticated by the session layer before it
+            // can produce rlen, a different hello cannot replace an active
+            // candidate, and half-open state expires. ServerHello is sent
+            // directly to the candidate without changing the authenticated
+            // tx peer; that peer is committed only after ClientFin.
             uint32_t now = timer_read_time();
             if (sess_hs_deadline
                 && !timer_is_before(now, sess_hs_deadline)) {
                 udpsess_reset_handshake();
                 sess_hs_deadline = 0;
-            }
-            if (kind == 1) {
-                if (sess_hs_gate
-                    && timer_is_before(now, sess_hs_gate)) {
-                    continue;
-                }
-                sess_hs_gate = (now
-                                + timer_from_us(UDP_SESSION_HELLO_GATE_US));
             }
             uint32_t rlen = udpsess_on_handshake(rx_dgram, got, tx_dgram,
                                                  sizeof(tx_dgram));

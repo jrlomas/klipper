@@ -217,9 +217,8 @@ extern "C" int
 udpsess_msg_type(const uint8_t *data, uint32_t len)
 {
     // Classify a raw datagram for the console router:
-    //   1 = a ClientHello (handshake start - the rate-gated message)
-    //   3 = a ClientFin (handshake completion - never gated, or a
-    //       reconnect would livelock against the gate)
+    //   1 = a ClientHello (handshake start, carrying its PSK proof)
+    //   3 = a ClientFin (handshake completion)
     //   2 = a session data datagram (DGF_SESSION set)
     //   0 = neither (route to the static path)
     // Session negotiation requires a PSK. In explicit trust-network mode,
@@ -231,7 +230,8 @@ udpsess_msg_type(const uint8_t *data, uint32_t len)
         if (len < 3 + intentproto::SEC_RANDOM_SIZE
             || data[1] != intentproto::SEC_PROTO_VERSION
             || data[2] > intentproto::SEC_ID_MAX
-            || len != 3 + intentproto::SEC_RANDOM_SIZE + data[2])
+            || len != 3 + intentproto::SEC_RANDOM_SIZE + data[2]
+                      + intentproto::SEC_HELLO_PROOF_SIZE)
             return 0;
         return 1;
     }

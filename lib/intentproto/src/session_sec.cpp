@@ -18,6 +18,7 @@ namespace {
 const uint8_t LBL_C2S[] = "intentproto c2s v1";
 const uint8_t LBL_S2C[] = "intentproto s2c v1";
 const uint8_t LBL_FIN[] = "intentproto finished v1";
+const uint8_t LBL_HELLO[] = "intentproto client hello v2";
 
 void store_be32(uint8_t* p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
@@ -32,6 +33,19 @@ uint32_t load_be32(const uint8_t* p) {
 }
 
 } // namespace
+
+void SecureSession::client_hello_mac(
+        const uint8_t* hello, size_t hello_len,
+        uint8_t out[SEC_HELLO_PROOF_SIZE]) {
+    HmacSha256 h;
+    h.begin(psk, psk_len);
+    h.update(LBL_HELLO, sizeof(LBL_HELLO) - 1);
+    h.update(hello, hello_len);
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    h.finish(digest);
+    memcpy(out, digest, SEC_HELLO_PROOF_SIZE);
+    memset(digest, 0, sizeof(digest));
+}
 
 // ---------------- key schedule ----------------
 
@@ -145,10 +159,12 @@ write_hello(uint8_t* out, uint8_t type, const uint8_t* random,
 size_t SecureSession::start(uint8_t* out, size_t cap) {
     if (role != SecRole::Initiator || state != SecState::Idle)
         return 0;
-    if (cap < 3 + SEC_RANDOM_SIZE + my_id_len)
+    if (cap < 3 + SEC_RANDOM_SIZE + my_id_len + SEC_HELLO_PROOF_SIZE)
         return 0;
     size_t n = write_hello(out, SEC_MSG_CLIENT_HELLO, client_random,
                            my_id, my_id_len);
+    client_hello_mac(out, n, out + n);
+    n += SEC_HELLO_PROOF_SIZE;
     state = SecState::WaitServerHello;
     return n;
 }
@@ -179,13 +195,30 @@ size_t SecureSession::on_handshake(const uint8_t* msg, size_t len,
     // Responder: ClientHello -> ServerHello.
     if (role == SecRole::Responder && state == SecState::Idle
             && msg[0] == SEC_MSG_CLIENT_HELLO) {
+        // Parse into temporaries and authenticate the complete hello before
+        // changing any responder state. Invalid/spoofed hellos receive no
+        // reply and leave the responder idle for a legitimate client.
+        uint8_t candidate_random[SEC_RANDOM_SIZE];
+        uint8_t candidate_id[SEC_ID_MAX];
+        size_t candidate_id_len = 0;
         size_t off = parse_hello(msg, len, SEC_MSG_CLIENT_HELLO,
-                                 client_random, peer_id_buf,
-                                 &peer_id_length);
-        if (!off) {
-            state = SecState::Failed;
+                                 candidate_random, candidate_id,
+                                 &candidate_id_len);
+        if (!off || len != off + SEC_HELLO_PROOF_SIZE)
+            return 0;
+        uint8_t want_hello[SEC_HELLO_PROOF_SIZE];
+        client_hello_mac(msg, off, want_hello);
+        volatile uint8_t hello_diff = 0;
+        for (size_t i = 0; i < SEC_HELLO_PROOF_SIZE; i++)
+            hello_diff |= (uint8_t)(want_hello[i] ^ msg[off + i]);
+        memset(want_hello, 0, sizeof(want_hello));
+        if (hello_diff != 0) {
+            auth_failures++;
             return 0;
         }
+        memcpy(client_random, candidate_random, sizeof(client_random));
+        memcpy(peer_id_buf, candidate_id, candidate_id_len);
+        peer_id_length = candidate_id_len;
         derive_prk();
         derive_traffic_key(true, 0, tx_key);
         derive_traffic_key(false, 0, rx_key);
@@ -212,7 +245,7 @@ size_t SecureSession::on_handshake(const uint8_t* msg, size_t len,
         size_t off = parse_hello(msg, len, SEC_MSG_SERVER_HELLO,
                                  server_random, peer_id_buf,
                                  &peer_id_length);
-        if (!off || len < off + SEC_FINISHED_SIZE) {
+        if (!off || len != off + SEC_FINISHED_SIZE) {
             state = SecState::Failed;
             return 0;
         }
@@ -246,7 +279,7 @@ size_t SecureSession::on_handshake(const uint8_t* msg, size_t len,
     // Responder: ClientFinished completes the handshake.
     if (role == SecRole::Responder && state == SecState::WaitClientFin
             && msg[0] == SEC_MSG_CLIENT_FIN) {
-        if (len < 1 + SEC_FINISHED_SIZE) {
+        if (len != 1 + SEC_FINISHED_SIZE) {
             state = SecState::Failed;
             return 0;
         }

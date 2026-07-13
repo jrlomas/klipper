@@ -31,8 +31,9 @@ work. They do not convert any unchecked target or hardware item into a pass.
   latch, and three-bit BCH correction against the host codec.
 * A real `linuxprocess` UDP responder proves the three-message session,
   mandatory expected board identity, authenticated command/reply traffic,
-  tamper rejection, live-session preservation, legitimate re-handshake, and
-  protection of the authenticated reply peer from an untrusted ClientHello.
+  tamper rejection, live-session preservation, legitimate re-handshake,
+  ClientHello PSK proof, and protection of the authenticated reply peer from
+  an untrusted ClientHello.
 * The PWM/DAC value path passes both the shared C segment-fitter test and the
   bounded scalar-function preflight/terminal-hold test.
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
@@ -66,12 +67,6 @@ visible in the repositories:
   OAMS bootloader therefore remains on its existing Katapult/CRC-only path.
 * **Heterogeneous fleet enforcement:** the timing substrate exists, but the
   new FD-0001 doc 14 correctly labels host enforcement as future work.
-* **UDP handshake availability:** idempotent half-open state, a global
-  ClientHello rate gate, and a two-second expiry bound accidental reset and
-  reflection work. They do not provide stateless-cookie protection: a
-  sustained on-segment/spoofed-source Hello flood can still delay a new
-  session, which should be addressed before treating hostile-network
-  availability as solved. Static pre-session traffic remains available.
 
 ## Hardware and printer qualification
 

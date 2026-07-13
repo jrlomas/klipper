@@ -127,7 +127,10 @@ HMAC-SHA256 keyed by a **static** PSK — that is the mandatory floor
   so the raw PSK never rides on a data packet.
 * A **3-message PSK handshake** (`ClientHello` / `ServerHello` /
   `ClientFinished`) establishes independent tx/rx keys and carries a
-  **per-board identity**. It is a pure state machine like `host.hpp`:
+  **per-board identity**. Protocol version 2 also authenticates the complete
+  ClientHello under the PSK, so spoofed/random hellos are discarded before
+  responder state is mutated or a ServerHello can be created. It is a pure
+  state machine like `host.hpp`:
   no heap, no I/O, no clock, no RNG — the caller feeds it its own
   nonce and bytes; it emits bytes and reaches `Established`.
 * **Key rotation** by an epoch bump (a datagram-count threshold or an

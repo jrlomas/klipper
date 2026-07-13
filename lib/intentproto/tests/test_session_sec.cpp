@@ -326,8 +326,8 @@ static void test_downgrade() {
 }
 
 static void test_bad_psk_rejected() {
-    // A responder holding the wrong PSK produces a bad server-finished
-    // MAC; the initiator must reject and fail closed.
+    // A responder holding the wrong PSK rejects ClientHello before
+    // allocating handshake state or emitting a ServerHello.
     static const uint8_t BADPSK[16] =
         {9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9};
     SecureSession cli, srv;
@@ -336,13 +336,31 @@ static void test_bad_psk_rejected() {
     srv.init(SecRole::Responder, BADPSK, sizeof(BADPSK),
              (const uint8_t*)SERVER_ID, strlen(SERVER_ID), SERVER_RAND);
 
-    uint8_t m[SEC_MSG_MAX], r[SEC_MSG_MAX], f[SEC_MSG_MAX];
+    uint8_t m[SEC_MSG_MAX], r[SEC_MSG_MAX];
     size_t n = cli.start(m, sizeof(m));
     size_t rn = srv.on_handshake(m, n, r, sizeof(r));
-    size_t fn = cli.on_handshake(r, rn, f, sizeof(f));
-    CHECK(fn == 0);
-    CHECK(cli.failed());
-    CHECK(cli.auth_failures == 1);
+    CHECK(rn == 0);
+    CHECK(srv.state == SecState::Idle);
+    CHECK(srv.auth_failures == 1);
+
+    // Tampering with an otherwise valid hello is rejected the same way.
+    SecureSession good_srv;
+    good_srv.init(SecRole::Responder, PSK, sizeof(PSK),
+                  (const uint8_t*)SERVER_ID, strlen(SERVER_ID), SERVER_RAND);
+    m[3] ^= 0x40;
+    rn = good_srv.on_handshake(m, n, r, sizeof(r));
+    CHECK(rn == 0);
+    CHECK(good_srv.state == SecState::Idle);
+    CHECK(good_srv.auth_failures == 1);
+
+    // The rejected packet did not wedge the responder; a fresh legitimate
+    // ClientHello can immediately proceed.
+    SecureSession cli2;
+    cli2.init(SecRole::Initiator, PSK, sizeof(PSK),
+              (const uint8_t*)CLIENT_ID, strlen(CLIENT_ID), CLIENT_RAND);
+    n = cli2.start(m, sizeof(m));
+    rn = good_srv.on_handshake(m, n, r, sizeof(r));
+    CHECK(rn > 0);
 }
 
 int main() {

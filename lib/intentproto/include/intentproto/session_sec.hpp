@@ -24,6 +24,9 @@
 //     carried in the handshake and exposed to the caller;
 //   * replay protection                              — a 64-entry
 //     sliding window over the per-epoch sequence number.
+//   * responder availability                         — ClientHello carries
+//     a PSK proof, so spoofed/random hellos are rejected before responder
+//     state is mutated or a ServerHello is emitted.
 //
 // AUTH-ONLY, NOT CONFIDENTIALITY. Like the static-PSK path, this layer
 // AUTHENTICATES datagrams (truncated HMAC-SHA256 over the whole
@@ -73,6 +76,9 @@ constexpr size_t SEC_ID_MAX = 24;
 constexpr size_t SEC_KEY_SIZE = SHA256_DIGEST_SIZE;
 // Finished-MAC truncation (handshake authentication proof).
 constexpr size_t SEC_FINISHED_SIZE = 16;
+// ClientHello proof truncation. This authenticates the complete hello under
+// the configured PSK before the responder mutates handshake state.
+constexpr size_t SEC_HELLO_PROOF_SIZE = 16;
 // Session datagram header: flags, epoch, u32 per-epoch sequence.
 constexpr size_t SEC_DG_HEADER = 6;
 constexpr size_t SEC_DG_TAG = DATAGRAM_TAG; // 8-byte truncated HMAC
@@ -84,10 +90,9 @@ constexpr uint32_t SEC_DEFAULT_REKEY = 1u << 20;
 constexpr uint8_t SEC_MSG_CLIENT_HELLO = 0x51;
 constexpr uint8_t SEC_MSG_SERVER_HELLO = 0x52;
 constexpr uint8_t SEC_MSG_CLIENT_FIN = 0x53;
-constexpr uint8_t SEC_PROTO_VERSION = 1;
+constexpr uint8_t SEC_PROTO_VERSION = 2;
 
-// Largest handshake message (ServerHello: type,ver,id_len, random,
-// id, finished MAC).
+// Largest handshake message (hello prefix plus a proof/finished MAC).
 constexpr size_t SEC_MSG_MAX =
     3 + SEC_RANDOM_SIZE + SEC_ID_MAX + SEC_FINISHED_SIZE;
 
@@ -192,6 +197,8 @@ struct SecureSession {
     // ---- internal helpers (public struct, library use) ----
     void derive_prk();
     void derive_traffic_key(bool is_tx, uint32_t epoch, uint8_t* out);
+    void client_hello_mac(const uint8_t* hello, size_t hello_len,
+                          uint8_t out[SEC_HELLO_PROOF_SIZE]);
     void finished_mac(bool server, uint8_t out[SEC_FINISHED_SIZE]);
 };
 
