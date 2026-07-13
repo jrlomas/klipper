@@ -14,8 +14,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
 
-from atlas.model import (DEPLOY, DEV, BudgetError, ModelPinError,  # noqa
-                         StubBackend, estimate_memory_mb, select_backend)
+from atlas.model import (DEPLOY, DEV, BudgetError, HailoBackend,  # noqa
+                         ModelPinError, StubBackend,
+                         estimate_memory_mb, select_backend)
 
 
 def test_deploy_pins_qwen3_4b():
@@ -94,6 +95,11 @@ def test_select_backend_prefers_stub_when_asked():
     print("PASS: backend selection honours an explicit preference")
 
 
+def test_unimplemented_hailo_is_not_advertised():
+    assert HailoBackend().available() is False
+    print("PASS: SDK presence cannot advertise unimplemented Hailo inference")
+
+
 def main():
     test_deploy_pins_qwen3_4b()
     test_deploy_refuses_bigger_model()
@@ -103,6 +109,7 @@ def main():
     test_stub_backend_is_deterministic()
     test_select_backend_falls_back_to_stub()
     test_select_backend_prefers_stub_when_asked()
+    test_unimplemented_hailo_is_not_advertised()
     print("ALL PASS")
 
 

@@ -1,12 +1,12 @@
-# ModelBackend abstraction (FD-0002 §2, §7; Milestone C prep).
+# ModelBackend abstraction (FD-0002 §2, §7; Milestone C).
 #
 # One interface, several implementations: stub (for contract tests, no
 # weights), llama.cpp (the deployable path — CUDA + ROCm + CPU builds,
 # GGUF/Q4_K_M), and Hailo (the deploy target). The interface is fixed
 # now so dropping Qwen3-4B onto the Hailo later is a plug-in, not an
 # integration. The llama.cpp binding and non-interactive binary transports
-# are real today; deploy-model quality and Hailo execution land with the
-# pinned Milestone C weights and target hardware.
+# are real today and the pinned model passes workstation evaluation. Hailo
+# execution remains target-hardware work and is not advertised as available.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -301,14 +301,13 @@ class HailoBackend(ModelBackend):
         self.profile = profile
 
     def available(self) -> bool:
-        try:
-            import hailo_platform  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        # Importability alone is not inference. Do not let a host with the
+        # Hailo SDK installed select an unimplemented backend and fail only on
+        # the first operator request.
+        return False
 
     def generate(self, prompt, schema=None, tools=None,
-                 max_tokens=512) -> Completion:      # pragma: no cover
+                 max_tokens=512, system=None) -> Completion:  # pragma: no cover
         raise NotImplementedError(
             "Hailo inference lands at the Milestone C deploy step; see the "
             "Atlas bring-up plan.")

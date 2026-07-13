@@ -1,4 +1,4 @@
-# The model tier abstraction (FD-0002 §2, §7; Milestone C prep).
+# The model tier abstraction (FD-0002 §2, §7; Milestone C).
 #
 # dev target != deploy target. We develop the model layer on NVIDIA
 # (CUDA) / AMD (ROCm) GPUs because they are fast and present, but Atlas

@@ -126,7 +126,9 @@ minimal:
 - **Moonraker components** for anything that is API/state plumbing —
   report submission, provisioning jobs, KB pulls, feedback capture.
 - **Mainsail panels** for the trace viewer, the diagnosis/incident view,
-  the provisioning wizard, and the companion chat — where they reach.
+  the provisioning wizard, and the companion chat. The trace, diagnosis, and
+  companion surfaces are present in the current fork; provisioning remains
+  part of its own machine-side bring-up.
 - **A standalone Atlas daemon** only for what the stack can't host: the
   always-on monitor, the local-model runtime, and the merged-timeline
   store.
