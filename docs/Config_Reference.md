@@ -275,6 +275,40 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 #   support. The default is False.
 ```
 
+### [trajectory_pwm]
+
+A sampled PWM/DAC trajectory actuator (FD-0001
+[doc 04](founding/0001-motion-intentions/04-Actuator_Backends.md)): a
+non-stepper output whose "position" is a level - laser power, spindle
+speed, a servo or analog-driven axis. The MCU samples the segment
+polynomial at a fixed loop rate and writes the mapped duty. Callers
+either drive `rebase()`/`queue_segment()` directly or feed a
+piecewise-linear value trajectory through `feed_value_trajectory()`,
+which fits it with the same C segment fitter the stepper path uses.
+
+```
+[trajectory_pwm my_laser]
+pin:
+#   Output pin. Required.
+#full_scale: 1.0
+#   Native value that maps to 100% output. The default is 1.0.
+#cycle_time: 0.100
+#   PWM cycle time in seconds. The default is 0.100.
+#shutdown_value: 0
+#   Fraction of full scale driven on a machine shutdown. The default
+#   is 0.
+#motion_sample_time: 0.001
+#   Sampling quantum of the MCU-side polynomial evaluation and of the
+#   host fitter. The default is 0.001 seconds.
+#motion_tolerance: 256
+#   Fit tolerance of feed_value_trajectory(), in sub-units (one native
+#   unit = 65536 sub-units). The default is 256 (1/256 of a native
+#   unit, below one duty LSB at 8-bit-or-better PWM resolution).
+#motion_underrun_decel: 5000
+#   Deceleration (native units/s^2) of the autonomous ramp the MCU
+#   synthesizes if the segment queue underruns. The default is 5000.
+```
+
 ### [helix_status]
 
 Enables the `HELIX_STATUS` command, a machine-wide introspection report
