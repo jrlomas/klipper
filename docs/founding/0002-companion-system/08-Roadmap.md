@@ -135,11 +135,12 @@ The open items are settled; FD-0002 has split into this numbered series;
 Milestones A and B are realized. Milestone C's safety contracts, pinned
 llama.cpp runtime, grounded conversational service, structured preview path,
 Moonraker boundary, terminal client, Mainsail face, and workstation quality
-preflight are green. What remains is hardware-bound: GPU authorship, Pi 5 +
-Hailo-10H compilation and validation, and live-machine apply/reload/undo
-trials. Voice remains Milestone D. The floor is honest, the service is usable,
-and the model drafts behind the deterministic gate without being trusted to
-decide safety.
+preflight are green. CUDA and ROCm accelerator binaries also compile for the
+two workstation adapters; GPU execution remains blocked on device passthrough.
+What remains is hardware-bound: GPU evaluation, Pi 5 + Hailo-10H compilation
+and validation, and live-machine apply/reload/undo trials. Voice remains
+Milestone D. The floor is honest, the service is usable, and the model drafts
+behind the deterministic gate without being trusted to decide safety.
 
 For the bring-up ladder and the current status of every task, see the
 [Atlas Bring-up Plan](../../Atlas_Bring-up_Plan.md) and the

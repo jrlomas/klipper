@@ -195,6 +195,12 @@ F072** it was designed to fit.
   Mainsail companion UI are built and green. See
   [Atlas Model Evaluation](Atlas_Model_Eval.md). This proves workstation
   integration, not live-machine apply.
+- [x] **Accelerator runtime builds.** *Do:* compile the pinned llama.cpp
+  runtime for both workstation adapters. *Pass:* CUDA 12.0 built/linked
+  `llama-completion` for `sm_75` with cuBLAS; ROCm 7.2.4 built/linked it for
+  `gfx1200` with HIP/rocBLAS. Runtime discovery is separately blocked because
+  this environment exposes no `/dev/nvidia*`, `/dev/dri`, or `/dev/kfd`; this
+  box proves build authoring only and does not satisfy model quality below.
 - [ ] **Model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
   *Expect:* diagnosis accuracy and config-edit correctness above the

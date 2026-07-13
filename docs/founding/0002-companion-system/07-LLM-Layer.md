@@ -10,8 +10,11 @@ eval harness in [`atlas/eval/`](../../../atlas/eval/), and the per-machine
 memory file + RAG index in [`atlas/memory/`](../../../atlas/memory/). The
 model backend is wired to **llama.cpp** and the official pinned
 **Qwen3-4B Q4_K_M** passes the workstation CPU smoke and labelled suite.
-The deploy target remains Pi 5 + Hailo-10H; GPU authorship, target model
-compilation, target metrics, and live-machine mutation remain open. On the
+The deploy target remains Pi 5 + Hailo-10H; GPU execution/evaluation, target
+model compilation, target metrics, and live-machine mutation remain open. The
+CUDA (`sm_75`) and ROCm (`gfx1200`) llama.cpp binaries compile and link on the
+workstation, but its current execution environment exposes no GPU device nodes,
+so no GPU inference result is claimed. On the
 workstation, daemon-owned inference, private IPC, authenticated Moonraker
 relays, terminal commands, and the Mainsail companion interface are built and
 tested together.

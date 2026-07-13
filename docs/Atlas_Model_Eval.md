@@ -1,8 +1,9 @@
 # Atlas Pinned-Model Evaluation
 
-Status: **Workstation CPU preflight passed on 2026-07-13; GPU authorship and
-Pi 5 + Hailo-10H validation remain pending.** This is evidence for the local
-model path, not a claim that the deploy hardware is validated.
+Status: **Workstation CPU preflight passed on 2026-07-13; CUDA and ROCm
+runtime builds pass, but GPU execution and Pi 5 + Hailo-10H validation remain
+pending.** This is evidence for the local model path, not a claim that the
+deploy hardware is validated.
 
 ## Artifact and budget
 
@@ -70,11 +71,20 @@ baseline, and made both available to deterministic RAG retrieval.
 ## Provenance and remaining validation
 
 This run is labelled **workstation CPU preflight; GPU/Hailo validation
-pending**. The workstation exposes AMD and NVIDIA adapters, but the available
-llama.cpp build could not initialize a supported GPU runtime and the NVIDIA
-driver was unavailable to `nvidia-smi`; no GPU result is claimed. The same
-labelled suite must still run on the development GPU and, last, on the Pi 5 +
-Hailo-10H target with memory and latency recorded.
+pending**. The compiler/toolchain half has now been proved independently:
+
+- CUDA 12.0 built and linked `llama-completion` for the RTX 2080's explicit
+  `sm_75` target, including CUDA runtime and cuBLAS/cuBLASLt.
+- ROCm 7.2.4 built and linked the same target for the AMD card's explicit
+  `gfx1200` target, including HIP, hipBLAS/rocBLAS, and the HSA runtime.
+
+Both binaries then honestly reported no capable device. This execution
+environment exposes neither `/dev/nvidia*` nor `/dev/dri`/`/dev/kfd`; CUDA
+reported `no CUDA-capable device is detected`, and ROCm reported
+`no ROCm-capable device is detected`. Thus the source and accelerator
+toolchains compile, but no GPU inference or quality number is claimed. The
+same labelled suite must still run in a session with GPU device passthrough
+and, last, on the Pi 5 + Hailo-10H target with memory and latency recorded.
 Live config mutation/reload/undo also remains a board-rig acceptance item; the
 workstation result proves drafting and the safety preview, not real-machine
 application.
