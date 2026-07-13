@@ -27,7 +27,7 @@ honesty; Atlas gives it a mind.
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
 | `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
-| `provision/` | **A6** board catalog (50+ boards), USB/CAN detection, one-touch build+flash planner | ✅ |
+| `provision/` | **A6** board catalog (53 boards), USB/CAN detection, one-touch build+flash planner | ✅ |
 | `fleet/` | **A7** protocol/ABI hash from `intentproto` + lockstep handshake + signed remediation | ✅ |
 | `kb/` | **A8** blackbox bundle, numeric-only redaction, GitHub-Issue intake + label vocabulary | ✅ |
 
@@ -44,14 +44,21 @@ integration (HANDOFF §5):
 | Module | Contract |
 | --- | --- |
 | `apply/` | the **non-LLM risk classifier** (safety/consequential/cosmetic from a config diff) + draft→validate→classify→apply pipeline with journal + undo. The safety gate never depends on the model. |
-| `model/` | the `ModelBackend` abstraction (stub/cuda/rocm/cpu/hailo) + the **deploy-profile budget guard** that refuses anything past Qwen3-4B / ~6 GB even on a big dev card. |
+| `model/` | the `ModelBackend` abstraction (stub/cuda/rocm/cpu/hailo) + the **deploy-profile budget guard** (refuses anything past Qwen3-4B / ~6 GB even on a big dev card) + `LlamaCppBackend.generate` wired to llama.cpp (schema→JSON grammar, tools→tool-calling) and the prompt/tool-schema contracts + assistant helpers. |
 | `eval/` | the eval harness — diagnosis accuracy, config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first, always reported against the deploy profile. |
 | `memory/` | the per-machine **memory file** (quirks, baselines, journaled changes) + the **RAG index** over the KB + memory, with a deterministic stub embedder for grounding. |
 
-Verification: [`docs/Atlas_Bring-up_Plan.md`](../docs/Atlas_Bring-up_Plan.md).
+**Milestone B** seeds the first curated failure patterns —
+[`diagnosis/patterns/`](diagnosis/patterns/) (thermal/comms/motion, 9
+patterns), verified in `test/atlas_patterns_test.py`.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,view,provision,fleet,kb,apply,model,eval,memory}_test.py`
-— 118 checks across 11 suites.
+Verification: [`docs/Atlas_Bring-up_Plan.md`](../docs/Atlas_Bring-up_Plan.md).
+The real model backend is validated end-to-end by
+[`scripts/atlas_llm_smoke.py`](../scripts/atlas_llm_smoke.py) against a
+real GGUF; the standard suite mocks the model so it runs on CPU.
+
+Tests: `test/atlas_{decoder,diagnosis,trace,view,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+— **136 checks across 13 suites**, all green.
 
 ## Try it on a real log
 
