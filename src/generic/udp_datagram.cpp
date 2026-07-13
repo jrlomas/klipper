@@ -84,6 +84,21 @@ udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames)
     return r;
 }
 
+extern "C" int
+udpdg_is_authenticated_static(uint8_t *data, uint32_t len)
+{
+    // Session mode requires a PSK. In trust_network mode a raw handshake
+    // and a static datagram are not distinguishable by authentication, so
+    // never claim a packet here.
+    if (!DGRx.psk_len)
+        return 0;
+    intentproto::DatagramRx probe = DGRx;
+    const uint8_t *frames;
+    intentproto::TrafficClass cls;
+    return intentproto::datagram_decode(
+        &probe, data, len, &frames, &cls) >= 0 ? 1 : 0;
+}
+
 extern "C" uint32_t
 udpdg_take_recovered(uint8_t *out, uint32_t cap)
 {
@@ -105,8 +120,9 @@ udpdg_get_stats(struct udpdg_stats *st)
 // The board is the RESPONDER: it waits for the host's ClientHello and,
 // once the 3-message handshake completes, all datagrams are session
 // datagrams (auth with rotating per-session keys, epoch rotation, replay
-// window). Static-PSK datagrams remain the permanent fallback: a host
-// that never sends a ClientHello keeps using udpdg_encode/decode.
+// window). Static-PSK datagrams remain the pre-session fallback: a host
+// that never sends a ClientHello keeps using udpdg_encode/decode, while a
+// negotiated session pins subsequent data traffic to its stronger keys.
 #if CONFIG_WANT_DATAGRAM_SESSION
 #include "intentproto/session_sec.hpp"
 
@@ -127,6 +143,10 @@ static uint32_t SessIdLen;
 static uint8_t SessNonce[16];
 static uint32_t SessHsCount;
 static bool SessPeerAdopted;
+static uint8_t SessActiveHello[intentproto::SEC_MSG_MAX];
+static uint32_t SessActiveHelloLen;
+static uint8_t SessActiveReply[intentproto::SEC_MSG_MAX];
+static uint32_t SessActiveReplyLen;
 
 static void
 sess_fresh_init(intentproto::SecureSession *s)
@@ -141,6 +161,58 @@ sess_fresh_init(intentproto::SecureSession *s)
             SessBoardId, SessIdLen, nonce, intentproto::SEC_DEFAULT_REKEY);
 }
 
+static void
+sess_clear_active(void)
+{
+    SessActiveHelloLen = SessActiveReplyLen = 0;
+}
+
+static uint32_t
+sess_on_hello(intentproto::SecureSession *s, const uint8_t *msg,
+              uint32_t len, uint8_t *out, uint32_t cap)
+{
+    if (len > intentproto::SEC_MSG_MAX)
+        return 0;
+    if (s->state == intentproto::SecState::WaitClientFin) {
+        // A retransmit of the same ClientHello is idempotent. A different
+        // unauthenticated hello cannot replace an in-progress handshake.
+        if (len == SessActiveHelloLen
+            && !memcmp(msg, SessActiveHello, len)) {
+            if (cap < SessActiveReplyLen)
+                return 0;
+            memcpy(out, SessActiveReply, SessActiveReplyLen);
+            return SessActiveReplyLen;
+        }
+        return 0;
+    }
+    sess_fresh_init(s);
+    uint32_t n = (uint32_t)s->on_handshake(msg, len, out, cap);
+    if (n) {
+        memcpy(SessActiveHello, msg, len);
+        SessActiveHelloLen = len;
+        memcpy(SessActiveReply, out, n);
+        SessActiveReplyLen = n;
+    }
+    return n;
+}
+
+static bool
+sess_try_fin(intentproto::SecureSession *s, const uint8_t *msg,
+             uint32_t len, uint8_t *out, uint32_t cap)
+{
+    if (s->state != intentproto::SecState::WaitClientFin)
+        return false;
+    // Verify on a copy. A forged ClientFin must not fail or reset the
+    // legitimate half-open handshake.
+    intentproto::SecureSession trial = *s;
+    trial.on_handshake(msg, len, out, cap);
+    if (!trial.established())
+        return false;
+    *s = trial;
+    sess_clear_active();
+    return true;
+}
+
 extern "C" int
 udpsess_msg_type(const uint8_t *data, uint32_t len)
 {
@@ -150,13 +222,23 @@ udpsess_msg_type(const uint8_t *data, uint32_t len)
     //       reconnect would livelock against the gate)
     //   2 = a session data datagram (DGF_SESSION set)
     //   0 = neither (route to the static path)
-    if (len < 1)
+    // Session negotiation requires a PSK. In explicit trust-network mode,
+    // every packet belongs to the static path; interpreting sequence bytes
+    // as handshake tags would only create collisions.
+    if (!DGRx.psk_len || len < 1)
         return 0;
-    if (data[0] == intentproto::SEC_MSG_CLIENT_HELLO)
+    if (data[0] == intentproto::SEC_MSG_CLIENT_HELLO) {
+        if (len < 3 + intentproto::SEC_RANDOM_SIZE
+            || data[1] != intentproto::SEC_PROTO_VERSION
+            || data[2] > intentproto::SEC_ID_MAX
+            || len != 3 + intentproto::SEC_RANDOM_SIZE + data[2])
+            return 0;
         return 1;
+    }
     if (data[0] == intentproto::SEC_MSG_CLIENT_FIN)
-        return 3;
-    if (data[0] & intentproto::DGF_SESSION)
+        return len == 1 + intentproto::SEC_FINISHED_SIZE ? 3 : 0;
+    if ((data[0] & intentproto::DGF_SESSION)
+        && len >= intentproto::SEC_DG_HEADER + intentproto::SEC_DG_TAG)
         return 2;
     return 0;
 }
@@ -179,6 +261,7 @@ udpsess_init(const uint8_t *psk, uint32_t psk_len, const uint8_t *board_id,
     memcpy(SessNonce, random16, sizeof(SessNonce));
     SessHsCount = 0;
     SessPeerAdopted = false;
+    sess_clear_active();
     sess_fresh_init(&SessRx);
 }
 
@@ -193,22 +276,25 @@ udpsess_on_handshake(const uint8_t *msg, uint32_t len, uint8_t *out,
                      uint32_t cap)
 {
     if (!SessRx.established()) {
-        // Not yet live: every ClientHello restarts the handshake on a
-        // fresh instance (unwedges half-open state; unique nonce).
+        uint32_t n = 0;
         if (len >= 1 && msg[0] == intentproto::SEC_MSG_CLIENT_HELLO)
-            sess_fresh_init(&SessRx);
-        uint32_t n = (uint32_t)SessRx.on_handshake(msg, len, out, cap);
-        if (SessRx.established())
+            n = sess_on_hello(&SessRx, msg, len, out, cap);
+        else if (len >= 1 && msg[0] == intentproto::SEC_MSG_CLIENT_FIN
+                 && sess_try_fin(&SessRx, msg, len, out, cap)) {
             SessPeerAdopted = true;
+        }
         return n;
     }
     // Live session: drive the PENDING handshake; adopt it only when the
     // ClientFin proves the peer holds the PSK (a reconnecting host).
     // Unauthenticated hellos can therefore never reset live keys.
+    uint32_t n = 0;
+    bool adopted = false;
     if (len >= 1 && msg[0] == intentproto::SEC_MSG_CLIENT_HELLO)
-        sess_fresh_init(&SessPending);
-    uint32_t n = (uint32_t)SessPending.on_handshake(msg, len, out, cap);
-    if (SessPending.established()) {
+        n = sess_on_hello(&SessPending, msg, len, out, cap);
+    else if (len >= 1 && msg[0] == intentproto::SEC_MSG_CLIENT_FIN)
+        adopted = sess_try_fin(&SessPending, msg, len, out, cap);
+    if (adopted) {
         SessRx = SessPending;
         SessPeerAdopted = true;
         // Consume the authenticated pending handshake. A later stray
@@ -216,6 +302,16 @@ udpsess_on_handshake(const uint8_t *msg, uint32_t len, uint8_t *out,
         sess_fresh_init(&SessPending);
     }
     return n;
+}
+
+extern "C" void
+udpsess_reset_handshake(void)
+{
+    sess_clear_active();
+    if (SessRx.established())
+        sess_fresh_init(&SessPending);
+    else
+        sess_fresh_init(&SessRx);
 }
 
 extern "C" int

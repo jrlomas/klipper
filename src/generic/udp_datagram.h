@@ -35,6 +35,9 @@ uint32_t udpdg_parity_flush(uint8_t *out);
 // 0 if the datagram was consumed internally (duplicate/parity);
 // <0 if rejected (auth failure or malformed).
 int32_t udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
+// Non-mutating probe used by the session router. Returns 1 only when a
+// PSK-authenticated static datagram validates under the configured key.
+int udpdg_is_authenticated_static(uint8_t *data, uint32_t len);
 // When the just-decoded datagram was a parity that reconstructed a
 // single lost datagram of its block, copy the recovered datagram
 // (whole: UDPDG_HEADER header + frames) into 'out' and return its
@@ -45,7 +48,7 @@ int32_t udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
 uint32_t udpdg_take_recovered(uint8_t *out, uint32_t cap);
 void udpdg_get_stats(struct udpdg_stats *st);
 
-// ---- optional DTLS-class session responder (CONFIG_WANT_DATAGRAM_SESSION) ----
+// Optional DTLS-class session responder (CONFIG_WANT_DATAGRAM_SESSION)
 // Classify a raw datagram: 1 = handshake message, 2 = session data
 // (DGF_SESSION), 0 = static-path datagram.
 int udpsess_msg_type(const uint8_t *data, uint32_t len);
@@ -62,6 +65,9 @@ uint32_t udpsess_on_handshake(const uint8_t *msg, uint32_t len,
 // Return 1 once after a ClientFin has authenticated and the responder
 // adopted that candidate as the live session peer.
 int udpsess_take_peer_adopted(void);
+// Drop a half-open handshake after the router's bounded timeout. A live
+// session is preserved; only its pending replacement is cleared.
+void udpsess_reset_handshake(void);
 // Seal frames into a session datagram (out >= len + 32). Returns size.
 uint32_t udpsess_encode(uint8_t *out, uint32_t cap, const uint8_t *frames,
                         uint32_t len);

@@ -87,7 +87,11 @@ void SecureSession::finished_mac(bool server,
         cid = peer_id_buf;   cid_len = peer_id_length;
         sid = my_id;         sid_len = my_id_len;
     }
+    uint8_t cid_len_byte = (uint8_t)cid_len;
+    uint8_t sid_len_byte = (uint8_t)sid_len;
+    h.update(&cid_len_byte, 1);
     h.update(cid, cid_len);
+    h.update(&sid_len_byte, 1);
     h.update(sid, sid_len);
 
     uint8_t digest[SHA256_DIGEST_SIZE];

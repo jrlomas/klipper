@@ -1,6 +1,7 @@
 # FD-0001: Link Layer and Transports
 
-Status: Implemented in HELIX 0.9 (software complete; hardware bring-up pending)
+Status: Core implemented and workstation-tested in HELIX 0.9; native-RMII
+board integration and ESP32 target/runtime work remain.
 
 > For the full, implementation-grounded treatment of the wire protocol
 > this document introduces, see [Protocol v2](../../Protocol_v2.md). This
@@ -108,8 +109,9 @@ negotiable layers:
 2. **Packet-level erasure FEC (UDP transport, below)** — recovers
    *lost datagrams* without waiting out a retransmit timeout: after
    every k data datagrams, send parity datagram(s) computed across
-   the block. The implemented codec is **XOR parity for single-loss
-   recovery** (`DGF_PARITY` datagrams in `datagram.cpp`); Reed–Solomon
+   the block. The implemented codec is **length-aware XOR parity for
+   single-loss recovery** (`DGF_PARITY | DGF_PARITY_LENGTHS` datagrams
+   carry a two-byte XOR-of-lengths field before the XOR body); Reed–Solomon
    over GF(2⁸) for burst tolerance remains a possible future extension.
    A lost datagram inside a
    protected block is reconstructed on arrival of the block's parity,

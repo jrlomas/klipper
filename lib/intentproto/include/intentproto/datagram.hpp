@@ -48,15 +48,19 @@ struct ClassStats {
 // flags: bits 0-1 traffic class, bit 2 = XOR parity datagram,
 //        bit 3 = authenticated, bit 4 = session-protected (the
 //        optional session-security upgrade, session_sec.hpp; the
-//        static-PSK path here never sets or inspects it). Bits 5-7
-//        remain reserved header space as FD-0001 doc 07 promised.
+//        static-PSK path here never sets or inspects it), bit 5 marks
+//        length-aware XOR parity. Bits 6-7 remain reserved.
 constexpr size_t DATAGRAM_HEADER = 3;
 constexpr size_t DATAGRAM_TAG = 8;
 constexpr size_t DATAGRAM_MAX = 1472; // typical UDP payload MTU
+// FEC parity adds a two-byte XOR-of-lengths field before its XOR body.
+constexpr size_t DATAGRAM_FEC_MAX_BODY =
+    DATAGRAM_MAX - DATAGRAM_HEADER - 2 - DATAGRAM_TAG;
 constexpr uint8_t DGF_CLASS_MASK = 0x03;
 constexpr uint8_t DGF_PARITY = 0x04;
 constexpr uint8_t DGF_AUTH = 0x08;
 constexpr uint8_t DGF_SESSION = 0x10;
+constexpr uint8_t DGF_PARITY_LENGTHS = 0x20;
 
 struct DatagramTx {
     const uint8_t* psk;
@@ -65,6 +69,7 @@ struct DatagramTx {
     // XOR erasure accumulator: parity over the last k datagrams
     uint8_t parity[DATAGRAM_MAX];
     size_t parity_len;
+    uint16_t parity_len_xor;
     uint8_t k;                // parity every k datagrams; 0 = off
     uint8_t sent_since_parity;
     ClassStats stats[3];
@@ -80,6 +85,7 @@ struct DatagramRx {
     // Single-loss recovery buffer
     uint8_t held[DATAGRAM_MAX];
     size_t held_len;
+    uint16_t held_len_xor;
     uint16_t held_seq;
     bool holding;
 };

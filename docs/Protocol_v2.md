@@ -588,7 +588,8 @@ constexpr uint8_t DGF_CLASS_MASK  = 0x03; // flags bits 0-1: traffic class
 constexpr uint8_t DGF_PARITY      = 0x04; // bit 2: XOR parity datagram
 constexpr uint8_t DGF_AUTH        = 0x08; // bit 3: authenticated
 constexpr uint8_t DGF_SESSION     = 0x10; // bit 4: session-protected (§9)
-// bits 5-7 reserved
+constexpr uint8_t DGF_PARITY_LENGTHS = 0x20; // bit 5: length-aware parity
+// bits 6-7 reserved
 ```
 
 * **Datagram sequence.** A 16-bit sequence prepended per datagram
@@ -600,6 +601,11 @@ constexpr uint8_t DGF_SESSION     = 0x10; // bit 4: session-protected (§9)
 * **XOR erasure FEC.** With `fec_k > 0`, the tx side folds every data
   datagram (header + frames, pre-auth) into a running XOR accumulator
   and, after each block of `k`, emits a **parity datagram** (`DGF_PARITY`).
+  Its body is `[u16 xor_of_protected_lengths][xor_bytes...]`; the explicit
+  `DGF_PARITY_LENGTHS` format bit makes older parity bodies degrade cleanly
+  to ARQ instead of being misparsed by a new receiver. FEC-enabled data
+  bodies are limited to 1459 bytes so the two-byte length field and HMAC
+  remain within the 1472-byte UDP payload ceiling.
   If exactly one datagram of a block is lost, the receiver XORs the
   survivors it held against the parity to **reconstruct the missing
   datagram without waiting out a retransmit timeout** — trading
@@ -742,7 +748,10 @@ console built with `CONFIG_WANT_DATAGRAM_SESSION` (Kconfig option
 static), answers a `ClientHello` with a `ServerHello`, and once
 established seals all replies as session datagrams — a host that never
 opens a session keeps using the static-PSK path, so the upgrade is
-strictly additive. Each board carries a distinct identity via
+strictly additive. Once a session is established, the board rejects static
+data until reboot or an authenticated re-handshake, preventing downgrade
+around identity, replay protection, and rotating keys. Each board carries a
+distinct identity via
 `CONFIG_DATAGRAM_SESSION_ID`. **On the host**, `[intentproto_transport]`
 with `session: True` runs the initiator: the bridge completes the
 3-message handshake at `open()` before its pump starts, then routes the

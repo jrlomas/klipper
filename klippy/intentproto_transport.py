@@ -92,8 +92,8 @@ def v1_split(buf):
 
 def v1_payload_seq(frame):
     """Extract (payload, seq_byte) from a validated v1 frame."""
-    return bytes(frame[MESSAGE_HEADER_SIZE:len(frame) - MESSAGE_TRAILER_SIZE]), \
-        frame[1]
+    payload = frame[MESSAGE_HEADER_SIZE:len(frame) - MESSAGE_TRAILER_SIZE]
+    return bytes(payload), frame[1]
 
 
 def v1_build(payload, seq_byte):
@@ -125,7 +125,8 @@ class BchConsoleCodec(object):
             # frame_v2 carries only the 4-bit seq nibble; the constant
             # MESSAGE_DEST bit is re-added when the far side rebuilds the v1
             # frame (from_wire / the MCU de-frame).
-            out.append(self._ip.frame_v2_encode(payload, seq & MESSAGE_SEQ_MASK))
+            wire = self._ip.frame_v2_encode(payload, seq & MESSAGE_SEQ_MASK)
+            out.append(wire)
             self.tx_frames += 1
         return b"".join(out)
 
@@ -142,7 +143,8 @@ class BchConsoleCodec(object):
             if i + blen > n:
                 break
             frame = buf[i:i + blen]
-            if frame[blen - 1] != MESSAGE_SYNC or not (frame[1] & FRAME_V2_FLAG):
+            if (frame[blen - 1] != MESSAGE_SYNC
+                    or not (frame[1] & FRAME_V2_FLAG)):
                 i += 1
                 continue
             try:
@@ -152,7 +154,8 @@ class BchConsoleCodec(object):
                 i += 1  # uncorrectable — resync; v1 ARQ will retransmit
                 continue
             # Re-add the constant MESSAGE_DEST bit stripped by v2's seq nibble.
-            out.append(v1_build(payload, MESSAGE_DEST | (seq & MESSAGE_SEQ_MASK)))
+            seq_flags = MESSAGE_DEST | (seq & MESSAGE_SEQ_MASK)
+            out.append(v1_build(payload, seq_flags))
             self.rx_frames += 1
             i += blen
         self._v2_tail = bytes(buf[i:])
@@ -307,6 +310,10 @@ class TransportBridge(object):
                 continue
             fin = self._session.on_handshake(data)
             if fin:
+                # There is no fourth handshake acknowledgement. Duplicate
+                # ClientFin is harmless and makes a single lost final packet
+                # substantially less likely to strand the responder half-open.
+                self._sock.sendto(fin, self.udp_board)
                 self._sock.sendto(fin, self.udp_board)
             if self._session.established:
                 # Enforce the configured board identity: the ServerHello's
@@ -413,7 +420,8 @@ class TransportBridge(object):
                 try:
                     payload, _cls = self._session.decode(data)
                 except ValueError:
-                    # auth failure / malformed / replay — drop; v1 ARQ recovers
+                    # Auth failure / malformed / replay: drop; v1 ARQ
+                    # recovers.
                     return
                 if payload:
                     self._write_master(payload)

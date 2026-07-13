@@ -91,6 +91,8 @@ datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
 {
     if (len + DATAGRAM_HEADER + DATAGRAM_TAG > DATAGRAM_MAX)
         return 0;
+    if (tx->k && len + DATAGRAM_HEADER > DATAGRAM_FEC_MAX_BODY)
+        return 0;
     uint16_t seq = tx->next_seq++;
     out[0] = (uint8_t)(seq >> 8);
     out[1] = (uint8_t)seq;
@@ -106,8 +108,10 @@ datagram_encode(DatagramTx* tx, uint8_t* out, const uint8_t* frames,
         if (!tx->sent_since_parity) {
             memset(tx->parity, 0, sizeof(tx->parity));
             tx->parity_len = 0;
+            tx->parity_len_xor = 0;
         }
         xor_into(tx->parity, &tx->parity_len, out, body);
+        tx->parity_len_xor ^= (uint16_t)body;
         tx->sent_since_parity++;
     }
     return seal(tx->psk, tx->psk_len, out, body);
@@ -121,14 +125,17 @@ datagram_parity_flush(DatagramTx* tx, uint8_t* out)
     uint16_t seq = tx->next_seq++;
     out[0] = (uint8_t)(seq >> 8);
     out[1] = (uint8_t)seq;
-    out[2] = DGF_PARITY | (uint8_t)(tx->sent_since_parity & DGF_CLASS_MASK);
+    out[2] = (DGF_PARITY | DGF_PARITY_LENGTHS
+              | (uint8_t)(tx->sent_since_parity & DGF_CLASS_MASK));
     // Parity body covers the protected datagrams' header+frames
     size_t plen = tx->parity_len;
-    if (DATAGRAM_HEADER + plen + DATAGRAM_TAG > DATAGRAM_MAX)
-        plen = DATAGRAM_MAX - DATAGRAM_HEADER - DATAGRAM_TAG;
-    memcpy(out + DATAGRAM_HEADER, tx->parity, plen);
+    if (DATAGRAM_HEADER + 2 + plen + DATAGRAM_TAG > DATAGRAM_MAX)
+        plen = DATAGRAM_MAX - DATAGRAM_HEADER - 2 - DATAGRAM_TAG;
+    out[DATAGRAM_HEADER] = (uint8_t)(tx->parity_len_xor >> 8);
+    out[DATAGRAM_HEADER + 1] = (uint8_t)tx->parity_len_xor;
+    memcpy(out + DATAGRAM_HEADER + 2, tx->parity, plen);
     tx->sent_since_parity = 0;
-    return seal(tx->psk, tx->psk_len, out, DATAGRAM_HEADER + plen);
+    return seal(tx->psk, tx->psk_len, out, DATAGRAM_HEADER + 2 + plen);
 }
 
 int
@@ -171,18 +178,40 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
         // Single-loss recovery: if exactly one datagram of the block
         // was lost, XOR of the survivors with the parity rebuilds it.
         // The caller keeps the survivors folded in rx->held.
+        // The explicit format bit prevents a new receiver from treating an
+        // older parity body as the length-aware format. Recovery then falls
+        // back to the retained v1 ARQ path.
+        if (!(flags & DGF_PARITY_LENGTHS)) {
+            rx->holding = false;
+            rx->held_len = rx->held_len_xor = 0;
+            return 0;
+        }
         if (rx->holding && delta == 1) {
-            size_t plen = len - DATAGRAM_HEADER;
-            size_t n = plen > rx->held_len ? plen : rx->held_len;
+            if (len < DATAGRAM_HEADER + 2) {
+                rx->holding = false;
+                rx->held_len = rx->held_len_xor = 0;
+                return -2;
+            }
+            uint16_t block_len_xor = ((uint16_t)data[DATAGRAM_HEADER] << 8)
+                                     | data[DATAGRAM_HEADER + 1];
+            size_t plen = len - DATAGRAM_HEADER - 2;
+            size_t lost_len = block_len_xor ^ rx->held_len_xor;
+            if (!lost_len || lost_len > plen
+                || lost_len > sizeof(rx->held)) {
+                rx->holding = false;
+                rx->held_len = rx->held_len_xor = 0;
+                return -2;
+            }
             size_t i;
-            for (i = 0; i < n; i++)
-                rx->held[i] ^= data[DATAGRAM_HEADER + i];
-            rx->held_len = n;
+            for (i = 0; i < lost_len; i++)
+                rx->held[i] ^= data[DATAGRAM_HEADER + 2 + i];
+            rx->held_len = lost_len;
             // rx->held now contains the missing datagram (hdr+frames)
             return 0;
         }
         rx->holding = false;
         rx->held_len = 0;
+        rx->held_len_xor = 0;
         return 0;
     }
 
@@ -190,9 +219,11 @@ datagram_decode(DatagramRx* rx, uint8_t* data, size_t len,
     if (!rx->holding) {
         memset(rx->held, 0, sizeof(rx->held));
         rx->held_len = 0;
+        rx->held_len_xor = 0;
         rx->holding = true;
     }
     xor_into(rx->held, &rx->held_len, data, len);
+    rx->held_len_xor ^= (uint16_t)len;
 
     TrafficClass c = (TrafficClass)(flags & DGF_CLASS_MASK);
     ClassStats* st = &rx->stats[(int)c <= 2 ? (int)c : 2];

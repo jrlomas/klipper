@@ -149,6 +149,28 @@ static void test_identity() {
     CHECK(!memcmp(srv.peer_id(), CLIENT_ID, strlen(CLIENT_ID)));
 }
 
+static void server_finished_for_ids(const char* client_id,
+                                    const char* server_id,
+                                    uint8_t mac[SEC_FINISHED_SIZE]) {
+    SecureSession cli, srv;
+    cli.init(SecRole::Initiator, PSK, sizeof(PSK),
+             (const uint8_t*)client_id, strlen(client_id), CLIENT_RAND);
+    srv.init(SecRole::Responder, PSK, sizeof(PSK),
+             (const uint8_t*)server_id, strlen(server_id), SERVER_RAND);
+    uint8_t hello[SEC_MSG_MAX], reply[SEC_MSG_MAX];
+    size_t hn = cli.start(hello, sizeof(hello));
+    size_t rn = srv.on_handshake(hello, hn, reply, sizeof(reply));
+    CHECK(rn >= SEC_FINISHED_SIZE);
+    memcpy(mac, reply + rn - SEC_FINISHED_SIZE, SEC_FINISHED_SIZE);
+}
+
+static void test_identity_lengths_bound() {
+    uint8_t split1[SEC_FINISHED_SIZE], split2[SEC_FINISHED_SIZE];
+    server_finished_for_ids("A", "BC", split1);
+    server_finished_for_ids("AB", "C", split2);
+    CHECK(memcmp(split1, split2, SEC_FINISHED_SIZE) != 0);
+}
+
 static void test_datagram_roundtrip() {
     SecureSession cli, srv;
     do_handshake(&cli, &srv);
@@ -327,6 +349,7 @@ int main() {
     test_hkdf_rfc5869();
     test_handshake_loopback();
     test_identity();
+    test_identity_lengths_bound();
     test_datagram_roundtrip();
     test_forgery();
     test_replay();

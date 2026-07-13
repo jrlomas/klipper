@@ -82,31 +82,81 @@ static void test_datagram_auth_roundtrip() {
     CHECK(r == -1);
 }
 
-static void test_datagram_loss_recovery() {
+static void check_datagram_loss_recovery(size_t survivor_len,
+                                         size_t lost_len) {
     DatagramTx tx;
     DatagramRx rx;
     datagram_tx_init(&tx, PSK, sizeof(PSK), 2); // parity every 2
     datagram_rx_init(&rx, PSK, sizeof(PSK));
 
-    uint8_t f1[8] = {1,1,1,1,1,1,1,1}, f2[8] = {2,2,2,2,2,2,2,2};
+    uint8_t f1[32], f2[32];
+    memset(f1, 0x11, sizeof(f1));
+    memset(f2, 0x22, sizeof(f2));
     uint8_t d1[DATAGRAM_MAX], d2[DATAGRAM_MAX], dp[DATAGRAM_MAX];
-    size_t n1 = datagram_encode(&tx, d1, f1, 8, TrafficClass::Scheduled);
+    size_t n1 = datagram_encode(&tx, d1, f1, survivor_len,
+                                TrafficClass::Scheduled);
     CHECK(datagram_parity_flush(&tx, dp) == 0);
-    size_t n2 = datagram_encode(&tx, d2, f2, 8, TrafficClass::Scheduled);
+    size_t n2 = datagram_encode(&tx, d2, f2, lost_len,
+                                TrafficClass::Scheduled);
     size_t np = datagram_parity_flush(&tx, dp);
     CHECK(np > 0);
 
     // Deliver d1, LOSE d2, deliver parity: d2 must be reconstructed
     const uint8_t* out;
     TrafficClass cls;
-    CHECK(datagram_decode(&rx, d1, n1, &out, &cls) == 8);
+    CHECK(datagram_decode(&rx, d1, n1, &out, &cls)
+          == (int)survivor_len);
     CHECK(datagram_decode(&rx, dp, np, &out, &cls) == 0);
     CHECK(rx.lost == 1);
     uint8_t rec[DATAGRAM_MAX];
     size_t rn = datagram_take_recovered(&rx, rec, sizeof(rec));
-    CHECK(rn >= DATAGRAM_HEADER + 8);
-    CHECK(!memcmp(rec + DATAGRAM_HEADER, f2, 8));
+    CHECK(rn == DATAGRAM_HEADER + lost_len);
+    CHECK(!memcmp(rec + DATAGRAM_HEADER, f2, lost_len));
     (void)n2;
+}
+
+static void test_datagram_loss_recovery() {
+    // Recover byte-exact length/content whether the missing datagram is
+    // larger or smaller than the surviving one.
+    check_datagram_loss_recovery(8, 20);
+    check_datagram_loss_recovery(20, 8);
+}
+
+static void test_datagram_fec_bounds_and_version() {
+    DatagramTx tx;
+    uint8_t frames[DATAGRAM_FEC_MAX_BODY - DATAGRAM_HEADER + 1];
+    memset(frames, 0x5a, sizeof(frames));
+    uint8_t dg[DATAGRAM_MAX];
+    datagram_tx_init(&tx, PSK, sizeof(PSK), 2);
+    size_t max_frames = DATAGRAM_FEC_MAX_BODY - DATAGRAM_HEADER;
+    CHECK(datagram_encode(&tx, dg, frames, max_frames,
+                          TrafficClass::Scheduled)
+          == DATAGRAM_FEC_MAX_BODY + DATAGRAM_TAG);
+
+    datagram_tx_init(&tx, PSK, sizeof(PSK), 2);
+    CHECK(datagram_encode(&tx, dg, frames, max_frames + 1,
+                          TrafficClass::Scheduled) == 0);
+    CHECK(tx.next_seq == 0);
+    CHECK(tx.sent_since_parity == 0);
+
+    // An older parity body without the explicit length-format bit is
+    // consumed without recovery; v1 ARQ remains the compatibility path.
+    DatagramRx rx;
+    datagram_tx_init(&tx, nullptr, 0, 2);
+    datagram_rx_init(&rx, nullptr, 0);
+    uint8_t one[8] = {1}, two[8] = {2};
+    uint8_t d1[DATAGRAM_MAX], d2[DATAGRAM_MAX], dp[DATAGRAM_MAX];
+    size_t n1 = datagram_encode(&tx, d1, one, sizeof(one),
+                                TrafficClass::Scheduled);
+    datagram_encode(&tx, d2, two, sizeof(two), TrafficClass::Scheduled);
+    size_t np = datagram_parity_flush(&tx, dp);
+    const uint8_t* out;
+    TrafficClass cls;
+    CHECK(datagram_decode(&rx, d1, n1, &out, &cls) == (int)sizeof(one));
+    dp[2] &= (uint8_t)~DGF_PARITY_LENGTHS;
+    CHECK(datagram_decode(&rx, dp, np, &out, &cls) == 0);
+    uint8_t recovered[DATAGRAM_MAX];
+    CHECK(datagram_take_recovered(&rx, recovered, sizeof(recovered)) == 0);
 }
 
 static void test_datagram_trust_network() {
@@ -128,6 +178,7 @@ int main() {
     test_frame_v2();
     test_datagram_auth_roundtrip();
     test_datagram_loss_recovery();
+    test_datagram_fec_bounds_and_version();
     test_datagram_trust_network();
     if (g_failures) {
         printf("%d FAILURE(S)\n", g_failures);

@@ -47,6 +47,8 @@
 
 // Batch outgoing frames briefly to amortize per-datagram overhead
 #define UDP_CONSOLE_BATCH_US 2000
+#define UDP_SESSION_HELLO_GATE_US 250000
+#define UDP_SESSION_HANDSHAKE_TIMEOUT_US 2000000
 
 static const struct udp_console_ops *udp_ops;
 static void *udp_ops_ctx;
@@ -193,37 +195,51 @@ udp_console_task(void)
         const uint8_t *frames;
         int32_t flen;
 #if CONFIG_WANT_DATAGRAM_SESSION
-        // Handshake rate gate while a session is live (see below).
+        // Handshake rate gate and half-open lifetime (see below).
         static uint32_t sess_hs_gate;
+        static uint32_t sess_hs_deadline;
         // Route by datagram kind. A handshake message is answered by the
         // session; a session datagram is decrypted-authenticated by it;
-        // anything else falls to the static path (bootstrap / a host that
-        // did not offer a session). The static DGF_SESSION classification
-        // is only trusted once established, so a long static link whose
-        // seq high byte happens to set bit 4 is never mis-routed.
+        // anything else falls to the static path before session pinning.
         int kind = udpsess_msg_type(rx_dgram, got);
+        // A static datagram's sequence high byte may equal a handshake
+        // type (0x51/0x53) or carry DGF_SESSION's bit. Authentication is
+        // the unambiguous discriminator: valid static traffic always wins.
+        if (kind && !udpsess_established()
+            && udpdg_is_authenticated_static(rx_dgram, got))
+            kind = 0;
         if (kind == 1 || kind == 3) {
-            // DoS hardening: while a session is LIVE, unauthenticated
-            // ClientHellos are rate-limited (a reconnecting host needs
-            // one) and can never reset the live keys
-            // (udpsess_on_handshake drives a separate pending handshake,
-            // adopted only on a PSK-proving ClientFin). ClientFins are
-            // never gated - gating the completion message would livelock
-            // a legitimate reconnect. ServerHello is sent directly to
-            // the candidate without changing the authenticated tx peer;
-            // that peer is committed only after a PSK-proving ClientFin.
-            if (kind == 1 && udpsess_established()) {
-                uint32_t now = timer_read_time();
+            // DoS hardening in both startup and reconnect: ClientHellos
+            // are rate-limited, a different hello cannot replace an active
+            // candidate, and half-open state expires. ClientFins are never
+            // gated. ServerHello is sent directly to the candidate without
+            // changing the authenticated tx peer; that peer is committed
+            // only after a PSK-proving ClientFin.
+            uint32_t now = timer_read_time();
+            if (sess_hs_deadline
+                && !timer_is_before(now, sess_hs_deadline)) {
+                udpsess_reset_handshake();
+                sess_hs_deadline = 0;
+            }
+            if (kind == 1) {
                 if (sess_hs_gate
                     && timer_is_before(now, sess_hs_gate)) {
                     continue;
                 }
-                sess_hs_gate = now + timer_from_us(250000);
+                sess_hs_gate = (now
+                                + timer_from_us(UDP_SESSION_HELLO_GATE_US));
             }
             uint32_t rlen = udpsess_on_handshake(rx_dgram, got, tx_dgram,
                                                  sizeof(tx_dgram));
-            if (udpsess_take_peer_adopted() && udp_ops->rx_accepted)
-                udp_ops->rx_accepted(udp_ops_ctx);
+            int adopted = udpsess_take_peer_adopted();
+            if (adopted) {
+                sess_hs_deadline = 0;
+                if (udp_ops->rx_accepted)
+                    udp_ops->rx_accepted(udp_ops_ctx);
+            } else if (rlen && !sess_hs_deadline) {
+                sess_hs_deadline = (
+                    now + timer_from_us(UDP_SESSION_HANDSHAKE_TIMEOUT_US));
+            }
             if (rlen && udp_ops->send_candidate)
                 udp_ops->send_candidate(udp_ops_ctx, tx_dgram, rlen);
             continue;
@@ -238,6 +254,11 @@ udp_console_task(void)
                 rx_append(frames, flen);
             continue;
         }
+        // Once a session is live, pin the data path to it. Static-PSK
+        // traffic remains the pre-session/backward-compatible bootstrap,
+        // but cannot bypass session identity, replay, or rotating keys.
+        if (udpsess_established())
+            continue;
 #endif
         flen = udpdg_decode(rx_dgram, got, &frames);
         if (flen < 0)

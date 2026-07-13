@@ -46,7 +46,9 @@
 //
 // NEGOTIATION / DOWNGRADE. Session security is an OFFER layered over
 // the untouched static-PSK datagram path (datagram.hpp), which stays
-// the default and the permanent fallback. The initiator emits a
+// the default bootstrap/fallback when no session is established. The
+// board integration pins data traffic to the session after negotiation.
+// The initiator emits a
 // ClientHello; a peer that does not support the session layer never
 // answers with a ServerHello, so the initiator never reaches
 // Established and the caller keeps using datagram_encode/decode with

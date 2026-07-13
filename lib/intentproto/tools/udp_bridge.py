@@ -38,6 +38,8 @@ DATAGRAM_MAX = 1472
 DGF_CLASS_MASK = 0x03
 DGF_PARITY = 0x04
 DGF_AUTH = 0x08
+DGF_PARITY_LENGTHS = 0x20
+DATAGRAM_FEC_MAX_BODY = DATAGRAM_MAX - DATAGRAM_HEADER - 2 - DATAGRAM_TAG
 # Batch serial bytes briefly to amortize per-datagram overhead
 BATCH_DELAY = 0.002
 
@@ -71,25 +73,35 @@ class DatagramCodec:
         # (each folded as [seq, flags, payload], pre-auth), and how many
         # data datagrams have been folded since the last parity flush.
         self.tx_parity = bytearray()
+        self.tx_len_xor = 0
         self.sent_since_parity = 0
         # rx survivors accumulator: XOR of the datagrams received since
         # the last parity, plus whether a block is currently open.
         self.rx_held = bytearray()
+        self.rx_len_xor = 0
         self.holding = False
 
     def encode(self, payload, cls=0):
         seq = self.tx_seq & 0xffff
-        self.tx_seq += 1
         flags = cls & DGF_CLASS_MASK
         if self.psk:
             flags |= DGF_AUTH
         head = bytes([(seq >> 8) & 0xff, seq & 0xff, flags])
         body = head + payload
+        # Match the freestanding C codec, which reserves tag capacity even
+        # in explicit trust-network mode so configuration does not alter MTU.
+        if len(body) + DATAGRAM_TAG > DATAGRAM_MAX:
+            raise ValueError("datagram payload exceeds UDP MTU")
+        if self.k and len(body) > DATAGRAM_FEC_MAX_BODY:
+            raise ValueError("datagram payload exceeds FEC parity capacity")
+        self.tx_seq += 1
         if self.k:
             # Fold [seq, flags, payload] (pre-auth) into the block
             if self.sent_since_parity == 0:
                 self.tx_parity = bytearray()
+                self.tx_len_xor = 0
             _xor_into(self.tx_parity, body)
+            self.tx_len_xor ^= len(body)
             self.sent_since_parity += 1
         if self.psk:
             body += make_tag(self.psk, body)
@@ -102,15 +114,17 @@ class DatagramCodec:
             return None
         seq = self.tx_seq & 0xffff
         self.tx_seq += 1
-        flags = DGF_PARITY | (self.sent_since_parity & DGF_CLASS_MASK)
+        flags = (DGF_PARITY | DGF_PARITY_LENGTHS
+                 | (self.sent_since_parity & DGF_CLASS_MASK))
         if self.psk:
             # Match the C seal(): the authenticated bit covers the
             # parity datagram too, and the tag spans it.
             flags |= DGF_AUTH
         plen = min(len(self.tx_parity),
-                   DATAGRAM_MAX - DATAGRAM_HEADER - DATAGRAM_TAG)
+                   DATAGRAM_MAX - DATAGRAM_HEADER - 2 - DATAGRAM_TAG)
         head = bytes([(seq >> 8) & 0xff, seq & 0xff, flags])
-        body = head + bytes(self.tx_parity[:plen])
+        lengths = bytes([self.tx_len_xor >> 8, self.tx_len_xor & 0xff])
+        body = head + lengths + bytes(self.tx_parity[:plen])
         self.sent_since_parity = 0
         if self.psk:
             body += make_tag(self.psk, body)
@@ -145,24 +159,47 @@ class DatagramCodec:
 
         if flags & DGF_PARITY:
             out = []
+            if not (flags & DGF_PARITY_LENGTHS):
+                self.holding = False
+                self.rx_held = bytearray()
+                self.rx_len_xor = 0
+                return out
             # Single-loss recovery: exactly one datagram of the block
             # was lost (the one right before this parity) iff a block is
             # open and this parity is the immediate successor (delta==1).
             if self.holding and delta == 1:
-                _xor_into(self.rx_held, data[DATAGRAM_HEADER:])
+                if len(data) < DATAGRAM_HEADER + 2:
+                    self.holding = False
+                    self.rx_held = bytearray()
+                    self.rx_len_xor = 0
+                    return []
+                block_len_xor = ((data[DATAGRAM_HEADER] << 8)
+                                 | data[DATAGRAM_HEADER + 1])
+                parity = data[DATAGRAM_HEADER + 2:]
+                lost_len = block_len_xor ^ self.rx_len_xor
+                if not lost_len or lost_len > len(parity):
+                    self.holding = False
+                    self.rx_held = bytearray()
+                    self.rx_len_xor = 0
+                    return []
+                _xor_into(self.rx_held, parity[:lost_len])
+                del self.rx_held[lost_len:]
                 # rx_held now holds the missing datagram [seq,flags,pay]
                 recovered = bytes(self.rx_held[DATAGRAM_HEADER:])
                 if recovered:
                     out.append(recovered)
             self.holding = False
             self.rx_held = bytearray()
+            self.rx_len_xor = 0
             return out
 
         # Data datagram: fold [seq, flags, payload] into the survivors
         if not self.holding:
             self.rx_held = bytearray()
+            self.rx_len_xor = 0
             self.holding = True
         _xor_into(self.rx_held, data)
+        self.rx_len_xor ^= len(data)
         return [data[DATAGRAM_HEADER:]]
 
 
