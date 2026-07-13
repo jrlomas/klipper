@@ -64,16 +64,18 @@ class RedactionPolicy:
         if _is_sensitive_key(key):
             return (False, None)                     # tier (c): never
         if self.drop_wallclock and str(key).lower() in _WALLCLOCK_KEYS:
-            return (False, None)                     # tier (b): drop absolute time
+            # tier (b): drop absolute time
+            return (False, None)
         if isinstance(val, bool) or isinstance(val, (int, float)):
             return (self.keep_numeric, val)          # tier (a): numeric raw
         if isinstance(val, str):
             if key in self.safe_string_keys:
                 return (True, val)                   # tier (a): safe structural
-            if "/" in val:                           # tier (b): path -> basename
+            if "/" in val:                          # tier (b): path -> basename
                 return (self.basename_paths, val.rsplit("/", 1)[-1]) \
                     if self.basename_paths else (False, None)
-            return (False, None)                     # tier (b): free-text dropped
+            # tier (b): free text dropped
+            return (False, None)
         if isinstance(val, dict):
             return (True, self.fields(val))
         if isinstance(val, (list, tuple)):
@@ -105,12 +107,26 @@ def redact_fields(d: dict, policy=DEFAULT_POLICY) -> dict:
     return policy.fields(d)
 
 
-def _scrub_summary(summary: str) -> str:
-    # A rendered structural summary is kept, but any path-like token is
-    # reduced to its basename so a stray filename never rides along.
-    return " ".join(
-        tok.rsplit("/", 1)[-1] if "/" in tok else tok
-        for tok in summary.split())
+_SAFE_SOURCES = frozenset({
+    "atlas", "execution", "host", "klippy", "link", "mcu", "monitor",
+    "timesync", "trace",
+})
+
+
+def _safe_source(source: str) -> str:
+    # Structured collectors may accept a caller-supplied source label. Keep
+    # only the category, never a hostname, MCU nickname, or serial suffix.
+    category = re.split(r"[/ :]", str(source).lower(), maxsplit=1)[0]
+    return category if category in _SAFE_SOURCES else "other"
+
+
+def _safe_summary(event, fields: dict) -> str:
+    # Free-text summaries can contain anything from a raw exception. Rebuild
+    # the shareable headline solely from structural fields that survived the
+    # policy instead of trying to guess every possible secret shape.
+    label = str(event.kind).replace("_", " ")
+    detail = fields.get("fault_class") or fields.get("event")
+    return "%s: %s" % (label, detail) if detail else label
 
 
 def redact_event(event, policy=DEFAULT_POLICY) -> dict:
@@ -120,14 +136,15 @@ def redact_event(event, policy=DEFAULT_POLICY) -> dict:
     relative machine-time) and redacted numeric fields; drops the raw
     source text entirely (it can carry paths and secrets).
     """
+    fields = policy.fields(event.fields)
     return {
         "seq": event.seq,
         "kind": event.kind,
         "severity": event.severity,
-        "source": event.source,
+        "source": _safe_source(event.source),
         "mtime": event.mtime,          # relative machine-time, kept
         "time_basis": event.time_basis,
-        "summary": _scrub_summary(event.summary),
-        "fields": policy.fields(event.fields),
+        "summary": _safe_summary(event, fields),
+        "fields": fields,
         # note: event.raw is deliberately NOT included.
     }

@@ -19,6 +19,7 @@ from atlas.diagnosis import Matcher, load_patterns  # noqa: E402
 from atlas.kb import (ALL_LABELS, REJECT_REASONS, STATE_LABELS,  # noqa: E402
                       assemble_bundle, redact_event, redact_fields,
                       render_issue)
+from atlas.timeline import Event, Timeline  # noqa: E402
 
 INCIDENT = """\
 Start printer at Sat Jul 12 10:00:00 2026 (1752314400.0 6.7)
@@ -159,6 +160,24 @@ def test_render_issue():
     print("PASS: issue renders the §6a template, labelled case/new")
 
 
+def test_rendered_issue_drops_planted_free_text_secrets():
+    planted = ["private-hostname", "SN-ULTRA-SECRET",
+               "/home/alice/private/model.gcode", "api-secret-123"]
+    tl = Timeline()
+    tl.notes.append("note from %s" % planted[0])
+    tl.add(Event(seq=tl.allocate_seq(), kind="mcu_shutdown",
+                 source="%s/%s" % (planted[0], planted[1]),
+                 severity="critical", mtime=1.0, time_basis="machine",
+                 summary="failure %s %s %s" % tuple(planted[1:]),
+                 fields={"fault_class": "timer_too_close",
+                         "hostname": planted[0], "serial": planted[1],
+                         "api_key": planted[3]}))
+    issue = render_issue(assemble_bundle(tl, Matcher([]).diagnose(tl)))
+    rendered = issue["title"] + "\n" + issue["body"]
+    assert not any(secret in rendered for secret in planted), rendered
+    print("PASS: rendered issue drops planted notes/source/summary secrets")
+
+
 def test_label_vocabulary():
     assert STATE_LABELS[0] == "case/new" and STATE_LABELS[-1] == "accepted"
     assert all(r.startswith("rejected/") for r in REJECT_REASONS)
@@ -180,6 +199,7 @@ def main():
     test_bundle_hash_stable_across_volatiles()
     test_bundle_with_match()
     test_render_issue()
+    test_rendered_issue_drops_planted_free_text_secrets()
     test_label_vocabulary()
     print("ALL PASS")
 

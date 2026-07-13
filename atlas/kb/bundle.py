@@ -58,7 +58,7 @@ class BlackboxBundle:
         return _signature(self.timeline)
 
 
-def _diagnosis_dict(diagnosis) -> tuple:
+def _diagnosis_dict(diagnosis, red_events=None) -> tuple:
     """Return (dict, headline) from an A5 Diagnosis (or None)."""
     if diagnosis is None:
         return ({"matched": False, "note": "no diagnosis run"}, "unknown")
@@ -71,11 +71,13 @@ def _diagnosis_dict(diagnosis) -> tuple:
                          for m in diagnosis.matches],
         }, best.cause if best else "matched")
     case = diagnosis.case
+    headline = (red_events[0]["summary"] if red_events
+                else "no significant events")
     return ({
         "matched": False,
         "note": case.note if case else "no known pattern matched",
         "case_hash": case.case_hash if case else "",
-    }, case.summary if case else "no significant events")
+    }, headline)
 
 
 def assemble_bundle(timeline, diagnosis=None, policy=DEFAULT_POLICY,
@@ -87,7 +89,7 @@ def assemble_bundle(timeline, diagnosis=None, policy=DEFAULT_POLICY,
         salient = [e for e in timeline.ordered() if e.sev_rank() == top]
     red_events = [redact_event(e, policy) for e in salient[:max_events]]
 
-    diag_dict, headline = _diagnosis_dict(diagnosis)
+    diag_dict, headline = _diagnosis_dict(diagnosis, red_events)
     versions = policy.fields(dict(timeline.versions))
 
     payload = "\n".join(_signature(red_events)).encode("utf-8")
@@ -96,4 +98,5 @@ def assemble_bundle(timeline, diagnosis=None, policy=DEFAULT_POLICY,
     return BlackboxBundle(
         schema_version=SCHEMA_VERSION, content_hash=content_hash,
         symptom=headline, timeline=red_events, diagnosis=diag_dict,
-        versions=versions, notes=list(timeline.notes))
+        # Timeline notes are free text and therefore never leave the Pi.
+        versions=versions, notes=[])
