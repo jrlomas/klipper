@@ -1,0 +1,22 @@
+[Unit]
+Description=Atlas deterministic companion service
+After=network.target
+
+[Service]
+Type=simple
+User=@ATLAS_USER@
+WorkingDirectory=@ATLAS_REPO@
+EnvironmentFile=@ATLAS_ENV@
+ExecStart=@PYTHON@ -m atlas.cli serve ${ATLAS_LOG} --state-file ${ATLAS_STATE} --catalog ${ATLAS_CATALOG} --interval ${ATLAS_INTERVAL} --heartbeat ${ATLAS_HEARTBEAT} --max-events ${ATLAS_MAX_EVENTS}
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@ATLAS_STATE_DIR@
+
+[Install]
+WantedBy=multi-user.target

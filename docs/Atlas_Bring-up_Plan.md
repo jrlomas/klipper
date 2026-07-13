@@ -63,6 +63,10 @@ and gates every commit. No hardware, no GPU, no model.
   `python3 test/atlas_moonraker_test.py`. *Expect:* schema/size validation,
   last-good retention, stale detection, status/incidents/health endpoints, and
   transition-only websocket updates. *Pass:* ALL PASS.
+- [ ] **Service packaging.** *Do:* `python3 test/atlas_install_test.py`.
+  *Expect:* an idempotent staged install with a private environment, hardened
+  systemd unit, Moonraker registration, and no system-service side effects.
+  *Pass:* ALL PASS.
 - [ ] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.

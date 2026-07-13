@@ -126,3 +126,10 @@ heartbeat. The deliberately boring Moonraker component in
 [`moonraker_components/atlas.py`](../../../moonraker_components/atlas.py)
 validates and exposes that contract, reports staleness, and does not become a
 second diagnosis implementation.
+
+Deployment is equally explicit:
+[`scripts/install-atlas.sh`](../../../scripts/install-atlas.sh) installs a
+mode-private environment, a restartable/hardened systemd unit, the Moonraker
+component and configuration, and the service allowlist entry. Its `DESTDIR`
+path is acceptance-tested without requiring root or changing a live
+workstation.

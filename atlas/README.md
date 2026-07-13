@@ -60,7 +60,7 @@ The real model backend is validated end-to-end by
 real GGUF; the standard suite mocks the model so it runs on CPU.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **149 checks across 15 suites**, all green.
+— **151 checks across 16 suites**, all green.
 
 ## Try it on a real log
 
@@ -93,6 +93,18 @@ rendered by the Mainsail Atlas panel. An idle heartbeat lets consumers tell a
 quiet service from a stopped one. The component in `moonraker_components/`
 validates and exposes this state without recomputing Atlas facts.
 
+Install the daemon, its hardened systemd service, and the Moonraker component
+on a standard Klipper host with:
+
+```console
+$ sudo scripts/install-atlas.sh
+```
+
+The installer is idempotent, keeps `atlas.env` mode-private, registers Atlas
+with Moonraker, and can stage into `DESTDIR` without touching system services.
+Use `--no-start` to install without enabling or restarting anything; run
+`scripts/install-atlas.sh --help` for non-standard paths and service users.
+
 ## Tests
 
 ```console
@@ -100,6 +112,7 @@ $ python3 test/atlas_decoder_test.py
 $ python3 test/atlas_diagnosis_test.py
 $ python3 test/atlas_daemon_test.py
 $ python3 test/atlas_moonraker_test.py
+$ python3 test/atlas_install_test.py
 ```
 
 These are part of the deterministic floor and run on any CPU with only
