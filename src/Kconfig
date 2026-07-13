@@ -298,7 +298,8 @@ config DATAGRAM_SESSION_ID
 
 # Serial console framing v2 (BCH FEC) — a framing transform on the UART
 # console (docs/Protocol_v2.md). Opt-in, code-size sensitive (pulls in the
-# BCH codec), and UNPROVEN — needs hardware bring-up. Off by default.
+# BCH codec). LIVE-tested in emulation (test/console_v2_live_test.py on
+# linuxprocess); silicon UART bring-up pending. Off by default.
 config WANT_CONSOLE_FRAMING_V2
     bool "Accept intentproto v2 (BCH) framing on the serial UART console"
     default n

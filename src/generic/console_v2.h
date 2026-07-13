@@ -3,8 +3,10 @@
 // Serial console framing-v2 (BCH) de-frame — a framing transform that lets
 // an application board accept intentproto v2 frames on the UART console and
 // reply in v2, while the inner stock v1 command block and its ARQ are
-// preserved. Compiled only when CONFIG_WANT_CONSOLE_FRAMING_V2. UNPROVEN —
-// needs hardware bring-up. See docs/Protocol_v2.md.
+// preserved. Compiled only when CONFIG_WANT_CONSOLE_FRAMING_V2. LIVE-tested
+// in emulation (test/console_v2_live_test.py against linuxprocess); the
+// silicon UART call sites still await hardware bring-up. See
+// docs/Protocol_v2.md.
 
 #include <stdint.h>
 

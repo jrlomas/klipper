@@ -11,7 +11,10 @@
 // BCH codec — nothing protocol is reimplemented here.
 //
 // Kept out of the hot path: only console_task calls in, and only when
-// CONFIG_WANT_CONSOLE_FRAMING_V2 is set. UNPROVEN — needs hardware.
+// CONFIG_WANT_CONSOLE_FRAMING_V2 is set. The transform itself is LIVE-
+// tested against linuxprocess firmware (test/console_v2_live_test.py:
+// dual-accept, latch, 3-bit BCH correction); the serial_irq (silicon
+// UART) call sites still await hardware bring-up.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //

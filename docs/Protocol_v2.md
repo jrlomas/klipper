@@ -910,20 +910,29 @@ envelope framing transform (see the as-built callout):
   exact v1 reconstruction both directions, chunked input, resync bytes,
   datagram auth tamper-rejection, and a real-PTY bridge round-trip.
 - **MCU:** the datagram side ships in `udp_console.c` (network links,
-  end-to-end). The **console-BCH** side (`src/generic/console_v2.c`, UART)
-  is `WANT_CONSOLE_FRAMING_V2`-gated, off by default, compile-checked but
-  **hardware-unproven** — its IRQ-path RX/TX transform needs a devkit.
+  end-to-end). The **console-BCH** side (`src/generic/console_v2.c`) is
+  `WANT_CONSOLE_FRAMING_V2`-gated, off by default, and **LIVE-tested in
+  emulation**: the linuxprocess console carries the same hooks, and
+  [test/console_v2_live_test.py](../test/console_v2_live_test.py) proves
+  dual-accept (v1 in → v1 out), the v2 latch (v2 in → v2 out), and BCH
+  correction of 3 flipped bits against real firmware over a PTY. The
+  silicon UART call sites (`serial_irq.c`) still await a devkit.
 
 The capability handshake exists: a console-BCH board advertises
 `FRAMING_V2 = 1` in the identify dictionary (`DECL_CONSTANT`), which
-`helix_status.py` and the host bridge read. What remains is **hardware
-bring-up** (the whole v2 path is host/compile-tested, not silicon-proven)
-plus the founding-document items: the segment payload codecs
+`helix_status.py` and the host bridge read. The founding-document items
+formerly listed as remaining are now **implemented and host-tested**: the
+segment payload codecs
 ([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md))
-and the extension-space connect-time host binding. PSK provisioning is
-handled by [scripts/gen_psk.py](../scripts/gen_psk.py) (per-board printable
-keys shared between the host `psk_file` and the board's build config). See
-the intentproto [README](../lib/intentproto/README.md) for the current
+live in the library as `segment.hpp` (bit-identity guarded by
+[test/segment_lib_test.py](../test/segment_lib_test.py)), and the
+extension-space connect-time host binding ships as
+`intentproto.ExtBinding`/`bind_host_session()` (see the library README).
+What remains is **hardware bring-up** — running the already-tested paths
+on silicon. PSK provisioning is handled by
+[scripts/gen_psk.py](../scripts/gen_psk.py) (per-board printable keys
+shared between the host `psk_file` and the board's build config). See the
+intentproto [README](../lib/intentproto/README.md) for the current
 caveats.
 
 ---

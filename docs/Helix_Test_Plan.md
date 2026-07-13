@@ -186,14 +186,16 @@ Prove the wire before you trust it to carry motion.
     `[intentproto_transport] mode: datagram` to a UDP/Ethernet board;
     confirm authenticated datagrams flow, erasure-FEC recovers injected
     loss, and a forged datagram is dropped. The MCU side is `udp_console.c`.
-  - *Console-BCH (UART — MCU side unproven):* build the board with
-    `WANT_CONSOLE_FRAMING_V2=y` (advertises `FRAMING_V2`), configure
-    `mode: bch`; confirm the board latches to v2 and normal traffic
-    survives. **This exercises the compile-checked-but-unproven MCU IRQ
-    de-frame — treat a failure here as expected-until-validated, not a
-    regression.**
+  - *Console-BCH (UART — transform LIVE-tested in emulation):* build the
+    board with `WANT_CONSOLE_FRAMING_V2=y` (advertises `FRAMING_V2`),
+    configure `mode: bch`; confirm the board latches to v2 and normal
+    traffic survives. The de-frame/latch/BCH-correction logic is already
+    proven against linuxprocess firmware
+    (`test/console_v2_live_test.py`); what this validates on silicon is
+    the `serial_irq.c` IRQ-path call sites — a failure here points at
+    the IRQ glue, not the transform.
   Pass: datagram mode clean and auth-enforced; console-BCH latches and runs
-  (or the failure is captured against the unproven MCU path).
+  (a failure implicates the silicon IRQ glue, not the proven transform).
 - [ ] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
   Pass: a legacy-only host session is clean.
