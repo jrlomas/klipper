@@ -177,6 +177,48 @@ the stock motion path.
 #   loop thread to stop. The default is 5.0.
 ```
 
+### [intentproto_transport]
+
+The v2 transport bridge (see [Protocol v2](Protocol_v2.md)): lets klippy
+speak intentproto v2 to a micro-controller as an authenticated,
+FEC-protected **envelope around unchanged stock v1 frames**. The bridge
+publishes a PTY; point the matching `[mcu]` section's `serial:` at it.
+One section per bridged micro-controller.
+
+```
+[intentproto_transport my_toolhead]
+#mode: datagram
+#   Envelope mode. "datagram": authenticated (truncated HMAC-SHA256) +
+#   erasure-FEC UDP datagrams for network boards (WiFi/Ethernet).
+#   "bch": BCH error-correcting console framing for a serial (UART)
+#   link to a board built with WANT_CONSOLE_FRAMING_V2. Required.
+#board_address: 192.168.1.50:41414
+#   Datagram mode: the board's UDP address as host:port. Required in
+#   datagram mode.
+#listen_port: 41414
+#   Datagram mode: local UDP port to listen on. The default is 41414.
+#device: /dev/ttyAMA0
+#   Bch mode: the serial device to the board. Required in bch mode.
+#baud: 250000
+#   Bch mode: baud rate of the serial device. The default is 250000.
+#psk_file:
+#   Path to the pre-shared key file used to authenticate datagrams
+#   (see docs/Protocol_v2.md and scripts/gen_psk.py). Authentication
+#   is mandatory: set this, or explicitly confess trust_network.
+#trust_network: False
+#   Explicitly run the link unauthenticated. Only acceptable on a
+#   physically isolated network segment. The default is False.
+#fec_k: 0
+#   XOR erasure coding block size: emit one parity datagram every k
+#   data datagrams and recover a single lost datagram per block. Must
+#   match the board's setting. 0 disables the erasure layer. The
+#   default is 0.
+#pty: /tmp/intentproto-my_toolhead
+#   Path of the PTY symlink the bridge publishes (what the [mcu]
+#   section's serial: should point at). The default is
+#   /tmp/intentproto-<name>.
+```
+
 ### [trajectory_queuing]
 
 Owns the actuators that opt into the trajectory-intention motion path

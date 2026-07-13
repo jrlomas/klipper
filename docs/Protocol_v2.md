@@ -899,8 +899,10 @@ The capability handshake exists: a console-BCH board advertises
 `helix_status.py` and the host bridge read. What remains is **hardware
 bring-up** (the whole v2 path is host/compile-tested, not silicon-proven)
 plus the founding-document items: the segment payload codecs
-([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md)),
-the extension-space connect-time host binding, and PSK provisioning. See
+([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md))
+and the extension-space connect-time host binding. PSK provisioning is
+handled by [scripts/gen_psk.py](../scripts/gen_psk.py) (per-board printable
+keys shared between the host `psk_file` and the board's build config). See
 the intentproto [README](../lib/intentproto/README.md) for the current
 caveats.
 

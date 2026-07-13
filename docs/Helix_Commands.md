@@ -57,6 +57,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 | `[helix_status]` | Enables `HELIX_STATUS` (also auto-loaded with the trajectory subsystem). |
 | `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`). |
 | `[asyncio_bridge]` | The asyncio↔reactor seam (`start_timeout`, `stop_timeout`). |
+| `[intentproto_transport NAME]` | The v2 transport bridge: klippy speaks intentproto v2 (auth + FEC envelope around stock v1 frames) to a network (`mode: datagram`) or serial (`mode: bch`) board; point `[mcu NAME] serial:` at its PTY. |
 | `[mcu] on_comm_timeout: pause` | Turn a lost link on a secondary MCU into pause-and-hold instead of shutdown. |
 | `[mcu] hardware_endstop_trigger: False` | Force the legacy polled endstop path on a board (default: use hardware edge interrupts when the firmware supports them). |
 | `[heater_*] failure_policy: hold` | Keep a heater at its target through a fault (`hold_max_temp`, `hold_max_duration`). |
