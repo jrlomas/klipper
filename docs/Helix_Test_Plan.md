@@ -375,8 +375,9 @@ Phases 3/7/8 over each real transport.
   machine-time beacon (intent) both map the host's print-time to the same
   physical moment.
   Pass: edges land within the time-model tolerance; the config-time
-  validator (when built) rejects a coordination *group* split across
-  paradigms. Record whether a coordinated group was (correctly) kept
+  validator rejects a coordination *group* split across paradigms (try a
+  deliberately mixed rail — klippy must refuse to start with the doc-14
+  error). Record whether a coordinated group was (correctly) kept
   single-paradigm.
 
 ---

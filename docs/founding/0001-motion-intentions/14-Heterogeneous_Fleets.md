@@ -105,10 +105,14 @@ explicit, opt-in fallback, never the default — offered so no machine is
 - **Exists today:** the timing substrate. `clocksync` disciplines firehose
   boards; the machine-time beacon ([doc 01](01-Time_Model.md)) disciplines
   intent boards; the host holds both maps. Regime-1 machines already run.
-- **Future work (host, Atlas-era):** the config-time validator that
-  enforces single-paradigm coordination groups, and the firehose-compat
-  mode on an intent board. Until then, mixed coordination groups are a
-  documented "don't," not a caught error.
+  **The config-time validator is implemented**: at connect,
+  `trajectory_queuing` rejects a kinematic rail that mixes trajectory and
+  legacy steppers, and rejects a partial conversion of coupled kinematics
+  (corexy/delta-class, whose rails move as one group) — with an error that
+  names the offending steppers and cites this document.
+- **Future work (host, Atlas-era):** the firehose-compat mode on an
+  intent board (running a specific axis on pre-computed steps to join a
+  firehose coordination group).
 
 ## Relationship to other documents
 
