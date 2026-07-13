@@ -11,9 +11,9 @@
 #                  are always answerable), unless confirmation is required
 #                  and not yet given.
 #
-# The journal is in-memory here; persisting it to the per-machine memory
-# file is Milestone C. The contract — every applied change is reversible
-# and audited — is fixed now.
+# This in-memory contract remains useful for drafting/tests. Real config files
+# use live.PersistentApplyPipeline: compare-and-swap, fsynced atomic writes,
+# durable audit, reload rollback, and restart-safe undo.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.

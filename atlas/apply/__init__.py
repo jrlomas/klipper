@@ -16,10 +16,12 @@ from .classify import (RiskTier, classify_change, classify_changeset,
                        decision_for)
 from .pipeline import (ApplyPipeline, ApplyResult, Journal, JournalEntry,
                        Proposal, Validation)
+from .live import PersistentApplyPipeline, StaleConfigError
 
 __all__ = [
     "Change", "parse_config", "diff_configs",
     "RiskTier", "classify_change", "classify_changeset", "decision_for",
     "ApplyPipeline", "ApplyResult", "Journal", "JournalEntry", "Proposal",
     "Validation",
+    "PersistentApplyPipeline", "StaleConfigError",
 ]

@@ -66,6 +66,12 @@ gate never depends on the LLM's judgement.** The model could hallucinate a
 change to a thermal limit; the classifier would still route it to
 "always confirm," because it reads the *diff*, not the model's intent.
 
+The real-file path is
+[`atlas/apply/live.py`](../../../atlas/apply/live.py): it rejects stale drafts
+with compare-and-swap, preserves file modes, fsyncs an atomic replacement,
+persists the complete audit in a mode-private SQLite journal, rolls back when
+the injected Klippy reload fails, and can undo after a process restart.
+
 Every applied change — at any tier — is **journaled to the machine's memory
 with its diff**, so *undo* and *"what did Atlas change?"* are always
 answerable. Atlas drafts; the deterministic layer classifies and

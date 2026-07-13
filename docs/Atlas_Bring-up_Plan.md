@@ -97,6 +97,10 @@ are required (§8 tier 2).
 - [ ] **Apply pipeline.** *Expect:* every applied change is journaled and
   undoable; a safety edit does not apply without explicit confirmation.
   *Pass:* covered green above.
+- [ ] **Live apply durability.** *Do:*
+  `python3 test/atlas_live_apply_test.py`. *Expect:* compare-and-swap rejects
+  stale proposals; real writes are atomic/fsynced; the audit and undo survive
+  restart; reload failure restores the original config. *Pass:* ALL PASS.
 - [ ] **Model backend + deploy profile.** *Do:*
   `python3 test/atlas_model_test.py`. *Expect:* the deploy profile refuses
   a 14B model and pins Qwen3-4B/Q4_K_M; backend selection falls back to a
