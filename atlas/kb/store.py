@@ -124,6 +124,7 @@ class SignedCatalogInstaller:
         os.makedirs(parent, exist_ok=True)
         staging = tempfile.mkdtemp(prefix=".atlas-kb-", dir=parent)
         backup = self.destination + ".previous"
+        displaced = False
         try:
             with tarfile.open(archive, "r:gz") as tar:
                 root = os.path.realpath(staging) + os.sep
@@ -143,10 +144,14 @@ class SignedCatalogInstaller:
                 shutil.rmtree(backup)
             if os.path.exists(self.destination):
                 os.replace(self.destination, backup)
+                displaced = True
             os.replace(staging, self.destination)
             return manifest
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
+            if (displaced and not os.path.exists(self.destination)
+                    and os.path.exists(backup)):
+                os.replace(backup, self.destination)
             raise
 
     def rollback(self):

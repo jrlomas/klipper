@@ -98,6 +98,9 @@ command_config_trace(uint32_t *args)
     t->ring = alloc_chunk(sizeof(*t->ring) * size);
     t->size = size;
     t->oid = args[0];
+    uint_fast8_t i;
+    for (i = 0; i < TRACE_SUB_COUNT; i++)
+        trace_level[i] = TRACE_LVL_OFF;
     main_trace = t;
 }
 DECL_COMMAND(command_config_trace, "config_trace oid=%c size=%hu");
@@ -235,9 +238,9 @@ DECL_ENUMERATION("trace_event", "hold_enter", TRACE_EV_hold_enter);
 DECL_ENUMERATION("trace_event", "rebase", TRACE_EV_rebase);
 DECL_ENUMERATION("trace_event", "trigger_fire", TRACE_EV_trigger_fire);
 
-DECL_CONSTANT_STR("trace_fmt step_underrun", "horizon_us=%u queue_depth=%u");
-DECL_CONSTANT_STR("trace_fmt queue_refill", "depth=%u added=%u");
-DECL_CONSTANT_STR("trace_fmt comm_retransmit", "seq=%u count=%u");
-DECL_CONSTANT_STR("trace_fmt hold_enter", "reason=%u");
-DECL_CONSTANT_STR("trace_fmt rebase", "new_anchor=%u");
-DECL_CONSTANT_STR("trace_fmt trigger_fire", "source_oid=%u reason=%u");
+DECL_CONSTANT_STR("trace_fmt_step_underrun", "horizon_us=%u queue_depth=%u");
+DECL_CONSTANT_STR("trace_fmt_queue_refill", "depth=%u added=%u");
+DECL_CONSTANT_STR("trace_fmt_comm_retransmit", "seq=%u count=%u");
+DECL_CONSTANT_STR("trace_fmt_hold_enter", "reason=%u");
+DECL_CONSTANT_STR("trace_fmt_rebase", "new_anchor=%u");
+DECL_CONSTANT_STR("trace_fmt_trigger_fire", "source_oid=%u reason=%u");

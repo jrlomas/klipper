@@ -4,7 +4,7 @@
 # an event id, a subsystem, a severity level, the MCU clock, and a small
 # blob of typed args.  The host renders them to human strings *here*,
 # using the data dictionary the firmware published (DECL_ENUMERATION
-# "trace_event"/"trace_sub" and DECL_CONSTANT_STR "trace_fmt <name>").
+# "trace_event"/"trace_sub" and DECL_CONSTANT_STR "trace_fmt_<name>").
 # Because every record carries the MCU clock, and timesync maps that
 # clock onto machine time (FD-0001 doc 01), traces from the mainboard, a
 # CAN toolhead, and an ESP32 accessory all merge into one timeline — the
@@ -91,16 +91,18 @@ class TraceDictionary:
         Expects:
           data['enumerations']['trace_event'] -> {name: id}
           data['enumerations']['trace_sub']   -> {name: id}
-          data['constants']['trace_fmt <name>'] -> "fmt string"
+          data['config']['trace_fmt_<name>'] -> "fmt string"
         Unknown / missing sections degrade to the built-in defaults so a
         partial dictionary never crashes the collector.
         """
         enums = data.get("enumerations", {})
-        consts = data.get("constants", {})
+        # Klipper publishes DECL_CONSTANT* values under "config". Accept
+        # the older synthetic "constants" spelling for recorded fixtures.
+        consts = data.get("config", data.get("constants", {}))
         subs = {v: k for k, v in enums.get("trace_sub", {}).items()}
         events = {}
         for name, eid in enums.get("trace_event", {}).items():
-            fmt = consts.get("trace_fmt %s" % name, "")
+            fmt = consts.get("trace_fmt_%s" % name, "")
             # sub is not carried per-event in the dictionary; default 0
             # (core) unless a fmt convention encodes it — kept simple.
             events[eid] = (name, 0, fmt)

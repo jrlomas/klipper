@@ -17,10 +17,11 @@ class PersistentApplyPipeline:
     """Compare-and-swap config writes with persistent restart-safe undo."""
 
     def __init__(self, config_path, journal_path, reload_callback=None,
-                 wall_clock=time.time):
+                 validate_callback=None, wall_clock=time.time):
         self.config_path = os.path.abspath(os.path.expanduser(config_path))
         self.journal_path = os.path.abspath(os.path.expanduser(journal_path))
         self.reload_callback = reload_callback
+        self.validate_callback = validate_callback
         self.clock = wall_clock
         os.makedirs(os.path.dirname(self.journal_path), exist_ok=True)
         self.db = sqlite3.connect(self.journal_path)
@@ -62,6 +63,7 @@ class PersistentApplyPipeline:
 
     def apply(self, proposal: Proposal, confirmed=False):
         with open(self.lock_path, "a+") as lock:
+            os.fchmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX)
             with open(self.config_path) as handle:
                 current = handle.read()
@@ -72,6 +74,8 @@ class PersistentApplyPipeline:
             result = pipeline.process(proposal, confirmed=confirmed)
             if not result.applied:
                 return result
+            if self.validate_callback is not None:
+                self.validate_callback(proposal.after)
             self._atomic_write(proposal.after)
             try:
                 self._reload()
@@ -89,6 +93,7 @@ class PersistentApplyPipeline:
 
     def undo(self):
         with open(self.lock_path, "a+") as lock:
+            os.fchmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX)
             row = self.db.execute("""SELECT seq, before_text, after_text
                 FROM changes WHERE reverted=0 ORDER BY seq DESC LIMIT 1""").fetchone()

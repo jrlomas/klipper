@@ -37,6 +37,7 @@ _SAFETY_SECTIONS = frozenset({
 
 # Keys that are safety-affecting in *any* section.
 _SAFETY_KEYS = frozenset({
+    "kinematics",
     "max_temp", "min_temp", "max_power", "min_extrude_temp",
     "pwm_cycle_time", "control", "pid_kp", "pid_ki", "pid_kd",
     "run_current", "hold_current", "sense_resistor",

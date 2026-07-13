@@ -20,6 +20,11 @@
 #include "sched.h" // DECL_SHUTDOWN
 #include "trigger_source.h" // trigger_source_notify
 #include "trsync.h" // trsync_do_trigger
+#if CONFIG_WANT_TRACE
+#include "trace.h" // LOG2
+#else
+#define LOG2(sub, lvl, ev, a0, a1) do { } while (0)
+#endif
 
 // Cap on the busy-wait qualification window (about 100us at typical
 // clock rates would already be generous; this is a hard safety cap).
@@ -178,6 +183,8 @@ trigger_source_notify(struct trigger_source *tsrc, uint32_t clock)
     tsrc->ts = NULL;
     trsync_do_trigger(ts, tsrc->reason);
     execlog_append(EL_TRIGGER, tsrc->oid, clock, 0, tsrc->reason);
+    LOG2(TRACE_SUB_TRIGGER, TRACE_LVL_INFO, TRACE_EV_trigger_fire,
+         tsrc->oid, tsrc->reason);
 }
 
 void

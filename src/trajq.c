@@ -9,15 +9,32 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include "autoconf.h" // CONFIG_WANT_TRACE, CONFIG_CLOCK_FREQ
 #include "basecmd.h" // move_alloc
 #include "board/irq.h" // irq_disable
+#include "board/misc.h" // timer_read_time
 #include "command.h" // shutdown
 #include "execlog.h" // execlog_append
 #include "sched.h" // sched_wake_task
 #include "timesync.h" // timesync_ticks_to_local
 #include "trajq.h" // trajq_setup
+#if CONFIG_WANT_TRACE
+#include "trace.h" // LOG*
+#else
+#define LOG1(sub, lvl, ev, a0) do { } while (0)
+#define LOG2(sub, lvl, ev, a0, a1) do { } while (0)
+#endif
 
 static struct task_wake traj_event_wake;
+
+static uint32_t
+trajq_horizon_us(struct trajq *tq)
+{
+    int32_t ticks = tq->horizon_clock - timer_read_time();
+    if (ticks <= 0)
+        return 0;
+    return (uint64_t)(uint32_t)ticks * 1000000 / CONFIG_CLOCK_FREQ;
+}
 
 // Instantaneous velocity (Q16.16 sub-units/tick) at tick t of a segment.
 int32_t
@@ -285,6 +302,8 @@ trajq_advance(struct trajq *tq)
         tq->event_pos = (int32_t)(tq->acc >> 32);
         execlog_append(EL_UNDERRUN, tq->oid, tq->event_clock
                        , tq->event_pos, 0);
+        LOG2(TRACE_SUB_MOTION, TRACE_LVL_WARN, TRACE_EV_step_underrun,
+             trajq_horizon_us(tq), tq->queued);
         sched_wake_task(&traj_event_wake);
         tq->flags &= ~TQF_ACTIVE;
         return TQ_ADV_IDLE;
@@ -310,6 +329,8 @@ trajq_advance(struct trajq *tq)
         tq->flags &= ~TQF_ACTIVE;
         execlog_append(EL_HOLD, tq->oid, tq->seg_start_clock
                        , (int32_t)(tq->acc >> 32), 0);
+        LOG1(TRACE_SUB_CORE, TRACE_LVL_INFO, TRACE_EV_hold_enter,
+             tq->seg_flags & TSEG_HOLD_AT_END);
         return TQ_ADV_IDLE;
     }
     // Moving: synthesize the underrun deceleration ramp.
@@ -320,6 +341,8 @@ trajq_advance(struct trajq *tq)
     tq->event_clock = tq->seg_start_clock;
     tq->event_pos = (int32_t)(tq->acc >> 32);
     execlog_append(EL_UNDERRUN, tq->oid, tq->event_clock, tq->event_pos, 0);
+    LOG2(TRACE_SUB_MOTION, TRACE_LVL_WARN, TRACE_EV_step_underrun,
+         trajq_horizon_us(tq), tq->queued);
     sched_wake_task(&traj_event_wake);
     tq->flags &= ~TQF_ACTIVE;
     return TQ_ADV_IDLE;
@@ -367,6 +390,8 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
     if (tq->flags & TQF_ACTIVE) {
         move_queue_push(&seg->node, &tq->mq);
         tq->queued++;
+        LOG2(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_queue_refill,
+             tq->queued, 1);
         irq_enable();
         return;
     }
@@ -450,6 +475,8 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
     tq->horizon_clock += duration;
     move_queue_push(&seg->node, &tq->mq);
     tq->queued++;
+    LOG2(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_queue_refill,
+         tq->queued, 1);
     irq_enable();
 }
 #endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
@@ -471,6 +498,7 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
     tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING);
     tq->dropped = 0;
     execlog_append(EL_REBASE, tq->oid, clock, pos, 0);
+    LOG1(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_rebase, clock);
     irq_enable();
 }
 

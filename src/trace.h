@@ -32,7 +32,7 @@ enum {
 
 // Registered trace events. Ids are stable within a build and published
 // to the host dictionary via DECL_ENUMERATION in trace.c, alongside a
-// render-format string (DECL_CONSTANT_STR "trace_fmt <name>").
+// render-format string (DECL_CONSTANT_STR "trace_fmt_<name>").
 enum {
     TRACE_EV_NONE = 0,
     TRACE_EV_step_underrun,   // motion queue ran dry: horizon_us, queue_depth

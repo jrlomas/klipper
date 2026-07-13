@@ -75,6 +75,7 @@ def test_diff_add_remove():
 def test_safety_by_key():
     for section, key in [("extruder", "max_temp"), ("extruder", "control"),
                          ("stepper_x", "rotation_distance"),
+                         ("printer", "kinematics"),
                          ("stepper_x", "position_endstop"),
                          ("stepper_x", "microsteps")]:
         c = Change(section, key, "change", "1", "2")

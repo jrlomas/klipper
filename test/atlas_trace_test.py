@@ -93,7 +93,7 @@ def test_from_dictionary_override():
             "trace_event": {"custom_evt": 42},
             "trace_sub": {"widget": 0},
         },
-        "constants": {"trace_fmt custom_evt": "a=%u b=%u"},
+        "config": {"trace_fmt_custom_evt": "a=%u b=%u"},
     }
     d = TraceDictionary.from_dictionary(data)
     tc = TraceCollector(dictionary=d)
