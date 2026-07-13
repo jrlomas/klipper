@@ -23,30 +23,29 @@ backwards-compatible superset of it.
 > **Status (HELIX 0.9):** implemented and host-tested; not yet
 > hardware-validated. See [Status and what is proven](#status-and-what-is-proven).
 
-> **As-built — what actually runs where (read this before the details).**
-> "v2" is two distinct things, and they do not run in the same places:
+> **As-built — how klippy speaks v2 (read this before the details).**
+> The application and host keep stock Klipper's v1 command path (so upstream
+> merges cleanly); intentproto adds transport/auth/FEC as an **envelope
+> around unchanged v1 frames** — a stateless **framing transform**, not
+> intentproto's `HostSession` (which *replaces* v1's ARQ and is only for
+> `proto.cpp`-cored peers like the bootloader). Two envelope modes:
 >
-> 1. **v2 console framing** — the `FRAME_V2_FLAG` + BCH trailer that
->    replaces the CRC on a byte stream, with the single `rx()` that
->    demuxes v1/v2 and dispatches. This lives in `lib/intentproto`'s
->    `proto.cpp` and today executes **only in the bootloader session and
->    the desktop test suite**. It is **not linked into the application
->    firmware**, and the klippy host does **not** speak it — so a running
->    printer's app boards do not latch console-v2 today.
-> 2. **v2 datagram transport** — authenticated, erasure-FEC UDP datagrams
->    (`datagram.cpp`). This **is** linked into the application firmware on
->    network transports, but its payload is **whole stock v1 command
->    frames** handed to stock `command_find_and_dispatch`. It is an
->    envelope, not a new command set.
+> 1. **Datagram transport (network links)** — authenticated, erasure-FEC UDP
+>    datagrams (`datagram.cpp`) wrapping whole v1 frames. **End-to-end
+>    today:** MCU side `udp_console.c`; host side the klippy transport
+>    bridge (`klippy/intentproto_transport.py`,
+>    `[intentproto_transport]`). This is where v2's value lives (lossy /
+>    untrusted WiFi/Ethernet).
+> 2. **Console framing (byte-stream UART links)** — each v1 frame re-framed
+>    with a BCH trailer (`frame_v2_encode/decode`). **Host side implemented
+>    and tested** (`BchConsoleCodec`, loopback round-trip); **MCU side is
+>    Kconfig-gated (`WANT_CONSOLE_FRAMING_V2`, off by default) and
+>    compile-checked but hardware-unproven** (`src/generic/console_v2.c`).
 >
-> This is the deliberate **envelope architecture**
-> ([Upstream_Tracking](Upstream_Tracking.md)): the application and host
-> keep stock Klipper's v1 command path so upstream merges cleanly, and
-> intentproto adds transport/auth/FEC *around* it. Where this document
-> describes "a v2-capable device accepts both framings," read it as the
-> **library/bootloader** capability — the sanctioned design for the
-> application/host path is the envelope shim in §12, which is **open
-> work**, not shipped in 0.9.
+> The `HostSession` / `proto.cpp` `rx()` dual-dispatch path described in
+> parts of this document is the **library/bootloader** engine, *not* the
+> app/host path. The app path is the framing transform above. See
+> [Upstream_Tracking](Upstream_Tracking.md).
 
 ---
 
@@ -878,29 +877,32 @@ The desktop test suite exercises every layer described here
 | `test_session_sec` | PSK handshake, session datagram round-trip, replay rejection, epoch rotation, per-board identity, downgrade, forgery rejection |
 | `test_can_transport` | UUID admin handshake, ≤8-byte frame chunking, full host→CAN→dispatch→reply→CAN→host round trip |
 
-What remains is hardware bring-up and the items the founding documents still track as
-open. The headline one is the **live v2 wiring into the running system**,
-which 0.9 does *not* ship: the application firmware and klippy speak stock
-v1 today (see the as-built callout at the top). The sanctioned design for
-closing it — the **envelope shim** — is:
+The **live v2 wiring into the running system is now implemented** as the
+envelope framing transform (see the as-built callout):
 
-- **Host:** hang intentproto's `session_enable_v2()` machinery on a thin
-  cffi layer *below* `serialhdl`/`serialqueue`, wrapping each outgoing
-  stock command block in the v2 trailer and unwrapping incoming ones, so
-  `msgproto.py`/`serialhdl.py` stay byte-identical to upstream.
-- **MCU:** generalize `src/generic/udp_console.c`'s existing
-  de-frame→`command_find_and_dispatch` pattern to the console, so a v2
-  frame is BCH-decoded and its **inner stock v1 block** is handed to the
-  stock dispatcher — no second command registry in the app.
+- **Host:** the klippy transport bridge
+  ([klippy/intentproto_transport.py](../klippy/intentproto_transport.py),
+  configured by `[intentproto_transport]`) sits *below* the serial fd via a
+  PTY and re-frames each stock v1 frame to v2 on the wire (datagram or BCH
+  console), leaving `serialqueue`/`serialhdl.py`/`msgproto.py`
+  byte-identical to upstream. Tested by loopback
+  ([test/intentproto_transport_test.py](../test/intentproto_transport_test.py)):
+  exact v1 reconstruction both directions, chunked input, resync bytes,
+  datagram auth tamper-rejection, and a real-PTY bridge round-trip.
+- **MCU:** the datagram side ships in `udp_console.c` (network links,
+  end-to-end). The **console-BCH** side (`src/generic/console_v2.c`, UART)
+  is `WANT_CONSOLE_FRAMING_V2`-gated, off by default, compile-checked but
+  **hardware-unproven** — its IRQ-path RX/TX transform needs a devkit.
 
-The capability handshake for this already exists: the device advertises
-`FRAMING_V2 = 1` in the identify dictionary, and `helix_status.py` reads
-it. The remaining founding-document items are the segment payload codecs
+The capability handshake exists: a console-BCH board advertises
+`FRAMING_V2 = 1` in the identify dictionary (`DECL_CONSTANT`), which
+`helix_status.py` and the host bridge read. What remains is **hardware
+bring-up** (the whole v2 path is host/compile-tested, not silicon-proven)
+plus the founding-document items: the segment payload codecs
 ([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md)),
-binding the standalone UDP datagram layer onto the negotiated framed byte
-streams, the extension-space connect-time host binding, and PSK
-provisioning. See the intentproto
-[README](../lib/intentproto/README.md) for the current caveats.
+the extension-space connect-time host binding, and PSK provisioning. See
+the intentproto [README](../lib/intentproto/README.md) for the current
+caveats.
 
 ---
 

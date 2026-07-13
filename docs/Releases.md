@@ -56,7 +56,11 @@ Major changes in this release:
   and Ed25519 image signing (`lib/intentproto`).
 * **Networks as first-class transports.** The same authenticated protocol
   over UDP (Ethernet/WiFi), CAN, USB, and UART; a network-native ESP32
-  target with the radio quarantined on a separate core.
+  target with the radio quarantined on a separate core. klippy speaks v2
+  as an **envelope** around unchanged stock v1 frames — a transport bridge
+  (`[intentproto_transport]`) that adds auth + FEC without touching
+  serialqueue/serialhdl/msgproto (host-tested; the datagram/network path is
+  end-to-end, the UART BCH-console MCU side is gated and hardware-unproven).
 * **First-class bootloader** with optional Ed25519 signed-image
   verification, and a **unified cross-family board syscall API**.
 * **New console surface** — `HELIX_STATUS`, `TRAJECTORY_STATUS`,

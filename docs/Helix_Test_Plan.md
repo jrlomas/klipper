@@ -165,19 +165,23 @@ Prove the wire before you trust it to carry motion.
 - [ ] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute.
-- [ ] **2.3 — v2 transport (as-built scope).** Two separate things carry
-  the "v2" name; test what actually runs (see [Protocol v2](Protocol_v2.md)
-  "as-built"):
-  - *Datagram carrier (app boards, network transports):* on a UDP/Ethernet
-    board, confirm authenticated datagrams flow and erasure-FEC recovers
-    injected loss — `link_stats` shows `bch_corrected` rising and
-    `bch_errors`/auth-failures at 0. (The payload is stock v1 frames.)
-  - *Console-v2 framing latch:* **not** available on a stock klipper
-    **application** board in 0.9 (`proto.cpp` is not linked; no
-    `FRAMING_V2` advertised). Exercise the latch against the **bootloader
-    session** or the desktop `test_negotiate`, not the app console.
-  Pass: datagram auth+FEC clean on the app board; console-v2 latch verified
-  against the bootloader/library, not claimed for the app.
+- [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
+  its stock v1 frames to v2 via the transport bridge
+  (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
+  Host loopware is already tested (`test/intentproto_transport_test.py`);
+  this validates it on silicon. Two modes:
+  - *Datagram (network — end-to-end today):* configure
+    `[intentproto_transport] mode: datagram` to a UDP/Ethernet board;
+    confirm authenticated datagrams flow, erasure-FEC recovers injected
+    loss, and a forged datagram is dropped. The MCU side is `udp_console.c`.
+  - *Console-BCH (UART — MCU side unproven):* build the board with
+    `WANT_CONSOLE_FRAMING_V2=y` (advertises `FRAMING_V2`), configure
+    `mode: bch`; confirm the board latches to v2 and normal traffic
+    survives. **This exercises the compile-checked-but-unproven MCU IRQ
+    de-frame — treat a failure here as expected-until-validated, not a
+    regression.**
+  Pass: datagram mode clean and auth-enforced; console-BCH latches and runs
+  (or the failure is captured against the unproven MCU path).
 - [ ] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
   Pass: a legacy-only host session is clean.

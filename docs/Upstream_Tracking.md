@@ -61,8 +61,16 @@ and each carries only additive HELIX logic:
 
 Plus the additive, HELIX-only files that never conflict because upstream
 has no counterpart: `lib/intentproto/`, `src/traj_*.c`, `src/trigger_source.c`,
-`src/heater_hold.c`, `src/execlog.c`, `src/generic/udp_*`, the
-`klippy/extras/` HELIX modules, and the docs.
+`src/heater_hold.c`, `src/execlog.c`, `src/generic/udp_*`,
+`src/generic/console_v2.*`, `src/generic/framing_v2.*`, the klippy v2
+transport (`klippy/intentproto_transport.py`,
+`klippy/extras/intentproto_transport.py`), the `klippy/extras/` HELIX
+modules, and the docs.
+
+A few upstream *generic* firmware files carry small, `#if`-gated HELIX
+additions (not stock-locked, so not in the guard, but worth knowing at
+merge time): `src/generic/serial_irq.c` (the `WANT_CONSOLE_FRAMING_V2`
+hooks). When off — the default — these compile to the stock code.
 
 ## The merge workflow
 
