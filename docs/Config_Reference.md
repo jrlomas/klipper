@@ -177,6 +177,28 @@ the stock motion path.
 #   loop thread to stop. The default is 5.0.
 ```
 
+### [helix_self_test]
+
+The built-in test mode: run each board's live verification gates through
+the protocol (firmware side `WANT_SELF_TEST`; see
+[Helix_Test_Plan](Helix_Test_Plan.md)). The suite executes the same
+invariants the desktop test suites enforce — the wire CRC check vector,
+timer monotonicity, a RAM pattern walk, and the trajectory fixed-point
+kernel checked against host-computed golden vectors — on the real
+silicon, plus a host↔board round-trip latency measurement. Registers
+`HELIX_SELF_TEST [MCU=<name>]` as an on-demand diagnostic.
+
+```
+[helix_self_test]
+#on_connect: False
+#   Run the full suite automatically every time klippy connects, and
+#   log the report. The default is False.
+#required: False
+#   With on_connect, treat any test failure as a startup error (the
+#   "verification is part of the protocol" mode). The default is
+#   False.
+```
+
 ### [intentproto_transport]
 
 The v2 transport bridge (see [Protocol v2](Protocol_v2.md)): lets klippy

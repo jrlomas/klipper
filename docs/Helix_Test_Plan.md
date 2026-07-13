@@ -162,6 +162,18 @@ Prove the wire before you trust it to carry motion.
 
 - [ ] **2.1 — Identify.** Host connects; MCU serves its dictionary.
   Pass: klippy starts, no version/CRC complaints.
+- [ ] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
+  (board built with `WANT_SELF_TEST`; `[helix_self_test]` configured —
+  or `on_connect: True` to make it automatic).
+  Expect: every advertised test passes ON THE BOARD — `crc_wire` returns
+  0x6F91 (the 0.2 vector, live), `timer_monotonic`, `ram_pattern`, and
+  `traj_kernel` (the board's fixed-point trajectory math equals the
+  host's golden vectors bit-for-bit on this silicon/compiler). The
+  report's link round-trip time is the wire-health fingerprint.
+  Pass: all PASS; record `timer_rate` and rtt as this board's baseline.
+  **This item is most of Phase 0 executed on the real hardware — a
+  failure here is a silicon/toolchain porting bug, catch it before
+  anything moves.**
 - [ ] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute.

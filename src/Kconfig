@@ -259,6 +259,21 @@ config WANT_SIGNED_IMAGES
         Off by default: enabling it means every accepted image must be
         signed, so provision signing keys first.
 
+# Built-in self test: the verification gates runnable live on the board
+# (docs/Helix_Test_Plan.md; host side [helix_self_test]).
+config WANT_SELF_TEST
+    bool "Built-in self test commands (run_self_test)"
+    default y if !HAVE_LIMITED_CODE_SIZE
+    default n
+    help
+        Register run_self_test: on-demand, protocol-driven self tests
+        that execute the software verification gates live on this board
+        (wire CRC vector, timer monotonicity, RAM pattern, and the
+        trajectory fixed-point kernel checked against host golden
+        vectors). Used at connect by the host's [helix_self_test]
+        module and as a field diagnostic via HELIX_SELF_TEST. Cheap,
+        safe (touches no I/O, moves nothing), and bounded.
+
 # Serial console framing v2 (BCH FEC) — a framing transform on the UART
 # console (docs/Protocol_v2.md). Opt-in, code-size sensitive (pulls in the
 # BCH codec), and UNPROVEN — needs hardware bring-up. Off by default.

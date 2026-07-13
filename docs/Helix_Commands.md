@@ -39,6 +39,11 @@ machine what it actually has with **`HELIX_STATUS`**.
 | --- | --- |
 | `HELIX_STATUS` | Which HELIX firmware features each MCU was built with (read from its served dictionary) and which host subsystems are loaded. The fastest answer to "what does this printer support, and what's on?" |
 
+### Built-in self test — `[helix_self_test]`
+| Command | Summary |
+| --- | --- |
+| `HELIX_SELF_TEST [MCU=<name>]` | Run each board's live verification gates through the protocol — wire CRC vector, timer monotonicity, RAM pattern, and the trajectory fixed-point kernel against host golden vectors — plus a link round-trip measurement. The verification stage as a console command; once green, a field diagnostic. `on_connect`/`required` options run it automatically at connect. |
+
 ## Config surface (new)
 
 ### Per-stepper (in any `[stepper_*]` / rail)
@@ -57,6 +62,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 | `[helix_status]` | Enables `HELIX_STATUS` (also auto-loaded with the trajectory subsystem). |
 | `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`). |
 | `[asyncio_bridge]` | The asyncio↔reactor seam (`start_timeout`, `stop_timeout`). |
+| `[helix_self_test]` | Built-in test mode: `HELIX_SELF_TEST` plus `on_connect`/`required` to run the boards' live verification gates at every connect. |
 | `[intentproto_transport NAME]` | The v2 transport bridge: klippy speaks intentproto v2 (auth + FEC envelope around stock v1 frames) to a network (`mode: datagram`) or serial (`mode: bch`) board; point `[mcu NAME] serial:` at its PTY. |
 | `[mcu] on_comm_timeout: pause` | Turn a lost link on a secondary MCU into pause-and-hold instead of shutdown. |
 | `[mcu] hardware_endstop_trigger: False` | Force the legacy polled endstop path on a board (default: use hardware edge interrupts when the firmware supports them). |
@@ -77,6 +83,8 @@ on where code size allows and off on `HAVE_LIMITED_CODE_SIZE` boards.
 | `WANT_HEATER_HOLD` | The autonomous heater failsafe hold. |
 | `WANT_SYSCALL_API` | The unified cross-family board syscall table (advertised as `BOARD_SYSCALL_ABI`/`CAPS`). |
 | `WANT_SIGNED_IMAGES` | Ed25519 signature verification of firmware images in the bootloader (where it fits). |
+| `WANT_SELF_TEST` | The built-in self-test commands (`run_self_test`): the live verification gates / diagnostics driven by `HELIX_SELF_TEST`. |
+| `WANT_CONSOLE_FRAMING_V2` | Accept intentproto v2 (BCH FEC) framing on the serial UART console (a framing transform; stock v1 preserved inside). |
 
 ## MCU-level commands (low level)
 
