@@ -92,6 +92,42 @@ class TestDatagramTransform(unittest.TestCase):
 
 
 class TestBridge(unittest.TestCase):
+    def test_bch_bridge_passthrough_then_upgrade(self):
+        # A bch bridge must start in v1 pass-through (identify happens in
+        # plain v1 against a possibly-stock board) and transform only after
+        # enable_v2() — the capability-driven negotiation.
+        import socket
+        import time
+        host_end, mcu_end = socket.socketpair()
+        host_end.setblocking(False)
+        link = "/tmp/ip-bridge-passthrough"
+        br = t.TransportBridge('bch', link,
+                               stream_wire_fd=host_end.fileno())
+        br.open()
+        try:
+            self.assertFalse(br.v2_active)
+            klippy = os.open(link, os.O_RDWR)
+            try:
+                frame = v1_frame(bytes(range(10)), 4)
+                os.write(klippy, frame)
+                time.sleep(0.2)
+                # Pass-through: the wire sees the raw v1 frame verbatim.
+                self.assertEqual(mcu_end.recv(4096), frame)
+                br.enable_v2()
+                os.write(klippy, frame)
+                time.sleep(0.2)
+                wire = mcu_end.recv(4096)
+                self.assertNotEqual(wire, frame)  # now transformed
+                self.assertEqual(t.BchConsoleCodec().from_wire(wire), frame)
+                self.assertEqual(br.stats()['mode'], 'bch')
+                self.assertTrue(br.stats()['v2_active'])
+            finally:
+                os.close(klippy)
+        finally:
+            br.close()
+            host_end.close()
+            mcu_end.close()
+
     def test_bch_bridge_over_pty(self):
         import socket
         import time
@@ -101,6 +137,7 @@ class TestBridge(unittest.TestCase):
         br = t.TransportBridge('bch', link,
                                stream_wire_fd=host_end.fileno())
         br.open()
+        br.enable_v2()  # bch starts in v1 pass-through until negotiated
         try:
             klippy = os.open(link, os.O_RDWR)
             try:

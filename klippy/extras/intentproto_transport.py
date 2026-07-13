@@ -70,11 +70,48 @@ class IntentprotoTransport:
             self._bridge = ipt.TransportBridge(
                 'bch', self.pty_link, stream_wire_fd=self._serial.fileno())
         # Open early (at config load) so the PTY exists before [mcu] connects.
+        # A bch bridge starts in v1 pass-through; the identify happens in
+        # plain v1 and _connect() upgrades once the dictionary confirms
+        # FRAMING_V2 (the MCU console accepts both framings at all times).
         self._bridge.open()
-        logging.info("intentproto_transport %s: %s bridge on %s",
-                     self.name, self.mode, self.pty_link)
+        logging.info("intentproto_transport %s: %s bridge on %s%s",
+                     self.name, self.mode, self.pty_link,
+                     " (v1 pass-through until negotiated)"
+                     if self.mode == 'bch' else "")
+        self.printer.register_event_handler('klippy:connect', self._connect)
         self.printer.register_event_handler('klippy:disconnect',
                                              self._disconnect)
+
+    def _connect(self):
+        # Capability-driven negotiation for the bch envelope.
+        if self._bridge is None or self.mode != 'bch':
+            return
+        mcu_name = 'mcu' if self.name == 'mcu' else 'mcu ' + self.name
+        mcu = self.printer.lookup_object(mcu_name, None)
+        if mcu is None:
+            logging.warning(
+                "intentproto_transport %s: no [%s] section found — leaving"
+                " the link in v1 pass-through", self.name, mcu_name)
+            return
+        try:
+            consts = mcu.get_constants()
+        except Exception:
+            consts = {}
+        if consts.get('FRAMING_V2'):
+            self._bridge.enable_v2()
+            logging.info("intentproto_transport %s: board advertises"
+                         " FRAMING_V2 — envelope upgraded to v2 (BCH)",
+                         self.name)
+        else:
+            logging.warning(
+                "intentproto_transport %s: board does not advertise"
+                " FRAMING_V2 (stock firmware, or WANT_CONSOLE_FRAMING_V2"
+                " not built) — staying in plain v1 pass-through", self.name)
+
+    def get_status(self, eventtime):
+        if self._bridge is None:
+            return {'mode': self.mode, 'v2_active': False}
+        return dict(self._bridge.stats())
 
     def _disconnect(self):
         if self._bridge is not None:

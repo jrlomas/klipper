@@ -113,6 +113,7 @@ class BchConsoleCodec(object):
         self._ip = _load_intentproto()
         self._v1_tail = b""   # partial v1 bytes from klippy
         self._v2_tail = b""   # partial v2 bytes from the wire
+        self.tx_frames = self.rx_frames = self.rx_uncorrectable = 0
 
     # klippy (v1) -> wire (v2)
     def to_wire(self, data):
@@ -125,6 +126,7 @@ class BchConsoleCodec(object):
             # MESSAGE_DEST bit is re-added when the far side rebuilds the v1
             # frame (from_wire / the MCU de-frame).
             out.append(self._ip.frame_v2_encode(payload, seq & MESSAGE_SEQ_MASK))
+            self.tx_frames += 1
         return b"".join(out)
 
     # wire (v2) -> klippy (v1)
@@ -146,10 +148,12 @@ class BchConsoleCodec(object):
             try:
                 payload, seq, _corr = self._ip.frame_v2_decode(bytes(frame))
             except ValueError:
+                self.rx_uncorrectable += 1
                 i += 1  # uncorrectable — resync; v1 ARQ will retransmit
                 continue
             # Re-add the constant MESSAGE_DEST bit stripped by v2's seq nibble.
             out.append(v1_build(payload, MESSAGE_DEST | (seq & MESSAGE_SEQ_MASK)))
+            self.rx_frames += 1
             i += blen
         self._v2_tail = bytes(buf[i:])
         return b"".join(out)
@@ -202,10 +206,32 @@ class TransportBridge(object):
         self._sock = None                  # datagram: UDP socket
         if mode == 'bch':
             self._codec = BchConsoleCodec()
+            # bch starts in v1 PASS-THROUGH: the MCU's console accepts both
+            # framings at all times, so identify happens in plain v1 and the
+            # caller upgrades with enable_v2() once the dictionary confirms
+            # FRAMING_V2 (or never, for a stock board — graceful fallback).
+            self.v2_active = False
         elif mode == 'datagram':
             self._codec = load_datagram_codec()(psk, fec_k)
+            self.v2_active = True  # the datagram MCU console only speaks v2
         else:
             raise FrameError("unknown transport mode %r" % (mode,))
+
+    def enable_v2(self):
+        # Upgrade a bch link from pass-through to the v2 transform. Safe at
+        # any time: the MCU accepts both framings, per-frame; if the switch
+        # splits a frame mid-stream the CRC/BCH resync + v1 ARQ recover it.
+        self.v2_active = True
+
+    def stats(self):
+        c = self._codec
+        if self.mode == 'bch':
+            return {'mode': 'bch', 'v2_active': self.v2_active,
+                    'tx_frames': c.tx_frames, 'rx_frames': c.rx_frames,
+                    'rx_uncorrectable': c.rx_uncorrectable}
+        return {'mode': 'datagram', 'v2_active': self.v2_active,
+                'rx_lost': c.rx_lost, 'rx_reordered': c.rx_reordered,
+                'auth_failures': c.auth_failures}
 
     def open(self):
         import pty
@@ -273,6 +299,9 @@ class TransportBridge(object):
         if not data:
             return
         if self.mode == 'bch':
+            if not self.v2_active:
+                self._write_stream(data)  # v1 pass-through
+                return
             wire = self._codec.to_wire(data)
             if wire:
                 self._write_stream(wire)
@@ -289,6 +318,9 @@ class TransportBridge(object):
         if self.mode == 'bch':
             data = self._read(self._wire_fd)
             if not data:
+                return
+            if not self.v2_active:
+                self._write_master(data)  # v1 pass-through
                 return
             v1 = self._codec.from_wire(data)
             if v1:

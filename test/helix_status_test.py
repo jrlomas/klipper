@@ -62,7 +62,12 @@ class FakePrinter:
         raise KeyError(name)
 
     def lookup_objects(self, module=None):
-        return list(self.mcus)
+        if module is None:
+            return list(self.mcus)
+        # Real klippy filters by section module name ("mcu" matches "mcu"
+        # and "mcu NAME"); mirror that so non-mcu queries return nothing.
+        return [(name, obj) for name, obj in self.mcus
+                if name == module or name.startswith(module + ' ')]
 
 
 class FakeConfig:
