@@ -165,3 +165,153 @@ def load_datagram_codec():
         sys.path.insert(0, tools)
     from udp_bridge import DatagramCodec
     return DatagramCodec
+
+
+# ---- the in-process bridge ------------------------------------------------
+# A PTY sits below klippy's serial fd; a background thread pumps the framing
+# transform between that PTY (v1, what klippy speaks) and the wire (v2, what
+# the MCU speaks). klippy opens the PTY as an ordinary serial port, so
+# serialqueue/serialhdl/msgproto are untouched.
+import errno
+import select
+import socket
+import threading
+
+DATAGRAM_MAX = 1472
+DATAGRAM_OVERHEAD = 3 + 8  # header + HMAC tag
+
+
+class TransportBridge(object):
+    def __init__(self, mode, pty_link, psk=None, fec_k=0,
+                 udp_board=None, udp_listen=0, stream_wire_fd=None):
+        # mode: 'bch' (byte-stream re-framing) or 'datagram' (UDP envelope).
+        # pty_link: symlink klippy opens as its serial port.
+        # udp_board: (host, port) for datagram mode.
+        # stream_wire_fd: an already-open fd for bch mode (serial device, or a
+        #   socketpair end in tests). Required for bch mode.
+        self.mode = mode
+        self.pty_link = pty_link
+        self.psk = psk
+        self.fec_k = fec_k
+        self.udp_board = udp_board
+        self.udp_listen = udp_listen
+        self.master_fd = None
+        self._stop = False
+        self._thread = None
+        self._wire_fd = stream_wire_fd     # bch: raw fd
+        self._sock = None                  # datagram: UDP socket
+        if mode == 'bch':
+            self._codec = BchConsoleCodec()
+        elif mode == 'datagram':
+            self._codec = load_datagram_codec()(psk, fec_k)
+        else:
+            raise FrameError("unknown transport mode %r" % (mode,))
+
+    def open(self):
+        import pty
+        import tty
+        master_fd, slave_fd = pty.openpty()
+        tty.setraw(master_fd)
+        os.set_blocking(master_fd, False)
+        slave_name = os.ttyname(slave_fd)
+        try:
+            os.unlink(self.pty_link)
+        except FileNotFoundError:
+            pass
+        os.symlink(slave_name, self.pty_link)
+        os.chmod(slave_name, 0o660)
+        self.master_fd = master_fd
+        if self.mode == 'datagram':
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.setblocking(False)
+            self._sock.bind(("0.0.0.0", self.udp_listen))
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def close(self):
+        self._stop = True
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        for fd in (self.master_fd,):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        if self._sock is not None:
+            self._sock.close()
+        try:
+            os.unlink(self.pty_link)
+        except OSError:
+            pass
+
+    def _wire_readfd(self):
+        return self._sock.fileno() if self.mode == 'datagram' else self._wire_fd
+
+    def _pump(self):
+        fds = [self.master_fd, self._wire_readfd()]
+        while not self._stop:
+            try:
+                r, _, _ = select.select(fds, [], [], 0.2)
+            except (OSError, ValueError):
+                break
+            if self.master_fd in r:
+                self._host_to_wire()
+            if self._wire_readfd() in r:
+                self._wire_to_host()
+
+    def _read(self, fd, n=4096):
+        try:
+            return os.read(fd, n)
+        except (BlockingIOError, OSError) as e:
+            if getattr(e, 'errno', None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+                return b""
+            return b""
+
+    def _host_to_wire(self):
+        data = self._read(self.master_fd)
+        if not data:
+            return
+        if self.mode == 'bch':
+            wire = self._codec.to_wire(data)
+            if wire:
+                self._write_stream(wire)
+        else:  # datagram
+            limit = DATAGRAM_MAX - DATAGRAM_OVERHEAD
+            while data:
+                chunk, data = data[:limit], data[limit:]
+                self._sock.sendto(self._codec.encode(chunk), self.udp_board)
+                parity = self._codec.parity_flush()
+                if parity is not None:
+                    self._sock.sendto(parity, self.udp_board)
+
+    def _wire_to_host(self):
+        if self.mode == 'bch':
+            data = self._read(self._wire_fd)
+            if not data:
+                return
+            v1 = self._codec.from_wire(data)
+            if v1:
+                self._write_master(v1)
+        else:  # datagram
+            try:
+                data, addr = self._sock.recvfrom(DATAGRAM_MAX)
+            except (BlockingIOError, OSError):
+                return
+            if self.udp_board is None:
+                self.udp_board = addr
+            for payload in self._codec.decode(data):
+                if payload:
+                    self._write_master(payload)
+
+    def _write_stream(self, data):
+        try:
+            os.write(self._wire_fd, data)
+        except OSError:
+            pass
+
+    def _write_master(self, data):
+        try:
+            os.write(self.master_fd, data)
+        except OSError:
+            pass

@@ -91,5 +91,40 @@ class TestDatagramTransform(unittest.TestCase):
         self.assertEqual(rx.auth_failures, 1)
 
 
+class TestBridge(unittest.TestCase):
+    def test_bch_bridge_over_pty(self):
+        import socket
+        import time
+        host_end, mcu_end = socket.socketpair()
+        host_end.setblocking(False)
+        link = "/tmp/ip-bridge-unittest"
+        br = t.TransportBridge('bch', link,
+                               stream_wire_fd=host_end.fileno())
+        br.open()
+        try:
+            klippy = os.open(link, os.O_RDWR)
+            try:
+                frames = [v1_frame(b"", 0), v1_frame(bytes(range(20)), 3),
+                          v1_frame(bytes((i * 5) & 0xff for i in range(40)), 15)]
+                # host -> wire
+                os.write(klippy, b"".join(frames))
+                time.sleep(0.2)
+                wire = mcu_end.recv(8192)
+                mcu = t.BchConsoleCodec()
+                self.assertEqual(mcu.from_wire(wire), b"".join(frames))
+                self.assertNotEqual(wire, b"".join(frames))
+                # wire -> host (a reply)
+                reply = v1_frame(bytes([7, 7, 7]), 9)
+                mcu_end.sendall(mcu.to_wire(reply))
+                time.sleep(0.2)
+                self.assertEqual(os.read(klippy, 4096), reply)
+            finally:
+                os.close(klippy)
+        finally:
+            br.close()
+            host_end.close()
+            mcu_end.close()
+
+
 if __name__ == '__main__':
     unittest.main()
