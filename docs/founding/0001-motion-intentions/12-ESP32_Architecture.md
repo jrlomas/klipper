@@ -1,7 +1,8 @@
 # FD-0001: ESP32 Architecture Stance
 
-Status: Partial in HELIX 0.9; host/stub validation exists, but the Xtensa
-build, runtime bring-up, and listed modem/stepper follow-ups remain.
+Status: Partial in HELIX 0.9; ESP-IDF v5.3.2 Xtensa builds pass for the
+component, component-RMT, and modem variants, but runtime bring-up and the
+listed modem/stepper follow-ups remain.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has

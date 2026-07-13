@@ -40,7 +40,7 @@ status line records its more precise state.
 | [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Framework implemented; per-target wiring and hardware proof remain |
 | [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Implemented — HELIX 0.9 |
 | [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Implemented — HELIX 0.9 |
-| [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Partial — host/stub proof only; Xtensa build and runtime work pending |
+| [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Partial — Xtensa builds pass; board runtime and follow-ups pending |
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
 | [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Design — timing substrate exists; host enforcement future |
 

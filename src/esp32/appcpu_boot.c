@@ -44,10 +44,10 @@
 // (through the appcpu_vectors.S table) is the flagged follow-up once
 // hardware bringup allows measuring both variants.
 //
-// RUNTIME UNPROVEN: this file host-compiles and every register write
-// is source-verified against IDF, but it has never executed on
-// silicon (no xtensa toolchain/hardware in the build environment).
-// See the bring-up checklist in docs/ESP32.md.
+// RUNTIME UNPROVEN: this file compiles and links in the real ESP-IDF
+// v5.3.2 Xtensa modem image and every register write is source-verified
+// against IDF, but it has never executed on silicon.  See the bring-up
+// checklist in docs/ESP32.md.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //

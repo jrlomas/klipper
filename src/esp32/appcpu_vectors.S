@@ -30,9 +30,9 @@
 // INTLEVEL=0 - interrupts are architecturally enabled but none is
 // unmasked, matching the polled bare runtime.
 //
-// RUNTIME UNPROVEN: assembled only by the xtensa toolchain (not
-// available in this build environment) and never run on silicon.
-// See the bring-up checklist in docs/ESP32.md.
+// RUNTIME UNPROVEN: assembled and linked with ESP-IDF v5.3.2's
+// xtensa-esp-elf 13.2.0 toolchain, but never run on silicon.  See
+// the bring-up checklist in docs/ESP32.md.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //

@@ -16,7 +16,8 @@ firmware" -> Architecture; FD-0001
 
 * **component** (stage 1, default): klipper compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
-  present on both cores.  This is the original, validated build.
+  present on both cores.  This is the original, toolchain-validated
+  build; target runtime validation remains pending.
 * **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
   klipper** — no RTOS, no IDF calls, register-level peripherals,
   IRAM-resident hot path — and core 0 is reduced to a network
@@ -90,16 +91,17 @@ citizen of this chip.  This target is FOC-first.
 
 ## The modem architecture (IDF as modem)
 
-> **RUNTIME UNVALIDATED — NEEDS HARDWARE.**  Everything in this
-> section compiles and links (host-gcc harness, both architectures),
-> the SPSC ring is unit-tested on the desktop under ThreadSanitizer/
-> AddressSanitizer, and every register write and boot step is
-> source-verified line-by-line against ESP-IDF v5.3.2 — but none of
-> it has executed on silicon: the development environment has no
-> xtensa toolchain and no devkit.  The APP-CPU bringup, the vector
-> table, the polled timer and the IRAM placement are exactly the
-> kind of code that only a serial console and a scope can finish.
-> Treat the `component` architecture as the working build until the
+> **TOOLCHAIN VALIDATED; RUNTIME UNVALIDATED — NEEDS HARDWARE.**  The
+> component, component-RMT, and modem images compile and link with
+> pinned ESP-IDF v5.3.2 and its `xtensa-esp-elf` 13.2.0 toolchain.
+> The modem map confirms the private vectors and selected motion-hot
+> objects are in IRAM.  The SPSC ring is also unit-tested on the
+> desktop under ThreadSanitizer/AddressSanitizer, and every register
+> write and boot step is source-verified against that IDF release.
+> None of this has executed on silicon, however.  APP-CPU bringup,
+> the polled timer, peripheral behavior, and timing still require a
+> serial console and scope.  Treat the `component` architecture as
+> the working build until the
 > [bring-up checklist](#devkit-bring-up-checklist) has been run.
 
 The stage-3 architecture of doc 12: IDF, FreeRTOS and the closed
@@ -252,29 +254,29 @@ motion core's dispatch path must never fault.  Two mechanisms:
 * `src/esp32/main/linker.lf` - an ldgen fragment mapping whole hot
   objects `noflash` in the modem arch.
 
-IRAM-resident set (modem arch) and estimated code sizes (host-gcc
-x86-64 text as proxy; confirm with `idf.py size` + map file on the
-first real build):
+IRAM-resident set in the ESP-IDF v5.3.2 modem image, measured from the
+Xtensa link map on 2026-07-13:
 
-| object | why | ~text |
+| object | why | IRAM code |
 | ------ | --- | ----- |
-| sched.c | timer list + task loop | 2.0KiB |
-| generic/timer_irq.c | `timer_dispatch_many` | 0.5KiB |
-| stepper.c | step event handlers | 2.5KiB |
-| trajq.c + traj_stepper.c | trajectory execute path | 5.4KiB |
-| esp32/gpio.c | `out_w1ts/w1tc` hot writes | 2.2KiB |
-| esp32/appcpu_boot.c | poll loop, bare timer | 1.6KiB |
-| esp32/shmem_console.c | ring ops on dispatch path | 0.9KiB |
-| appcpu_vectors.S | vector table + entry | 1.2KiB |
+| sched.c | timer list + task loop | 861B |
+| generic/timer_irq.c | `timer_dispatch_many` | 165B |
+| stepper.c | step event handlers | 1,124B |
+| trajq.c + traj_stepper.c | trajectory execute path | 2,886B |
+| esp32/gpio.c | `out_w1ts/w1tc` hot writes | 1,253B |
+| esp32/appcpu_boot.c | poll loop, bare timer | 904B |
+| esp32/shmem_console.c | ring ops on dispatch path | 596B |
+| appcpu_vectors.S | vector table + entry | 1,060B |
 
-Total ≈ 16KiB code (+ a few KiB rodata moved by `noflash`) against
-the 128KiB IRAM, most of which WiFi/IDF claims; the budget fits with
-tens of KiB to spare.  Task-level code (command parsing, config,
+The selected set occupies 8,849B.  The whole image uses 97,622B of
+the 128KiB IRAM region (`.iram0.vectors` + `.iram0.text`), leaving
+33,450B.  The same map confirms the selected OBJECT-library members
+land at IRAM addresses, resolving the earlier ldgen placement
+question.  Task-level code (command parsing, config,
 sensors) deliberately stays in flash: IRAM is the scarce resource,
 and a miss there costs dispatch latency of the jitter class already
-accepted on this chip.  Note the ldgen mapping of the klipper OBJECT
-library into `libmain.a` is one of the things the first hardware
-build must confirm (see checklist).
+accepted on this chip.  Hardware must still confirm that real runtime
+paths do not introduce an unlisted flash dependency.
 
 ### Building the modem architecture
 
@@ -312,9 +314,8 @@ dual-core silicon):
    still drops silently; confirm responses only go to the
    authenticated peer (send from a second source).
 4. **IRAM placement**: `idf.py size-components`, then check the map
-   file that sched/stepper/trajq/timer_irq landed in `iram0` (the
-   OBJECT-library-in-libmain.a ldgen question) and that IRAM didn't
-   overflow.
+   file against the workstation baseline above and confirm runtime
+   behavior does not reveal an unlisted flash dependency.
 5. **Timer sanity**: `timesync` round trips; scope a
    `queue_step`-driven pin for rate correctness; measure dispatch
    jitter (poll-loop worst case) idle vs. under command load and
@@ -381,8 +382,8 @@ Details and constraints:
 ## RMT step generation (implemented - unvalidated on silicon)
 
 > **IMPLEMENTED, NOT YET RUN ON HARDWARE.**  The backend below
-> host-compiles and links (the esp32 hostcheck harness builds a third
-> `component-rmt` variant with `CONFIG_KLIPPER_RMT_STEP`), its
+> compiles and links in a real ESP-IDF v5.3.2 `component-rmt` image
+> with `CONFIG_KLIPPER_RMT_STEP`, its
 > pulse-planning logic is unit-tested off-hardware (item translation,
 > clock-anchor math, wrap-underrun watermark), and every RMT register
 > and field is source-verified against ESP-IDF v5.3.2 - but it has
@@ -533,7 +534,15 @@ idf.py build flash monitor
 This builds the (default) component architecture; for the modem
 architecture see
 [Building the modem architecture](#building-the-modem-architecture)
-above.  The port's register drivers compile against the vendored
+above.  For the RMT component variant, replace the `set-target` line
+with:
+
+```
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.rmt" \
+    set-target esp32
+```
+
+The port's register drivers compile against the vendored
 Apache-2.0 soc headers in `lib/esp32/` (see `lib/esp32/README`), not
 against the installed IDF's copies - the same pattern as
 `lib/stm32*`'s CMSIS.
@@ -622,32 +631,38 @@ transport code): authenticated datagram console end-to-end, identify
 / dictionary download, command dispatch, tx batching, auth-failure
 rejection, trust-network mode.
 
-Compiled and dictionary-verified (including `spicmds`, `i2ccmds`,
+Xtensa-compiled and dictionary-verified (including `spicmds`, `i2ccmds`,
 `pwmcmds`, `buttons`, `tmcuart`, `neopixel` and the software SPI/I2C
 fallbacks) but, like the rest of the board code, not yet run on
 silicon: the SPI, I2C and LEDC bindings.  The **RMT step backend**
 (`CONFIG_KLIPPER_RMT_STEP`, `src/esp32/rmt_stepper.c`) is likewise
-implemented and host-validated (its pulse-planning logic is
-unit-tested off-hardware and the `component-rmt` build variant
+implemented and workstation-validated (its pulse-planning logic is
+unit-tested off-hardware and the real Xtensa `component-rmt` build
 compiles/links with the identical command surface) but
 unvalidated on silicon - see
 [RMT step generation](#rmt-step-generation-implemented---unvalidated-on-silicon)
 and its bring-up checklist.
 
-The ESP32 board code compiles and links in **both architectures**
-(validated against stub IDF headers + the vendored `lib/esp32`
-register headers with the dictionary flow executed for real - 79
-commands / 28 responses in each; API names, register fields and the
-APP-CPU boot sequence checked against ESP-IDF v5.3.2 sources; the
-SPSC ring unit-tested under TSan/ASan), but has **not yet been built
-with the xtensa toolchain or run on hardware** - the development
-environment could not download the toolchain.  Remaining work, in
-rough order:
+The ESP32 board code compiles and links in all three maintained build
+variants with pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0:
 
-* First `idf.py build` of both architectures + on-hardware bring-up:
-  the component arch first, then the modem arch's
+| variant | configuration | application image | partition free |
+| --- | --- | ---: | ---: |
+| component | default | `0xc43c0` | 48% |
+| component-RMT | `sdkconfig.defaults.rmt` | `0xc4d20` | 48% |
+| modem | `sdkconfig.defaults.modem` | `0xbec90` | 49% |
+
+The first real builds exposed and fixed two issues that the stub path
+missed: disabled Kconfig booleans are absent from `sdkconfig.h`, and
+the private vector assembly needed the configured `EXCSAVE_1` special-
+register definition.  The dictionary flow executes in these builds,
+the APP-CPU boot sequence remains checked against ESP-IDF v5.3.2
+sources, and the SPSC ring remains TSan/ASan-tested.  The images have
+**not run on hardware**.  Remaining work, in rough order:
+
+* On-hardware bring-up: the component arch first, then the modem arch's
   [devkit checklist](#devkit-bring-up-checklist) (APP-CPU boot,
-  vector table, IRAM map, polled-dispatch jitter measurements).
+  vector table, polled-dispatch jitter, and peripheral measurements).
 * A level-1 bare-core timer ISR through `appcpu_vectors.S` (replacing
   polled dispatch) once hardware allows comparing the two; then
   reinstating `rmt_step.c` on the bare core.
