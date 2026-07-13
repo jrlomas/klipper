@@ -274,6 +274,28 @@ config WANT_SELF_TEST
         module and as a field diagnostic via HELIX_SELF_TEST. Cheap,
         safe (touches no I/O, moves nothing), and bounded.
 
+# DTLS-class authenticated session over the datagram transport (doc 07).
+config WANT_DATAGRAM_SESSION
+    bool "DTLS-class session over the UDP datagram transport"
+    depends on NEED_UDP_CONSOLE || MACH_LINUX
+    default n
+    help
+        Offer the intentproto secure session (session_sec.hpp) on top of
+        the static-PSK datagram floor: HKDF per-session keys, epoch key
+        rotation, per-board identity, and a replay window (auth-only).
+        The board is the responder; a host that never opens a session
+        keeps using the static-PSK path (permanent fallback). Requires a
+        PSK. Pulls in the session + SHA-512 code, so it is code-size
+        sensitive. Off by default.
+
+config DATAGRAM_SESSION_ID
+    string "Per-board identity carried in the session handshake"
+    depends on WANT_DATAGRAM_SESSION
+    default "helix-board"
+    help
+        A short (<= 24 char) name identifying this board to the host in
+        the session handshake. Give each board a distinct id.
+
 # Serial console framing v2 (BCH FEC) — a framing transform on the UART
 # console (docs/Protocol_v2.md). Opt-in, code-size sensitive (pulls in the
 # BCH codec), and UNPROVEN — needs hardware bring-up. Off by default.

@@ -106,26 +106,30 @@ src-$(CONFIG_WANT_ETHERNET_RMII) += stm32/eth_mac.c
 ifneq ($(filter y,$(CONFIG_NEED_UDP_CONSOLE) $(CONFIG_WANT_CONSOLE_FRAMING_V2)),)
 CXX = $(CROSS_PREFIX)g++
 w5500-cxxflags := $(CFLAGS-y) -mthumb -D$(MCU_UPPER) \
-	-iquote src/generic -Ilib/intentproto/include \
+	-iquote $(OUT) -iquote src/generic -Ilib/intentproto/include \
 	-std=c++17 -Os -MD -Wall -fno-exceptions -fno-rtti \
 	-fno-threadsafe-statics -ffunction-sections -fdata-sections -ggdb3
 OBJS_klipper.elf += $(OUT)lib/intentproto/src/datagram.o \
 	$(OUT)lib/intentproto/src/bch.o \
 	$(OUT)lib/intentproto/src/hmac.o
+ifeq ($(CONFIG_WANT_DATAGRAM_SESSION),y)
+OBJS_klipper.elf += $(OUT)lib/intentproto/src/session_sec.o \
+	$(OUT)lib/intentproto/src/sha512.o
+endif
 ifeq ($(CONFIG_NEED_UDP_CONSOLE),y)
 OBJS_klipper.elf += $(OUT)src/generic/udp_datagram.o
-$(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp
+$(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"
 	$(Q)$(CXX) $(w5500-cxxflags) -c $< -o $@
 endif
 ifeq ($(CONFIG_WANT_CONSOLE_FRAMING_V2),y)
 OBJS_klipper.elf += $(OUT)src/generic/framing_v2.o
-$(OUT)src/generic/framing_v2.o: src/generic/framing_v2.cpp
+$(OUT)src/generic/framing_v2.o: src/generic/framing_v2.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"
 	$(Q)$(CXX) $(w5500-cxxflags) -c $< -o $@
 endif
 
-$(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp
+$(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"
 	$(Q)mkdir -p $(OUT)lib/intentproto/src
 	$(Q)$(CXX) $(w5500-cxxflags) -c $< -o $@

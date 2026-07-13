@@ -714,6 +714,26 @@ epoch's `tx_key`.
 A live `SecureSession` (both directions, keys, epochs, replay window)
 costs **264 bytes of RAM per link** on the STM32F072 floor.
 
+### As built: both ends are wired
+
+The session is no longer library-only. **On the board**, a datagram
+console built with `CONFIG_WANT_DATAGRAM_SESSION` (Kconfig option
+"DTLS-class session over the UDP datagram transport") runs the responder:
+`udp_console.c` classifies each inbound datagram (handshake / session /
+static), answers a `ClientHello` with a `ServerHello`, and once
+established seals all replies as session datagrams — a host that never
+opens a session keeps using the static-PSK path, so the upgrade is
+strictly additive. Each board carries a distinct identity via
+`CONFIG_DATAGRAM_SESSION_ID`. **On the host**, `[intentproto_transport]`
+with `session: True` runs the initiator: the bridge completes the
+3-message handshake at `open()` before its pump starts, then routes the
+v1 byte stream through the session's `encode`/`decode` instead of the
+static codec. Both directions were exercised end to end over a real UDP
+socket against `linuxprocess` firmware
+([test/datagram_session_live_test.py](../test/datagram_session_live_test.py))
+and in a firmware-free host loopback
+([test/session_bridge_test.py](../test/session_bridge_test.py)).
+
 ---
 
 ## 10. The CAN carrier

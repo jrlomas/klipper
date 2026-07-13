@@ -11,6 +11,8 @@
 #   listen_port: 41414                  # datagram mode
 #   psk_file: ~/printer_data/config/toolhead.psk
 #   fec_k: 4
+#   session: True                       # datagram mode: DTLS-class session
+#   board_id: helix-board               # must match the board's identity
 #   # bch mode instead:
 #   #   device: /dev/ttyACM0
 #   #   baud: 250000
@@ -58,9 +60,17 @@ class IntentprotoTransport:
             addr = config.get('board_address')
             host, port = addr.rsplit(':', 1)
             listen = config.getint('listen_port', 41414)
+            session = config.getboolean('session', False)
+            board_id = config.get('board_id', '').encode()
+            if session and psk is None:
+                raise config.error(
+                    "intentproto_transport %s: session: True requires a"
+                    " psk_file (the session is keyed from the PSK)"
+                    % (self.name,))
             self._bridge = ipt.TransportBridge(
                 'datagram', self.pty_link, psk=psk, fec_k=self.fec_k,
-                udp_board=(host, int(port)), udp_listen=listen)
+                udp_board=(host, int(port)), udp_listen=listen,
+                session=session, board_id=board_id)
         else:  # bch — a real serial device to the MCU
             device = config.get('device')
             baud = config.getint('baud', 250000)

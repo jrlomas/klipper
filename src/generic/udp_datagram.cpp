@@ -11,6 +11,7 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include "autoconf.h" // CONFIG_WANT_DATAGRAM_SESSION
 #include "intentproto/datagram.hpp"
 
 extern "C" {
@@ -98,3 +99,68 @@ udpdg_get_stats(struct udpdg_stats *st)
     st->rx_reordered = DGRx.reordered;
     st->rx_auth_failures = DGRx.auth_failures;
 }
+
+// ---- optional DTLS-class session responder (session_sec.hpp) ----
+// The board is the RESPONDER: it waits for the host's ClientHello and,
+// once the 3-message handshake completes, all datagrams are session
+// datagrams (auth with rotating per-session keys, epoch rotation, replay
+// window). Static-PSK datagrams remain the permanent fallback: a host
+// that never sends a ClientHello keeps using udpdg_encode/decode.
+#if CONFIG_WANT_DATAGRAM_SESSION
+#include "intentproto/session_sec.hpp"
+
+static intentproto::SecureSession SessRx;
+
+extern "C" int
+udpsess_msg_type(const uint8_t *data, uint32_t len)
+{
+    // Classify a raw datagram for the console router:
+    //   1 = a handshake message (ClientHello/ClientFin)
+    //   2 = a session data datagram (DGF_SESSION set)
+    //   0 = neither (route to the static path)
+    if (len < 1)
+        return 0;
+    if (data[0] == intentproto::SEC_MSG_CLIENT_HELLO
+        || data[0] == intentproto::SEC_MSG_CLIENT_FIN)
+        return 1;
+    if (data[0] & intentproto::DGF_SESSION)
+        return 2;
+    return 0;
+}
+
+extern "C" void
+udpsess_init(const uint8_t *psk, uint32_t psk_len, const uint8_t *board_id,
+             uint32_t id_len, const uint8_t *random16)
+{
+    SessRx.init(intentproto::SecRole::Responder, psk, psk_len, board_id,
+                id_len, random16, intentproto::SEC_DEFAULT_REKEY);
+}
+
+extern "C" int
+udpsess_established(void)
+{
+    return SessRx.established() ? 1 : 0;
+}
+
+extern "C" uint32_t
+udpsess_on_handshake(const uint8_t *msg, uint32_t len, uint8_t *out,
+                     uint32_t cap)
+{
+    return (uint32_t)SessRx.on_handshake(msg, len, out, cap);
+}
+
+extern "C" uint32_t
+udpsess_encode(uint8_t *out, uint32_t cap, const uint8_t *frames,
+               uint32_t len)
+{
+    return (uint32_t)SessRx.datagram_encode(
+        out, cap, frames, len, intentproto::TrafficClass::Scheduled);
+}
+
+extern "C" int32_t
+udpsess_decode(uint8_t *data, uint32_t len, const uint8_t **frames)
+{
+    intentproto::TrafficClass cls;
+    return (int32_t)SessRx.datagram_decode(data, len, frames, &cls);
+}
+#endif // CONFIG_WANT_DATAGRAM_SESSION

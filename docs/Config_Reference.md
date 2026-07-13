@@ -235,6 +235,18 @@ One section per bridged micro-controller.
 #   data datagrams and recover a single lost datagram per block. Must
 #   match the board's setting. 0 disables the erasure layer. The
 #   default is 0.
+#session: False
+#   Datagram mode: establish the DTLS-class authenticated session
+#   (HKDF per-session keys, epoch key rotation, per-board identity,
+#   replay window) on top of the static-PSK floor, instead of the
+#   static truncated-HMAC datagrams. Requires a psk_file (the session
+#   is keyed from the PSK) and a board built with WANT_DATAGRAM_SESSION;
+#   a board that never sees a ClientHello stays on the static path. The
+#   default is False.
+#board_id:
+#   Datagram session mode: the peer identity the board presents in the
+#   handshake (the board's CONFIG_DATAGRAM_SESSION_ID). Informational
+#   for now; give each board a distinct name.
 #pty: /tmp/intentproto-my_toolhead
 #   Path of the PTY symlink the bridge publishes (what the [mcu]
 #   section's serial: should point at). The default is

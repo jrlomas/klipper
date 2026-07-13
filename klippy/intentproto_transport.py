@@ -187,23 +187,30 @@ DATAGRAM_OVERHEAD = 3 + 8  # header + HMAC tag
 
 class TransportBridge(object):
     def __init__(self, mode, pty_link, psk=None, fec_k=0,
-                 udp_board=None, udp_listen=0, stream_wire_fd=None):
+                 udp_board=None, udp_listen=0, stream_wire_fd=None,
+                 session=False, board_id=b""):
         # mode: 'bch' (byte-stream re-framing) or 'datagram' (UDP envelope).
         # pty_link: symlink klippy opens as its serial port.
         # udp_board: (host, port) for datagram mode.
         # stream_wire_fd: an already-open fd for bch mode (serial device, or a
         #   socketpair end in tests). Required for bch mode.
+        # session: datagram mode only — establish the DTLS-class session
+        #   (session_sec) and use it instead of the static-PSK codec.
         self.mode = mode
         self.pty_link = pty_link
         self.psk = psk
         self.fec_k = fec_k
         self.udp_board = udp_board
         self.udp_listen = udp_listen
+        self.use_session = session
+        self.board_id = board_id
         self.master_fd = None
         self._stop = False
         self._thread = None
         self._wire_fd = stream_wire_fd     # bch: raw fd
         self._sock = None                  # datagram: UDP socket
+        self._session = None
+        self.session_established = False
         if mode == 'bch':
             self._codec = BchConsoleCodec()
             # bch starts in v1 PASS-THROUGH: the MCU's console accepts both
@@ -214,6 +221,11 @@ class TransportBridge(object):
         elif mode == 'datagram':
             self._codec = load_datagram_codec()(psk, fec_k)
             self.v2_active = True  # the datagram MCU console only speaks v2
+            if session:
+                if not psk:
+                    raise FrameError("session mode requires a PSK")
+                ip = _load_intentproto()
+                self._session = ip.SecureSession(True, psk, board_id)
         else:
             raise FrameError("unknown transport mode %r" % (mode,))
 
@@ -230,6 +242,8 @@ class TransportBridge(object):
                     'tx_frames': c.tx_frames, 'rx_frames': c.rx_frames,
                     'rx_uncorrectable': c.rx_uncorrectable}
         return {'mode': 'datagram', 'v2_active': self.v2_active,
+                'session': self.use_session,
+                'session_established': self.session_established,
                 'rx_lost': c.rx_lost, 'rx_reordered': c.rx_reordered,
                 'auth_failures': c.auth_failures}
 
@@ -251,8 +265,41 @@ class TransportBridge(object):
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._sock.setblocking(False)
             self._sock.bind(("0.0.0.0", self.udp_listen))
+            if self.use_session:
+                # Run the DTLS-class handshake to completion BEFORE the pump
+                # starts, so the ClientHello/ServerHello/ClientFin exchange is
+                # never mistaken for session data. Once established, every
+                # datagram both ways is a session datagram.
+                self._session_handshake()
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
+
+    def _session_handshake(self, tries=10, timeout=0.5):
+        # Host is the session initiator: send ClientHello, await ServerHello,
+        # reply ClientFin. Retransmit ClientHello until a ServerHello lands
+        # (the responder is idempotent on a repeated ClientHello) or we give
+        # up. Blocks the opener; the pump has not started yet.
+        if self.udp_board is None:
+            raise FrameError("datagram session mode requires a board address")
+        hello = self._session.start()
+        for _ in range(tries):
+            self._sock.sendto(hello, self.udp_board)
+            r, _, _ = select.select([self._sock], [], [], timeout)
+            if not r:
+                continue
+            try:
+                data, _addr = self._sock.recvfrom(DATAGRAM_MAX)
+            except OSError:
+                continue
+            fin = self._session.on_handshake(data)
+            if fin:
+                self._sock.sendto(fin, self.udp_board)
+            if self._session.established:
+                self.session_established = True
+                return
+            if self._session.failed:
+                raise FrameError("session handshake rejected by the board")
+        raise FrameError("session handshake timed out")
 
     def close(self):
         self._stop = True
@@ -309,6 +356,12 @@ class TransportBridge(object):
             limit = DATAGRAM_MAX - DATAGRAM_OVERHEAD
             while data:
                 chunk, data = data[:limit], data[limit:]
+                if self.session_established:
+                    # Session datagrams carry the rotating-key seal in place of
+                    # the static HMAC; no erasure parity in session mode.
+                    self._sock.sendto(self._session.encode(chunk),
+                                      self.udp_board)
+                    continue
                 self._sock.sendto(self._codec.encode(chunk), self.udp_board)
                 parity = self._codec.parity_flush()
                 if parity is not None:
@@ -332,6 +385,15 @@ class TransportBridge(object):
                 return
             if self.udp_board is None:
                 self.udp_board = addr
+            if self.session_established:
+                try:
+                    payload, _cls = self._session.decode(data)
+                except ValueError:
+                    # auth failure / malformed / replay — drop; v1 ARQ recovers
+                    return
+                if payload:
+                    self._write_master(payload)
+                return
             for payload in self._codec.decode(data):
                 if payload:
                     self._write_master(payload)
