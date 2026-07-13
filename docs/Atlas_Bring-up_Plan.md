@@ -75,6 +75,11 @@ and gates every commit. No hardware, no GPU, no model.
 - [ ] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.
+- [ ] **Provision/fleet execution.** *Do:*
+  `python3 test/atlas_provision_execute_test.py`. *Expect:* explicit argv only;
+  confirmation plus real Ed25519 verification before flash; hard catalog
+  blockers cannot be overridden; fleet remediation uses the same audited job.
+  *Pass:* ALL PASS.
 - [ ] **Fleet coherence (A7).** *Do:* `python3 test/atlas_fleet_test.py`.
   *Expect:* the protocol hash derives from `intentproto` and the lockstep
   matrix is correct. *Pass:* ALL PASS.

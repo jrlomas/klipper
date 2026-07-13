@@ -5,7 +5,7 @@ are built and CPU-tested; the intelligence tier is in progress.** The
 `atlas/` package plus [`src/trace.c`](../../../src/trace.c) implement the
 deterministic floor; the first curated failure patterns are seeded; the
 model-layer contracts (risk classifier, `ModelBackend`, eval harness,
-memory + RAG) exist and pass their suites. **159 checks across 18 test
+memory + RAG) exist and pass their suites. **163 checks across 19 test
 suites, all green.** Every open decision this document once flagged is now
 settled.
 

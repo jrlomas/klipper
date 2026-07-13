@@ -9,6 +9,13 @@ the protocol/ABI-hash lockstep handshake and signed remediation are in
 [`abi.py`](../../../atlas/fleet/abi.py), coherence in
 [`coherence.py`](../../../atlas/fleet/coherence.py)).
 
+Execution is no longer a rendered shell-plan promise: the runner in
+[`atlas/provision/execute.py`](../../../atlas/provision/execute.py) uses argv
+without a shell, refuses ambiguous/UNCONFIRMED targets even after confirmation,
+cryptographically verifies the detached Ed25519 signature, and writes a private
+job audit. [`atlas/fleet/remediate.py`](../../../atlas/fleet/remediate.py) routes
+an authorized `flash-board` coherence verdict through that same runner.
+
 Observing and understanding a machine ([02](02-Trace-Observability.md)–[04](04-Diagnosis-Engine.md))
 is half of a companion. The other half is *acting* — getting a board set
 up correctly in the first place, and keeping a whole fleet in agreement

@@ -25,7 +25,11 @@ class BuildFlashPlan:
     kconfig: dict = field(default_factory=dict)
     steps: list = field(default_factory=list)      # shell commands, in order
     warnings: list = field(default_factory=list)
+    blockers: list = field(default_factory=list)
     needs_confirmation: bool = True                # flashing is irreversible
+    klipper_dir: str = "~/klipper"
+    config_out: str = ".config"
+    target_identifier: str = ""
 
     def render(self) -> str:
         lines = ["# Atlas build+flash plan for %s (method: %s)"
@@ -63,12 +67,16 @@ def build_plan(board, target=None, klipper_dir="~/klipper",
     flags that the target must be filled in.
     """
     plan = BuildFlashPlan(board_id=board.id, method=board.flash_method,
-                          kconfig=dict(board.kconfig))
+                          kconfig=dict(board.kconfig), klipper_dir=klipper_dir,
+                          config_out=config_out,
+                          target_identifier=(target.identifier
+                                             if target is not None else ""))
 
     if board.flash_method == "custom":
         plan.warnings.append(
             "Custom board: no curated Kconfig. Run `make menuconfig` and "
             "flash by hand.")
+        plan.blockers.append("custom boards require manual provisioning")
         plan.steps = ["cd %s" % klipper_dir, "make menuconfig", "make"]
         return plan
 
@@ -79,6 +87,7 @@ def build_plan(board, target=None, klipper_dir="~/klipper",
             plan.warnings.append(
                 "Kconfig %s is UNCONFIRMED for this board — verify before "
                 "flashing (a wrong flash offset can brick it)." % key)
+            plan.blockers.append("%s is UNCONFIRMED" % key)
             plan.needs_confirmation = True
 
     if board.constrained:
@@ -102,6 +111,7 @@ def build_plan(board, target=None, klipper_dir="~/klipper",
             "Detected target is ambiguous (%d candidates share this "
             "signature) — confirm the exact board before flashing."
             % len(target.candidates))
+        plan.blockers.append("detected target is ambiguous")
 
     return plan
 
@@ -123,6 +133,7 @@ def _flash_steps(board, ident, plan) -> list:
         if ident is None:
             plan.warnings.append("CAN target uuid unknown — run a canbus "
                                  "query first.")
+            plan.blockers.append("CAN target uuid is unknown")
         return ["python3 lib/katapult/scripts/flash_can.py -i can0 -u %s "
                 "-f out/klipper.bin" % uuid]
     if method == "serial":

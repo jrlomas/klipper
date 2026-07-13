@@ -31,8 +31,8 @@ honesty; Atlas gives it a mind.
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
 | `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
-| `provision/` | **A6** board catalog (53 boards), USB/CAN detection, one-touch build+flash planner | ✅ |
-| `fleet/` | **A7** protocol/ABI hash from `intentproto` + lockstep handshake + signed remediation | ✅ |
+| `provision/` | **A6** board catalog (53 boards), USB/CAN detection, planner, and non-shell confirmed job runner with real Ed25519 verification and private audit | ✅ |
+| `fleet/` | **A7** protocol/ABI hash from `intentproto` + lockstep handshake; remediation reuses the signed provisioning runner | ✅ |
 | `kb/` | **A8** blackbox bundle, numeric-only redaction, GitHub-Issue intake + label vocabulary | ✅ |
 
 ¹ A1 is software-authored and hardware-unvalidated (mirrors `execlog.c`
@@ -62,7 +62,7 @@ The real model backend is validated end-to-end by
 real GGUF; the standard suite mocks the model so it runs on CPU.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **159 checks across 18 suites**, all green.
+— **163 checks across 19 suites**, all green.
 
 ## Try it on a real log
 

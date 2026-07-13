@@ -16,10 +16,12 @@ from .catalog import (BoardEntry, BoardCatalogError, CUSTOM_BOARD,
                       builtin_catalog)
 from .detect import (DetectedBoard, parse_lsusb, match_usb, detect_boards)
 from .plan import BuildFlashPlan, build_plan
+from .execute import ProvisionBlocked, ProvisionExecutor, verify_detached
 
 __all__ = [
     "BoardEntry", "BoardCatalogError", "CUSTOM_BOARD",
     "load_board", "load_boards", "load_board_catalog", "builtin_catalog",
     "DetectedBoard", "parse_lsusb", "match_usb", "detect_boards",
     "BuildFlashPlan", "build_plan",
+    "ProvisionBlocked", "ProvisionExecutor", "verify_detached",
 ]

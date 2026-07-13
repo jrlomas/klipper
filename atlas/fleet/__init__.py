@@ -16,9 +16,11 @@ from .abi import (parse_core_ids, protocol_hash, host_protocol_hash,
                   abi_header, DEFAULT_CORE_IDS)
 from .coherence import (BoardState, CoherenceReport, check_board,
                         check_fleet)
+from .remediate import remediate_board
 
 __all__ = [
     "parse_core_ids", "protocol_hash", "host_protocol_hash", "abi_header",
     "DEFAULT_CORE_IDS", "BoardState", "CoherenceReport", "check_board",
     "check_fleet",
+    "remediate_board",
 ]
