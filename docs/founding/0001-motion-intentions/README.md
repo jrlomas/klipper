@@ -35,7 +35,7 @@ status line records its more precise state.
 | [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Implemented — HELIX 0.9 |
 | [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Core implemented off-silicon |
 | [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Adopted — HELIX 0.9 |
-| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Core implemented; RMII/ESP32 target integration remains |
+| [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Core and target builds pass; board runtime validation remains |
 | [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Implemented — HELIX 0.9 |
 | [09-Hardware_Triggers.md](09-Hardware_Triggers.md) | Event-driven sensing: EXTI, comparators, capture timestamps | Framework implemented; per-target wiring and hardware proof remain |
 | [10-Protocol_Library.md](10-Protocol_Library.md) | One MIT-licensed protocol library for host, firmware, third parties | Implemented — HELIX 0.9 |

@@ -13,10 +13,10 @@ built on Klipper 0.13.0.
 > **Maturity — read this first.** HELIX 0.9 is a **workstation-validated
 > development milestone, not a software-complete release**. Its core
 > protocol, host, linuxprocess firmware, trajectory, recovery, and tooling
-> paths pass the off-silicon suites. Target-specific integration remains:
-> the time-sync Class-0 convergence gate, native-RMII board details, the
-> first real Xtensa/ESP32 build and runtime bring-up, and downstream OAMS
-> updater registration. None of the motion-critical paths has yet been
+> paths pass the off-silicon suites. Real ARM native-RMII and pinned Xtensa
+> ESP32 builds now pass; board runtime bring-up, the time-sync Class-0
+> convergence gate, and downstream OAMS updater registration remain. None
+> of the motion-critical paths has yet been
 > validated on a running printer. Treat 0.9 as a developer preview; every
 > capability is opt-in and classic Klipper remains beside it. **Do not run
 > 0.9 on hardware you are not prepared to supervise closely.** See the

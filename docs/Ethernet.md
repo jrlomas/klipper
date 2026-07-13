@@ -7,16 +7,16 @@ Two paths are provided:
 
 * the **W5500** - a WIZnet SPI Ethernet controller that runs the
   IP/UDP/ARP stack in silicon, usable on any board with an SPI bus;
-* the **native RMII MAC** - the Ethernet MAC built into STM32F4/F7/H7
+* the **native RMII MAC** - the Ethernet MAC built into supported STM32F4/F7
   parts, driving an external RMII PHY, with a software IP layer above
   it.
 
 !!! warning "Compile-checked, not hardware-validated here"
-    Both transports in this fork **build and link** (STM32F407,
-    STM32G0B1) and the RMII path's IP helpers pass host unit tests, but
-    **neither has been run against physical Ethernet hardware**.  Treat
-    the register/DMA/pin details as a starting point to bring up on a
-    bench, not as validated firmware.
+    The native path **builds and links with the real ARM toolchain** for
+    STM32F407 and STM32F765, and its framing and stateful socket adapter
+    pass host tests. Neither Ethernet transport has been run against a
+    physical PHY in this project. Register, DMA, clock, and pin behavior
+    therefore remain a board-bring-up item, not validated firmware.
 
 ## Same binding, different loss model
 
@@ -45,9 +45,9 @@ Authentication is mandatory on network transports (FD-0001 doc 07).
 Every datagram carries a truncated HMAC keyed by a pre-shared key. The
 key is provisioned at build time, mirroring the ESP32 port:
 
-* `CONFIG_W5500_PSK` - the pre-shared key string. A host connects with
+* `CONFIG_W5500_PSK` or `CONFIG_RMII_PSK` - the pre-shared key string. A host connects with
   the matching key via `lib/intentproto/tools/udp_bridge.py`.
-* `CONFIG_W5500_TRUST_NETWORK` - the explicit "unauthenticated"
+* `CONFIG_W5500_TRUST_NETWORK` or `CONFIG_RMII_TRUST_NETWORK` - the explicit "unauthenticated"
   confession, for an isolated bench VLAN only.
 
 A datagram source is only latched as the reply peer **after** it passes
@@ -124,48 +124,82 @@ command that configures the very transport carrying the console, which
 is why the console path (`CONFIG_CONSOLE_W5500`) uses build-time static
 configuration instead.
 
-## Native RMII MAC - design + seam
+## Native RMII MAC
 
-STM32F4/F7/H7 parts have a built-in Ethernet MAC that needs an external
-RMII PHY **and a software IP/UDP stack** above it (the MAC delivers only
-raw ethernet frames). A full lwIP integration is large and cannot be
-built or validated in this environment, so it is **not vendored here**.
-
-Instead the path is split at a single documented seam:
+Supported STM32F4/F7 parts have a built-in Ethernet MAC that needs an
+external RMII PHY **and a software IP/UDP stack** above it (the MAC delivers
+only raw Ethernet frames). The implementation stays deliberately small and
+is split at one replaceable seam:
 
 ```
    rx frame  --> nano_udp_input()      (or lwIP: ethernet_input)
    tx frame  <-- eth_mac_emit()        (or lwIP: low_level_output)
 ```
 
-* `src/stm32/eth_mac.c` is the **MAC/DMA half**: RMII pin/clock
-  bring-up, the DMA descriptor rings, and the OWN-bit handshakes that
-  move frames. The board-specific pieces that cannot be validated blind
-  - the exact RMII pin map, the PHY address and its auto-negotiation,
-  and the IP-config source - are marked `TODO(board)`.
+* `src/stm32/eth_mac.c` is the **MAC/DMA half and console binding**:
+  configurable AF11 pins and PHY reset, an HCLK-correct bounded MDIO path,
+  PHY identity checks, IEEE 10/100 auto-negotiation and reconnect polling,
+  DMA descriptor rings with ownership barriers, a UID-derived local MAC,
+  and the standard `console_sendf()` / `console_receive_buffer()` hooks.
 * `src/generic/nano_udp.c` is the **pluggable IP layer**: a minimal
   single-socket UDP/IP/ARP responder (ARP replies so a host can find
-  us, IPv4 header + checksum, UDP demux to the console). It is small,
-  freestanding, and **host unit-tested** - so the RMII path is
-  functional without lwIP. Swapping in lwIP is a matter of re-pointing
-  the two seam calls.
+  us, validated IPv4 and UDP checksums and lengths, fragment rejection,
+  destination filtering, and UDP demultiplexing to the console. Its
+  one-slot receive queue commits the candidate return address atomically
+  with the datagram, so a dropped packet cannot redirect an authenticated
+  reply. Swapping in lwIP remains possible by replacing the two seam calls.
 
-### Scope decision (honest)
+The small IP layer intentionally has no DHCP, gateway, VLAN, ICMP, TCP, or
+fragment reassembly. Configure a static address and place the host bridge on
+the same layer-2 subnet. A broader network stack is outside this deterministic
+single-socket console's scope.
 
-The primary, buildable, coherent path is the **W5500**: it needs no
-software IP stack and works on any SPI board. The native RMII path is
-delivered as a **MAC/DMA skeleton + a functional, tested nano-UDP IP
-layer + the lwIP seam**, with the DMA bring-up's board-specific details
-left as marked TODOs. This was chosen over stubbing nano-UDP because a
-minimal single-socket responder is tractable and independently testable
-(checksums, ARP/UDP framing against known-good byte vectors), whereas a
-blind lwIP port would be large, untestable here, and no more honest.
+### Build configuration
 
-Enable it (off by default; STM32 F407/F429/F7/H7 only):
+Select **Communication interface -> Ethernet datagram console via native
+RMII MAC** on STM32F407, STM32F429, or a supported STM32F7 target. This is a
+console choice, so USB, UART, and CAN console implementations are not linked
+beside it. The generated configuration contains:
 
 ```
-CONFIG_WANT_ETHERNET_RMII=y      # depends on HAVE_ETH_MAC
+CONFIG_STM32_ETHERNET_RMII=y
+CONFIG_RMII_PSK="your-pre-shared-key"
+CONFIG_RMII_IP=0xC0A800FE
+CONFIG_RMII_UDP_PORT=1234
+CONFIG_RMII_PHY_ADDR=0
+CONFIG_RMII_PHY_RESET_PIN=-1     # or an encoded GPIO number
+CONFIG_RMII_REF_CLK_PIN=1        # PA1; pins use (port-'A')*16 + number
+CONFIG_RMII_MDIO_PIN=2           # PA2
+CONFIG_RMII_MDC_PIN=33           # PC1
+CONFIG_RMII_CRS_DV_PIN=7         # PA7
+CONFIG_RMII_RXD0_PIN=36          # PC4
+CONFIG_RMII_RXD1_PIN=37          # PC5
+CONFIG_RMII_TX_EN_PIN=27         # PB11
+CONFIG_RMII_TXD0_PIN=28          # PB12
+CONFIG_RMII_TXD1_PIN=29          # PB13
 ```
+
+The pin defaults are the common AF11 mapping, not a promise that a particular
+board routes them to its PHY. Confirm the schematic, PHY strap address,
+50MHz reference-clock direction, reset polarity, and power/reset timing
+before flashing. An empty PSK fails closed unless
+`CONFIG_RMII_TRUST_NETWORK=y` explicitly confesses an isolated trusted link.
+`CONFIG_RMII_FEC_PAIR=y` enables pair parity, although switched Ethernet
+normally should leave it off.
+
+### Workstation evidence
+
+Commit `8c7d368c` adds persistent CI configurations for both maintained
+families. With `arm-none-eabi-gcc` 13.2.1 they compile and link as follows:
+
+| configuration | session mode | text | data | bss |
+| --- | --- | ---: | ---: | ---: |
+| `stm32f407-rmii.config` | authenticated | 65,510 | 64 | 27,616 |
+| `stm32f765-rmii.config` | authenticated + pair FEC | 63,146 | 64 | 27,632 |
+
+These configurations are included automatically by `scripts/ci-build.sh`.
+They establish configuration, compiler, linker, and flash/RAM-fit evidence;
+they do not establish electrical behavior or packet flow on a real PHY.
 
 ### Testing nano-UDP on the host
 
@@ -173,9 +207,10 @@ CONFIG_WANT_ETHERNET_RMII=y      # depends on HAVE_ETH_MAC
 test/nano_udp/run.sh
 ```
 
-This builds `src/generic/nano_udp.c` with `-DNANO_UDP_TEST` and checks
-the Internet checksum against the canonical RFC 1071 IPv4 example and
-the ARP/UDP framing against known-good byte vectors.
+This runs the pure framing vectors plus the stateful socket-adapter test. The
+suite checks Internet, IPv4, and UDP checksums; ARP/UDP framing; malformed
+length and fragment rejection; destination filtering; and candidate-peer
+stability while the receive slot is occupied.
 
 ## Files
 
@@ -183,6 +218,7 @@ the ARP/UDP framing against known-good byte vectors.
 | --- | --- |
 | `src/generic/w5500.c` / `.h` | W5500 SPI Ethernet transport + `config_w5500` |
 | `src/generic/nano_udp.c` / `.h` | minimal UDP/IP/ARP responder (RMII IP layer) |
-| `src/stm32/eth_mac.c` | RMII MAC/DMA bring-up skeleton + lwIP/nano-UDP seam |
+| `src/stm32/eth_mac.c` | STM32F4/F7 RMII MAC/DMA console + lwIP/nano-UDP seam |
 | `src/generic/udp_console.c` | shared, transport-independent datagram console glue (unchanged) |
 | `test/nano_udp/nano_udp_test.c` | host unit test for the nano-UDP framing helpers |
+| `test/nano_udp/nano_udp_state_test.c` | host unit test for receive/candidate-peer state |

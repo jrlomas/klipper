@@ -1,7 +1,7 @@
 # FD-0001: Link Layer and Transports
 
-Status: Core implemented and workstation-tested in HELIX 0.9; native-RMII
-board integration and ESP32 target/runtime work remain.
+Status: Core and native-RMII software integration are workstation-tested in
+HELIX 0.9; Ethernet/ESP32 board runtime work remains.
 
 > For the full, implementation-grounded treatment of the wire protocol
 > this document introduces, see [Protocol v2](../../Protocol_v2.md). This

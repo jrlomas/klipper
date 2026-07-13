@@ -14,7 +14,7 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (ESP32 implementation checkpoint `6b251da9`) | Includes the Helix transport/security review plus real ESP-IDF component, RMT, and modem build fixes; this document is committed on top as the status checkpoint. |
+| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (RMII implementation checkpoint `8c7d368c`) | Includes the Helix transport/security review, real ESP-IDF builds, and real ARM native-RMII console builds; this document is committed on top as the status checkpoint. |
 | `jrlomas/mainsail` | `fe5d30a9` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
@@ -47,6 +47,13 @@ work. They do not convert any unchecked target or hardware item into a pass.
   private vectors and selected motion-hot objects land in IRAM with 33,450B
   remaining in the 128KiB region. These are compiler/linker results, not a
   claim that any image has run on a board.
+* `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
+  authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
+  image. The path includes configurable pins and reset, bounded MDIO,
+  standards-based link negotiation/reconnect, DMA ownership barriers, the
+  actual MCU console hooks, fail-closed PSK setup, and a stateful regression
+  proving a dropped packet cannot replace the authenticated candidate peer.
+  This is compiler/linker and host-test evidence, not PHY runtime evidence.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
   and OpenAMS panels pass 46 unit tests across 7 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.
@@ -64,8 +71,6 @@ success.
 These are not hardware measurements; they are code/integration work still
 visible in the repositories:
 
-* **Native STM32 RMII:** the nano-UDP layer is host-tested, but MAC/PHY reset,
-  pin map, PHY address/negotiation, and IP configuration remain board seams.
 * **ESP32:** all maintained variants now have real Xtensa compiler/linker
   evidence. Board runtime remains unvalidated; the ESP32 guide lists the
   devkit procedure plus keepalive/reconnect, ISR bring-up, FEC measurement,
@@ -83,8 +88,8 @@ All remaining board, Pi, Hailo, signal-integrity, timing, thermal, fault-
 injection, soak, and real-print evidence stays unchecked in the
 [HELIX Test and Bring-up Plan](Helix_Test_Plan.md). Host emulation is useful
 evidence, but it does not establish flash/RAM fit on every target, ISR jitter,
-PWM waveform quality, network behavior on a real radio/PHY, or safe recovery
-on a moving and heated printer.
+PWM waveform quality, native-RMII behavior on a real PHY, network behavior on
+a real radio, or safe recovery on a moving and heated printer.
 
 HELIX should not be called 1.0 or production-ready until the remaining
 software seams are closed and the applicable bring-up-plan evidence is
