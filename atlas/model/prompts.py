@@ -115,15 +115,22 @@ def build_config_edit_prompt(request: str, current_config: str,
 
 
 def build_assistant_prompt(question: str, timeline_summary: str,
-                           rag_hits=None) -> str:
+                           rag_hits=None, history=None) -> str:
     """Ground a free-form operator question in current machine facts."""
+    conversation = []
+    for message in (history or []):
+        label = "Operator" if message["role"] == "operator" else "Atlas"
+        conversation.append("%s: %s" % (label, message["content"]))
+    history_text = ("\n".join(conversation)
+                    if conversation else "(no earlier conversation)")
     return (
-        "Operator question: %s\n\n"
+        "Recent conversation (context only; machine facts below remain "
+        "authoritative):\n%s\n\nOperator question: %s\n\n"
         "Current machine timeline (machine-time ordered):\n%s\n\n"
         "Related known-failure knowledge and this machine's memory:\n%s\n\n"
         "Answer the question. Cite evidence by event time or summary when "
         "possible."
-        % (question, timeline_summary, _rag_block(rag_hits))
+        % (history_text, question, timeline_summary, _rag_block(rag_hits))
     )
 
 

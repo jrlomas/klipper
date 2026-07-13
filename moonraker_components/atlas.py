@@ -267,7 +267,8 @@ class Atlas:
     async def _handle_assistant_ask(self, web_request: "WebRequest"
                                     ) -> Dict[str, Any]:
         return await self.assistant.request(
-            "ask", {"question": web_request.get_str("question")})
+            "ask", {"question": web_request.get_str("question"),
+                    "history": web_request.get("history", [])})
 
     async def _handle_assistant_interpret(self, web_request: "WebRequest"
                                           ) -> Dict[str, Any]:

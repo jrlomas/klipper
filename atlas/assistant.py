@@ -16,6 +16,8 @@ ASSISTANT_SCHEMA_VERSION = 1
 DEFAULT_MAX_QUESTION = 4096
 DEFAULT_MAX_CONFIG_BYTES = 2 * 1024 * 1024
 DEFAULT_PROPOSAL_TTL = 15 * 60
+DEFAULT_MAX_HISTORY_MESSAGES = 8
+DEFAULT_MAX_HISTORY_CHARS = 16 * 1024
 _KEEP_MEMORY = object()
 
 
@@ -103,6 +105,33 @@ class AssistantRuntime:
         with open(self.config_path, encoding="utf-8") as handle:
             return handle.read()
 
+    def _validate_history(self, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("history must be an array")
+        if len(value) > DEFAULT_MAX_HISTORY_MESSAGES:
+            raise ValueError("history exceeds %d messages"
+                             % DEFAULT_MAX_HISTORY_MESSAGES)
+        clean = []
+        total = 0
+        for message in value:
+            if not isinstance(message, dict):
+                raise ValueError("history messages must be objects")
+            role = message.get("role")
+            content = message.get("content")
+            if role not in ("operator", "atlas"):
+                raise ValueError("history role must be operator or atlas")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("history content must be a non-empty string")
+            content = content.strip()
+            total += len(content)
+            if total > DEFAULT_MAX_HISTORY_CHARS:
+                raise ValueError("history exceeds %d characters"
+                                 % DEFAULT_MAX_HISTORY_CHARS)
+            clean.append({"role": role, "content": content})
+        return clean
+
     def _purge_proposals(self):
         now = self.clock()
         self._proposals = {
@@ -153,8 +182,10 @@ class AssistantRuntime:
                     result = self.status()
                 elif operation == "ask":
                     question = self._validate_question(params.get("question"))
+                    history = self._validate_history(params.get("history"))
                     result = {"answer": answer_question(
-                        self.backend, question, timeline, self.rag),
+                        self.backend, question, timeline, self.rag,
+                        history=history),
                               "read_only": True}
                 elif operation == "interpret":
                     result = {"interpretation": interpret_incident(

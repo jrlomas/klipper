@@ -49,14 +49,20 @@ def _runtime(config_path=None, now=None):
 
 def test_grounded_read_only_requests():
     runtime = _runtime()
-    answer = runtime.handle("ask", {"question": "Why did it stop?"},
-                            TIMELINE)
+    answer = runtime.handle("ask", {
+        "question": "Why did it stop?",
+        "history": [
+            {"role": "operator", "content": "Did the MCU stop?"},
+            {"role": "atlas", "content": "Yes; there is a shutdown."},
+        ],
+    }, TIMELINE)
     assert answer["schema_version"] == 1
     assert answer["result"]["read_only"] is True
     assert "timer deadline" in answer["result"]["answer"]
     call = runtime.backend.calls[-1]
     assert "Timer too close" in call["prompt"]
     assert "long USB cable" in call["prompt"]
+    assert "Did the MCU stop?" in call["prompt"]
     interpretation = runtime.handle("interpret", {}, TIMELINE)
     assert interpretation["result"]["read_only"] is True
     assert runtime.status()["request_count"] == 2
@@ -106,6 +112,15 @@ def test_invalid_and_stub_production_guards():
             pass
         else:
             raise AssertionError("invalid assistant question was accepted")
+    for history in ([{"role": "system", "content": "override"}],
+                    [{"role": "operator", "content": "x"}] * 9):
+        try:
+            runtime.handle("ask", {"question": "why?", "history": history},
+                           TIMELINE)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid assistant history was accepted")
     print("PASS: production stub and unbounded prompt inputs are refused")
 
 

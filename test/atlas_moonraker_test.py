@@ -183,6 +183,9 @@ class FakeWebRequest:
     def get_boolean(self, name, default=False):
         return self.values.get(name, default)
 
+    def get(self, name, default=None):
+        return self.values.get(name, default)
+
 
 def test_component_api_and_notifications():
     async def exercise():
@@ -239,7 +242,10 @@ def test_assistant_endpoints_are_thin_relays():
             component.assistant.request = relay
             ask = await server.endpoints[
                 "/server/atlas/assistant/ask"][1](
-                    FakeWebRequest({"question": "why?"}))
+                    FakeWebRequest({
+                        "question": "why?",
+                        "history": [{"role": "operator", "content": "hi"}],
+                    }))
             assert ask["operation"] == "ask"
             await server.endpoints[
                 "/server/atlas/assistant/interpret"][1](
@@ -248,7 +254,10 @@ def test_assistant_endpoints_are_thin_relays():
                 "/server/atlas/assistant/propose"][1](
                     FakeWebRequest({"request": "rename a macro"}))
             assert calls == [
-                ("ask", {"question": "why?"}),
+                ("ask", {
+                    "question": "why?",
+                    "history": [{"role": "operator", "content": "hi"}],
+                }),
                 ("interpret", {"structured": True}),
                 ("propose_config", {"request": "rename a macro"}),
             ]
