@@ -40,7 +40,7 @@
  * against the runtime intentproto_abi_version() and refuses a MAJOR
  * mismatch. */
 #define INTENTPROTO_ABI_VERSION_MAJOR 1
-#define INTENTPROTO_ABI_VERSION_MINOR 1
+#define INTENTPROTO_ABI_VERSION_MINOR 2
 #define INTENTPROTO_ABI_VERSION_PATCH 0
 #define INTENTPROTO_ABI_VERSION                                         \
     ((INTENTPROTO_ABI_VERSION_MAJOR << 16)                             \
@@ -305,6 +305,16 @@ int ip_secure_session_decode(ip_secure_session *s, uint8_t *data,
                              size_t len, size_t *frames_off, int *cls);
 /* Explicit key rotation (the peer follows on the epoch byte). */
 void ip_secure_session_rekey(ip_secure_session *s);
+
+/* Session health counters (layout-stable; extend only at the end). */
+typedef struct ip_secure_session_diag {
+    uint32_t auth_failures;      /* bad tag / truncated datagrams */
+    uint32_t replays_rejected;   /* replay-window hits */
+    uint32_t old_epoch_rejected; /* stale-epoch datagrams */
+    uint32_t tx_epoch, rx_epoch; /* current key epochs */
+} ip_secure_session_diag;
+void ip_secure_session_get_diag(const ip_secure_session *s,
+                                ip_secure_session_diag *d);
 
 /* ================================================================
  * Device registry + extension-descriptor accessors

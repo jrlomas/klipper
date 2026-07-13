@@ -475,4 +475,15 @@ void ip_secure_session_rekey(ip_secure_session* s) {
     s->s.rekey();
 }
 
+void ip_secure_session_get_diag(const ip_secure_session* s,
+                                ip_secure_session_diag* d) {
+    if (!d)
+        return;
+    d->auth_failures = s->s.auth_failures;
+    d->replays_rejected = s->s.replays_rejected;
+    d->old_epoch_rejected = s->s.old_epoch_rejected;
+    d->tx_epoch = s->s.tx_epoch;
+    d->rx_epoch = s->s.rx_epoch;
+}
+
 } // extern "C"

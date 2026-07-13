@@ -163,6 +163,14 @@ size_t ip_secure_session_encode(ip_secure_session *s, uint8_t *out,
 int ip_secure_session_decode(ip_secure_session *s, uint8_t *data,
                              size_t len, size_t *frames_off, int *cls);
 void ip_secure_session_rekey(ip_secure_session *s);
+typedef struct ip_secure_session_diag {
+    uint32_t auth_failures;
+    uint32_t replays_rejected;
+    uint32_t old_epoch_rejected;
+    uint32_t tx_epoch, rx_epoch;
+} ip_secure_session_diag;
+void ip_secure_session_get_diag(const ip_secure_session *s,
+                                ip_secure_session_diag *d);
 size_t ip_datagram_take_recovered(ip_datagram_rx *rx, uint8_t *out,
                                   size_t cap);
 
@@ -556,6 +564,16 @@ class SecureSession(object):
 
     def rekey(self):
         self._lib.ip_secure_session_rekey(self._s)
+
+    def diag(self):
+        # Session health counters: auth failures, replay-window and
+        # stale-epoch rejections, and the live tx/rx key epochs.
+        d = self._ffi.new("ip_secure_session_diag *")
+        self._lib.ip_secure_session_get_diag(self._s, d)
+        return {'auth_failures': d.auth_failures,
+                'replays_rejected': d.replays_rejected,
+                'old_epoch_rejected': d.old_epoch_rejected,
+                'tx_epoch': d.tx_epoch, 'rx_epoch': d.rx_epoch}
 
 
 class HostSession(object):

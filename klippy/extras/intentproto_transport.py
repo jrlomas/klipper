@@ -12,7 +12,8 @@
 #   psk_file: ~/printer_data/config/toolhead.psk
 #   fec_k: 4
 #   session: True                       # datagram mode: DTLS-class session
-#   board_id: helix-board               # must match the board's identity
+#   board_id: helix-board               # identity the board MUST present
+#                                       # (handshake rejected on mismatch)
 #   # bch mode instead:
 #   #   device: /dev/ttyACM0
 #   #   baud: 250000

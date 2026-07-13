@@ -65,14 +65,18 @@ class TestSessionBridge(unittest.TestCase):
         pty_link = '/tmp/helix_sess_bridge_test'
         bridge = ipt.TransportBridge(
             'datagram', pty_link, psk=PSK, session=True,
-            board_id=b'klippy-host',
+            board_id=b'test-board',  # identity the responder must present
             udp_board=('127.0.0.1', resp.port), udp_listen=0)
         slave = None
         try:
             bridge.open()  # runs the 3-message handshake before the pump
             self.assertTrue(bridge.session_established)
+            self.assertEqual(bridge.peer_id, b'test-board')
             st = bridge.stats()
             self.assertTrue(st['session'] and st['session_established'])
+            self.assertEqual(st['peer_id'], 'test-board')
+            self.assertEqual(st['auth_failures'], 0)
+            self.assertIn('tx_epoch', st)
 
             slave = os.open(pty_link, os.O_RDWR | os.O_NOCTTY)
             os.set_blocking(slave, False)
@@ -89,6 +93,25 @@ class TestSessionBridge(unittest.TestCase):
         finally:
             if slave is not None:
                 os.close(slave)
+            bridge.close()
+            resp.stop()
+
+    def test_identity_mismatch_rejected(self):
+        # The responder presents 'test-board'; a bridge configured to
+        # expect a different identity must reject the handshake.
+        import intentproto_transport as ipt
+        resp = _Responder()
+        resp.start()
+        bridge = ipt.TransportBridge(
+            'datagram', '/tmp/helix_sess_bridge_mismatch', psk=PSK,
+            session=True, board_id=b'some-other-board',
+            udp_board=('127.0.0.1', resp.port), udp_listen=0)
+        try:
+            with self.assertRaisesRegex(ipt.FrameError,
+                                        'identity mismatch'):
+                bridge.open()
+            self.assertFalse(bridge.session_established)
+        finally:
             bridge.close()
             resp.stop()
 

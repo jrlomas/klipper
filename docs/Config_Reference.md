@@ -244,9 +244,11 @@ One section per bridged micro-controller.
 #   a board that never sees a ClientHello stays on the static path. The
 #   default is False.
 #board_id:
-#   Datagram session mode: the peer identity the board presents in the
-#   handshake (the board's CONFIG_DATAGRAM_SESSION_ID). Informational
-#   for now; give each board a distinct name.
+#   Datagram session mode: the identity the board must present in the
+#   session handshake (its CONFIG_DATAGRAM_SESSION_ID). The handshake
+#   is rejected if the board presents a different identity — give each
+#   board a distinct name. Leave unset to accept any identity (the
+#   verified peer is still reported in the section's status).
 #pty: /tmp/intentproto-my_toolhead
 #   Path of the PTY symlink the bridge publishes (what the [mcu]
 #   section's serial: should point at). The default is

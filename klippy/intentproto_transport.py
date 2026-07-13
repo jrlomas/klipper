@@ -211,6 +211,7 @@ class TransportBridge(object):
         self._sock = None                  # datagram: UDP socket
         self._session = None
         self.session_established = False
+        self.peer_id = b""
         if mode == 'bch':
             self._codec = BchConsoleCodec()
             # bch starts in v1 PASS-THROUGH: the MCU's console accepts both
@@ -225,7 +226,11 @@ class TransportBridge(object):
                 if not psk:
                     raise FrameError("session mode requires a PSK")
                 ip = _load_intentproto()
-                self._session = ip.SecureSession(True, psk, board_id)
+                # The session carries per-peer identities both ways: the
+                # host advertises itself as "klippy-host"; board_id is the
+                # identity we REQUIRE the board to present (verified after
+                # the handshake in _session_handshake).
+                self._session = ip.SecureSession(True, psk, b"klippy-host")
         else:
             raise FrameError("unknown transport mode %r" % (mode,))
 
@@ -241,11 +246,17 @@ class TransportBridge(object):
             return {'mode': 'bch', 'v2_active': self.v2_active,
                     'tx_frames': c.tx_frames, 'rx_frames': c.rx_frames,
                     'rx_uncorrectable': c.rx_uncorrectable}
-        return {'mode': 'datagram', 'v2_active': self.v2_active,
-                'session': self.use_session,
-                'session_established': self.session_established,
-                'rx_lost': c.rx_lost, 'rx_reordered': c.rx_reordered,
-                'auth_failures': c.auth_failures}
+        st = {'mode': 'datagram', 'v2_active': self.v2_active,
+              'session': self.use_session,
+              'session_established': self.session_established,
+              'rx_lost': c.rx_lost, 'rx_reordered': c.rx_reordered,
+              'auth_failures': c.auth_failures}
+        if self.session_established:
+            # In session mode the static codec is bypassed; report the
+            # session's own health counters (and the verified peer).
+            st['peer_id'] = self.peer_id.decode('utf-8', 'replace')
+            st.update(self._session.diag())
+        return st
 
     def open(self):
         import pty
@@ -295,6 +306,16 @@ class TransportBridge(object):
             if fin:
                 self._sock.sendto(fin, self.udp_board)
             if self._session.established:
+                # Enforce the configured board identity: the ServerHello's
+                # id rides under the handshake's Finished MAC, so a peer
+                # that knows the PSK still cannot claim another board's
+                # name without failing here.
+                peer = self._session.peer_id()
+                if self.board_id and peer != self.board_id:
+                    raise FrameError(
+                        "session peer identity mismatch: board presented"
+                        " %r, expected %r" % (peer, self.board_id))
+                self.peer_id = peer
                 self.session_established = True
                 return
             if self._session.failed:
