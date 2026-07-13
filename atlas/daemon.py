@@ -14,6 +14,10 @@ import tempfile
 import time
 
 from .diagnosis import Matcher, load_catalog
+from .history import IncidentStore
+from .monitor import BaselineMonitor
+from .observe import StructuredTail
+from .timeline import Event
 from .view import LiveTail, TimelineFilter
 
 
@@ -59,7 +63,8 @@ def _diagnosis_dict(diagnosis) -> dict:
     }
 
 
-def build_status(timeline, diagnosis, service: dict) -> dict:
+def build_status(timeline, diagnosis, service: dict, incidents=None,
+                 monitor=None) -> dict:
     """Build the stable daemon -> Moonraker -> Mainsail contract."""
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
@@ -70,6 +75,8 @@ def build_status(timeline, diagnosis, service: dict) -> dict:
         },
         "diagnosis": _diagnosis_dict(diagnosis),
         "service": dict(service),
+        "incidents": list(incidents or []),
+        "monitor": dict(monitor or {}),
     }
 
 
@@ -105,7 +112,8 @@ class AtlasDaemon:
     def __init__(self, log_path: str, state_path: str, catalog_path: str,
                  interval: float = 0.5, max_events: int = DEFAULT_MAX_EVENTS,
                  heartbeat: float = DEFAULT_HEARTBEAT, patterns=None,
-                 wall_clock=None):
+                 wall_clock=None, telemetry_paths=None, history_path=None,
+                 baseline_path=None):
         if interval <= 0:
             raise ValueError("interval must be positive")
         if heartbeat <= 0:
@@ -117,6 +125,11 @@ class AtlasDaemon:
         self.follower = LiveTail(
             self.log_path, TimelineFilter(ordered=False),
             max_events=max_events)
+        self.telemetry = [StructuredTail(path, self.follower.timeline)
+                          for path in (telemetry_paths or [])]
+        self.history = (IncidentStore(history_path, wall_clock=wall_clock or time.time)
+                        if history_path else None)
+        self.monitor = BaselineMonitor(baseline_path) if baseline_path else None
         self.publisher = AtomicStatePublisher(state_path)
         self._fixed_patterns = patterns is not None
         self.patterns = list(patterns or [])
@@ -167,7 +180,9 @@ class AtlasDaemon:
                          (self._catalog_error, self._source_error) if error)
 
     def _service_status(self) -> dict:
-        state = "running" if self.follower.source_available else "waiting"
+        available = (self.follower.source_available
+                     or any(t.source_available for t in self.telemetry))
+        state = "running" if available else "waiting"
         error = self._error_text()
         if error:
             state = "degraded"
@@ -176,9 +191,12 @@ class AtlasDaemon:
             "generation": self._generation,
             "updated_at": self._clock(),
             "source": "klippy.log",
+            "structured_sources": [tail.path for tail in self.telemetry],
             "event_count": len(self.follower.timeline),
             "pattern_count": len(self.patterns),
-            "rotations": self.follower.rotations,
+            "rotations": (self.follower.rotations
+                          + sum(t.rotations for t in self.telemetry)),
+            "incident_count": len(self.history) if self.history else 0,
             "last_error": error,
         }
 
@@ -196,10 +214,41 @@ class AtlasDaemon:
             new_events = []
         else:
             self._source_error = ""
+        for tail in self.telemetry:
+            try:
+                new_events.extend(tail.poll())
+            except OSError as exc:
+                self._source_error = "structured read failed: %s" % exc
+            if tail.last_error:
+                self._source_error = tail.last_error
+        if self.follower.max_events is not None:
+            overflow = (len(self.follower.timeline.events)
+                        - self.follower.max_events)
+            if overflow > 0:
+                del self.follower.timeline.events[:overflow]
+                self.follower.timeline.note(
+                    "live timeline is bounded to the latest %d events"
+                    % self.follower.max_events)
+        monitor_alerts = []
+        if self.monitor is not None and new_events:
+            monitor_alerts = self.monitor.observe(new_events)
+            for alert in monitor_alerts:
+                event = Event(
+                    seq=self.follower.timeline.allocate_seq(), kind="anomaly",
+                    source=alert["source"], severity="warning",
+                    summary=("%s drifted from %.3f to %.3f" % (
+                        alert["metric"], alert["baseline"], alert["value"])),
+                    mtime=alert["mtime"], time_basis="machine", t_exact=True,
+                    fields=alert)
+                self.follower.timeline.add(event)
+                new_events.append(event)
         error_changed = self._error_text() != previous_error
-        rotated = self.follower.rotations != self._last_rotations
-        source_changed = (self.follower.source_available
-                          != self._last_source_available)
+        rotations = (self.follower.rotations
+                     + sum(t.rotations for t in self.telemetry))
+        source_available = (self.follower.source_available
+                            or any(t.source_available for t in self.telemetry))
+        rotated = rotations != self._last_rotations
+        source_changed = source_available != self._last_source_available
         now = self._clock()
         heartbeat_due = (self._last_publish_at is not None
                          and now - self._last_publish_at >= self.heartbeat)
@@ -210,12 +259,21 @@ class AtlasDaemon:
         if not changed:
             return self._last_state
 
-        self._last_rotations = self.follower.rotations
-        self._last_source_available = self.follower.source_available
+        self._last_rotations = rotations
+        self._last_source_available = source_available
         self._generation += 1
         diagnosis = Matcher(self.patterns).diagnose(self.follower.timeline)
+        if (self.history is not None
+                and any(event.sev_rank() >= 4 for event in new_events)):
+            self.history.record(diagnosis)
+        incidents = self.history.recent() if self.history else []
+        monitor_state = {
+            "enabled": self.monitor is not None,
+            "metric_count": len(self.monitor.stats) if self.monitor else 0,
+            "alerts": monitor_alerts,
+        }
         state = build_status(self.follower.timeline, diagnosis,
-                             self._service_status())
+                             self._service_status(), incidents, monitor_state)
         self.publisher.publish(state)
         self._last_state = state
         self._last_publish_at = now
@@ -229,3 +287,7 @@ class AtlasDaemon:
                 await asyncio.wait_for(stop_event.wait(), self.interval)
             except asyncio.TimeoutError:
                 pass
+
+    def close(self) -> None:
+        if self.history is not None:
+            self.history.close()

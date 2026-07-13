@@ -25,6 +25,8 @@ honesty; Atlas gives it a mind.
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
 | `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract | ✅ |
 | `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health endpoints, stale detection, and websocket updates | ✅ |
+| `observe.py` | rotation-safe JSONL ingestion for trace, execution, link-stat, and timesync events on exact machine time | ✅ |
+| `history.py` / `monitor.py` | bounded SQLite incident history plus persistent per-machine drift baselines | ✅ |
 | `decode/trace.py` | **A2** host trace collector — decode trace records via the dictionary onto the merged timeline | ✅ |
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
@@ -60,7 +62,7 @@ The real model backend is validated end-to-end by
 real GGUF; the standard suite mocks the model so it runs on CPU.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **151 checks across 16 suites**, all green.
+— **156 checks across 17 suites**, all green.
 
 ## Try it on a real log
 
@@ -113,6 +115,7 @@ $ python3 test/atlas_diagnosis_test.py
 $ python3 test/atlas_daemon_test.py
 $ python3 test/atlas_moonraker_test.py
 $ python3 test/atlas_install_test.py
+$ python3 test/atlas_observe_test.py
 ```
 
 These are part of the deterministic floor and run on any CPU with only

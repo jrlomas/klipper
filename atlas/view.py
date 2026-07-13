@@ -75,16 +75,15 @@ class LiveTail:
     """
 
     def __init__(self, path, filt: TimelineFilter = None,
-                 max_events: int = None):
+                 max_events: int = None, timeline=None):
         from .decode.klippy_log import KlippyLogDecoder
         self.path = path
         self.filt = filt or TimelineFilter(ordered=False)
-        self.decoder = KlippyLogDecoder()
+        self.decoder = KlippyLogDecoder(timeline=timeline)
         if max_events is not None and max_events < 1:
             raise ValueError("max_events must be positive")
         self.max_events = max_events
         self._offset = 0
-        self._emitted = 0
         self._pending = ""   # an unterminated trailing line, held back
         self._identity = None
         self.source_available = False
@@ -125,7 +124,6 @@ class LiveTail:
         if overflow <= 0:
             return
         del self.timeline.events[:overflow]
-        self._emitted = max(0, self._emitted - overflow)
         self.timeline.note("live timeline is bounded to the latest %d events"
                            % self.max_events)
 
@@ -148,11 +146,11 @@ class LiveTail:
         # open traceback must stay open until its terminator arrives (a
         # completed traceback self-flushes inside the decoder).
         *complete, self._pending = self._pending.split("\n")
+        before = len(self.timeline.events)
         for line in complete:
             self.decoder.feed_line(line)
         tl = self.decoder.timeline
-        new = tl.events[self._emitted:]
-        self._emitted = len(tl.events)
+        new = tl.events[before:]
         selected = [e for e in new if self.filt.passes(e)]
         self._prune()
         return selected

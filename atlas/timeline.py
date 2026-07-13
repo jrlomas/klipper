@@ -60,8 +60,15 @@ class Timeline:
         self.anchor: Optional[dict] = None  # {wall, systime, monotime}
         self.notes: list[str] = []          # decoder provenance / caveats
         self.versions: dict = {}            # host/mcu/library versions seen
+        self._next_seq = 0
+
+    def allocate_seq(self) -> int:
+        seq = self._next_seq
+        self._next_seq += 1
+        return seq
 
     def add(self, event: Event) -> Event:
+        self._next_seq = max(self._next_seq, event.seq + 1)
         self.events.append(event)
         return event
 

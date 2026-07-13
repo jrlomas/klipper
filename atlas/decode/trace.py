@@ -139,8 +139,7 @@ class TraceCollector:
         self.dict = dictionary or TraceDictionary.default()
         self.clockmap = clockmap
         self.source = source
-        self.timeline = timeline or Timeline()
-        self._seq = len(self.timeline)  # continue the global order
+        self.timeline = timeline if timeline is not None else Timeline()
 
     def ingest(self, event_id, clock, sub, level, data=b"", seq=None):
         """Decode one trace_data record into an Event (and store it)."""
@@ -163,12 +162,11 @@ class TraceCollector:
         fields.update(event=name, event_id=event_id, sub=sub_name,
                       mcu_clock=clock)
         ev = Event(
-            seq=self._seq, kind="trace", severity=severity,
+            seq=self.timeline.allocate_seq(), kind="trace", severity=severity,
             source="%s/%s" % (self.source, sub_name), summary=summary,
             mtime=mtime, time_basis=basis, t_exact=exact, fields=fields,
             raw="trace event=%d sub=%d level=%d clock=%u data=%r"
                 % (event_id, sub, level, clock, data))
-        self._seq += 1
         return self.timeline.add(ev)
 
     def feed(self, records) -> Timeline:

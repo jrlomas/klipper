@@ -94,6 +94,9 @@ for *this* machine" is learned, not assumed. Baselines maturing at fleet
 scale is a later-milestone goal ([08-Roadmap.md](08-Roadmap.md)); the
 engine that drives it is the deterministic floor that exists now.
 
-The current daemon supplies the live deterministic rule-evaluation loop and
-status publication. Learning and comparing per-machine drift baselines remains
-Milestone D work; live matching is not presented as learned anomaly detection.
+The daemon supplies the live deterministic rule-evaluation loop, status
+publication, bounded durable incident history, and persistent per-machine
+baselines for link/timesync metrics. The baseline monitor requires a minimum
+healthy sample set, uses deterministic variance thresholds, and does not let an
+outlier teach itself into the baseline. Fleet-scale baseline maturation remains
+Milestone D work.

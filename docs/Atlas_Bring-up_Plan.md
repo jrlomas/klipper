@@ -67,6 +67,11 @@ and gates every commit. No hardware, no GPU, no model.
   *Expect:* an idempotent staged install with a private environment, hardened
   systemd unit, Moonraker registration, and no system-service side effects.
   *Pass:* ALL PASS.
+- [ ] **Structured observability + durability.** *Do:*
+  `python3 test/atlas_observe_test.py`. *Expect:* trace/execution/link/timesync
+  JSONL merges on exact machine time; partial lines and rotation recover;
+  incidents deduplicate and retain across restart; learned baselines persist
+  and flag drift. *Pass:* ALL PASS.
 - [ ] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.

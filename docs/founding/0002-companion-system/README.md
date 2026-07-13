@@ -22,7 +22,7 @@ Status: **Split into the numbered series; the deterministic floor
 (Milestone A) and the first patterns (Milestone B) are realized in the
 [`atlas/`](../../../atlas/) package + [`src/trace.c`](../../../src/trace.c);
 the Milestone C safety contracts are built and CPU-tested; the
-intelligence tier is in progress. 151 checks across 16 test suites, all
+intelligence tier is in progress. 156 checks across 17 test suites, all
 green.** Each document's own status line records its precise state.
 
 ## The documents

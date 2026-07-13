@@ -111,18 +111,28 @@ def _cmd_bundle(args) -> int:
 
 
 def _cmd_serve(args) -> int:
+    state_dir = os.path.dirname(os.path.abspath(
+        os.path.expanduser(args.state_file)))
     daemon = AtlasDaemon(
         log_path=args.logfile, state_path=args.state_file,
         catalog_path=args.catalog, interval=args.interval,
-        max_events=args.max_events, heartbeat=args.heartbeat)
+        max_events=args.max_events, heartbeat=args.heartbeat,
+        telemetry_paths=args.telemetry,
+        history_path=args.history_file or os.path.join(
+            state_dir, "incidents.sqlite3"),
+        baseline_path=args.baseline_file or os.path.join(
+            state_dir, "baselines.json"))
     if args.once:
         state = daemon.poll_once(force=True)
         print(json.dumps(state, indent=2, sort_keys=True))
         return 0
     try:
-        asyncio.run(daemon.serve())
-    except KeyboardInterrupt:
-        pass
+        try:
+            asyncio.run(daemon.serve())
+        except KeyboardInterrupt:
+            pass
+    finally:
+        daemon.close()
     return 0
 
 
@@ -175,6 +185,12 @@ def main(argv=None) -> int:
     s.add_argument("--heartbeat", type=float, default=DEFAULT_HEARTBEAT,
                    help="seconds between idle health snapshots")
     s.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
+    s.add_argument("--telemetry", action="append", default=[],
+                   help="newline-delimited structured telemetry (repeatable)")
+    s.add_argument("--history-file",
+                   help="SQLite incident history (default: beside state file)")
+    s.add_argument("--baseline-file",
+                   help="machine baseline JSON (default: beside state file)")
     s.add_argument("--once", action="store_true",
                    help="publish one snapshot and exit")
     s.set_defaults(func=_cmd_serve)

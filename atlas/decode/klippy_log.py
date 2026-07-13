@@ -111,9 +111,8 @@ def _coerce(val: str):
 class KlippyLogDecoder:
     """Decode a klippy.log (as text or lines) into a Timeline."""
 
-    def __init__(self):
-        self.timeline = Timeline()
-        self._seq = 0
+    def __init__(self, timeline=None):
+        self.timeline = timeline if timeline is not None else Timeline()
         self._clock = None          # last known monotonic time (seconds)
         self._basis = "none"
         self._in_traceback = False
@@ -126,11 +125,11 @@ class KlippyLogDecoder:
         if mtime is None:
             mtime = self._clock
         ev = Event(
-            seq=self._seq, kind=kind, source=source, severity=severity,
+            seq=self.timeline.allocate_seq(), kind=kind, source=source,
+            severity=severity,
             summary=summary, mtime=mtime,
             time_basis=self._basis if mtime is not None else "none",
             t_exact=t_exact, fields=fields, raw=fields.pop("_raw", ""))
-        self._seq += 1
         return self.timeline.add(ev)
 
     # -- driver -----------------------------------------------------------

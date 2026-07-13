@@ -99,6 +99,7 @@ if [ ! -f "${ENV_DEST}" ]; then
     {
         printf 'ATLAS_LOG=%s\n' "${ATLAS_DATA}/logs/klippy.log"
         printf 'ATLAS_STATE=%s\n' "${STATE_FILE}"
+        printf 'ATLAS_TELEMETRY=%s\n' "${ATLAS_DATA}/logs/atlas-telemetry.jsonl"
         printf 'ATLAS_CATALOG=%s\n' "${ATLAS_REPO}/atlas/diagnosis/patterns"
         printf 'ATLAS_INTERVAL=0.5\n'
         printf 'ATLAS_HEARTBEAT=5.0\n'

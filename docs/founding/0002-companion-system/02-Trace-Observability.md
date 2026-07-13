@@ -84,7 +84,9 @@ it; the health monitor and the LLM interpreter all read the same store.
   fault. *Built:* [`src/trace.c`](../../../src/trace.c),
   [`src/trace.h`](../../../src/trace.h), behind `WANT_TRACE`, F072-fit.
 - **Host trace collector** — decode trace records via the dictionary onto
-  the merged timeline. *Built:* [`atlas/decode/trace.py`](../../../atlas/decode/trace.py).
+  the merged timeline. *Built:* [`atlas/decode/trace.py`](../../../atlas/decode/trace.py),
+  with the live trace/execution/link/timesync JSONL boundary in
+  [`atlas/observe.py`](../../../atlas/observe.py).
 - **Merged-timeline store** — the machine-time-ordered stream across all
   MCUs. *Built:* [`atlas/timeline.py`](../../../atlas/timeline.py).
 - **Live viewer** — a Mainsail panel if it reaches, else a standalone

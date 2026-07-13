@@ -53,6 +53,7 @@ def test_staged_install_is_complete_and_idempotent():
         assert moonraker.read_text().count("[atlas]") == 1
         assert asvc.read_text().splitlines().count("atlas") == 1
         assert "ATLAS_HEARTBEAT=5.0" in env_file.read_text()
+        assert "ATLAS_TELEMETRY=" in env_file.read_text()
         print("PASS: staged install is complete, private, hardened, and idempotent")
 
 
