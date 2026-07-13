@@ -56,9 +56,19 @@ is `docs/helix-landing.html`.
 **The map you'll reuse most** (HELIX foundations Atlas is built on — read
 these before designing anything):
 
+> **Envelope architecture — know this before you touch the protocol.** The
+> application firmware and klippy run **stock Klipper v1** (`command.c`,
+> `msgproto.py` are byte-identical to upstream; HELIX commands are ordinary
+> `DECL_COMMAND`s). intentproto is an **additive envelope** + the
+> bootloader/third-party core + the host v2 binding — *not* the app's
+> dispatcher. So the trace plane (below) reuses intentproto's registry as a
+> **new, additive** channel; it does not ride the app's stock command
+> registration. See [Upstream_Tracking](../../Upstream_Tracking.md) and
+> [Protocol_v2](../../Protocol_v2.md).
+
 | Foundation | Where | Why Atlas needs it |
 | --- | --- | --- |
-| Protocol library, annotation/registry, dictionary, extension self-description, Ed25519 signing | `lib/intentproto/` (`include/intentproto/proto.hpp` is the spine) | The **trace plane** registers events the same way commands are registered; the decoder reads the dictionary as its symbol table; signing secures KB pulls and images. |
+| Protocol library, annotation/registry, dictionary, extension self-description, Ed25519 signing | `lib/intentproto/` (`include/intentproto/proto.hpp` is the spine) | The **trace plane** reuses intentproto's registry as an additive channel; the decoder reads the dictionary as its symbol table; signing secures KB pulls and images. |
 | Execution log ("flight recorder") | `src/execlog.c` / `.h` | Primary raw input to the **blackbox decoder**. |
 | Machine time | `src/timesync.c`, `klippy/extras/timesync.py`, FD-0001 doc 01 | The **merge key** that orders multi-MCU events into one timeline. |
 | Capability / version advertisement | `klippy/extras/helix_status.py` (`HELIX_STATUS`), `BOARD_SYSCALL_ABI`, `FRAMING_V2` | Seed of **fleet coherence**: what a board *is* and *speaks*. |

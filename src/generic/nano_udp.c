@@ -295,21 +295,36 @@ nano_rx_accepted(void *ctx)
 }
 
 static void
-nano_send(void *ctx, const uint8_t *data, uint32_t len)
+nano_send_to(const uint8_t *mac, uint32_t ip, uint16_t port,
+             const uint8_t *data, uint32_t len)
 {
-    if (!have_peer || !mac_emit)
+    if (!mac_emit)
         return;
     uint8_t frame[NANO_UDP_OVERHEAD + UDPDG_DATAGRAM_MAX];
     uint32_t flen = nano_udp_build_frame(frame, sizeof(frame), our_mac
-                                         , peer_mac, our_ip, peer_ip
-                                         , our_port, peer_port, data, len);
+                                         , mac, our_ip, ip
+                                         , our_port, port, data, len);
     if (flen)
         mac_emit(frame, flen);
+}
+
+static void
+nano_send(void *ctx, const uint8_t *data, uint32_t len)
+{
+    if (have_peer)
+        nano_send_to(peer_mac, peer_ip, peer_port, data, len);
+}
+
+static void
+nano_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
+{
+    nano_send_to(cand_mac, cand_ip, cand_port, data, len);
 }
 
 const struct udp_console_ops nano_udp_ops = {
     .recv = nano_recv,
     .send = nano_send,
+    .send_candidate = nano_send_candidate,
     .rx_accepted = nano_rx_accepted,
 };
 

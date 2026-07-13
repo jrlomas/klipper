@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "HELIX upstream-tracking guard manifest. See docs/Upstream_Tracking.md.",
+    "The 'stock_files' below are UNMODIFIED upstream Klipper and MUST stay",
+    "byte-identical so future Klipper releases merge into HELIX cleanly.",
+    "HELIX's protocol novelty lives in the additive intentproto v2 envelope,",
+    "never by editing these files. If an upstream merge legitimately changes",
+    "one of them, re-run `scripts/check_upstream_stock.py --update` as part of",
+    "that merge and record the new baseline here (that is the ONLY sanctioned",
+    "way these hashes change).",
+    "The 'app_quarantine' rule keeps the intentproto v1-reimplementation TUs",
+    "(proto/dict/host) out of every APPLICATION firmware image; only the",
+    "bootloader (the sanctioned exception) may link them."
+  ],
+  "upstream": {
+    "repo": "https://github.com/Klipper3d/klipper",
+    "import": "upstream master @ db88a336 (2026-05-17, post-0.13.0)",
+    "note": "HELIX imported upstream Klipper's master branch (root graft db88a336; includes work past the 0.13.0 tag, e.g. ads131m0x). The stock_files below match that imported tree and must stay byte-identical to it so future upstream merges apply cleanly."
+  },
+  "stock_files": [
+    { "path": "src/command.c",             "sha256": "36d3d245daacb4f77b2be55087fe8a26f9b12c9e90f194130d585dbb2ae79016" },
+    { "path": "src/generic/crc16_ccitt.c", "sha256": "47dd06f03860d84d7db7d13f873cbb0c8f0ada31c3dffc87ffd8b85a67697a8c" },
+    { "path": "klippy/serialhdl.py",       "sha256": "7f840a22e50ae9589292969f21f18c0a105f4a22e52a506bac7d3e82883ef553" },
+    { "path": "klippy/msgproto.py",        "sha256": "fdb8c203af0dc336b1a0507804b4ceb5ddd9378b46cf889d52393ea756928486" }
+  ],
+  "app_quarantine": {
+    "forbidden": ["proto.cpp", "proto.o", "dict.cpp", "dict.o", "host.cpp", "host.o"],
+    "app_build_files": [
+      "src/linux/Makefile",
+      "src/stm32/Makefile",
+      "src/esp32/main/CMakeLists.txt"
+    ],
+    "exceptions": ["src/boot_app/Makefile"],
+    "note": "proto/dict/host are the intentproto v1-reimplementation TUs. This rule scopes THIS repo's application firmware: they must never link into a klipper application image (which uses stock command.c) — only the in-repo bootloader (src/boot_app) may. Full-library consumers OUTSIDE this repo are a sanctioned, intended use of the MIT library: e.g. the OpenAMS mainboard-firmware, whose own (non-klipper) application is built ON intentproto's core. This guard does not police those repos."
+  }
+}

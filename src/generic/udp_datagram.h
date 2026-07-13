@@ -45,4 +45,28 @@ int32_t udpdg_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
 uint32_t udpdg_take_recovered(uint8_t *out, uint32_t cap);
 void udpdg_get_stats(struct udpdg_stats *st);
 
+// ---- optional DTLS-class session responder (CONFIG_WANT_DATAGRAM_SESSION) ----
+// Classify a raw datagram: 1 = handshake message, 2 = session data
+// (DGF_SESSION), 0 = static-path datagram.
+int udpsess_msg_type(const uint8_t *data, uint32_t len);
+// Initialize the responder session. random16 is 16 bytes of per-boot
+// nonce entropy (uniqueness, not secrecy — the PSK authenticates).
+void udpsess_init(const uint8_t *psk, uint32_t psk_len,
+                  const uint8_t *board_id, uint32_t id_len,
+                  const uint8_t *random16);
+int udpsess_established(void);
+// Feed one handshake message; any reply is written to out (>=256) and
+// its length returned (0 if none).
+uint32_t udpsess_on_handshake(const uint8_t *msg, uint32_t len,
+                              uint8_t *out, uint32_t cap);
+// Return 1 once after a ClientFin has authenticated and the responder
+// adopted that candidate as the live session peer.
+int udpsess_take_peer_adopted(void);
+// Seal frames into a session datagram (out >= len + 32). Returns size.
+uint32_t udpsess_encode(uint8_t *out, uint32_t cap, const uint8_t *frames,
+                        uint32_t len);
+// Unwrap a session datagram in place: frames' length with *frames set;
+// <0 on auth failure / malformed / replay.
+int32_t udpsess_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
+
 #endif // udp_datagram.h

@@ -145,20 +145,11 @@ struct shmem_console_shared {
     // Modem -> klipper: sealed datagrams, each record prefixed with
     // the SHMEM_ADDR_MAX-byte source-address blob
     struct shmem_ring rx;
-    // Klipper -> modem: sealed datagrams (no address; the modem
-    // sends to the published peer below)
+    // Klipper -> modem: sealed datagrams, each prefixed with its opaque
+    // destination address. Carrying the address per record lets a
+    // ServerHello reach an uncommitted handshake candidate without
+    // redirecting the authenticated peer.
     struct shmem_ring tx;
-
-    // Authenticated-peer publication.  Writer: core 1 (on HMAC
-    // acceptance, ops->rx_accepted).  Reader: core 0 (before every
-    // transmit).  Classic seqlock: writer makes seq odd, updates the
-    // words, makes seq even; the reader retries while seq is odd or
-    // moved.  The address is stored as whole words so both sides can
-    // use relaxed atomic word accesses between the seqlock fences
-    // (C11 seqlock idiom - plain accesses would be a data race).
-    uint32_t peer_seq;
-    uint32_t peer_valid;
-    uint32_t peer_addr[SHMEM_ADDR_MAX / 4];
 
     // Boot handshake: core 0 fills psk/trust before unstalling core
     // 1; core 1 sets core1_alive once sched_main is entered.

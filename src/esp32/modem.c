@@ -10,8 +10,8 @@
 // core behind the ring (shmem_console.c + the unchanged generic
 // glue).  The modem cannot forge traffic core 1 will accept, and it
 // only ever transmits to the peer core 1 has authenticated - the
-// address blob travels with each rx record and comes back through
-// the seqlock publication below.
+// address blob travels with each rx record and comes back attached to
+// each tx record after core 1 has authenticated it.
 //
 // The task alternates a 1ms-timeout recvfrom with a tx-ring drain,
 // so board->host latency is bounded by ~1ms + the console's own 2ms
@@ -40,27 +40,6 @@ static int modem_sock = -1;
 _Static_assert(sizeof(struct sockaddr_in) <= SHMEM_ADDR_MAX
                , "sockaddr_in must fit the ring's address blob");
 
-// Seqlock read side (writer: shmem_console.c on core 1).  Returns 0
-// until some datagram has passed authentication on core 1.
-static int
-modem_get_peer(struct sockaddr_in *out)
-{
-    if (!__atomic_load_n(&esp32_shmem.peer_valid, __ATOMIC_ACQUIRE))
-        return 0;
-    uint32_t words[SHMEM_ADDR_MAX / 4], s1, s2;
-    do {
-        s1 = __atomic_load_n(&esp32_shmem.peer_seq, __ATOMIC_RELAXED);
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        for (uint32_t i = 0; i < SHMEM_ADDR_MAX / 4; i++)
-            words[i] = __atomic_load_n(&esp32_shmem.peer_addr[i]
-                                       , __ATOMIC_RELAXED);
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        s2 = __atomic_load_n(&esp32_shmem.peer_seq, __ATOMIC_RELAXED);
-    } while (s1 != s2 || (s1 & 1));
-    memcpy(out, words, sizeof(struct sockaddr_in));
-    return 1;
-}
-
 // Report (once) a fault parked on the bare core - the only
 // diagnostics channel core 1's fatal-exception handler has
 static void
@@ -79,12 +58,12 @@ modem_check_core1_fault(void)
 static void
 modem_task(void *arg)
 {
-    uint8_t buf[UDPDG_DATAGRAM_MAX];
+    uint8_t buf[SHMEM_ADDR_MAX + UDPDG_DATAGRAM_MAX];
     for (;;) {
         // Air -> ring (1ms poll granularity via SO_RCVTIMEO)
         struct sockaddr_in src;
         socklen_t sl = sizeof(src);
-        int ret = recvfrom(modem_sock, buf, sizeof(buf), 0
+        int ret = recvfrom(modem_sock, buf, UDPDG_DATAGRAM_MAX, 0
                            , (struct sockaddr *)&src, &sl);
         if (ret > 0) {
             uint8_t addr[SHMEM_ADDR_MAX];
@@ -94,13 +73,17 @@ modem_task(void *arg)
             shmem_ring_push(&esp32_shmem.rx, addr, sizeof(addr), buf, ret);
         }
 
-        // Ring -> air (only to the authenticated peer)
+        // Ring -> air. Core 1 attaches the authenticated destination to
+        // ordinary traffic, or the uncommitted candidate to ServerHello.
         while (shmem_ring_readable(&esp32_shmem.tx)) {
             int32_t len = shmem_ring_pop(&esp32_shmem.tx, buf, sizeof(buf));
             struct sockaddr_in peer;
-            if (len > 0 && modem_get_peer(&peer))
-                sendto(modem_sock, buf, len, 0
+            if (len > SHMEM_ADDR_MAX) {
+                memcpy(&peer, buf, sizeof(peer));
+                sendto(modem_sock, buf + SHMEM_ADDR_MAX,
+                       len - SHMEM_ADDR_MAX, 0
                        , (const struct sockaddr *)&peer, sizeof(peer));
+            }
         }
 
         modem_check_core1_fault();

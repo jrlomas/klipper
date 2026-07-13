@@ -9,10 +9,16 @@
 # the position anchor (trajectory_rebase) and the segment/hold command
 # surface.
 #
-# Callers may queue protocol segments directly or feed a scalar value
-# function through feed_value_trajectory().  The latter samples and
-# quantizes the whole trajectory before touching the MCU, corrects each
-# span from the exact fixed-point accumulator, and terminates in a hold.
+# Two host interfaces are provided:
+#   * the direct path - rebase() the anchor and queue_segment() wire
+#     spans by hand; and
+#   * the fitter path - feed_value_trajectory() takes a piecewise-
+#     linear value trajectory (print_time, value) and runs it through
+#     the SAME C segfit fitter the stepper path uses (a private trapq
+#     + kinematics stand in for the joint), so wire quantization and
+#     chained-position exactness are shared, not reimplemented.
+# The same entry point also accepts a scalar callback; that path preflights
+# and bounds the complete sampled trajectory before touching the MCU.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 #
@@ -85,6 +91,105 @@ def plan_value_trajectory(duration, value_at, frequency,
     }
 
 
+# Default fit tolerance for a VALUE channel, in sub-units: 1/256 of a
+# native unit (~0.4% of full scale at full_scale=1.0) - comfortably
+# below one duty LSB of a typical 8-bit-or-better PWM resolution.
+DEFAULT_TOLERANCE_SU = SUBUNITS / 256.
+
+
+class ValueTrajectoryFitter:
+    """Fit a piecewise-linear VALUE trajectory into wire segments.
+
+    Feeds a (print_time, value) polyline through the C segfit sampler -
+    the same fitter/quantizer the stepper path uses - by standing up a
+    private trapq + single-axis kinematics as the "joint".  The fitter
+    maintains the exact Q32.32 chained anchor, so segments emitted here
+    integrate on the MCU to the same sub-unit positions the host
+    computed.  Pure chelper: no printer or MCU objects, so it is unit
+    testable standalone (see test/traj_pwm_fitter_test.py).
+    """
+    def __init__(self, mcu_freq, tolerance_su=DEFAULT_TOLERANCE_SU,
+                 sample_time=DEFAULT_SAMPLE_TIME):
+        import chelper
+        ffi_main, self.ffi_lib = chelper.get_ffi()
+        self.tq = ffi_main.gc(self.ffi_lib.trapq_alloc(),
+                              self.ffi_lib.trapq_free)
+        # A plain cartesian 'x' solver: position(t) = the move's x - i.e.
+        # the value itself.  The fitter only uses its trapq walk +
+        # calc_position callback.
+        self.sk = ffi_main.gc(self.ffi_lib.cartesian_stepper_alloc(b'x'),
+                              self.ffi_lib.free)
+        # step_dist is irrelevant for pure sampling (no step generation
+        # runs on this solver); 1.0 keeps the kinematics well-formed.
+        self.ffi_lib.itersolve_set_trapq(self.sk, self.tq, 1.)
+        self.segfit = ffi_main.gc(self.ffi_lib.segfit_alloc(),
+                                  self.ffi_lib.segfit_free)
+        # su per native value unit is simply SUBUNITS (value 1.0 = 2^16).
+        self.ffi_lib.segfit_setup(self.segfit, self.sk, mcu_freq,
+                                  SUBUNITS, tolerance_su, sample_time)
+        self.anchored = False
+        self.end_time = 0.
+        self.end_value = 0.
+
+    def anchor(self, print_time, value):
+        # Anchor the chained stream at (print_time, value).  Returns the
+        # integer sub-unit position for the caller's rebase command.
+        pos_su = int(round(value * SUBUNITS))
+        self.ffi_lib.segfit_set_anchor(self.segfit, print_time,
+                                       pos_su << 32)
+        self.anchored = True
+        self.end_time = print_time
+        self.end_value = value
+        return pos_su
+
+    def position_su(self):
+        # Exact integer sub-unit position of the chained anchor.
+        return int(self.ffi_lib.segfit_get_anchor(self.segfit)) >> 32
+
+    def feed(self, knots, emit):
+        """Fit the polyline 'knots' ([(print_time, value), ...], strictly
+        increasing times, knots[0] == the current anchor point) and call
+        emit(duration, velocity, accel) for each wire segment.  Finalizes
+        the tail span so the value lands on the last knot, and returns
+        the exact end position in sub-units."""
+        if not self.anchored:
+            raise ValueError("value trajectory fed before anchor()")
+        # Append each linear span as a cruise move on the private trapq.
+        for (t0, v0), (t1, v1) in zip(knots[:-1], knots[1:]):
+            dt = t1 - t0
+            if dt <= 0.:
+                raise ValueError("value trajectory times must be"
+                                 " strictly increasing")
+            dv = v1 - v0
+            if dv >= 0.:
+                axis_r, rate = 1., dv / dt
+            else:
+                axis_r, rate = -1., -dv / dt
+            self.ffi_lib.trapq_append(self.tq, t0, 0., dt, 0.,
+                                      v0, 0., 0., axis_r, 0., 0.,
+                                      rate, rate, 0.)
+        t_end = knots[-1][0]
+        n = self.ffi_lib.segfit_generate(self.segfit, t_end)
+        if n < 0:
+            raise ValueError("value trajectory fit overflow")
+        self._drain(n, emit)
+        n = self.ffi_lib.segfit_finalize(self.segfit)
+        if n < 0:
+            raise ValueError("value trajectory fit overflow")
+        self._drain(n, emit)
+        self.ffi_lib.trapq_finalize_moves(self.tq, t_end + 1., t_end + 1.)
+        self.end_time = t_end
+        self.end_value = knots[-1][1]
+        return self.position_su()
+
+    def _drain(self, n, emit):
+        segs = self.ffi_lib.segfit_get_segs(self.segfit)
+        for i in range(n):
+            s = segs[i]
+            if s.duration:
+                emit(s.duration, s.velocity, s.accel)
+
+
 def subunit_to_duty(pos_su, scale, max_value):
     # Pure sub-unit position -> duty mapping, mirroring
     # traj_pwm_duty() in src/traj_pwm.c: duty = pos_su * max_value /
@@ -122,6 +227,10 @@ class TrajectoryPWM:
             'shutdown_value', 0., minval=0., maxval=1.)
         self.underrun_decel = config.getfloat(
             'motion_underrun_decel', DEFAULT_UNDERRUN_DECEL, above=0.)
+        # Fit tolerance for feed_value_trajectory(), in sub-units.
+        self.tolerance_su = config.getfloat(
+            'motion_tolerance', DEFAULT_TOLERANCE_SU, above=0.)
+        self._fitter = None
         self.oid = None
         self.max_value = 0
         self.scale = int(self.full_scale * SUBUNITS + .5)
@@ -172,6 +281,10 @@ class TrajectoryPWM:
         clock = self.mcu.print_time_to_clock(print_time)
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
         self.need_rebase = False
+        # A manual re-anchor invalidates the fitter's chained stream; the
+        # next feed_value_trajectory() re-anchors at its first knot.
+        if getattr(self, '_fitter', None) is not None:
+            self._fitter.anchored = False
 
     def queue_segment(self, duration_ticks, velocity, accel, flags=0):
         # Queue one constant-acceleration span.  velocity is Q16.16
@@ -187,8 +300,26 @@ class TrajectoryPWM:
         params = self.get_pos_cmd.send([self.oid])
         return params['pos'] / SUBUNITS
 
-    def feed_value_trajectory(self, print_time, duration, value_at,
+    def feed_value_trajectory(self, trajectory, duration=None, value_at=None,
                               sample_time=None):
+        """Queue either a polyline or a bounded sampled scalar function.
+
+        The preferred form is ``feed_value_trajectory(knots)`` where knots
+        is a list of ``(print_time, value_native)`` pairs. For callers that
+        naturally provide a function, the compatible form is
+        ``feed_value_trajectory(print_time, duration, value_at)``.
+        """
+        if duration is None and value_at is None:
+            return self._feed_value_knots(trajectory)
+        if duration is None or value_at is None:
+            raise self.printer.command_error(
+                "value trajectory requires knots or print_time, duration,"
+                " value_at")
+        return self._feed_sampled_value_trajectory(
+            trajectory, duration, value_at, sample_time)
+
+    def _feed_sampled_value_trajectory(self, print_time, duration, value_at,
+                                       sample_time=None):
         """Queue a time-indexed native-unit value function.
 
         The complete plan is evaluated and range-checked before rebase, so
@@ -213,6 +344,51 @@ class TrajectoryPWM:
         self.hold(terminal_ticks)
         self.last_plan = plan
         return plan
+
+    def _feed_value_knots(self, knots):
+        # Fit a piecewise-linear value trajectory (list of
+        # (print_time, value_native), strictly increasing times) through
+        # the C segfit fitter and ship the segments - the natural
+        # interface for laser/spindle raster where power tracks a
+        # commanded value trajectory.  Anchors (rebases) automatically at
+        # knots[0] when unanchored or after an underrun; a continuing
+        # call must start where the previous one ended.  Returns the
+        # exact end value in native units.
+        if self.queue_cmd is None:
+            raise self.printer.command_error(
+                "trajectory_pwm %s is not configured yet" % (self.name,))
+        if len(knots) < 2:
+            raise self.printer.command_error(
+                "value trajectory needs at least 2 (time, value) knots")
+        if self._fitter is None:
+            self._fitter = ValueTrajectoryFitter(
+                self.mcu.seconds_to_clock(1.), self.tolerance_su,
+                self.sample_time)
+        t0, v0 = knots[0]
+        if self.need_rebase or not self._fitter.anchored:
+            clock = self.mcu.print_time_to_clock(t0)
+            pos_su = self._fitter.anchor(t0, v0)
+            self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
+            self.need_rebase = False
+        elif (abs(t0 - self._fitter.end_time) > self.sample_time
+              or abs(v0 - self._fitter.end_value) * SUBUNITS
+              > self.tolerance_su):
+            raise self.printer.command_error(
+                "value trajectory discontinuity: chunk starts at"
+                " (%.6f, %.4f) but the stream ended at (%.6f, %.4f) -"
+                " rebase first" % (t0, v0, self._fitter.end_time,
+                                   self._fitter.end_value))
+        def emit(duration, velocity, accel):
+            if not velocity and not accel:
+                self.hold_cmd.send([self.oid, duration])
+            else:
+                self.queue_cmd.send([self.oid, 0, duration,
+                                     velocity, accel])
+        try:
+            end_su = self._fitter.feed(knots, emit)
+        except ValueError as e:
+            raise self.printer.command_error(str(e))
+        return end_su / SUBUNITS
 
     def _handle_underrun(self, params):
         self.need_rebase = True

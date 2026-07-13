@@ -177,6 +177,83 @@ the stock motion path.
 #   loop thread to stop. The default is 5.0.
 ```
 
+### [helix_self_test]
+
+The built-in test mode: run each board's live verification gates through
+the protocol (firmware side `WANT_SELF_TEST`; see
+[Helix_Test_Plan](Helix_Test_Plan.md)). The suite executes the same
+invariants the desktop test suites enforce — the wire CRC check vector,
+timer monotonicity, a RAM pattern walk, and the trajectory fixed-point
+kernel checked against host-computed golden vectors — on the real
+silicon, plus a host↔board round-trip latency measurement. Registers
+`HELIX_SELF_TEST [MCU=<name>]` as an on-demand diagnostic.
+
+```
+[helix_self_test]
+#on_connect: False
+#   Run the full suite automatically every time klippy connects, and
+#   log the report. The default is False.
+#required: False
+#   With on_connect, treat any test failure as a startup error (the
+#   "verification is part of the protocol" mode). The default is
+#   False.
+```
+
+### [intentproto_transport]
+
+The v2 transport bridge (see [Protocol v2](Protocol_v2.md)): lets klippy
+speak intentproto v2 to a micro-controller as an authenticated,
+FEC-protected **envelope around unchanged stock v1 frames**. The bridge
+publishes a PTY; point the matching `[mcu]` section's `serial:` at it.
+One section per bridged micro-controller.
+
+```
+[intentproto_transport my_toolhead]
+#mode: datagram
+#   Envelope mode. "datagram": authenticated (truncated HMAC-SHA256) +
+#   erasure-FEC UDP datagrams for network boards (WiFi/Ethernet).
+#   "bch": BCH error-correcting console framing for a serial (UART)
+#   link to a board built with WANT_CONSOLE_FRAMING_V2. Required.
+#board_address: 192.168.1.50:41414
+#   Datagram mode: the board's UDP address as host:port. Required in
+#   datagram mode.
+#listen_port: 41414
+#   Datagram mode: local UDP port to listen on. The default is 41414.
+#device: /dev/ttyAMA0
+#   Bch mode: the serial device to the board. Required in bch mode.
+#baud: 250000
+#   Bch mode: baud rate of the serial device. The default is 250000.
+#psk_file:
+#   Path to the pre-shared key file used to authenticate datagrams
+#   (see docs/Protocol_v2.md and scripts/gen_psk.py). Authentication
+#   is mandatory: set this, or explicitly confess trust_network.
+#trust_network: False
+#   Explicitly run the link unauthenticated. Only acceptable on a
+#   physically isolated network segment. The default is False.
+#fec_k: 0
+#   XOR erasure coding block size: emit one parity datagram every k
+#   data datagrams and recover a single lost datagram per block. Must
+#   match the board's setting. 0 disables the erasure layer. The
+#   default is 0.
+#session: False
+#   Datagram mode: establish the DTLS-class authenticated session
+#   (HKDF per-session keys, epoch key rotation, per-board identity,
+#   replay window) on top of the static-PSK floor, instead of the
+#   static truncated-HMAC datagrams. Requires a psk_file (the session
+#   is keyed from the PSK) and a board built with WANT_DATAGRAM_SESSION;
+#   a board that never sees a ClientHello stays on the static path. The
+#   default is False.
+#board_id:
+#   Datagram session mode: the identity the board must present in the
+#   session handshake (its CONFIG_DATAGRAM_SESSION_ID). The handshake
+#   is rejected if the board presents a different identity — give each
+#   board a distinct name and PSK. Required when session is True.
+#pty: /tmp/intentproto-my_toolhead
+#   Path of the PTY symlink the bridge publishes (what the [mcu]
+#   section's serial: should point at). The default is
+#   /tmp/intentproto-<name>.
+```
+
 ### [trajectory_queuing]
 
 Owns the actuators that opt into the trajectory-intention motion path
@@ -201,26 +278,38 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 
 ### [trajectory_pwm]
 
-Defines a sampled PWM/DAC actuator on the trajectory-intention path. Each
-section is named (for example, `[trajectory_pwm laser]`). The host API may
-queue segments directly or use `feed_value_trajectory(print_time, duration,
-value_at)` to preflight and emit a bounded scalar value function; physical
-waveform verification is covered by the HELIX bring-up plan.
+A sampled PWM/DAC trajectory actuator (FD-0001
+[doc 04](founding/0001-motion-intentions/04-Actuator_Backends.md)): a
+non-stepper output whose "position" is a level - laser power, spindle
+speed, a servo or analog-driven axis. The MCU samples the segment
+polynomial at a fixed loop rate and writes the mapped duty. Callers
+either drive `rebase()`/`queue_segment()` directly or feed a
+piecewise-linear value trajectory through `feed_value_trajectory()`,
+which fits it with the same C segment fitter the stepper path uses. The
+same method also accepts `(print_time, duration, value_at)` for a bounded,
+fully preflighted sampled scalar function.
 
 ```
-[trajectory_pwm laser]
+[trajectory_pwm my_laser]
 pin:
-#   PWM-capable output pin. This parameter must be provided.
-#cycle_time: 0.100
-#   Hardware PWM cycle time in seconds.
-#motion_sample_time: 0.001
-#   MCU output sampling cadence and default host scalar sampling interval.
+#   Output pin. Required.
 #full_scale: 1.0
-#   Native trajectory value that maps to 100 percent duty.
-#shutdown_value: 0.0
-#   Fraction of full-scale output used on machine shutdown (0.0 to 1.0).
-#motion_underrun_decel: 5000.0
-#   Native-units-per-second-squared deceleration used on queue underrun.
+#   Native value that maps to 100% output. The default is 1.0.
+#cycle_time: 0.100
+#   PWM cycle time in seconds. The default is 0.100.
+#shutdown_value: 0
+#   Fraction of full scale driven on a machine shutdown. The default
+#   is 0.
+#motion_sample_time: 0.001
+#   Sampling quantum of the MCU-side polynomial evaluation and of the
+#   host fitter. The default is 0.001 seconds.
+#motion_tolerance: 256
+#   Fit tolerance of feed_value_trajectory(), in sub-units (one native
+#   unit = 65536 sub-units). The default is 256 (1/256 of a native
+#   unit, below one duty LSB at 8-bit-or-better PWM resolution).
+#motion_underrun_decel: 5000
+#   Deceleration (native units/s^2) of the autonomous ramp the MCU
+#   synthesizes if the segment queue underruns. The default is 5000.
 ```
 
 ### [helix_status]

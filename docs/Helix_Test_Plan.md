@@ -109,11 +109,14 @@ workstation, no amount of hardware poking will save you.
   Expect: all link.
   Pass: no build breaks introduced by the fork.
 
-- [ ] **0.8 — Loopback protocol soak (nano_udp).**
-  Do: run `test/nano_udp/run.sh` (host ↔ minimal device over UDP loopback).
-  Expect: identify handshake, framing-v2 latch, and datagram auth all
-  succeed over the socket path with no real hardware.
-  Pass: clean run, no CRC/BCH/HMAC errors in the summary.
+- [ ] **0.8 — nano_udp stack unit test.**
+  Do: run `test/nano_udp/run.sh`.
+  Expect: the minimal UDP/IP stack (`src/generic/nano_udp.c`, the RMII
+  path) parses/builds datagrams correctly. **Note:** this test compiles
+  *only* `nano_udp.c` — it does **not** exercise intentproto framing-v2 or
+  datagram auth (those are covered by `test_datagram` / `test_negotiate` /
+  `test_host` in 0.1).
+  Pass: clean run.
 
 ---
 
@@ -159,14 +162,40 @@ Prove the wire before you trust it to carry motion.
 
 - [ ] **2.1 — Identify.** Host connects; MCU serves its dictionary.
   Pass: klippy starts, no version/CRC complaints.
+- [ ] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
+  (board built with `WANT_SELF_TEST`; `[helix_self_test]` configured —
+  or `on_connect: True` to make it automatic).
+  Expect: every advertised test passes ON THE BOARD — `crc_wire` returns
+  0x6F91 (the 0.2 vector, live), `timer_monotonic`, `ram_pattern`, and
+  `traj_kernel` (the board's fixed-point trajectory math equals the
+  host's golden vectors bit-for-bit on this silicon/compiler). The
+  report's link round-trip time is the wire-health fingerprint.
+  Pass: all PASS; record `timer_rate` and rtt as this board's baseline.
+  **This item is most of Phase 0 executed on the real hardware — a
+  failure here is a silicon/toolchain porting bug, catch it before
+  anything moves.**
 - [ ] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute.
-- [ ] **2.3 — Framing-v2 latch.** Force a v2 frame; confirm the link
-  latches to the BCH trailer and stays there (device never
-  auto-downgrades until reset).
-  Pass: `HELIX_STATUS`/link diagnostics show v2 active; `bch_corrected`
-  may be >0 on a noisy link, `bch_errors` stays 0.
+- [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
+  its stock v1 frames to v2 via the transport bridge
+  (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
+  Host loopware is already tested (`test/intentproto_transport_test.py`);
+  this validates it on silicon. Two modes:
+  - *Datagram (network — end-to-end today):* configure
+    `[intentproto_transport] mode: datagram` to a UDP/Ethernet board;
+    confirm authenticated datagrams flow, erasure-FEC recovers injected
+    loss, and a forged datagram is dropped. The MCU side is `udp_console.c`.
+  - *Console-BCH (UART — transform LIVE-tested in emulation):* build the
+    board with `WANT_CONSOLE_FRAMING_V2=y` (advertises `FRAMING_V2`),
+    configure `mode: bch`; confirm the board latches to v2 and normal
+    traffic survives. The de-frame/latch/BCH-correction logic is already
+    proven against linuxprocess firmware
+    (`test/console_v2_live_test.py`); what this validates on silicon is
+    the `serial_irq.c` IRQ-path call sites — a failure here points at
+    the IRQ glue, not the transform.
+  Pass: datagram mode clean and auth-enforced; console-BCH latches and runs
+  (a failure implicates the silicon IRQ glue, not the proven transform).
 - [ ] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
   Pass: a legacy-only host session is clean.
@@ -312,7 +341,8 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   shut down; host sees it paused (`FAILURE_RECOVERY_STATUS`).
   Pass: no shutdown; heaters stay on per policy.
 - [ ] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
-  Pass: re-handshake succeeds; link back to v2.
+  Pass: re-handshake succeeds; link re-established (datagram auth restored
+  where the transport uses it).
 - [ ] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
   Expect: each joint reconciles from its execution log to exactly where it
   stopped; the print continues; a joint marked
@@ -349,6 +379,20 @@ Phases 3/7/8 over each real transport.
 - [ ] **9.5 — Datagram loss tolerance.** Inject packet loss on 9.3/9.4.
   Pass: FEC + retransmit hide it up to the documented loss rate; beyond
   that it degrades to a clean pause, never a crash.
+- [ ] **9.6 — Mixed fleet: firehose + intent time agreement.** On a machine
+  with at least one **stock-Klipper (firehose) board** and one **HELIX
+  intent board** driving *independent* actuators (regime 1 of
+  [FD-0001 doc 14](founding/0001-motion-intentions/14-Heterogeneous_Fleets.md)),
+  schedule a coordinated timed event ("at T, board A pulses and board B
+  starts a move") and scope both.
+  Expect: both act at the same instant — `clocksync` (firehose) and the
+  machine-time beacon (intent) both map the host's print-time to the same
+  physical moment.
+  Pass: edges land within the time-model tolerance; the config-time
+  validator rejects a coordination *group* split across paradigms (try a
+  deliberately mixed rail — klippy must refuse to start with the doc-14
+  error). Record whether a coordinated group was (correctly) kept
+  single-paradigm.
 
 ---
 

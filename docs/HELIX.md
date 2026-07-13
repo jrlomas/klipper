@@ -168,17 +168,28 @@ triggers. Those uses aren't all built yet — the point is the substrate
 now makes them *reachable* rather than a fight with the scheduler.
 → [doc 09](founding/0001-motion-intentions/09-Hardware_Triggers.md)
 
-## One protocol, one library, every board the same
+## An additive library — and upstream stays upstream
 
-Under the hood, HELIX speaks a single protocol implemented **once** as a
-freestanding C++ library (`lib/intentproto`). Two decisions define it:
+HELIX keeps Klipper's classic **v1 protocol exactly as upstream ships
+it** — `src/command.c` and `klippy/msgproto.py` are byte-identical to
+Klipper, and every HELIX command is an ordinary Klipper command. That is
+not laziness; it is the mechanism by which HELIX **absorbs every future
+Klipper release cleanly** (see [Upstream_Tracking](Upstream_Tracking.md)).
+What HELIX *adds* is a single freestanding C++ library (`lib/intentproto`)
+that carries the v2 **envelope** — framing, authentication, forward error
+correction, datagrams — *around* unchanged stock command blocks, and that
+serves as the protocol core for the parts that can't run Klipper's own
+command layer:
 
-* **Annotation, not code generation.** A command is declared with a
-  macro next to its handler (`KLIPPER_METHOD(...)`) and registers itself
-  before `main()` — no external code generator, no build step that
-  parses your source, no generated files to drift out of sync. The
-  device's data dictionary is a *serialization of the live registry*,
-  served, not scraped.
+* **A library for the bootloader and for other people's boards.** The
+  same MIT library the bootloader links to speak the protocol is the one
+  a third-party board (like OpenAMS) links to join the ecosystem without
+  running Klipper's firmware. In it, a command is declared with a macro
+  next to its handler (`KLIPPER_METHOD(...)`) that self-registers before
+  `main()` — no external code generator, no source-scraping build step;
+  the data dictionary is a *serialization of the live registry*, served,
+  not scraped. (The application firmware itself keeps Klipper's stock
+  `DECL_COMMAND` path — the library is an *addition*, not a replacement.)
 * **A unified board syscall surface.** STM32 and ESP32 already implement
   the same board primitives; HELIX gathers them into one **versioned,
   capability-advertised syscall table** so a module is written once

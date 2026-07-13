@@ -13,7 +13,9 @@
 
 #include "intentproto/datagram.hpp"
 #include "intentproto/host.hpp"
+#include "intentproto/session_sec.hpp"
 #include "intentproto/proto.hpp"
+#include "intentproto/segment.hpp"
 
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +94,59 @@ int ip_frame_v2_decode(uint8_t* frame, size_t frame_len, size_t* payload_off,
     if (n >= 0 && payload_off)
         *payload_off = (size_t)(payload - frame);
     return n;
+}
+
+// ---- trajectory segment codec (FD-0001 doc 02) ----
+
+int32_t ip_segment_quantize(double true_value, unsigned order_k) {
+    return segment_quantize(true_value, order_k);
+}
+
+int64_t ip_segment_end_delta(uint32_t duration, int32_t velocity,
+                             int32_t accel, int32_t jerk, int32_t snap,
+                             int32_t crackle) {
+    return segment_end_delta(duration, velocity, accel, jerk, snap, crackle);
+}
+
+int64_t ip_segment_chain_advance(int64_t acc, uint32_t duration,
+                                 int32_t velocity, int32_t accel,
+                                 int32_t jerk, int32_t snap, int32_t crackle,
+                                 int64_t* new_acc) {
+    SegmentChain ch{acc};
+    int64_t pos = segment_chain_advance(&ch, duration, velocity, accel, jerk,
+                                        snap, crackle);
+    if (new_acc)
+        *new_acc = ch.acc;
+    return pos;
+}
+
+size_t ip_segment_encode(uint8_t* out, size_t cap, uint8_t oid, uint8_t flags,
+                         uint32_t duration, int32_t velocity, int32_t accel,
+                         int32_t jerk, int32_t snap, int32_t crackle) {
+    return segment_encode(out, cap, oid, flags, duration, velocity, accel,
+                          jerk, snap, crackle);
+}
+
+size_t ip_segment_encode_hold(uint8_t* out, size_t cap, uint8_t oid,
+                              uint32_t duration) {
+    return segment_encode_hold(out, cap, oid, duration);
+}
+
+int ip_segment_decode(const uint8_t* in, size_t len, ip_segment* seg) {
+    SegmentPayload sp;
+    int kind = segment_decode(in, len, &sp);
+    if (seg) {
+        seg->kind = sp.kind;
+        seg->oid = sp.oid;
+        seg->flags = sp.flags;
+        seg->duration = sp.duration;
+        seg->velocity = sp.velocity;
+        seg->accel = sp.accel;
+        seg->jerk = sp.jerk;
+        seg->snap = sp.snap;
+        seg->crackle = sp.crackle;
+    }
+    return kind;
 }
 
 // ---- host session ----
@@ -334,6 +389,101 @@ int ip_command_index_by_name(const char* name) {
         if (!strcmp(c->name, name))
             return idx;
     return -1;
+}
+
+// ---- secure session (session_sec.hpp) ----
+// The wrapper owns a copy of the PSK (SecureSession stores a pointer).
+struct ip_secure_session {
+    SecureSession s;
+    uint8_t psk[64];
+};
+
+ip_secure_session* ip_secure_session_create(int is_initiator,
+                                            const uint8_t* psk,
+                                            size_t psk_len,
+                                            const uint8_t* board_id,
+                                            size_t id_len,
+                                            const uint8_t* my_random16,
+                                            uint32_t rekey) {
+    if (!psk || !psk_len || !my_random16)
+        return nullptr;
+    ip_secure_session* w =
+        (ip_secure_session*)malloc(sizeof(ip_secure_session));
+    if (!w)
+        return nullptr;
+    if (psk_len > sizeof(w->psk))
+        psk_len = sizeof(w->psk);
+    memcpy(w->psk, psk, psk_len);
+    w->s.init(is_initiator ? SecRole::Initiator : SecRole::Responder,
+              w->psk, psk_len, board_id, id_len, my_random16,
+              rekey ? rekey : SEC_DEFAULT_REKEY);
+    return w;
+}
+
+void ip_secure_session_free(ip_secure_session* s) {
+    free(s);
+}
+
+size_t ip_secure_session_start(ip_secure_session* s, uint8_t* out,
+                               size_t cap) {
+    return s->s.start(out, cap);
+}
+
+size_t ip_secure_session_on_handshake(ip_secure_session* s,
+                                      const uint8_t* msg, size_t len,
+                                      uint8_t* out, size_t cap) {
+    return s->s.on_handshake(msg, len, out, cap);
+}
+
+int ip_secure_session_established(const ip_secure_session* s) {
+    return s->s.established();
+}
+
+int ip_secure_session_failed(const ip_secure_session* s) {
+    return s->s.failed();
+}
+
+size_t ip_secure_session_peer_id(const ip_secure_session* s, uint8_t* out,
+                                 size_t cap) {
+    size_t n = s->s.peer_id_len();
+    if (n > cap)
+        n = cap;
+    memcpy(out, s->s.peer_id(), n);
+    return n;
+}
+
+size_t ip_secure_session_encode(ip_secure_session* s, uint8_t* out,
+                                size_t cap, const uint8_t* frames,
+                                size_t len, int cls) {
+    return s->s.datagram_encode(out, cap, frames, len,
+                                class_of_int(cls));
+}
+
+int ip_secure_session_decode(ip_secure_session* s, uint8_t* data,
+                             size_t len, size_t* frames_off, int* cls) {
+    const uint8_t* frames = nullptr;
+    TrafficClass tc = TrafficClass::Scheduled;
+    int r = s->s.datagram_decode(data, len, &frames, &tc);
+    if (r > 0 && frames_off)
+        *frames_off = (size_t)(frames - data);
+    if (cls)
+        *cls = (int)tc;
+    return r;
+}
+
+void ip_secure_session_rekey(ip_secure_session* s) {
+    s->s.rekey();
+}
+
+void ip_secure_session_get_diag(const ip_secure_session* s,
+                                ip_secure_session_diag* d) {
+    if (!d)
+        return;
+    d->auth_failures = s->s.auth_failures;
+    d->replays_rejected = s->s.replays_rejected;
+    d->old_epoch_rejected = s->s.old_epoch_rejected;
+    d->tx_epoch = s->s.tx_epoch;
+    d->rx_epoch = s->s.rx_epoch;
 }
 
 } // extern "C"

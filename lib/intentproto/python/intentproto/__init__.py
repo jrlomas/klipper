@@ -74,6 +74,28 @@ size_t ip_frame_v2_encode(uint8_t *out, const uint8_t *payload,
 int ip_frame_v2_decode(uint8_t *frame, size_t frame_len,
                        size_t *payload_off, uint8_t *seq, int *corrected);
 
+typedef struct ip_segment {
+    int kind;
+    uint8_t oid;
+    uint8_t flags;
+    uint32_t duration;
+    int32_t velocity, accel, jerk, snap, crackle;
+} ip_segment;
+int32_t ip_segment_quantize(double true_value, unsigned order_k);
+int64_t ip_segment_end_delta(uint32_t duration, int32_t velocity,
+                             int32_t accel, int32_t jerk, int32_t snap,
+                             int32_t crackle);
+int64_t ip_segment_chain_advance(int64_t acc, uint32_t duration,
+                                 int32_t velocity, int32_t accel,
+                                 int32_t jerk, int32_t snap, int32_t crackle,
+                                 int64_t *new_acc);
+size_t ip_segment_encode(uint8_t *out, size_t cap, uint8_t oid, uint8_t flags,
+                         uint32_t duration, int32_t velocity, int32_t accel,
+                         int32_t jerk, int32_t snap, int32_t crackle);
+size_t ip_segment_encode_hold(uint8_t *out, size_t cap, uint8_t oid,
+                              uint32_t duration);
+int ip_segment_decode(const uint8_t *in, size_t len, ip_segment *seg);
+
 typedef int (*ip_write_fn)(const uint8_t *data, size_t len, void *user);
 typedef void (*ip_response_fn)(const uint8_t *payload, size_t len,
                                void *user);
@@ -117,6 +139,38 @@ size_t ip_datagram_encode(ip_datagram_tx *tx, uint8_t *out,
 size_t ip_datagram_parity_flush(ip_datagram_tx *tx, uint8_t *out);
 int ip_datagram_decode(ip_datagram_rx *rx, uint8_t *data, size_t len,
                        size_t *frames_off, int *cls);
+typedef struct ip_secure_session ip_secure_session;
+ip_secure_session *ip_secure_session_create(int is_initiator,
+                                            const uint8_t *psk,
+                                            size_t psk_len,
+                                            const uint8_t *board_id,
+                                            size_t id_len,
+                                            const uint8_t *my_random16,
+                                            uint32_t rekey);
+void ip_secure_session_free(ip_secure_session *s);
+size_t ip_secure_session_start(ip_secure_session *s, uint8_t *out,
+                               size_t cap);
+size_t ip_secure_session_on_handshake(ip_secure_session *s,
+                                      const uint8_t *msg, size_t len,
+                                      uint8_t *out, size_t cap);
+int ip_secure_session_established(const ip_secure_session *s);
+int ip_secure_session_failed(const ip_secure_session *s);
+size_t ip_secure_session_peer_id(const ip_secure_session *s, uint8_t *out,
+                                 size_t cap);
+size_t ip_secure_session_encode(ip_secure_session *s, uint8_t *out,
+                                size_t cap, const uint8_t *frames,
+                                size_t len, int cls);
+int ip_secure_session_decode(ip_secure_session *s, uint8_t *data,
+                             size_t len, size_t *frames_off, int *cls);
+void ip_secure_session_rekey(ip_secure_session *s);
+typedef struct ip_secure_session_diag {
+    uint32_t auth_failures;
+    uint32_t replays_rejected;
+    uint32_t old_epoch_rejected;
+    uint32_t tx_epoch, rx_epoch;
+} ip_secure_session_diag;
+void ip_secure_session_get_diag(const ip_secure_session *s,
+                                ip_secure_session_diag *d);
 size_t ip_datagram_take_recovered(ip_datagram_rx *rx, uint8_t *out,
                                   size_t cap);
 
@@ -309,6 +363,219 @@ def vlq_decode(data, pos=0):
     return out[0], pos + n
 
 
+# Framing-v2 (BCH-trailer console frame) — the *stateless transform*
+# primitives. These carry a payload+seq and replace the legacy CRC with a
+# BCH(t=3) error-correcting trailer; they do NOT run a session/ARQ. They
+# exist so a host bridge can re-frame a stock v1 frame's payload as a v2
+# frame (and back) without reimplementing BCH — the C library is the
+# single source of truth for the code. See FRAME_V2_OVERHEAD == 7.
+FRAME_V2_OVERHEAD = 7
+
+
+def frame_v2_encode(payload, seq):
+    # Return the BCH-framed v2 frame bytes for the given payload + 4-bit
+    # style seq byte (the caller passes the whole seq byte, e.g. the v1
+    # frame's seq | FRAME_V2_FLAG is set internally by the C encoder).
+    ffi, lib = _ensure_ready()
+    payload = bytes(payload)
+    out = ffi.new("uint8_t[]", len(payload) + FRAME_V2_OVERHEAD + 4)
+    n = lib.ip_frame_v2_encode(out, payload, len(payload), seq & 0xff)
+    if n == 0:
+        raise ValueError("frame_v2_encode failed (payload too large?)")
+    return bytes(ffi.buffer(out, n))
+
+
+def frame_v2_decode(frame):
+    # Decode (and BCH-correct in place) one complete v2 frame. Returns
+    # (payload_bytes, seq, corrected) or raises ValueError if the frame is
+    # not a valid/decodable v2 frame.
+    ffi, lib = _ensure_ready()
+    buf = ffi.new("uint8_t[]", bytes(frame))
+    off = ffi.new("size_t *")
+    seq = ffi.new("uint8_t *")
+    corr = ffi.new("int *")
+    n = lib.ip_frame_v2_decode(buf, len(frame), off, seq, corr)
+    if n < 0:
+        raise ValueError("frame_v2_decode failed (uncorrectable/malformed)")
+    payload = bytes(ffi.buffer(buf + off[0], n))
+    return payload, seq[0], corr[0]
+
+
+# ---- trajectory segment codec (FD-0001 doc 02) ----
+# Helpers for a third-party trajectory peer: coefficient quantization,
+# exact chained-position bookkeeping, and the queue_traj_segment/traj_hold
+# payload codec. The quantizer and chaining arithmetic are the C library's,
+# so a peer's end position stays bit-identical to the MCU's integration.
+SEG_HOLD_AT_END = 1 << 0
+SEG_POLY_MASK = 3 << 6
+SEG_POLY_QUADRATIC = 0 << 6
+SEG_POLY_CUBIC = 1 << 6
+SEG_POLY_QUINTIC = 2 << 6
+SEG_KIND_NONE = 0
+SEG_KIND_SEGMENT = 1
+SEG_KIND_HOLD = 2
+
+
+def segment_quantize(true_value, order_k):
+    # Quantize a true per-tick derivative to its wire int32 (scale
+    # 2^(16*order_k); order_k 1=velocity..5=crackle). Round half away from
+    # zero, saturated to int32.
+    _, lib = _ensure_ready()
+    return int(lib.ip_segment_quantize(float(true_value), int(order_k)))
+
+
+def segment_end_delta(duration, velocity, accel=0, jerk=0, snap=0, crackle=0):
+    # Exact Q32.32 sub-unit end-of-segment position delta.
+    _, lib = _ensure_ready()
+    return int(lib.ip_segment_end_delta(
+        duration & 0xffffffff, velocity, accel, jerk, snap, crackle))
+
+
+class SegmentChain(object):
+    # A running Q32.32 chained-position accumulator (the peer twin of the
+    # MCU's tq->acc). advance() returns the new integer sub-unit position.
+    def __init__(self, pos_subunits=0):
+        self._ffi, self._lib = _ensure_ready()
+        self.acc = int(pos_subunits) << 32
+
+    def set_position(self, pos_subunits):
+        self.acc = int(pos_subunits) << 32
+
+    @property
+    def position_subunits(self):
+        return self.acc >> 32
+
+    def advance(self, duration, velocity, accel=0, jerk=0, snap=0, crackle=0):
+        na = self._ffi.new("int64_t *")
+        pos = self._lib.ip_segment_chain_advance(
+            self.acc, duration & 0xffffffff, velocity, accel, jerk, snap,
+            crackle, na)
+        self.acc = int(na[0])
+        return int(pos)
+
+
+def segment_encode(oid, flags, duration, velocity, accel,
+                   jerk=0, snap=0, crackle=0):
+    # Encode a queue_traj_segment payload; the coefficient count follows
+    # the polynomial-order bits of flags. Returns the payload bytes.
+    ffi, lib = _ensure_ready()
+    out = ffi.new("uint8_t[64]")
+    n = lib.ip_segment_encode(out, 64, oid & 0xff, flags & 0xff,
+                              duration & 0xffffffff, velocity, accel,
+                              jerk, snap, crackle)
+    if n == 0:
+        raise ValueError("segment_encode failed (reserved order?)")
+    return bytes(ffi.buffer(out, n))
+
+
+def segment_encode_hold(oid, duration):
+    # Encode a traj_hold payload (oid + duration).
+    ffi, lib = _ensure_ready()
+    out = ffi.new("uint8_t[32]")
+    n = lib.ip_segment_encode_hold(out, 32, oid & 0xff, duration & 0xffffffff)
+    if n == 0:
+        raise ValueError("segment_encode_hold failed")
+    return bytes(ffi.buffer(out, n))
+
+
+def segment_decode(data):
+    # Decode a queue_traj_segment / traj_hold payload. Returns a dict with
+    # 'kind' plus fields, or None if the payload is neither.
+    ffi, lib = _ensure_ready()
+    seg = ffi.new("ip_segment *")
+    kind = lib.ip_segment_decode(bytes(data), len(data), seg)
+    if kind == SEG_KIND_NONE:
+        return None
+    return {'kind': kind, 'oid': seg.oid, 'flags': seg.flags,
+            'duration': seg.duration, 'velocity': seg.velocity,
+            'accel': seg.accel, 'jerk': seg.jerk, 'snap': seg.snap,
+            'crackle': seg.crackle}
+
+
+class SecureSession(object):
+    # The DTLS-class authenticated session (session_sec.hpp) behind the
+    # C ABI: HKDF session keys from the PSK + exchanged nonces, epoch
+    # rotation, per-board identity, a replay window. Auth-only.
+    def __init__(self, initiator, psk, board_id=b"", random16=None,
+                 rekey=0):
+        import os as _os
+        self._ffi, self._lib = _ensure_ready()
+        if random16 is None:
+            random16 = _os.urandom(16)
+        if len(random16) != 16:
+            raise ValueError("random16 must be exactly 16 bytes")
+        self._s = self._lib.ip_secure_session_create(
+            1 if initiator else 0, bytes(psk), len(psk),
+            bytes(board_id), len(board_id), bytes(random16),
+            rekey)
+        if self._s == self._ffi.NULL:
+            raise ValueError("secure session create failed (empty psk?)")
+
+    def close(self):
+        if self._s is not None:
+            self._lib.ip_secure_session_free(self._s)
+            self._s = None
+
+    def start(self):
+        out = self._ffi.new("uint8_t[256]")
+        n = self._lib.ip_secure_session_start(self._s, out, 256)
+        return bytes(self._ffi.buffer(out, n))
+
+    def on_handshake(self, msg):
+        out = self._ffi.new("uint8_t[256]")
+        n = self._lib.ip_secure_session_on_handshake(
+            self._s, bytes(msg), len(msg), out, 256)
+        return bytes(self._ffi.buffer(out, n)) if n else None
+
+    @property
+    def established(self):
+        return bool(self._lib.ip_secure_session_established(self._s))
+
+    @property
+    def failed(self):
+        return bool(self._lib.ip_secure_session_failed(self._s))
+
+    def peer_id(self):
+        out = self._ffi.new("uint8_t[64]")
+        n = self._lib.ip_secure_session_peer_id(self._s, out, 64)
+        return bytes(self._ffi.buffer(out, n))
+
+    def encode(self, frames, cls=0):
+        frames = bytes(frames)
+        out = self._ffi.new("uint8_t[]", len(frames) + 32)
+        n = self._lib.ip_secure_session_encode(
+            self._s, out, len(frames) + 32, frames, len(frames), cls)
+        if not n:
+            raise ValueError("session encode failed (not established?)")
+        return bytes(self._ffi.buffer(out, n))
+
+    def decode(self, data):
+        # Returns (frames, cls); raises on auth failure / malformed /
+        # replay so callers cannot accidentally ignore a rejection.
+        buf = self._ffi.new("uint8_t[]", bytes(data))
+        off = self._ffi.new("size_t *")
+        cls = self._ffi.new("int *")
+        r = self._lib.ip_secure_session_decode(
+            self._s, buf, len(data), off, cls)
+        if r < 0:
+            raise ValueError({-1: "auth failure", -2: "malformed",
+                              -3: "replay/stale epoch"}.get(r, r))
+        return bytes(self._ffi.buffer(buf + off[0], r)), cls[0]
+
+    def rekey(self):
+        self._lib.ip_secure_session_rekey(self._s)
+
+    def diag(self):
+        # Session health counters: auth failures, replay-window and
+        # stale-epoch rejections, and the live tx/rx key epochs.
+        d = self._ffi.new("ip_secure_session_diag *")
+        self._lib.ip_secure_session_get_diag(self._s, d)
+        return {'auth_failures': d.auth_failures,
+                'replays_rejected': d.replays_rejected,
+                'old_epoch_rejected': d.old_epoch_rejected,
+                'tx_epoch': d.tx_epoch, 'rx_epoch': d.rx_epoch}
+
+
 class HostSession(object):
     # A retransmit-window host session (host.hpp) behind the C ABI.
     #   on_write(frame_bytes)     - transport transmit hook (required)
@@ -430,7 +697,19 @@ class Device(object):
 __all__ = [
     "get_ffi", "build", "abi_version", "version_string",
     "crc16_ccitt", "vlq_encode", "vlq_decode",
-    "HostSession", "Device",
+    "frame_v2_encode", "frame_v2_decode", "FRAME_V2_OVERHEAD",
+    "segment_quantize", "segment_end_delta", "SegmentChain",
+    "segment_encode", "segment_encode_hold", "segment_decode",
+    "SEG_HOLD_AT_END", "SEG_POLY_MASK", "SEG_POLY_QUADRATIC",
+    "SEG_POLY_CUBIC", "SEG_POLY_QUINTIC",
+    "SEG_KIND_NONE", "SEG_KIND_SEGMENT", "SEG_KIND_HOLD",
+    "HostSession", "Device", "SecureSession",
+    "ExtBinding", "Message", "HostSessionTransport", "bind_host_session",
     "FRAMING_LEGACY", "FRAMING_PROBING",
     "CLASS_SCHEDULED", "CLASS_PROMPT", "CLASS_TELEMETRY",
 ]
+
+# Connect-time extension binding (doc 10). Imported last so the module's
+# vlq_encode/vlq_decode/CLASS_SCHEDULED it depends on are already defined.
+from .extbind import (  # noqa: E402
+    ExtBinding, Message, HostSessionTransport, bind_host_session)

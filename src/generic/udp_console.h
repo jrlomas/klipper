@@ -15,6 +15,10 @@ struct udp_console_ops {
     int32_t (*recv)(void *ctx, uint8_t *buf, uint32_t cap);
     // Transmit one datagram to the current peer (best effort).
     void (*send)(void *ctx, const uint8_t *data, uint32_t len);
+    // Transmit to the source of the most recently received datagram
+    // without changing the authenticated peer. Used only for a session
+    // ServerHello, before the candidate has proved PSK possession.
+    void (*send_candidate)(void *ctx, const uint8_t *data, uint32_t len);
     // Optional (may be NULL): the most recently received datagram
     // passed authentication - safe point to latch its source address
     // as the peer to transmit to.

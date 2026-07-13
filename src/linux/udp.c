@@ -61,9 +61,22 @@ udp_send(void *ctx, const uint8_t *data, uint32_t len)
         report_errno("sendto", ret);
 }
 
+static void
+udp_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
+{
+    if (!rx_candidate_len)
+        return;
+    int ret = sendto(udp_fd, data, len, MSG_DONTWAIT,
+                     (const struct sockaddr *)&rx_candidate,
+                     rx_candidate_len);
+    if (ret < 0)
+        report_errno("sendto candidate", ret);
+}
+
 static const struct udp_console_ops linux_udp_ops = {
     .recv = udp_recv,
     .send = udp_send,
+    .send_candidate = udp_send_candidate,
     .rx_accepted = udp_rx_accepted,
 };
 

@@ -117,7 +117,7 @@ and **an MCU with a memory**:
 | Failure recovery | shutdown-everything → pause, hold, resume | [doc 08](docs/founding/0001-motion-intentions/08-Failure_Recovery.md) |
 | Link & transport | USB/CAN only → network-native, authenticated, FEC | [doc 07](docs/founding/0001-motion-intentions/07-Link_Transport.md) |
 | Hardware triggers | polled endstops → interrupt-driven stops | [doc 09](docs/founding/0001-motion-intentions/09-Hardware_Triggers.md) |
-| The protocol library | code generation → annotation static registration | [doc 10](docs/founding/0001-motion-intentions/10-Protocol_Library.md) |
+| The protocol library | stock v1 stays; an additive MIT library adds the v2 envelope (and powers the bootloader &amp; third-party boards) | [doc 10](docs/founding/0001-motion-intentions/10-Protocol_Library.md) |
 | ESP32 as a target | unsupported → network-native, IDF-as-modem | [doc 12](docs/founding/0001-motion-intentions/12-ESP32_Architecture.md) |
 
 The full design canon lives in

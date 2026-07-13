@@ -37,11 +37,15 @@ src-$(CONFIG_WANT_TRACE) += trace.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += trigger_source.c
 src-$(CONFIG_WANT_HEATER_HOLD) += heater_hold.c
 src-$(CONFIG_WANT_SYSCALL_API) += generic/board_syscall.c
+src-$(CONFIG_WANT_SELF_TEST) += self_test.c
 src-$(CONFIG_WANT_BOOTLOADER) += bootloader_entry.c
 
 # Ethernet datagram-console transports (FD-0001 doc 07).  The shared
 # datagram glue (udp_console.c + the C++ intentproto codec, wired in the
 # port Makefile) is pulled by NEED_UDP_CONSOLE.
 src-$(CONFIG_NEED_UDP_CONSOLE) += generic/udp_console.c
+# Serial console framing v2 (BCH). The C++ frame_v2 shim + the BCH codec
+# objects are wired in the port Makefiles (like the datagram glue).
+src-$(CONFIG_WANT_CONSOLE_FRAMING_V2) += generic/console_v2.c
 src-$(CONFIG_WANT_ETHERNET_W5500) += generic/w5500.c
 src-$(CONFIG_WANT_NANO_UDP) += generic/nano_udp.c

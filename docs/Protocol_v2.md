@@ -23,6 +23,30 @@ backwards-compatible superset of it.
 > **Status (HELIX 0.9):** implemented and host-tested; not yet
 > hardware-validated. See [Status and what is proven](#status-and-what-is-proven).
 
+> **As-built — how klippy speaks v2 (read this before the details).**
+> The application and host keep stock Klipper's v1 command path (so upstream
+> merges cleanly); intentproto adds transport/auth/FEC as an **envelope
+> around unchanged v1 frames** — a stateless **framing transform**, not
+> intentproto's `HostSession` (which *replaces* v1's ARQ and is only for
+> `proto.cpp`-cored peers like the bootloader). Two envelope modes:
+>
+> 1. **Datagram transport (network links)** — authenticated, erasure-FEC UDP
+>    datagrams (`datagram.cpp`) wrapping whole v1 frames. **End-to-end
+>    today:** MCU side `udp_console.c`; host side the klippy transport
+>    bridge (`klippy/intentproto_transport.py`,
+>    `[intentproto_transport]`). This is where v2's value lives (lossy /
+>    untrusted WiFi/Ethernet).
+> 2. **Console framing (byte-stream UART links)** — each v1 frame re-framed
+>    with a BCH trailer (`frame_v2_encode/decode`). **Host side implemented
+>    and tested** (`BchConsoleCodec`, loopback round-trip); **MCU side is
+>    Kconfig-gated (`WANT_CONSOLE_FRAMING_V2`, off by default) and
+>    compile-checked but hardware-unproven** (`src/generic/console_v2.c`).
+>
+> The `HostSession` / `proto.cpp` `rx()` dual-dispatch path described in
+> parts of this document is the **library/bootloader** engine, *not* the
+> app/host path. The app path is the framing transform above. See
+> [Upstream_Tracking](Upstream_Tracking.md).
+
 ---
 
 ## 1. Overview and design goals
@@ -436,6 +460,18 @@ payload.
 
 ## 6. Negotiation and fallback
 
+> **Scope note.** This section describes negotiation between intentproto's
+> **host session** (`host.cpp`, cffi-reachable) and a **device that links
+> intentproto's core** (`rx()`) — i.e. the bootloader, third-party
+> firmware, and the desktop tests. It is **not** wired into the klippy
+> host or the stock application firmware in 0.9. Making a *klippy app
+> board* negotiate console-v2 is the envelope-shim work in
+> [§12](#12-status-and-what-is-proven) — the host side hangs the same
+> `session_enable_v2()` machinery *below* `serialhdl` (wrapping stock
+> command blocks), and the MCU side generalizes `udp_console.c`'s
+> de-frame→stock-dispatch pattern to the console. Until then the text
+> below is the library's behaviour, not a running printer's.
+
 Negotiation has four moving parts and is driven entirely from the host;
 the device is passive.
 
@@ -678,6 +714,45 @@ epoch's `tx_key`.
 A live `SecureSession` (both directions, keys, epochs, replay window)
 costs **264 bytes of RAM per link** on the STM32F072 floor.
 
+### Handshake hardening (as built)
+
+The responder's handshake surface is hardened against unauthenticated
+UDP traffic: a ClientHello can never reset a **live** session (while
+established, hellos drive a *pending* handshake that replaces the live
+keys only when its ClientFin proves PSK knowledge — this is also how a
+restarted klippy reconnects without a board reboot); ClientHellos are
+rate-limited (4/s) while a session is live, and ClientFins are never
+gated so a legitimate reconnect cannot livelock; every accepted hello
+re-derives from a fresh responder nonce, so a replayed old handshake
+cannot re-derive old session keys; and a handshake message that produces
+no reply never moves the reply peer. The residual exposure — a briefly
+redirected reply peer during a hostile hello burst — self-heals on the
+next authenticated datagram from the real host. All of this is exercised
+live by
+[test/datagram_session_live_test.py](../test/datagram_session_live_test.py)
+(hostile hello against a live session, then a legitimate adopted
+re-handshake).
+
+### As built: both ends are wired
+
+The session is no longer library-only. **On the board**, a datagram
+console built with `CONFIG_WANT_DATAGRAM_SESSION` (Kconfig option
+"DTLS-class session over the UDP datagram transport") runs the responder:
+`udp_console.c` classifies each inbound datagram (handshake / session /
+static), answers a `ClientHello` with a `ServerHello`, and once
+established seals all replies as session datagrams — a host that never
+opens a session keeps using the static-PSK path, so the upgrade is
+strictly additive. Each board carries a distinct identity via
+`CONFIG_DATAGRAM_SESSION_ID`. **On the host**, `[intentproto_transport]`
+with `session: True` runs the initiator: the bridge completes the
+3-message handshake at `open()` before its pump starts, then routes the
+v1 byte stream through the session's `encode`/`decode` instead of the
+static codec. Both directions were exercised end to end over a real UDP
+socket against `linuxprocess` firmware
+([test/datagram_session_live_test.py](../test/datagram_session_live_test.py))
+and in a firmware-free host loopback
+([test/session_bridge_test.py](../test/session_bridge_test.py)).
+
 ---
 
 ## 10. The CAN carrier
@@ -841,13 +916,43 @@ The desktop test suite exercises every layer described here
 | `test_session_sec` | PSK handshake, session datagram round-trip, replay rejection, epoch rotation, per-board identity, downgrade, forgery rejection |
 | `test_can_transport` | UUID admin handshake, ≤8-byte frame chunking, full host→CAN→dispatch→reply→CAN→host round trip |
 
-What remains is hardware bring-up and the items the founding documents still track as
-open: segment payload codecs
-([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md)),
-binding the standalone UDP datagram layer onto the negotiated framed
-byte streams, the extension-space connect-time host binding, and PSK
-provisioning flow. See the intentproto
-[README](../lib/intentproto/README.md) for the current caveats.
+The **live v2 wiring into the running system is now implemented** as the
+envelope framing transform (see the as-built callout):
+
+- **Host:** the klippy transport bridge
+  ([klippy/intentproto_transport.py](../klippy/intentproto_transport.py),
+  configured by `[intentproto_transport]`) sits *below* the serial fd via a
+  PTY and re-frames each stock v1 frame to v2 on the wire (datagram or BCH
+  console), leaving `serialqueue`/`serialhdl.py`/`msgproto.py`
+  byte-identical to upstream. Tested by loopback
+  ([test/intentproto_transport_test.py](../test/intentproto_transport_test.py)):
+  exact v1 reconstruction both directions, chunked input, resync bytes,
+  datagram auth tamper-rejection, and a real-PTY bridge round-trip.
+- **MCU:** the datagram side ships in `udp_console.c` (network links,
+  end-to-end). The **console-BCH** side (`src/generic/console_v2.c`) is
+  `WANT_CONSOLE_FRAMING_V2`-gated, off by default, and **LIVE-tested in
+  emulation**: the linuxprocess console carries the same hooks, and
+  [test/console_v2_live_test.py](../test/console_v2_live_test.py) proves
+  dual-accept (v1 in → v1 out), the v2 latch (v2 in → v2 out), and BCH
+  correction of 3 flipped bits against real firmware over a PTY. The
+  silicon UART call sites (`serial_irq.c`) still await a devkit.
+
+The capability handshake exists: a console-BCH board advertises
+`FRAMING_V2 = 1` in the identify dictionary (`DECL_CONSTANT`), which
+`helix_status.py` and the host bridge read. The founding-document items
+formerly listed as remaining are now **implemented and host-tested**: the
+segment payload codecs
+([02-Intention_Protocol.md](founding/0001-motion-intentions/02-Intention_Protocol.md))
+live in the library as `segment.hpp` (bit-identity guarded by
+[test/segment_lib_test.py](../test/segment_lib_test.py)), and the
+extension-space connect-time host binding ships as
+`intentproto.ExtBinding`/`bind_host_session()` (see the library README).
+What remains is **hardware bring-up** — running the already-tested paths
+on silicon. PSK provisioning is handled by
+[scripts/gen_psk.py](../scripts/gen_psk.py) (per-board printable keys
+shared between the host `psk_file` and the board's build config). See the
+intentproto [README](../lib/intentproto/README.md) for the current
+caveats.
 
 ---
 

@@ -560,7 +560,50 @@ class TrajectoryQueuing:
     def get_trajectory_steppers(self):
         return list(self.steppers)
 
+    # Kinematics whose XY(Z) rails move together for ordinary motion, so
+    # a paradigm split ACROSS rails is also a split coordination group.
+    COUPLED_KINEMATICS = ('corexy', 'corexz', 'delta', 'deltesian',
+                          'rotary_delta', 'winch', 'polar')
+
+    def _validate_paradigm_groups(self):
+        # FD-0001 doc 14: a coordination group must be single-paradigm —
+        # steppers that execute one coordinated kinematic motion must be
+        # either all trajectory (intent) or all legacy (firehose). Reject
+        # the mixed topology at startup instead of producing a move with
+        # two different failure behaviours.
+        if not self.steppers:
+            return
+        traj_names = set(ts.name for ts in self.steppers)
+        toolhead = self.printer.lookup_object('toolhead', None)
+        if toolhead is None:
+            return
+        kin = toolhead.get_kinematics()
+        rails = getattr(kin, 'rails', None) or []
+        rail_kinds = []
+        for rail in rails:
+            names = [s.get_name() for s in rail.get_steppers()]
+            in_traj = [n for n in names if n in traj_names]
+            if in_traj and len(in_traj) != len(names):
+                raise self.printer.config_error(
+                    "trajectory_queuing: rail '%s' mixes trajectory and"
+                    " legacy steppers (%s vs %s). A coordination group must"
+                    " be single-paradigm (FD-0001 doc 14): give every"
+                    " stepper of this rail motion_protocol: trajectory, or"
+                    " none of them." % (names[0], ", ".join(in_traj),
+                                        ", ".join(n for n in names
+                                                  if n not in traj_names)))
+            rail_kinds.append(bool(in_traj))
+        kin_mod = type(kin).__module__.split('.')[-1]
+        if kin_mod in self.COUPLED_KINEMATICS and len(set(rail_kinds)) > 1:
+            raise self.printer.config_error(
+                "trajectory_queuing: %s kinematics move their rails as one"
+                " coordination group, but only some rails use"
+                " motion_protocol: trajectory. A coordination group must be"
+                " single-paradigm (FD-0001 doc 14): convert all of the"
+                " kinematic rails, or none." % (kin_mod,))
+
     def _handle_connect(self):
+        self._validate_paradigm_groups()
         for ts in self.steppers:
             ts.connect()
         if self.steppers:

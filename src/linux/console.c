@@ -20,6 +20,13 @@
 #include "generic/udp_console.h" // udp_console_note_rx
 #include "internal.h" // console_setup
 #include "sched.h" // sched_wake_task
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+#include "generic/console_v2.h" // console_v2_try_rx
+#include "generic/framing_v2.h" // FV2_MAX
+// Advertise v2 framing so a v2 host knows this console accepts the BCH
+// envelope (same latch/dual-accept contract as the serial_irq console).
+DECL_CONSTANT("FRAMING_V2", 1);
+#endif
 
 static struct pollfd main_pfd[1];
 #define MP_TTY_IDX   0
@@ -165,7 +172,30 @@ console_task(void)
 
     // Find and dispatch message blocks in the input
     int len = receive_pos + ret;
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+    // Dual-accept framing: a v2 (BCH) frame - up to FV2_MAX bytes, so the
+    // scan window is wider than a v1 frame's - is de-framed, dispatched
+    // and popped here; the stock v1 path below handles everything else.
+    uint_fast8_t pop_count, msglen = len > FV2_MAX ? FV2_MAX : len;
+    uint_fast8_t v2_consumed;
+    int_fast8_t v2_ret = console_v2_try_rx(receive_buf, msglen, &v2_consumed);
+    if (v2_ret) {
+        if (v2_ret < 0) {
+            // A v2 frame is mid-arrival; wait for the rest.
+            receive_pos = len;
+            return;
+        }
+        len -= v2_consumed;
+        if (len) {
+            memmove(receive_buf, &receive_buf[v2_consumed], len);
+            sched_wake_task(&console_wake);
+        }
+        receive_pos = len;
+        return;
+    }
+#else
     uint_fast8_t pop_count, msglen = len > MESSAGE_MAX ? MESSAGE_MAX : len;
+#endif
     ret = command_find_and_dispatch(receive_buf, msglen, &pop_count);
     if (ret) {
         len -= pop_count;
@@ -188,10 +218,19 @@ console_sendf(const struct command_encoder *ce, va_list args)
     }
 
     // Generate message
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+    // A v2 (BCH) frame is up to 2 bytes longer than the v1 frame it wraps.
+    uint8_t buf[FV2_MAX];
+#else
     uint8_t buf[MESSAGE_MAX];
-    uint_fast8_t msglen = command_encode_and_frame(buf, sizeof(buf), ce, args);
+#endif
+    uint_fast8_t msglen = command_encode_and_frame(buf, MESSAGE_MAX, ce, args);
     if (!msglen)
         return;
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+    // Once the link has latched to v2, re-frame the v1 reply in place.
+    msglen = console_v2_wrap_tx(buf, msglen, sizeof(buf));
+#endif
 
     // Transmit message
     int ret = write(main_pfd[MP_TTY_IDX].fd, buf, msglen);

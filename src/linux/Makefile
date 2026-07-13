@@ -17,16 +17,30 @@ udpdg-objs := $(OUT)src/generic/udp_datagram.o \
 	$(OUT)lib/intentproto/src/datagram.o \
 	$(OUT)lib/intentproto/src/bch.o \
 	$(OUT)lib/intentproto/src/hmac.o
+# The DTLS-class session responder pulls in session_sec + sha512.
+ifeq ($(CONFIG_WANT_DATAGRAM_SESSION),y)
+udpdg-objs += $(OUT)lib/intentproto/src/session_sec.o \
+	$(OUT)lib/intentproto/src/sha512.o
+endif
 OBJS_klipper.elf += $(udpdg-objs)
-CXXFLAGS_udpdg := -iquote src/generic -Ilib/intentproto/include -std=c++17 \
+CXXFLAGS_udpdg := -iquote $(OUT) -iquote src/generic -Ilib/intentproto/include -std=c++17 \
 	-O2 -MD -Wall -fno-exceptions -fno-rtti -ffunction-sections \
 	-fdata-sections -ggdb3
 
-$(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp
+$(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"
 	$(Q)$(CXX) $(CXXFLAGS_udpdg) -c $< -o $@
 
-$(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp
+# Serial console framing v2 (BCH): the frame_v2 C++ shim. datagram.o + bch.o
+# are already in udpdg-objs above.
+ifeq ($(CONFIG_WANT_CONSOLE_FRAMING_V2),y)
+OBJS_klipper.elf += $(OUT)src/generic/framing_v2.o
+$(OUT)src/generic/framing_v2.o: src/generic/framing_v2.cpp $(OUT)autoconf.h
+	@echo "  Compiling (C++) $@"
+	$(Q)$(CXX) $(CXXFLAGS_udpdg) -c $< -o $@
+endif
+
+$(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"
 	$(Q)mkdir -p $(OUT)lib/intentproto/src
 	$(Q)$(CXX) $(CXXFLAGS_udpdg) -c $< -o $@

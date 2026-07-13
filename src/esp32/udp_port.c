@@ -97,9 +97,17 @@ udp_port_send(void *ctx, const uint8_t *data, uint32_t len)
            , sizeof(tx_peer));
 }
 
+static void
+udp_port_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
+{
+    sendto(udp_sock, data, len, 0,
+           (const struct sockaddr *)&rx_candidate, sizeof(rx_candidate));
+}
+
 static const struct udp_console_ops esp32_udp_ops = {
     .recv = udp_port_recv,
     .send = udp_port_send,
+    .send_candidate = udp_port_send_candidate,
     .rx_accepted = udp_port_rx_accepted,
 };
 

@@ -80,6 +80,23 @@ class HelixStatus:
             else:
                 lines.append("    (stock command set - no HELIX firmware"
                              " features detected)")
+        # v2 transport bridges, if any.
+        bridges = self.printer.lookup_objects(module='intentproto_transport')
+        for name, obj in bridges:
+            st = obj.get_status(None)
+            extra = ""
+            if st.get('mode') == 'datagram':
+                extra = (" lost=%d reordered=%d auth_fail=%d"
+                         % (st.get('rx_lost', 0), st.get('rx_reordered', 0),
+                            st.get('auth_failures', 0)))
+            elif st.get('mode') == 'bch':
+                extra = (" tx=%d rx=%d uncorrectable=%d"
+                         % (st.get('tx_frames', 0), st.get('rx_frames', 0),
+                            st.get('rx_uncorrectable', 0)))
+            lines.append("Transport '%s': %s, %s%s"
+                         % (name.split()[-1], st.get('mode'),
+                            "v2 active" if st.get('v2_active')
+                            else "v1 pass-through", extra))
         # Host-side subsystems that are loaded.
         lines.append("Host subsystems:")
         host_objs = [

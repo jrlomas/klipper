@@ -38,6 +38,8 @@ struct shmem_console_shared esp32_shmem;
 // Source address of the last datagram handed to the console glue;
 // published as the transmit peer once that datagram authenticates
 static uint8_t rx_candidate[SHMEM_ADDR_MAX];
+static uint8_t tx_peer[SHMEM_ADDR_MAX];
+static uint8_t have_peer;
 
 // ops->recv: pop one sealed datagram (rx record = addr blob + bytes)
 static int32_t
@@ -56,23 +58,12 @@ shmem_recv(void *ctx, uint8_t *buf, uint32_t cap)
 }
 
 // ops->rx_accepted: the datagram from shmem_recv passed HMAC - latch
-// its source as the peer the modem may transmit to.  Seqlock write
-// side (C11 idiom): seq odd -> release fence -> relaxed word stores
-// -> release fence -> seq even; modem.c holds the matching reader.
+// its source as the destination attached to ordinary tx records.
 static void
 shmem_rx_accepted(void *ctx)
 {
-    uint32_t seq = esp32_shmem.peer_seq; // single writer - plain read
-    uint32_t words[SHMEM_ADDR_MAX / 4];
-    memcpy(words, rx_candidate, SHMEM_ADDR_MAX);
-    __atomic_store_n(&esp32_shmem.peer_seq, seq + 1, __ATOMIC_RELAXED);
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    for (uint32_t i = 0; i < SHMEM_ADDR_MAX / 4; i++)
-        __atomic_store_n(&esp32_shmem.peer_addr[i], words[i]
-                         , __ATOMIC_RELAXED);
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&esp32_shmem.peer_seq, seq + 2, __ATOMIC_RELAXED);
-    __atomic_store_n(&esp32_shmem.peer_valid, 1, __ATOMIC_RELEASE);
+    memcpy(tx_peer, rx_candidate, sizeof(tx_peer));
+    have_peer = 1;
 }
 
 // ops->send: queue one sealed datagram for the modem to transmit
@@ -81,12 +72,23 @@ shmem_send(void *ctx, const uint8_t *data, uint32_t len)
 {
     // Full ring: drop, exactly as a wired port drops on tx overflow;
     // the host's retransmit machinery recovers
-    shmem_ring_push(&esp32_shmem.tx, NULL, 0, data, len);
+    if (have_peer)
+        shmem_ring_push(&esp32_shmem.tx, tx_peer, sizeof(tx_peer), data, len);
+}
+
+static void
+shmem_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
+{
+    // Carry the uncommitted destination with this one ServerHello record;
+    // the modem never publishes it as the authenticated peer.
+    shmem_ring_push(&esp32_shmem.tx, rx_candidate, sizeof(rx_candidate),
+                    data, len);
 }
 
 static const struct udp_console_ops shmem_console_ops = {
     .recv = shmem_recv,
     .send = shmem_send,
+    .send_candidate = shmem_send_candidate,
     .rx_accepted = shmem_rx_accepted,
 };
 

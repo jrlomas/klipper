@@ -40,7 +40,7 @@
  * against the runtime intentproto_abi_version() and refuses a MAJOR
  * mismatch. */
 #define INTENTPROTO_ABI_VERSION_MAJOR 1
-#define INTENTPROTO_ABI_VERSION_MINOR 0
+#define INTENTPROTO_ABI_VERSION_MINOR 2
 #define INTENTPROTO_ABI_VERSION_PATCH 0
 #define INTENTPROTO_ABI_VERSION                                         \
     ((INTENTPROTO_ABI_VERSION_MAJOR << 16)                             \
@@ -96,6 +96,67 @@ size_t ip_frame_v2_encode(uint8_t *out, const uint8_t *payload,
  * the number of repaired bit errors. Returns -1 if uncorrectable. */
 int ip_frame_v2_decode(uint8_t *frame, size_t frame_len,
                        size_t *payload_off, uint8_t *seq, int *corrected);
+
+/* ================================================================
+ * Trajectory segment codec (FD-0001 doc 02)
+ * ================================================================
+ * Helpers a third-party trajectory peer needs to emit queue_traj_segment
+ * payloads and track chained position identically to the MCU. The
+ * quantizer and end-delta arithmetic are bit-for-bit identical to
+ * src/trajq.c and klippy/chelper/segfit.c (guarded by the test suite). */
+
+/* Segment polynomial-order flags (mirror src/trajq.h TSEG_*). */
+#define IP_SEG_HOLD_AT_END    (1 << 0)
+#define IP_SEG_POLY_MASK      (3 << 6)
+#define IP_SEG_POLY_QUADRATIC (0 << 6)
+#define IP_SEG_POLY_CUBIC     (1 << 6)
+#define IP_SEG_POLY_QUINTIC   (2 << 6)
+
+/* Decoded segment kind (ip_segment.kind / ip_segment_decode return). */
+#define IP_SEG_KIND_NONE    0
+#define IP_SEG_KIND_SEGMENT 1
+#define IP_SEG_KIND_HOLD    2
+
+/* Decoded queue_traj_segment / traj_hold fields. */
+typedef struct ip_segment {
+    int kind;
+    uint8_t oid;
+    uint8_t flags;
+    uint32_t duration;
+    int32_t velocity, accel, jerk, snap, crackle;
+} ip_segment;
+
+/* Quantize a true per-tick derivative to its wire int32 (scale 2^(16*k),
+ * round half away from zero, saturated to int32). order_k: 1=velocity ..
+ * 5=crackle. */
+int32_t ip_segment_quantize(double true_value, unsigned order_k);
+
+/* Exact Q32.32 sub-unit end-of-segment position delta for the quantized
+ * coefficients over duration ticks. Unused higher orders pass 0. */
+int64_t ip_segment_end_delta(uint32_t duration, int32_t velocity,
+                             int32_t accel, int32_t jerk, int32_t snap,
+                             int32_t crackle);
+
+/* Advance a Q32.32 chained accumulator by one segment. Returns the new
+ * integer sub-unit position (new_acc >> 32); if new_acc != NULL, writes
+ * the full Q32.32 accumulator there. */
+int64_t ip_segment_chain_advance(int64_t acc, uint32_t duration,
+                                 int32_t velocity, int32_t accel,
+                                 int32_t jerk, int32_t snap, int32_t crackle,
+                                 int64_t *new_acc);
+
+/* Encode a queue_traj_segment payload (msgid + oid + flags + duration +
+ * coefficients; coefficient count follows the flags' polynomial order)
+ * into out. Returns bytes written, or 0 on a reserved order / short cap. */
+size_t ip_segment_encode(uint8_t *out, size_t cap, uint8_t oid, uint8_t flags,
+                         uint32_t duration, int32_t velocity, int32_t accel,
+                         int32_t jerk, int32_t snap, int32_t crackle);
+/* Encode a traj_hold payload (msgid + oid + duration). */
+size_t ip_segment_encode_hold(uint8_t *out, size_t cap, uint8_t oid,
+                              uint32_t duration);
+/* Decode a queue_traj_segment / traj_hold payload into *seg; returns the
+ * kind (IP_SEG_KIND_*) or IP_SEG_KIND_NONE on a foreign/short payload. */
+int ip_segment_decode(const uint8_t *in, size_t len, ip_segment *seg);
 
 /* ================================================================
  * Host session — the retransmit-window state machine (host.hpp)
@@ -202,6 +263,58 @@ int ip_datagram_decode(ip_datagram_rx *rx, uint8_t *data, size_t len,
  * reconstructed datagram into out; returns its length or 0. */
 size_t ip_datagram_take_recovered(ip_datagram_rx *rx, uint8_t *out,
                                   size_t cap);
+
+/* ================================================================
+ * Secure session (session_sec.hpp): the DTLS-class authenticated
+ * session over the datagram transport — HKDF session keys, epoch
+ * rotation, per-board identity, replay window. Auth-only.
+ * ================================================================ */
+typedef struct ip_secure_session ip_secure_session;
+/* role: 1 = initiator (host), 0 = responder (board). my_random is
+ * SEC_RANDOM_SIZE (16) fresh bytes from the caller's RNG. rekey = 0
+ * selects the default auto-rekey threshold. */
+ip_secure_session *ip_secure_session_create(int is_initiator,
+                                            const uint8_t *psk,
+                                            size_t psk_len,
+                                            const uint8_t *board_id,
+                                            size_t id_len,
+                                            const uint8_t *my_random16,
+                                            uint32_t rekey);
+void ip_secure_session_free(ip_secure_session *s);
+/* Initiator: write the ClientHello into out; returns its length. */
+size_t ip_secure_session_start(ip_secure_session *s, uint8_t *out,
+                               size_t cap);
+/* Feed one received handshake message; any reply is written to out
+ * and its length returned (0 if none). */
+size_t ip_secure_session_on_handshake(ip_secure_session *s,
+                                      const uint8_t *msg, size_t len,
+                                      uint8_t *out, size_t cap);
+int ip_secure_session_established(const ip_secure_session *s);
+int ip_secure_session_failed(const ip_secure_session *s);
+/* Peer identity (valid once hellos exchanged); returns its length. */
+size_t ip_secure_session_peer_id(const ip_secure_session *s,
+                                 uint8_t *out, size_t cap);
+/* Seal frames into a session datagram; returns its size, or 0. */
+size_t ip_secure_session_encode(ip_secure_session *s, uint8_t *out,
+                                size_t cap, const uint8_t *frames,
+                                size_t len, int cls);
+/* Unwrap a session datagram: returns the frames' length (with
+ * *frames_off the offset within data) and *cls; -1 auth failure, -2
+ * malformed/not-a-session-datagram, -3 replay/stale epoch. */
+int ip_secure_session_decode(ip_secure_session *s, uint8_t *data,
+                             size_t len, size_t *frames_off, int *cls);
+/* Explicit key rotation (the peer follows on the epoch byte). */
+void ip_secure_session_rekey(ip_secure_session *s);
+
+/* Session health counters (layout-stable; extend only at the end). */
+typedef struct ip_secure_session_diag {
+    uint32_t auth_failures;      /* bad tag / truncated datagrams */
+    uint32_t replays_rejected;   /* replay-window hits */
+    uint32_t old_epoch_rejected; /* stale-epoch datagrams */
+    uint32_t tx_epoch, rx_epoch; /* current key epochs */
+} ip_secure_session_diag;
+void ip_secure_session_get_diag(const ip_secure_session *s,
+                                ip_secure_session_diag *d);
 
 /* ================================================================
  * Device registry + extension-descriptor accessors

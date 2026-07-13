@@ -13,6 +13,9 @@
 #include "command.h" // DECL_CONSTANT
 #include "sched.h" // sched_wake_tasks
 #include "serial_irq.h" // serial_enable_tx_irq
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+#include "console_v2.h" // console_v2_try_rx
+#endif
 
 #define RX_BUFFER_SIZE 192
 
@@ -21,6 +24,11 @@ static uint8_t transmit_buf[96], transmit_pos, transmit_max;
 
 DECL_CONSTANT("SERIAL_BAUD", CONFIG_SERIAL_BAUD);
 DECL_CONSTANT("RECEIVE_WINDOW", RX_BUFFER_SIZE);
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+// Advertise v2 framing so a v2 host knows this board's serial console can
+// accept the BCH envelope; helix_status.py / negotiation read it.
+DECL_CONSTANT("FRAMING_V2", 1);
+#endif
 
 // Rx interrupt - store read data
 void
@@ -75,6 +83,18 @@ void
 console_task(void)
 {
     uint_fast8_t rpos = readb(&receive_pos), pop_count;
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+    // A v2 (BCH) frame, if present at the buffer start, is de-framed and
+    // dispatched here; the stock v1 path below handles everything else.
+    uint_fast8_t v2_consumed;
+    int_fast8_t v2_ret = console_v2_try_rx(receive_buf, rpos, &v2_consumed);
+    if (v2_ret > 0) {
+        console_pop_input(v2_consumed);
+        return;
+    }
+    if (v2_ret < 0)
+        return; // a v2 frame is mid-arrival; wait for the rest
+#endif
     int_fast8_t ret = command_find_block(receive_buf, rpos, &pop_count);
     if (ret > 0)
         command_dispatch(receive_buf, pop_count);
@@ -120,6 +140,11 @@ console_sendf(const struct command_encoder *ce, va_list args)
         buf, sizeof(transmit_buf) - tmax, ce, args);
     if (!msglen)
         return;
+#if CONFIG_WANT_CONSOLE_FRAMING_V2
+    // Once the link has latched to v2, re-frame the v1 reply to a BCH v2
+    // frame in place before it is streamed out.
+    msglen = console_v2_wrap_tx(buf, msglen, sizeof(transmit_buf) - tmax);
+#endif
 
     // Start message transmit
     writeb(&transmit_max, tmax + msglen);

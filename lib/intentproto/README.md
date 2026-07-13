@@ -146,17 +146,62 @@ codec never sets or inspects it. A live `SecureSession` (both
 directions, keys, epochs and the replay window) costs 264 bytes of
 RAM per link on the STM32F072 floor.
 
-## Not yet implemented (tracked in FD-0001 doc 10)
+## Trajectory segment codec (FD-0001 doc 02)
 
-* Segment payload codecs (`queue_traj_segment` coefficient
-  quantization, chained-position bookkeeping) per
-  [02](../../docs/founding/0001-motion-intentions/02-Intention_Protocol.md).
-* Binding the datagram/HMAC transport (`datagram.hpp`) to the
-  sessions' framed byte streams (framing v2 and traffic classes are
-  wired into the negotiation path; the UDP datagram layer still
-  rides standalone).
-* v2 extension self-description (the >= 0x80 id space of
-  `core_ids.hpp`) and the connect-time host binding.
+`segment.hpp` gives a **third-party trajectory peer** the two pieces of
+the motion-intent protocol that must be bit-exact, so it can emit
+`queue_traj_segment` payloads and track position identically to the MCU
+without vendoring klippy:
+
+* **Coefficient quantization** — `segment_quantize(true_value, order_k)`
+  maps a true per-tick polynomial derivative to its wire int32 (scale
+  `2^(16k)`, round half away from zero, saturated), matching
+  `segfit.c`'s `quantize()`/`bezier_to_wire()`.
+* **Chained-position bookkeeping** — `segment_end_delta()` and the
+  `SegmentChain` accumulator reproduce the exact truncate-toward-zero
+  Q32.32 integration of `src/trajq.c:trajq_end_delta_seg()`, so a peer's
+  end position never drifts from where the board integrates the segment.
+* **Payload codec** — `segment_encode()`/`segment_encode_hold()`/
+  `segment_decode()` build and parse the VLQ payloads (coefficient count
+  follows the flags' polynomial-order bits).
+
+The bit-identity against both klippy references (`segfit.c` and
+`trajectory_queuing.py`) is asserted by `test/segment_lib_test.py`; the
+firmware's own `traj_kernel` golden vectors are re-checked by
+`tests/test_segment.cpp`. Exposed through the C ABI (`ip_segment_*`) and
+the Python binding (`intentproto.segment_*` / `SegmentChain`).
+
+## Connect-time extension binding (FD-0001 doc 10)
+
+A v2 peer serves its command/response/constant registry as **data** over
+two library-owned meta-commands (`list_extensions` / `list_constants`,
+`proto.cpp` + `core_ids.hpp`) — no zlib dictionary round-trip. The host
+binds to it at connect: `intentproto.ExtBinding` streams the descriptors
+into typed encoders and parsers, so after `query()` a caller does
+`ext.encode_command(name, **kwargs)` and `ext.parse_response(payload)`,
+and reads `ext.constants` / `ext.enums`. Extension commands live in the
+`>= 0x80` id space (`MSGID_EXTENSION_BASE`); the meta-commands self-
+describe all the way down.
+
+The packaged API (`python/intentproto/extbind.py`) reuses the C-backed
+VLQ codec and adds `HostSessionTransport` / `bind_host_session()` to drive
+the enumeration over a real `HostSession`; `python/test_extbind_py.py`
+proves it against an in-process device. `tools/extbind.py` remains as a
+dependency-free (stdlib-only) reference of the same protocol.
+
+## Feature-complete
+
+Every FD-0001 doc-10 library surface is now implemented and tested:
+framing v2 (BCH), traffic classes, the UDP datagram layer with its
+truncated-HMAC authentication and XOR erasure FEC, the DTLS-class
+session upgrade, extension self-description with the host `ExtBinding`,
+the trajectory segment codec, Ed25519 signed images in `boot/bootcore`,
+the `extern "C"`/cffi host binding, and the CAN carrier. The datagram
+transport is bound to a `HostSession`'s framed byte stream by
+`DatagramCarrier` (`datagram_carrier.hpp`) — the host-side complement of
+the device's `udp_console.c` — so a host can run a full ARQ session over
+UDP without re-implementing the datagram accounting (test:
+`tests/test_datagram_carrier.cpp`).
 
 ## Caveats
 

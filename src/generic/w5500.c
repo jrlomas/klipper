@@ -313,24 +313,38 @@ w5500_rx_accepted(void *ctx)
 }
 
 static void
-w5500_send(void *ctx, const uint8_t *data, uint32_t len)
+w5500_send_to(uint32_t ip, uint16_t port, const uint8_t *data, uint32_t len)
 {
-    if (!w5500_ready || !have_peer || !len)
+    if (!w5500_ready || !len)
         return;
     uint16_t fsr = w5500_rd16(W5500_Sn_TX_FSR, W5500_BSB_S0_REG);
     if (fsr < len)
         return; // no room - best effort, host retransmits on missing ack
-    w5500_wr32(W5500_Sn_DIPR, W5500_BSB_S0_REG, tx_peer_ip);
-    w5500_wr16(W5500_Sn_DPORT, W5500_BSB_S0_REG, tx_peer_port);
+    w5500_wr32(W5500_Sn_DIPR, W5500_BSB_S0_REG, ip);
+    w5500_wr16(W5500_Sn_DPORT, W5500_BSB_S0_REG, port);
     uint16_t wr = w5500_rd16(W5500_Sn_TX_WR, W5500_BSB_S0_REG);
     w5500_buf_write(wr, data, len);
     w5500_wr16(W5500_Sn_TX_WR, W5500_BSB_S0_REG, wr + len);
     w5500_cmd(W5500_Sn_CR_SEND);
 }
 
+static void
+w5500_send(void *ctx, const uint8_t *data, uint32_t len)
+{
+    if (have_peer)
+        w5500_send_to(tx_peer_ip, tx_peer_port, data, len);
+}
+
+static void
+w5500_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
+{
+    w5500_send_to(rx_candidate_ip, rx_candidate_port, data, len);
+}
+
 const struct udp_console_ops w5500_udp_ops = {
     .recv = w5500_recv,
     .send = w5500_send,
+    .send_candidate = w5500_send_candidate,
     .rx_accepted = w5500_rx_accepted,
 };
 

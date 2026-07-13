@@ -63,6 +63,51 @@ done
 
 
 ######################################################################
+# Verify Helix host/library paths and live linuxprocess transports
+######################################################################
+
+start_test helix_library "Test intentproto library and C/Python bindings"
+PATH=$(dirname ${PYTHON}):${PATH} make -C lib/intentproto clean test capi
+finish_test helix_library "Test intentproto library and C/Python bindings"
+
+start_test helix_host "Test Helix workstation host paths"
+for TEST in \
+    test/helix_flash_test.py \
+    test/helix_status_test.py \
+    test/intentproto_transport_test.py \
+    test/paradigm_validator_test.py \
+    test/segment_lib_test.py \
+    test/session_bridge_test.py \
+    test/traj_higher_order_test.py \
+    test/traj_pwm_feed_test.py \
+    test/traj_pwm_fitter_test.py \
+    test/traj_pwm_map_test.py ; do
+    ${PYTHON} ${TEST}
+done
+finish_test helix_host "Test Helix workstation host paths"
+
+for TARGET in test/helix-configs/*.config ; do
+    start_test helix_live "$TARGET"
+    make clean
+    make distclean
+    unset CC
+    cp ${TARGET} .config
+    make olddefconfig
+    make V=1
+    case ${TARGET} in
+        *-cv2.config)
+            HELIX_REQUIRE_LIVE=1 ${PYTHON} test/console_v2_live_test.py
+            HELIX_REQUIRE_LIVE=1 ${PYTHON} test/self_test_live_test.py
+            ;;
+        *-session.config)
+            HELIX_REQUIRE_LIVE=1 ${PYTHON} test/datagram_session_live_test.py
+            ;;
+    esac
+    finish_test helix_live "$TARGET"
+done
+
+
+######################################################################
 # Verify klippy host software
 ######################################################################
 

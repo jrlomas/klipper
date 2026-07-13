@@ -8,6 +8,20 @@ All dates in this document are approximate.
 
 ## Changes
 
+20260713: New optional config section `[helix_self_test]` and G-Code
+command `HELIX_SELF_TEST`: run the boards' built-in verification gates
+live through the protocol (firmware option `WANT_SELF_TEST`, on by
+default except on limited-code-size boards). Fully opt-in on the host.
+See the [Config Reference](Config_Reference.md#helix_self_test).
+
+20260713: New optional config section `[intentproto_transport NAME]`:
+the v2 transport bridge that lets klippy speak intentproto v2
+(authenticated + FEC envelope around unchanged stock v1 frames) to a
+network or serial micro-controller. Fully opt-in; no action is required
+for existing configs. See the
+[Config Reference](Config_Reference.md#intentproto_transport) and
+[Protocol v2](Protocol_v2.md).
+
 20260712: The FD-0001 "motion intentions" features are now available
 as opt-in, backwards-compatible config options; the default behavior is
 unchanged and no action is required to keep an existing config working.

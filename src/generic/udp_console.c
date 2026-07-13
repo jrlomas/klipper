@@ -37,6 +37,7 @@
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
 #include <string.h> // memcpy
+#include "autoconf.h" // CONFIG_WANT_DATAGRAM_SESSION
 #include "board/irq.h" // irq_save
 #include "board/misc.h" // timer_read_time
 #include "command.h" // command_encode_and_frame
@@ -138,6 +139,18 @@ udp_console_flush(void)
     irq_restore(flag);
     if (!len)
         return;
+#if CONFIG_WANT_DATAGRAM_SESSION
+    // Once the session is established, replies go out as session
+    // datagrams (rotating keys, replay-protected). The static path and
+    // its erasure-FEC layer are used only before/without a session.
+    if (udpsess_established()) {
+        uint32_t slen = udpsess_encode(tx_dgram, sizeof(tx_dgram),
+                                       tx_stage, len);
+        if (slen)
+            udp_ops->send(udp_ops_ctx, tx_dgram, slen);
+        return;
+    }
+#endif
     uint32_t dlen = udpdg_encode(tx_dgram, tx_stage, len);
     if (dlen)
         udp_ops->send(udp_ops_ctx, tx_dgram, dlen);
@@ -178,7 +191,55 @@ udp_console_task(void)
         if (got <= 0)
             break;
         const uint8_t *frames;
-        int32_t flen = udpdg_decode(rx_dgram, got, &frames);
+        int32_t flen;
+#if CONFIG_WANT_DATAGRAM_SESSION
+        // Handshake rate gate while a session is live (see below).
+        static uint32_t sess_hs_gate;
+        // Route by datagram kind. A handshake message is answered by the
+        // session; a session datagram is decrypted-authenticated by it;
+        // anything else falls to the static path (bootstrap / a host that
+        // did not offer a session). The static DGF_SESSION classification
+        // is only trusted once established, so a long static link whose
+        // seq high byte happens to set bit 4 is never mis-routed.
+        int kind = udpsess_msg_type(rx_dgram, got);
+        if (kind == 1 || kind == 3) {
+            // DoS hardening: while a session is LIVE, unauthenticated
+            // ClientHellos are rate-limited (a reconnecting host needs
+            // one) and can never reset the live keys
+            // (udpsess_on_handshake drives a separate pending handshake,
+            // adopted only on a PSK-proving ClientFin). ClientFins are
+            // never gated - gating the completion message would livelock
+            // a legitimate reconnect. ServerHello is sent directly to
+            // the candidate without changing the authenticated tx peer;
+            // that peer is committed only after a PSK-proving ClientFin.
+            if (kind == 1 && udpsess_established()) {
+                uint32_t now = timer_read_time();
+                if (sess_hs_gate
+                    && timer_is_before(now, sess_hs_gate)) {
+                    continue;
+                }
+                sess_hs_gate = now + timer_from_us(250000);
+            }
+            uint32_t rlen = udpsess_on_handshake(rx_dgram, got, tx_dgram,
+                                                 sizeof(tx_dgram));
+            if (udpsess_take_peer_adopted() && udp_ops->rx_accepted)
+                udp_ops->rx_accepted(udp_ops_ctx);
+            if (rlen && udp_ops->send_candidate)
+                udp_ops->send_candidate(udp_ops_ctx, tx_dgram, rlen);
+            continue;
+        }
+        if (kind == 2 && udpsess_established()) {
+            flen = udpsess_decode(rx_dgram, got, &frames);
+            if (flen < 0)
+                continue;
+            if (udp_ops->rx_accepted)
+                udp_ops->rx_accepted(udp_ops_ctx);
+            if (flen > 0)
+                rx_append(frames, flen);
+            continue;
+        }
+#endif
+        flen = udpdg_decode(rx_dgram, got, &frames);
         if (flen < 0)
             // Authentication failure or malformed - silently drop
             continue;
@@ -237,11 +298,41 @@ udp_console_set_fec_k(uint8_t fec_k)
     udp_fec_k = fec_k;
 }
 
+#if CONFIG_WANT_DATAGRAM_SESSION
+// Gather a 16-byte per-boot nonce for the session handshake. Uniqueness,
+// not secrecy, is required (the PSK authenticates), so the free-running
+// timer sampled across a short spin is adequate; a port with a hardware
+// UID/RNG can mix more in here.
+static void
+session_nonce(uint8_t out[16])
+{
+    for (int i = 0; i < 16; i++) {
+        uint32_t t = timer_read_time();
+        out[i] = (uint8_t)(t ^ (t >> 8) ^ (t >> 16) ^ (t >> 24));
+        // a tiny variable spin so successive samples differ
+        for (volatile int s = 0; s < (int)(t & 7) + 1; s++)
+            ;
+    }
+}
+#endif
+
 void
 udp_console_init(const struct udp_console_ops *ops, void *ctx
                  , const uint8_t *psk, uint32_t psk_len)
 {
     udpdg_init(psk, psk_len, udp_fec_k);
+#if CONFIG_WANT_DATAGRAM_SESSION
+    // Offer the DTLS-class session on top of the static-PSK floor. It
+    // requires an authenticated link, so a PSK is mandatory here; without
+    // one the session simply never establishes and traffic stays static.
+    if (psk && psk_len) {
+        static const char board_id[] = CONFIG_DATAGRAM_SESSION_ID;
+        uint8_t nonce[16];
+        session_nonce(nonce);
+        udpsess_init(psk, psk_len, (const uint8_t *)board_id,
+                     sizeof(board_id) - 1, nonce);
+    }
+#endif
     udp_ops_ctx = ctx;
     udp_ops = ops;
 }
