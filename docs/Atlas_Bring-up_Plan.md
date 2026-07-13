@@ -44,81 +44,86 @@ GPU and only becomes true when it is *validated on the Hailo*, within the
 Everything here runs on the **bench host** with only the standard library
 and gates every commit. No hardware, no GPU, no model.
 
-- [ ] **Decoder (A4).** *Do:* `python3 test/atlas_decoder_test.py`.
+- [x] **Decoder (A4).** *Do:* `python3 test/atlas_decoder_test.py`.
   *Expect:* a stock `klippy.log` decodes into a machine-time-ordered
   timeline with honest time-basis flags. *Pass:* ALL PASS.
-- [ ] **Diagnosis (A5).** *Do:* `python3 test/atlas_diagnosis_test.py`.
+- [x] **Diagnosis (A5).** *Do:* `python3 test/atlas_diagnosis_test.py`.
   *Expect:* the empty catalog still runs and captures a case. *Pass:*
   ALL PASS.
-- [ ] **Trace collector (A2).** *Do:* `python3 test/atlas_trace_test.py`.
+- [x] **Trace collector (A2).** *Do:* `python3 test/atlas_trace_test.py`.
   *Expect:* trace records render via the dictionary and merge onto the
   timeline. *Pass:* ALL PASS.
-- [ ] **Viewer (A3).** *Do:* `python3 test/atlas_view_test.py`. *Pass:*
+- [x] **Viewer (A3).** *Do:* `python3 test/atlas_view_test.py`. *Pass:*
   ALL PASS (incl. live-tail across split lines/tracebacks).
-- [ ] **Always-on service.** *Do:* `python3 test/atlas_daemon_test.py`.
+- [x] **Always-on service.** *Do:* `python3 test/atlas_daemon_test.py`.
   *Expect:* the service waits for the log, follows appends/rotation, bounds its
   timeline, diagnoses deterministically, and atomically publishes the exact
   Mainsail status contract. An idle heartbeat proves liveness. *Pass:* ALL PASS.
-- [ ] **Moonraker boundary.** *Do:*
+- [x] **Moonraker boundary.** *Do:*
   `python3 test/atlas_moonraker_test.py`. *Expect:* schema/size validation,
   last-good retention, stale detection, status/incidents/health endpoints, and
   transition-only websocket updates. *Pass:* ALL PASS.
-- [ ] **Service packaging.** *Do:* `python3 test/atlas_install_test.py`.
+- [x] **Service packaging.** *Do:* `python3 test/atlas_install_test.py`.
   *Expect:* an idempotent staged install with a private environment, hardened
   systemd unit, Moonraker registration, and no system-service side effects.
   *Pass:* ALL PASS.
-- [ ] **Structured observability + durability.** *Do:*
+- [x] **Structured observability + durability.** *Do:*
   `python3 test/atlas_observe_test.py`. *Expect:* trace/execution/link/timesync
   JSONL merges on exact machine time; partial lines and rotation recover;
   incidents deduplicate and retain across restart; learned baselines persist
   and flag drift. *Pass:* ALL PASS.
-- [ ] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
+- [x] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.
-- [ ] **Provision/fleet execution.** *Do:*
+- [x] **Provision/fleet execution.** *Do:*
   `python3 test/atlas_provision_execute_test.py`. *Expect:* explicit argv only;
   confirmation plus real Ed25519 verification before flash; hard catalog
   blockers cannot be overridden; fleet remediation uses the same audited job.
   *Pass:* ALL PASS.
-- [ ] **Fleet coherence (A7).** *Do:* `python3 test/atlas_fleet_test.py`.
+- [x] **Fleet coherence (A7).** *Do:* `python3 test/atlas_fleet_test.py`.
   *Expect:* the protocol hash derives from `intentproto` and the lockstep
   matrix is correct. *Pass:* ALL PASS.
-- [ ] **KB + redaction (A8).** *Do:* `python3 test/atlas_kb_test.py`.
+- [x] **KB + redaction (A8).** *Do:* `python3 test/atlas_kb_test.py`.
   *Expect:* the numeric-only redaction pass never leaks a secret, path,
   or serial. *Pass:* ALL PASS.
-- [ ] **KB consent + signed pulls.** *Do:*
+- [x] **KB consent + signed pulls.** *Do:*
   `python3 test/atlas_kb_store_test.py`. *Expect:* per-incident consent is
   short-lived and single-use; duplicate cases coalesce; feedback is structured;
   signed catalogs activate atomically, reject tamper/traversal, and roll back.
   *Pass:* ALL PASS.
-- [ ] **Redaction adversarial review.** *Do:* hand a bundle containing
+- [x] **Redaction adversarial review.** *Do:* hand a bundle containing
   planted secrets/paths/serials through `assemble_bundle`. *Expect:* none
-  survive. *Pass:* the rendered issue body contains zero planted values.
+  survive. *Pass:* the rendered issue body contains zero planted values;
+  automated by `test_rendered_issue_drops_planted_free_text_secrets`.
+- [x] **Mainsail Atlas/OpenAMS panels.** *Do:* run the Mainsail unit suite,
+  lint, and production build. *Expect:* the panels consume the Moonraker
+  boundary without recomputing Atlas facts. *Pass:* 46/46 unit files, lint,
+  build, and distribution zip all green on 2026-07-13.
 
 ## Phase 1 — Contracts (any CPU, stub model)
 
 The model-facing contracts, tested with a **stub** backend so no weights
 are required (§8 tier 2).
 
-- [ ] **Risk classifier (safety gate).** *Do:*
+- [x] **Risk classifier (safety gate).** *Do:*
   `python3 test/atlas_apply_test.py`. *Expect:* safety edits always
   confirm; consequential auto-apply with undo; cosmetic auto-apply; the
   most conservative tier wins. *Pass:* ALL PASS.
-- [ ] **Apply pipeline.** *Expect:* every applied change is journaled and
+- [x] **Apply pipeline.** *Expect:* every applied change is journaled and
   undoable; a safety edit does not apply without explicit confirmation.
   *Pass:* covered green above.
-- [ ] **Live apply durability.** *Do:*
+- [x] **Live apply durability.** *Do:*
   `python3 test/atlas_live_apply_test.py`. *Expect:* compare-and-swap rejects
   stale proposals; real writes are atomic/fsynced; the audit and undo survive
   restart; reload failure restores the original config. *Pass:* ALL PASS.
-- [ ] **Model backend + deploy profile.** *Do:*
+- [x] **Model backend + deploy profile.** *Do:*
   `python3 test/atlas_model_test.py`. *Expect:* the deploy profile refuses
   a 14B model and pins Qwen3-4B/Q4_K_M; backend selection falls back to a
   stub. *Pass:* ALL PASS.
-- [ ] **Eval harness (stub).** *Do:* `python3 test/atlas_eval_test.py`.
+- [x] **Eval harness (stub).** *Do:* `python3 test/atlas_eval_test.py`.
   *Expect:* safety-tier accuracy is 100% (deterministic); diagnosis and
   config-edit metrics reflect the catalog/model. *Pass:* ALL PASS.
-- [ ] **Memory-file & RAG-index formats.** *Do:*
+- [x] **Memory-file & RAG-index formats.** *Do:*
   `python3 test/atlas_memory_test.py`. *Expect:* the per-machine memory
   file round-trips losslessly and journals applied changes; the RAG index
   (stub embedder) retrieves the relevant grounding document. *Pass:* ALL
@@ -128,6 +133,12 @@ are required (§8 tier 2).
 
 The one firmware-side piece, on a real MCU — ideally the **constrained
 F072** it was designed to fit.
+
+- [x] **Host-simulator software preflight.** *Do:* build clean with trace,
+  trajectories, and PWM trajectories enabled. *Expect:* the firmware links
+  and its generated dictionary decodes registered trace formats. *Pass:* clean
+  host-simulator build passed on 2026-07-13. This does not claim F072 fit or
+  real timing.
 
 - [ ] **Builds for the target.** *Do:* enable `WANT_TRACE`, build for the
   board. *Expect:* it compiles and links; measure the flash/RAM delta.
@@ -156,14 +167,21 @@ F072** it was designed to fit.
 - [ ] **ABI-hash handshake.** *Do:* bake the protocol hash into an image;
   connect. *Expect:* a matching board reads *lockstep*; a stale one is
   offered a signed flash. *Pass:* the verdict matches reality.
+- [x] **Pinned-model CPU preflight.** *Do:* run
+  `scripts/atlas_llm_smoke.py` and `scripts/atlas_llm_eval.py` against the
+  verified Qwen3-4B Q4_K_M artifact. *Pass:* 9/9 labelled cases, real
+  interpretation, structured config proposal, and deterministic apply path
+  passed. See [Atlas Model Evaluation](Atlas_Model_Eval.md). This is not the
+  required GPU or Hailo result.
 - [ ] **Model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
   *Expect:* diagnosis accuracy and config-edit correctness above the
   agreed bar; **safety-tier refusal at 100%**. *Pass:* record the numbers.
   *(authored on GPU, validated on Hailo)*
-- [ ] **Budget honesty.** *Do:* run the harness under `--profile deploy`.
+- [x] **Budget honesty.** *Do:* run the harness under `--profile deploy`.
   *Expect:* it refuses anything past the Qwen3-4B / ~6 GB ceiling even
-  though the card is bigger. *Pass:* an over-budget model is rejected.
+  though the card is bigger. *Pass:* an over-budget model is rejected; the
+  pinned artifact estimated 2,836 MB against the 6,144 MB ceiling.
 
 ## Phase 4 — Diagnosis & apply on a live machine (board rig)
 

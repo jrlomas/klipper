@@ -1,11 +1,11 @@
 # FD-0002 · 08 — Roadmap and Settled Decisions
 
-Status: **Milestones A and B realized; the Milestone C safety contracts
-are built and CPU-tested; the intelligence tier is in progress.** The
+Status: **Milestones A and B realized; the Milestone C contracts and pinned
+model workstation path are CPU-validated; deploy hardware is pending.** The
 `atlas/` package plus [`src/trace.c`](../../../src/trace.c) implement the
 deterministic floor; the first curated failure patterns are seeded; the
 model-layer contracts (risk classifier, `ModelBackend`, eval harness,
-memory + RAG) exist and pass their suites. **166 checks across 20 test
+memory + RAG) exist and pass their suites. **157 semantic checks across 20 test
 suites, all green.** Every open decision this document once flagged is now
 settled.
 
@@ -39,8 +39,8 @@ base vs the intelligence tier.
   the GitHub intake, feedback, and acceptance→promotion workflow; signed
   KB pulls. Deterministic core; base tier; model-assisted triage where
   available.
-- **Milestone C — Intelligence.** ⏳ **Contracts built early and
-  CPU-tested; intelligence in progress.** The local open-weight model:
+- **Milestone C — Intelligence.** ⏳ **Workstation path validated; deploy
+  target pending.** The local open-weight model:
   interpretation of unmatched cases, NL config/control
   (draft → validate → confirm), RAG over KB + per-machine memory.
   Intelligence tier. The deterministic *contracts* it plugs into are done
@@ -49,7 +49,9 @@ base vs the intelligence tier.
   profile guard ([`atlas/model/`](../../../atlas/model/)), the eval harness
   ([`atlas/eval/`](../../../atlas/eval/)), and the memory + RAG index
   ([`atlas/memory/`](../../../atlas/memory/)) — with the backend wired to
-  llama.cpp and validated on a real GGUF.
+  llama.cpp. The official pinned Qwen3-4B Q4_K_M passes the real-model
+  workstation smoke and all 9 labelled eval cases; GPU and Hailo results
+  remain explicitly unclaimed.
 - **Milestone D — Companion at scale.** Proactive baselines + anomaly
   detection maturing; the users-as-trainers loop running at fleet scale;
   voice (future). Both tiers; intelligence tier for voice/NL.
@@ -124,12 +126,12 @@ recorded here as the settled record; the rationale for the last four is in
 ## Where this leaves us
 
 The open items are settled; FD-0002 has split into this numbered series;
-Milestones A and B are realized and Milestone C's safety contracts are in
-place and green. What remains is the *intelligence itself* — bringing the
-pinned model up on the Hailo-10H within budget and letting it interpret,
-draft, and (later) listen behind the deterministic gate that already
-exists. The floor is honest, the contracts are proven, and the machine can
-talk. The rest is teaching it what to say.
+Milestones A and B are realized. Milestone C's safety contracts, pinned
+llama.cpp runtime, structured action path, and workstation quality preflight
+are green. What remains is hardware-bound: GPU authorship, Pi 5 + Hailo-10H
+compilation and validation, and live-machine trials. Voice remains Milestone
+D. The floor is honest, the contracts are proven, and the model can draft
+behind the deterministic gate without being trusted to decide safety.
 
 For the bring-up ladder and the current status of every task, see the
 [Atlas Bring-up Plan](../../Atlas_Bring-up_Plan.md) and the

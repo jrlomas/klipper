@@ -39,17 +39,18 @@ honesty; Atlas gives it a mind.
 primitive-for-primitive), consistent with HELIX 0.9's status. It needs an
 on-target bring-up before "it works" is true (see the §8 checklist).
 
-## Milestone C prep — the deterministic contracts (built early)
+## Milestone C — workstation path validated; deploy hardware pending
 
-Built ahead of the model tier because they're deterministic and
-CPU-testable, so dropping Qwen3-4B on later is a plug-in, not an
-integration (HANDOFF §5):
+The deterministic contracts were built ahead of the weights. The pinned
+Qwen3-4B Q4_K_M model now also runs through the llama.cpp CPU transport on
+the workstation; Pi 5 + Hailo-10H compilation and validation remain hardware
+bring-up work (HANDOFF §5):
 
 | Module | Contract |
 | --- | --- |
 | `apply/` | the **non-LLM risk classifier** plus draft→validate→classify→apply. The live path uses compare-and-swap, atomic config writes, durable audit, reload rollback, and restart-safe undo. The safety gate never depends on the model. |
 | `model/` | the `ModelBackend` abstraction (stub/cuda/rocm/cpu/hailo) + the **deploy-profile budget guard** (refuses anything past Qwen3-4B / ~6 GB even on a big dev card) + `LlamaCppBackend.generate` wired to llama.cpp (schema→JSON grammar, tools→tool-calling) and the prompt/tool-schema contracts + assistant helpers. |
-| `eval/` | the eval harness — diagnosis accuracy, config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first, always reported against the deploy profile. |
+| `eval/` | the eval harness — diagnosis accuracy, structured config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first or against real GGUF weights, always reported against the deploy profile and actual accelerator provenance. |
 | `memory/` | the per-machine **memory file** (quirks, baselines, journaled changes) + the **RAG index** over the KB + memory, with a deterministic stub embedder for grounding. |
 
 **Milestone B** seeds the first curated failure patterns —
@@ -59,10 +60,13 @@ patterns), verified in `test/atlas_patterns_test.py`.
 Verification: [`docs/Atlas_Bring-up_Plan.md`](../docs/Atlas_Bring-up_Plan.md).
 The real model backend is validated end-to-end by
 [`scripts/atlas_llm_smoke.py`](../scripts/atlas_llm_smoke.py) against a
-real GGUF; the standard suite mocks the model so it runs on CPU.
+real GGUF; [`scripts/atlas_llm_eval.py`](../scripts/atlas_llm_eval.py) runs
+the labelled suite against the pinned weights. The recorded workstation
+result is in [`docs/Atlas_Model_Eval.md`](../docs/Atlas_Model_Eval.md).
+The standard suite mocks the model so it runs without weights.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **166 checks across 20 suites**, all green.
+— **157 semantic checks across 20 suites**, all green.
 
 ## Try it on a real log
 

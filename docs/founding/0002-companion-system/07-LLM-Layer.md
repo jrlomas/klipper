@@ -1,17 +1,17 @@
 # FD-0002 · 07 — Plane 4: The LLM as Interpreter *and* Actuator
 
-Status: **Contracts realized (Milestone C prep); intelligence tier in
-progress.** The deterministic safety contracts the model plugs into are
-**built and CPU-tested ahead of the model itself**: the non-LLM risk
+Status: **Contracts and pinned-model workstation path realized; deploy
+hardware pending.** The deterministic safety contracts the model plugs into
+are **built and CPU-tested**: the non-LLM risk
 classifier + draft→validate→classify→apply pipeline in
 [`atlas/apply/`](../../../atlas/apply/), the `ModelBackend` abstraction +
 deploy-profile budget guard in [`atlas/model/`](../../../atlas/model/), the
 eval harness in [`atlas/eval/`](../../../atlas/eval/), and the per-machine
 memory file + RAG index in [`atlas/memory/`](../../../atlas/memory/). The
-model backend is wired to **llama.cpp** and validated with a real GGUF; the
-deploy target remains Pi 5 + Hailo-10H running **Qwen3-4B Q4_K_M**. The
-intelligence itself — interpretation of unmatched cases, NL config/control
-in production — is the in-progress part.
+model backend is wired to **llama.cpp** and the official pinned
+**Qwen3-4B Q4_K_M** passes the workstation CPU smoke and labelled suite.
+The deploy target remains Pi 5 + Hailo-10H; GPU authorship, target model
+compilation, target metrics, and live-machine integration remain open.
 
 This is the plane other printer stacks are not even considering: a machine
 you can *ask*, and (carefully) *tell*. But the entire value of the plane
@@ -20,10 +20,10 @@ by a single discipline stated many ways in this series: **the model
 drafts; deterministic code classifies and validates; the human is asked
 only when the stakes justify it.** Two modes, one guardrail.
 
-Why the contracts were built *before* the model: they are deterministic
-and CPU-testable, so dropping Qwen3-4B onto the Hailo later is a
-plug-in, not an integration. The safety gate exists and is tested even
-though the intelligence above it is still being brought up.
+Why the contracts were built *before* the model: they are deterministic and
+CPU-testable, so moving the same Qwen3-4B contract from workstation llama.cpp
+to Hailo is a backend change, not a safety rewrite. The workstation result is
+recorded in [Atlas Model Evaluation](../../Atlas_Model_Eval.md).
 
 ## Interpret
 

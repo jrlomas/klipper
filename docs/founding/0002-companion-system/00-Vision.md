@@ -1,8 +1,9 @@
 # Founding Document 0002 — Atlas: Vision
 
 Status: **Adopted — the deterministic floor (Milestone A) is realized in
-the `atlas/` package + `src/trace.c`; the Milestone C contracts are built
-and CPU-tested; the intelligence tier is in progress.**
+the `atlas/` package + `src/trace.c`; the Milestone C contracts and pinned
+Qwen3-4B workstation path are CPU-validated; deploy-target intelligence
+remains hardware bring-up.**
 
 > **These documents are no longer a single proposal — they are the design
 > record of what Atlas is becoming.** FD-0002 was written as one spine to
@@ -113,8 +114,9 @@ Underneath all four is the **shared brain**: a public, signed knowledge
 base whose every lesson — and every *refusal* to learn — carries a
 readable rationale ([05-Knowledge-Base.md](05-Knowledge-Base.md)).
 
-The first three planes are deterministic, CPU-only, and **already
-built** — the Milestone A floor. The fourth sits above them and is in
-progress, with its safety contracts already realized and tested. The
-roadmap that got us here and the settled decisions behind it are in
+The first three planes are deterministic, CPU-only, and **already built** —
+the Milestone A floor. The fourth sits above them: its safety contracts,
+llama.cpp transport, and pinned Qwen3-4B workstation preflight are realized;
+GPU authorship and Pi 5 + Hailo-10H validation remain. The roadmap that got
+us here and the settled decisions behind it are in
 [08-Roadmap.md](08-Roadmap.md).

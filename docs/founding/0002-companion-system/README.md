@@ -21,9 +21,10 @@ below, and the deterministic substrate exists in code.
 Status: **Split into the numbered series; the deterministic floor
 (Milestone A) and the first patterns (Milestone B) are realized in the
 [`atlas/`](../../../atlas/) package + [`src/trace.c`](../../../src/trace.c);
-the Milestone C safety contracts are built and CPU-tested; the
-intelligence tier is in progress. 166 checks across 20 test suites, all
-green.** Each document's own status line records its precise state.
+the Milestone C contracts and pinned Qwen3-4B workstation path are
+CPU-validated; Pi 5 + Hailo-10H deployment remains hardware bring-up.
+157 semantic checks across 20 test suites, all green.** Each document's own
+status line records its precise state.
 
 ## The documents
 
@@ -31,15 +32,15 @@ Read in order, or jump by interest. Each is self-contained.
 
 | Document | Contents | Status |
 | --- | --- | --- |
-| [00-Vision.md](00-Vision.md) | The thesis, the six principles, what Atlas is in one breath | Adopted — floor realized, intelligence in progress |
+| [00-Vision.md](00-Vision.md) | The thesis, the six principles, what Atlas is in one breath | Adopted — floor realized, model workstation-validated |
 | [01-Compute-Tiers.md](01-Compute-Tiers.md) | Base / ASR-accel / Intelligence tiers; the Hailo constraint; the Qwen3 model choice; dev-target ≠ deploy-target | Adopted — deploy target pinned; `atlas/model/` realized |
 | [02-Trace-Observability.md](02-Trace-Observability.md) | Plane 1: the structured, registered trace plane; the merged-timeline substrate | Realized in the Atlas floor (Milestone A) |
 | [03-Blackbox-Decoder.md](03-Blackbox-Decoder.md) | Merging execlog + trace + link_stats + timesync + stock `klippy.log` into one narrative | Realized in the Atlas floor (Milestone A) |
 | [04-Diagnosis-Engine.md](04-Diagnosis-Engine.md) | The deterministic pattern catalog, the empty-catalog principle, and the proactive health monitor | Realized (Milestone A); patterns seeded (Milestone B) |
 | [05-Knowledge-Base.md](05-Knowledge-Base.md) | The shared brain: KB contents, report pipeline, redaction, the §6a lifecycle state machine + label vocabulary, trust & anti-poisoning | Framework realized in the Atlas floor (Milestone A) |
 | [06-Provisioning-Fleet-Coherence.md](06-Provisioning-Fleet-Coherence.md) | Plane 3: the board catalog, one-touch provisioning, and fleet coherence as one signed mechanism | Realized in the Atlas floor (Milestone A) |
-| [07-LLM-Layer.md](07-LLM-Layer.md) | Plane 4: interpret + generate/control, the risk tiers, the eval harness, voice, and the ecosystem seams | Contracts realized (Milestone C prep); intelligence in progress |
-| [08-Roadmap.md](08-Roadmap.md) | The A–D milestones with their current state, and every (now settled) open decision | Milestones A/B realized; C contracts green |
+| [07-LLM-Layer.md](07-LLM-Layer.md) | Plane 4: interpret + generate/control, the risk tiers, the eval harness, voice, and the ecosystem seams | Contracts + pinned-model workstation path realized; target pending |
+| [08-Roadmap.md](08-Roadmap.md) | The A–D milestones with their current state, and every (now settled) open decision | Milestones A/B realized; C workstation path green |
 
 ## Reading order
 
