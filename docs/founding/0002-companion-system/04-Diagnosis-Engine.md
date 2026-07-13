@@ -8,7 +8,8 @@ patterns seeded (Milestone B).** The schema, matcher, and
 [`matcher.py`](../../../atlas/diagnosis/matcher.py)); the first **9 curated
 failure patterns** — thermal, comms, motion — are seeded in
 [`atlas/diagnosis/patterns/`](../../../atlas/diagnosis/patterns/). Run it
-with `python3 -m atlas.cli diagnose /path/to/klippy.log`.
+with `python3 -m atlas.cli diagnose /path/to/klippy.log`; the same matcher runs
+continuously over live state in [`atlas/daemon.py`](../../../atlas/daemon.py).
 
 The [blackbox decoder](03-Blackbox-Decoder.md) turns a flight recording
 into a *narrative*. The diagnosis engine turns the narrative into a
@@ -92,3 +93,7 @@ machine's memory file (the same store the LLM layer grounds against — see
 for *this* machine" is learned, not assumed. Baselines maturing at fleet
 scale is a later-milestone goal ([08-Roadmap.md](08-Roadmap.md)); the
 engine that drives it is the deterministic floor that exists now.
+
+The current daemon supplies the live deterministic rule-evaluation loop and
+status publication. Learning and comparing per-machine drift baselines remains
+Milestone D work; live matching is not presented as learned anomaly detection.

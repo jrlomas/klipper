@@ -5,7 +5,10 @@ Status: **Realized in the Atlas floor (Milestone A).** The decoder is
 reading onto the merged store in [`atlas/timeline.py`](../../../atlas/timeline.py)
 and driven from the CLI (`python3 -m atlas.cli decode /path/to/klippy.log`).
 It is useful on a **stock Klipper log today**, before a single new board
-ships.
+ships. The always-on path is realized in
+[`atlas/daemon.py`](../../../atlas/daemon.py): it follows the live log across
+rotation, keeps a bounded timeline, runs deterministic diagnosis, and
+atomically publishes the versioned state consumed by API/UI plumbing.
 
 A modern aircraft does not ask the pilot to remember what happened in the
 three seconds before an incident — it has a flight recorder, and afterward

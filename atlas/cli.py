@@ -9,6 +9,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import argparse
+import asyncio
 import os
 import sys
 
@@ -16,6 +17,7 @@ import json
 
 from .decode import decode_klippy_log
 from .diagnosis import Matcher, load_catalog
+from .daemon import AtlasDaemon, DEFAULT_MAX_EVENTS
 from .kb import assemble_bundle, render_issue
 from .view import LiveTail, TimelineFilter, render
 
@@ -108,6 +110,22 @@ def _cmd_bundle(args) -> int:
     return 0
 
 
+def _cmd_serve(args) -> int:
+    daemon = AtlasDaemon(
+        log_path=args.logfile, state_path=args.state_file,
+        catalog_path=args.catalog, interval=args.interval,
+        max_events=args.max_events)
+    if args.once:
+        state = daemon.poll_once(force=True)
+        print(json.dumps(state, indent=2, sort_keys=True))
+        return 0
+    try:
+        asyncio.run(daemon.serve())
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="atlas", description="Atlas floor CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -144,6 +162,20 @@ def main(argv=None) -> int:
     b.add_argument("--issue", action="store_true",
                    help="render as a GitHub Issue instead of JSON")
     b.set_defaults(func=_cmd_bundle)
+
+    s = sub.add_parser(
+        "serve", help="run the always-on timeline and diagnosis service")
+    s.add_argument("logfile", help="klippy.log to follow")
+    s.add_argument(
+        "--state-file",
+        default=os.path.expanduser("~/.local/state/atlas/status.json"),
+        help="atomic JSON snapshot consumed by API plumbing")
+    s.add_argument("--catalog", default=_CATALOG)
+    s.add_argument("--interval", type=float, default=0.5)
+    s.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
+    s.add_argument("--once", action="store_true",
+                   help="publish one snapshot and exit")
+    s.set_defaults(func=_cmd_serve)
 
     args = p.parse_args(argv)
     return args.func(args)

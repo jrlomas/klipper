@@ -13,6 +13,7 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -73,20 +74,74 @@ class LiveTail:
     arrival order (what a live tail wants).
     """
 
-    def __init__(self, path, filt: TimelineFilter = None):
+    def __init__(self, path, filt: TimelineFilter = None,
+                 max_events: int = None):
         from .decode.klippy_log import KlippyLogDecoder
         self.path = path
         self.filt = filt or TimelineFilter(ordered=False)
         self.decoder = KlippyLogDecoder()
+        if max_events is not None and max_events < 1:
+            raise ValueError("max_events must be positive")
+        self.max_events = max_events
         self._offset = 0
         self._emitted = 0
         self._pending = ""   # an unterminated trailing line, held back
+        self._identity = None
+        self.source_available = False
+        self.rotations = 0
+
+    @property
+    def timeline(self) -> Timeline:
+        return self.decoder.timeline
+
+    def _source_ready(self) -> bool:
+        try:
+            st = os.stat(self.path)
+        except FileNotFoundError:
+            self.source_available = False
+            return False
+        self.source_available = True
+        identity = (st.st_dev, st.st_ino)
+        rotated = (self._identity is not None
+                   and (identity != self._identity
+                        or st.st_size < self._offset))
+        if rotated:
+            # Keep the existing bounded narrative, but start reading the new
+            # source at byte zero.  This handles rename+create and copytruncate
+            # without losing the incident that caused a rollover.
+            self.decoder.finalize()
+            self._offset = 0
+            self._pending = ""
+            self.rotations += 1
+            self.timeline.note("klippy.log rotated; continued from the new "
+                               "file at byte zero")
+        self._identity = identity
+        return True
+
+    def _prune(self) -> None:
+        if self.max_events is None:
+            return
+        overflow = len(self.timeline.events) - self.max_events
+        if overflow <= 0:
+            return
+        del self.timeline.events[:overflow]
+        self._emitted = max(0, self._emitted - overflow)
+        self.timeline.note("live timeline is bounded to the latest %d events"
+                           % self.max_events)
 
     def poll(self) -> list:
-        with open(self.path, "r") as fh:
-            fh.seek(self._offset)
-            chunk = fh.read()
-            self._offset = fh.tell()
+        if not self._source_ready():
+            return []
+        try:
+            with open(self.path, "r") as fh:
+                fh.seek(self._offset)
+                chunk = fh.read()
+                self._offset = fh.tell()
+        except FileNotFoundError:
+            # The file may rotate between stat() and open().  Treat that as a
+            # normal waiting poll; the next pass attaches to the replacement.
+            self.source_available = False
+            return []
         self._pending += chunk
         # Feed only complete (newline-terminated) lines; keep any partial
         # final line for the next poll.  Do NOT finalize mid-stream — an
@@ -98,7 +153,9 @@ class LiveTail:
         tl = self.decoder.timeline
         new = tl.events[self._emitted:]
         self._emitted = len(tl.events)
-        return [e for e in new if self.filt.passes(e)]
+        selected = [e for e in new if self.filt.passes(e)]
+        self._prune()
+        return selected
 
     def follow(self, out=None, interval=0.5, wall=False, _max_polls=None):
         """Blocking tail loop.  _max_polls bounds it for testing."""

@@ -23,6 +23,7 @@ honesty; Atlas gives it a mind.
 | --- | --- | --- |
 | `../src/trace.{c,h}` | **A1** structured trace plane (firmware) — `LOG*` macros, IRAM ring, Class-2 stream, dictionary-registered events, F072-fit | ✅ authored¹ |
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
+| `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract | ✅ |
 | `decode/trace.py` | **A2** host trace collector — decode trace records via the dictionary onto the merged timeline | ✅ |
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
@@ -57,8 +58,8 @@ The real model backend is validated end-to-end by
 [`scripts/atlas_llm_smoke.py`](../scripts/atlas_llm_smoke.py) against a
 real GGUF; the standard suite mocks the model so it runs on CPU.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,view,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **136 checks across 13 suites**, all green.
+Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+— **144 checks across 14 suites**, all green.
 
 ## Try it on a real log
 
@@ -74,6 +75,21 @@ clock from `Stats` lines, anchored to wall time by the `Start printer at`
 banner. Events between stats lines are marked with a `~` (inferred time).
 Real machine time arrives when the trace plane (A1/A2) and execution log
 feed the same `Timeline`.
+
+## Run the companion service
+
+The deterministic service can run before Klipper starts; it waits for the log,
+then follows appends and rotations while keeping a bounded in-memory timeline:
+
+```console
+$ python3 -m atlas.cli serve ~/printer_data/logs/klippy.log \
+    --state-file ~/.local/state/atlas/status.json
+```
+
+The snapshot is written with rename atomicity and is the stable boundary API
+plumbing consumes. Its `timeline` and `diagnosis` objects are the exact contract
+rendered by the Mainsail Atlas panel. Moonraker integration remains deliberately
+thin: read and expose this state; never recompute Atlas facts there.
 
 ## Tests
 
