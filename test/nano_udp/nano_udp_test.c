@@ -132,6 +132,31 @@ test_udp_roundtrip(void)
     bad[NANO_ETH_HLEN + 16] ^= 0xff; // flip a byte of the source IP
     CHECK(nano_udp_parse(bad, flen, dst_ip, dst_port, &pp, &plen
                          , peer_mac, &peer_ip, &peer_port) == 0);
+
+    // A valid IP header cannot make a corrupt UDP payload acceptable.
+    memcpy(bad, frame, flen);
+    bad[flen - 1] ^= 0x01;
+    CHECK(nano_udp_parse(bad, flen, dst_ip, dst_port, &pp, &plen,
+                         peer_mac, &peer_ip, &peer_port) == 0);
+
+    // Fragmented IPv4 and inconsistent IP/UDP lengths are unsupported.
+    memcpy(bad, frame, flen);
+    bad[NANO_ETH_HLEN + 6] = 0x20; // MF set
+    bad[NANO_ETH_HLEN + 10] = bad[NANO_ETH_HLEN + 11] = 0;
+    uint16_t csum = nano_ip_checksum(bad + NANO_ETH_HLEN, NANO_IP_HLEN, 0);
+    bad[NANO_ETH_HLEN + 10] = csum >> 8;
+    bad[NANO_ETH_HLEN + 11] = csum;
+    CHECK(nano_udp_parse(bad, flen, dst_ip, dst_port, &pp, &plen,
+                         peer_mac, &peer_ip, &peer_port) == 0);
+
+    memcpy(bad, frame, flen);
+    bad[NANO_ETH_HLEN + 3]--; // IPv4 total length no longer matches UDP
+    bad[NANO_ETH_HLEN + 10] = bad[NANO_ETH_HLEN + 11] = 0;
+    csum = nano_ip_checksum(bad + NANO_ETH_HLEN, NANO_IP_HLEN, 0);
+    bad[NANO_ETH_HLEN + 10] = csum >> 8;
+    bad[NANO_ETH_HLEN + 11] = csum;
+    CHECK(nano_udp_parse(bad, flen, dst_ip, dst_port, &pp, &plen,
+                         peer_mac, &peer_ip, &peer_port) == 0);
 }
 
 int

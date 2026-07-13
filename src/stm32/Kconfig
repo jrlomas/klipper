@@ -19,7 +19,7 @@ config STM32_SELECT
     select HAVE_LIMITED_CODE_SIZE if FLASH_SIZE < 0x10000
     # Parts with a built-in Ethernet MAC (external RMII PHY) - enables
     # the native RMII datagram-console path (src/stm32/eth_mac.c)
-    select HAVE_ETH_MAC if MACH_STM32F407 || MACH_STM32F429 || MACH_STM32F7 || MACH_STM32H7
+    select HAVE_ETH_MAC if MACH_STM32F407 || MACH_STM32F429 || MACH_STM32F7
 
 config BOARD_DIRECTORY
     string
@@ -524,6 +524,15 @@ choice
             console is built; the console rides the UDP datagram binding
             over the wired link.  Configure the SPI bus, chip-select
             pin and static IP under "Ethernet transport".
+    config STM32_ETHERNET_RMII
+        bool "Ethernet datagram console via native RMII MAC"
+        depends on HAVE_ETH_MAC
+        select CONSOLE_RMII
+        help
+            Use the STM32F4/F7 on-chip Ethernet MAC with an external
+            RMII PHY as the board's console transport.  No USART/USB/CAN
+            console is built.  Configure the board's PHY, reset pin,
+            RMII pins, static IP, and PSK under "Ethernet transport".
 endchoice
 choice
     prompt "CAN bus interface" if USBCANBUS

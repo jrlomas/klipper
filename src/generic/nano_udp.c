@@ -182,14 +182,32 @@ nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
         return 0;
     if (nano_ip_checksum(ip, ihl, 0) != 0)
         return 0; // includes the stored checksum -> must fold to zero
+    uint16_t ip_total = rd_be16(ip + 2);
+    if (ip_total < ihl + NANO_UDP_HLEN
+        || (uint32_t)NANO_ETH_HLEN + ip_total > len)
+        return 0;
+    // This tiny stack has no fragment reassembly. Reject MF or non-zero
+    // fragment offsets instead of interpreting a fragment as a UDP packet.
+    if (rd_be16(ip + 6) & 0x3fff)
+        return 0;
 
     const uint8_t *udp = ip + ihl;
     if (rd_be16(udp + 2) != our_port)
         return 0;
     uint16_t udp_len = rd_be16(udp + 4);
     if (udp_len < NANO_UDP_HLEN
-        || (uint32_t)(NANO_ETH_HLEN + ihl + udp_len) > len)
+        || udp_len != ip_total - ihl)
         return 0;
+    uint16_t udp_csum = rd_be16(udp + 6);
+    if (udp_csum) {
+        uint32_t src_ip = rd_be32(ip + 12);
+        uint32_t dst_ip = rd_be32(ip + 16);
+        uint32_t psum = ((src_ip >> 16) & 0xffff) + (src_ip & 0xffff)
+                        + ((dst_ip >> 16) & 0xffff) + (dst_ip & 0xffff)
+                        + IP_PROTO_UDP + udp_len;
+        if (nano_ip_checksum(udp, udp_len, psum) != 0)
+            return 0;
+    }
 
     if (peer_mac)
         memcpy(peer_mac, frame + 6, 6);
@@ -244,6 +262,11 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
         return;
     uint16_t ethertype = rd_be16(frame + 12);
     if (ethertype == ETH_TYPE_ARP) {
+        static const uint8_t broadcast[6] = {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+        };
+        if (memcmp(frame, our_mac, 6) && memcmp(frame, broadcast, 6))
+            return;
         uint8_t reply[NANO_ETH_HLEN + NANO_ARP_LEN];
         uint32_t alen = nano_arp_build_reply(frame + NANO_ETH_HLEN
                                              , len - NANO_ETH_HLEN
@@ -259,13 +282,24 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     }
     if (ethertype != ETH_TYPE_IPV4)
         return;
+    if (memcmp(frame, our_mac, 6))
+        return;
     const uint8_t *payload;
     uint32_t plen;
-    if (!nano_udp_parse(frame, len, our_ip, our_port, &payload, &plen
-                        , cand_mac, &cand_ip, &cand_port))
+    uint8_t src_mac[6];
+    uint32_t src_ip;
+    uint16_t src_port;
+    if (!nano_udp_parse(frame, len, our_ip, our_port, &payload, &plen,
+                        src_mac, &src_ip, &src_port))
         return;
     if (rx_full || plen > sizeof(rx_payload))
         return; // console has not drained the slot yet - ARQ recovers
+    // Commit the candidate peer together with the queued datagram. Parsing a
+    // later packet must not overwrite the source that rx_accepted() will
+    // authorize for this packet.
+    memcpy(cand_mac, src_mac, sizeof(cand_mac));
+    cand_ip = src_ip;
+    cand_port = src_port;
     memcpy(rx_payload, payload, plen);
     rx_len = plen;
     rx_full = 1;
@@ -275,6 +309,7 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
 static int32_t
 nano_recv(void *ctx, uint8_t *buf, uint32_t cap)
 {
+    (void)ctx;
     if (!rx_full)
         return 0;
     uint32_t n = rx_len;
@@ -288,6 +323,7 @@ nano_recv(void *ctx, uint8_t *buf, uint32_t cap)
 static void
 nano_rx_accepted(void *ctx)
 {
+    (void)ctx;
     memcpy(peer_mac, cand_mac, 6);
     peer_ip = cand_ip;
     peer_port = cand_port;
@@ -311,6 +347,7 @@ nano_send_to(const uint8_t *mac, uint32_t ip, uint16_t port,
 static void
 nano_send(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     if (have_peer)
         nano_send_to(peer_mac, peer_ip, peer_port, data, len);
 }
@@ -318,6 +355,7 @@ nano_send(void *ctx, const uint8_t *data, uint32_t len)
 static void
 nano_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     nano_send_to(cand_mac, cand_ip, cand_port, data, len);
 }
 

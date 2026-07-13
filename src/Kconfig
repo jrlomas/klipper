@@ -381,21 +381,78 @@ config W5500_GATEWAY
 endif # CONSOLE_W5500
 endif # WANT_ETHERNET_W5500
 
-# Native on-chip Ethernet MAC + external RMII PHY path (needs a
-# software IP stack).  HAVE_ETH_MAC is set by ports with a built-in MAC.
+# Native on-chip Ethernet MAC + external RMII PHY console (needs a
+# software IP stack). HAVE_ETH_MAC is set by supported ports with a MAC.
 config HAVE_ETH_MAC
     bool
+config CONSOLE_RMII
+    bool
 config WANT_ETHERNET_RMII
-    bool "Support native RMII Ethernet MAC datagram console (design seam)"
-    depends on HAVE_ETH_MAC
+    bool
+    default y if CONSOLE_RMII
+if CONSOLE_RMII
+config RMII_TRUST_NETWORK
+    bool "Run the RMII link unauthenticated (trust_network confession)"
     default n
     help
-        Native on-chip Ethernet MAC driving an external RMII PHY.
-        Ships the MAC/DMA descriptor-ring bring-up skeleton
-        (stm32/eth_mac.c) and a minimal built-in UDP/IP/ARP responder
-        (generic/nano_udp.c) as the pluggable IP layer; the MAC DMA
-        bring-up is a clearly-marked TODO seam where lwIP or the
-        built-in responder plugs in.  See docs/Ethernet.md.
+        Permit an empty PSK only on a physically isolated, trusted
+        network. Anyone able to send packets on that segment can then
+        control motors and heaters.
+config RMII_PSK
+    string "Pre-shared key for datagram authentication"
+    default ""
+config RMII_UDP_PORT
+    int "UDP listen port"
+    range 1 65535
+    default 1234
+config RMII_IP
+    hex "Static IPv4 address (0xC0A800FE == 192.168.0.254)"
+    default 0xC0A800FE
+config RMII_PHY_ADDR
+    int "PHY MDIO address"
+    range 0 31
+    default 0
+config RMII_PHY_RESET_PIN
+    int "PHY reset pin (-1 if tied to board reset)"
+    range -1 255
+    default -1
+config RMII_PHY_RESET_ACTIVE_LOW
+    bool "PHY reset is active-low"
+    default y
+config RMII_REF_CLK_PIN
+    int "RMII REF_CLK pin (encoded PA1=1)"
+    default 1
+config RMII_MDIO_PIN
+    int "RMII MDIO pin (encoded PA2=2)"
+    default 2
+config RMII_MDC_PIN
+    int "RMII MDC pin (encoded PC1=33)"
+    default 33
+config RMII_CRS_DV_PIN
+    int "RMII CRS_DV pin (encoded PA7=7)"
+    default 7
+config RMII_RXD0_PIN
+    int "RMII RXD0 pin (encoded PC4=36)"
+    default 36
+config RMII_RXD1_PIN
+    int "RMII RXD1 pin (encoded PC5=37)"
+    default 37
+config RMII_TX_EN_PIN
+    int "RMII TX_EN pin (encoded PB11=27)"
+    default 27
+config RMII_TXD0_PIN
+    int "RMII TXD0 pin (encoded PB12=28)"
+    default 28
+config RMII_TXD1_PIN
+    int "RMII TXD1 pin (encoded PB13=29)"
+    default 29
+config RMII_FEC_PAIR
+    bool "Protect each UDP data pair with XOR parity"
+    default n
+    help
+        Enable fec_k=2. Wired Ethernet normally does not benefit, so
+        leave this disabled unless measurements show packet loss.
+endif # CONSOLE_RMII
 config WANT_NANO_UDP
     bool
     default y if WANT_ETHERNET_RMII

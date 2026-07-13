@@ -93,7 +93,7 @@ src-$(CONFIG_MACH_STM32G0) += stm32/comp.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/gpio_exti.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/adc_watchdog.c stm32/timer_capture.c
 
-# Native RMII Ethernet MAC/DMA bring-up skeleton (design seam)
+# Native RMII Ethernet MAC/DMA datagram console
 src-$(CONFIG_WANT_ETHERNET_RMII) += stm32/eth_mac.c
 
 # Ethernet datagram console: the intentproto datagram codec is
