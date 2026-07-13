@@ -34,6 +34,14 @@ SYSTEM_CONFIG = (
     "gate handle it."
 )
 
+SYSTEM_ASSISTANT = (
+    "You are Atlas, a local companion for a HELIX/Klipper 3D printer. "
+    "Answer the operator's question using only the supplied machine "
+    "timeline and retrieved knowledge. Distinguish observed facts from "
+    "inference, say when evidence is insufficient, and never claim that "
+    "you changed or controlled the printer. Be concise and practical."
+)
+
 # The tool the model calls to propose an edit. The apply layer consumes
 # `after_config`, diffs it against the current config, classifies the
 # risk, and journals/gates the result — so the model's output is always
@@ -103,6 +111,19 @@ def build_config_edit_prompt(request: str, current_config: str,
         "Relevant knowledge / this machine's quirks:\n%s\n\n"
         "Call propose_config_edit with the complete edited config."
         % (request, current_config, _rag_block(rag_hits))
+    )
+
+
+def build_assistant_prompt(question: str, timeline_summary: str,
+                           rag_hits=None) -> str:
+    """Ground a free-form operator question in current machine facts."""
+    return (
+        "Operator question: %s\n\n"
+        "Current machine timeline (machine-time ordered):\n%s\n\n"
+        "Related known-failure knowledge and this machine's memory:\n%s\n\n"
+        "Answer the question. Cite evidence by event time or summary when "
+        "possible."
+        % (question, timeline_summary, _rag_block(rag_hits))
     )
 
 

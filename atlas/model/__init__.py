@@ -16,11 +16,11 @@ from .profile import (DeployProfile, DEPLOY, DEV, BudgetError,
 from .backend import (ModelBackend, StubBackend, LlamaCppBackend,
                       HailoBackend, Completion, select_backend)
 from . import prompts
-from .assistant import interpret_incident, propose_config_edit
+from .assistant import answer_question, interpret_incident, propose_config_edit
 
 __all__ = [
     "DeployProfile", "DEPLOY", "DEV", "BudgetError", "ModelPinError",
     "estimate_memory_mb", "ModelBackend", "StubBackend", "LlamaCppBackend",
     "HailoBackend", "Completion", "select_backend", "prompts",
-    "interpret_incident", "propose_config_edit",
+    "answer_question", "interpret_incident", "propose_config_edit",
 ]

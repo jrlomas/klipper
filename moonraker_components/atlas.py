@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import pathlib
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
 SUPPORTED_SCHEMA_VERSION = 1
 DEFAULT_MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
+DEFAULT_MAX_ASSISTANT_RESPONSE_BYTES = 4 * 1024 * 1024
+ASSISTANT_IPC_SCHEMA_VERSION = 1
 
 
 def _validate_snapshot(value: Any) -> Dict[str, Any]:
@@ -51,7 +54,51 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
         raise ValueError("service.generation must be an integer")
     if not isinstance(service.get("updated_at"), (int, float)):
         raise ValueError("service.updated_at must be numeric")
+    assistant = value.get("assistant")
+    if assistant is not None and not isinstance(assistant, dict):
+        raise ValueError("assistant must be an object")
     return value
+
+
+class AssistantClient:
+    """Bounded relay to the daemon-owned local model runtime."""
+
+    def __init__(self, path: pathlib.Path, timeout: float,
+                 max_bytes: int = DEFAULT_MAX_ASSISTANT_RESPONSE_BYTES):
+        self.path = path
+        self.timeout = timeout
+        self.max_bytes = max_bytes
+
+    async def request(self, operation: str,
+                      params: Dict[str, Any]) -> Dict[str, Any]:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(
+                str(self.path), limit=self.max_bytes + 1), self.timeout)
+        payload = {
+            "schema_version": ASSISTANT_IPC_SCHEMA_VERSION,
+            "operation": operation,
+            "params": params,
+        }
+        writer.write((json.dumps(payload, separators=(",", ":"))
+                      + "\n").encode("utf-8"))
+        await writer.drain()
+        try:
+            raw = await asyncio.wait_for(reader.readline(), self.timeout)
+            if len(raw) > self.max_bytes or not raw.endswith(b"\n"):
+                raise RuntimeError("assistant response is missing or too large")
+            response = json.loads(raw)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+        if not response.get("ok"):
+            error = response.get("error", {})
+            raise RuntimeError("%s: %s" % (
+                error.get("type", "assistant error"),
+                error.get("message", "unknown failure")))
+        value = response.get("response")
+        if not isinstance(value, dict):
+            raise RuntimeError("assistant returned an invalid response")
+        return value
 
 
 class SnapshotReader:
@@ -133,6 +180,15 @@ class Atlas:
         self.stale_after = config.getfloat(
             "stale_after", 15.0, above=self.poll_interval)
         self.reader = SnapshotReader(state_path, max_bytes)
+        default_socket = state_path.parent / "assistant.sock"
+        assistant_socket = config.getpath("assistant_socket", default_socket)
+        assistant_timeout = config.getfloat(
+            "assistant_timeout", 300.0, above=0.0)
+        assistant_max_bytes = config.getint(
+            "max_assistant_response_bytes",
+            DEFAULT_MAX_ASSISTANT_RESPONSE_BYTES, above=1024)
+        self.assistant = AssistantClient(
+            assistant_socket, assistant_timeout, assistant_max_bytes)
         self._last_health_key: Optional[Tuple[Any, ...]] = None
         self.poll_timer: "FlexTimer" = self.eventloop.register_timer(
             self._handle_poll)
@@ -146,6 +202,15 @@ class Atlas:
         self.server.register_endpoint(
             "/server/atlas/health", RequestType.GET,
             self._handle_health)
+        self.server.register_endpoint(
+            "/server/atlas/assistant/ask", RequestType.POST,
+            self._handle_assistant_ask)
+        self.server.register_endpoint(
+            "/server/atlas/assistant/interpret", RequestType.POST,
+            self._handle_assistant_interpret)
+        self.server.register_endpoint(
+            "/server/atlas/assistant/propose", RequestType.POST,
+            self._handle_assistant_propose)
         self.server.register_notification(
             "atlas:status_update", "atlas_status_update")
 
@@ -198,6 +263,22 @@ class Atlas:
     async def _handle_health(self, web_request: "WebRequest"
                              ) -> Dict[str, Any]:
         return self.reader.health(self.stale_after)
+
+    async def _handle_assistant_ask(self, web_request: "WebRequest"
+                                    ) -> Dict[str, Any]:
+        return await self.assistant.request(
+            "ask", {"question": web_request.get_str("question")})
+
+    async def _handle_assistant_interpret(self, web_request: "WebRequest"
+                                          ) -> Dict[str, Any]:
+        return await self.assistant.request(
+            "interpret", {"structured": web_request.get_boolean(
+                "structured", False)})
+
+    async def _handle_assistant_propose(self, web_request: "WebRequest"
+                                        ) -> Dict[str, Any]:
+        return await self.assistant.request(
+            "propose_config", {"request": web_request.get_str("request")})
 
     async def close(self) -> None:
         self.poll_timer.stop()

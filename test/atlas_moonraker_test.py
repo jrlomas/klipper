@@ -173,6 +173,17 @@ class FakeConfig:
         return default
 
 
+class FakeWebRequest:
+    def __init__(self, values):
+        self.values = values
+
+    def get_str(self, name):
+        return self.values[name]
+
+    def get_boolean(self, name, default=False):
+        return self.values.get(name, default)
+
+
 def test_component_api_and_notifications():
     async def exercise():
         with tempfile.TemporaryDirectory() as tmp:
@@ -184,7 +195,9 @@ def test_component_api_and_notifications():
             component.reader.wall_clock = lambda: now[0]
             assert set(server.endpoints) == {
                 "/server/atlas/status", "/server/atlas/incidents",
-                "/server/atlas/health"}
+                "/server/atlas/health", "/server/atlas/assistant/ask",
+                "/server/atlas/assistant/interpret",
+                "/server/atlas/assistant/propose"}
             assert server.notifications == [
                 ("atlas:status_update", "atlas_status_update")]
             await component.component_init()
@@ -211,11 +224,44 @@ def test_component_api_and_notifications():
     print("PASS: Moonraker endpoints and websocket transitions are stable")
 
 
+def test_assistant_endpoints_are_thin_relays():
+    async def exercise():
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "status.json"
+            server = FakeServer()
+            component = atlas_component.Atlas(FakeConfig(server, path))
+            calls = []
+
+            async def relay(operation, params):
+                calls.append((operation, params))
+                return {"operation": operation, "result": {}}
+
+            component.assistant.request = relay
+            ask = await server.endpoints[
+                "/server/atlas/assistant/ask"][1](
+                    FakeWebRequest({"question": "why?"}))
+            assert ask["operation"] == "ask"
+            await server.endpoints[
+                "/server/atlas/assistant/interpret"][1](
+                    FakeWebRequest({"structured": True}))
+            await server.endpoints[
+                "/server/atlas/assistant/propose"][1](
+                    FakeWebRequest({"request": "rename a macro"}))
+            assert calls == [
+                ("ask", {"question": "why?"}),
+                ("interpret", {"structured": True}),
+                ("propose_config", {"request": "rename a macro"}),
+            ]
+    asyncio.run(exercise())
+    print("PASS: assistant APIs relay only typed requests to the daemon")
+
+
 def main():
     test_snapshot_validation_and_staleness()
     test_bad_update_retains_last_good_state()
     test_size_limit()
     test_component_api_and_notifications()
+    test_assistant_endpoints_are_thin_relays()
     print("ALL PASS")
 
 

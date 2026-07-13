@@ -15,9 +15,10 @@ import time
 
 from .diagnosis import Matcher, load_catalog
 from .history import IncidentStore
+from .ipc import AssistantUnixServer
 from .monitor import BaselineMonitor
 from .observe import StructuredTail
-from .timeline import Event
+from .timeline import Event, Timeline
 from .view import LiveTail, TimelineFilter
 
 
@@ -64,7 +65,7 @@ def _diagnosis_dict(diagnosis) -> dict:
 
 
 def build_status(timeline, diagnosis, service: dict, incidents=None,
-                 monitor=None) -> dict:
+                 monitor=None, assistant=None) -> dict:
     """Build the stable daemon -> Moonraker -> Mainsail contract."""
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
@@ -77,6 +78,7 @@ def build_status(timeline, diagnosis, service: dict, incidents=None,
         "service": dict(service),
         "incidents": list(incidents or []),
         "monitor": dict(monitor or {}),
+        "assistant": dict(assistant or {"enabled": False}),
     }
 
 
@@ -113,7 +115,7 @@ class AtlasDaemon:
                  interval: float = 0.5, max_events: int = DEFAULT_MAX_EVENTS,
                  heartbeat: float = DEFAULT_HEARTBEAT, patterns=None,
                  wall_clock=None, telemetry_paths=None, history_path=None,
-                 baseline_path=None):
+                 baseline_path=None, assistant=None, assistant_socket=None):
         if interval <= 0:
             raise ValueError("interval must be positive")
         if heartbeat <= 0:
@@ -130,6 +132,12 @@ class AtlasDaemon:
         self.history = (IncidentStore(history_path, wall_clock=wall_clock or time.time)
                         if history_path else None)
         self.monitor = BaselineMonitor(baseline_path) if baseline_path else None
+        self.assistant = assistant
+        self.assistant_socket = (os.path.abspath(os.path.expanduser(
+            assistant_socket)) if assistant_socket else None)
+        if self.assistant is not None and self.assistant_socket is None:
+            raise ValueError("assistant_socket is required with assistant")
+        self._assistant_server = None
         self.publisher = AtomicStatePublisher(state_path)
         self._fixed_patterns = patterns is not None
         self.patterns = list(patterns or [])
@@ -173,6 +181,8 @@ class AtlasDaemon:
         self.patterns = patterns
         self._catalog_signature = signature
         self._catalog_error = ""
+        if getattr(self, "assistant", None) is not None:
+            self.assistant.update_grounding(self.patterns)
         return True
 
     def _error_text(self) -> str:
@@ -272,8 +282,12 @@ class AtlasDaemon:
             "metric_count": len(self.monitor.stats) if self.monitor else 0,
             "alerts": monitor_alerts,
         }
+        assistant_state = (self.assistant.status()
+                           if self.assistant is not None
+                           else {"enabled": False})
         state = build_status(self.follower.timeline, diagnosis,
-                             self._service_status(), incidents, monitor_state)
+                             self._service_status(), incidents, monitor_state,
+                             assistant_state)
         self.publisher.publish(state)
         self._last_state = state
         self._last_publish_at = now
@@ -281,12 +295,33 @@ class AtlasDaemon:
 
     async def serve(self, stop_event=None) -> None:
         stop_event = stop_event or asyncio.Event()
-        while not stop_event.is_set():
-            self.poll_once()
-            try:
-                await asyncio.wait_for(stop_event.wait(), self.interval)
-            except asyncio.TimeoutError:
-                pass
+        if self.assistant is not None:
+            def handle(operation, params):
+                # Inference runs in a worker thread and may take minutes on
+                # CPU.  Give it a stable view instead of sharing the live
+                # list that the polling loop continues to append and bound.
+                timeline = Timeline()
+                timeline.events = list(self.follower.timeline.events)
+                timeline.notes = list(self.follower.timeline.notes)
+                timeline.versions = dict(self.follower.timeline.versions)
+                timeline.anchor = (dict(self.follower.timeline.anchor)
+                                   if self.follower.timeline.anchor else None)
+                return self.assistant.handle(
+                    operation, params, timeline)
+            self._assistant_server = AssistantUnixServer(
+                self.assistant_socket, handle)
+            await self._assistant_server.start()
+        try:
+            while not stop_event.is_set():
+                self.poll_once()
+                try:
+                    await asyncio.wait_for(stop_event.wait(), self.interval)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            if self._assistant_server is not None:
+                await self._assistant_server.close()
+                self._assistant_server = None
 
     def close(self) -> None:
         if self.history is not None:

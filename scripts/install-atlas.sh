@@ -104,6 +104,13 @@ if [ ! -f "${ENV_DEST}" ]; then
         printf 'ATLAS_INTERVAL=0.5\n'
         printf 'ATLAS_HEARTBEAT=5.0\n'
         printf 'ATLAS_MAX_EVENTS=2000\n'
+        printf 'ATLAS_MODEL=\n'
+        printf 'ATLAS_LLAMA_CLI=\n'
+        printf 'ATLAS_ACCELERATOR=cpu\n'
+        printf 'ATLAS_ASSISTANT_SOCKET=%s\n' "${STATE_DIR}/assistant.sock"
+        printf 'ATLAS_MEMORY_FILE=%s\n' "${STATE_DIR}/memory.json"
+        printf 'ATLAS_PRINTER_CONFIG=%s\n' \
+            "${ATLAS_DATA}/config/printer.cfg"
     } > "${ENV_DEST}"
 fi
 
@@ -124,6 +131,8 @@ if ! grep -q '^\[atlas\]$' "${MOONRAKER_DEST}"; then
         printf 'state_file: %s\n' "${STATE_FILE}"
         printf 'poll_interval: 0.5\n'
         printf 'stale_after: 15\n'
+        printf 'assistant_socket: %s\n' "${STATE_DIR}/assistant.sock"
+        printf 'assistant_timeout: 300\n'
     } >> "${MOONRAKER_DEST}"
 fi
 
@@ -144,3 +153,4 @@ if [ -z "${DESTDIR}" ]; then
 fi
 
 echo "Atlas installed. State: ${STATE_FILE}; Moonraker API: /server/atlas/status"
+echo "Set ATLAS_MODEL and ATLAS_LLAMA_CLI in ${ENV_FILE} to enable the local assistant."

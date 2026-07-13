@@ -18,7 +18,11 @@ import json
 from .decode import decode_klippy_log
 from .diagnosis import Matcher, load_catalog
 from .daemon import AtlasDaemon, DEFAULT_HEARTBEAT, DEFAULT_MAX_EVENTS
+from .assistant import AssistantRuntime
+from .ipc import request as assistant_request
 from .kb import assemble_bundle, render_issue
+from .memory import MachineMemory
+from .model import LlamaCppBackend
 from .view import LiveTail, TimelineFilter, render
 
 _CATALOG = os.path.join(os.path.dirname(__file__), "diagnosis", "patterns")
@@ -113,6 +117,26 @@ def _cmd_bundle(args) -> int:
 def _cmd_serve(args) -> int:
     state_dir = os.path.dirname(os.path.abspath(
         os.path.expanduser(args.state_file)))
+    assistant = None
+    if args.model:
+        model_path = os.path.abspath(os.path.expanduser(args.model))
+        backend = LlamaCppBackend(
+            model_path=model_path, accelerator=args.accelerator,
+            n_ctx=args.model_context, cli_path=args.llama_cli,
+            timeout=args.model_timeout)
+        backend.enforce_budget()
+        if not backend.available():
+            raise RuntimeError(
+                "configured model or llama.cpp runtime is unavailable")
+        memory = None
+        if args.memory_file:
+            memory_path = os.path.abspath(os.path.expanduser(
+                args.memory_file))
+            if os.path.exists(memory_path):
+                with open(memory_path, encoding="utf-8") as handle:
+                    memory = MachineMemory.from_json(handle.read())
+        assistant = AssistantRuntime(
+            backend, memory=memory, config_path=args.printer_config)
     daemon = AtlasDaemon(
         log_path=args.logfile, state_path=args.state_file,
         catalog_path=args.catalog, interval=args.interval,
@@ -121,7 +145,9 @@ def _cmd_serve(args) -> int:
         history_path=args.history_file or os.path.join(
             state_dir, "incidents.sqlite3"),
         baseline_path=args.baseline_file or os.path.join(
-            state_dir, "baselines.json"))
+            state_dir, "baselines.json"), assistant=assistant,
+        assistant_socket=(args.assistant_socket or os.path.join(
+            state_dir, "assistant.sock")) if assistant else None)
     if args.once:
         state = daemon.poll_once(force=True)
         print(json.dumps(state, indent=2, sort_keys=True))
@@ -133,6 +159,31 @@ def _cmd_serve(args) -> int:
             pass
     finally:
         daemon.close()
+    return 0
+
+
+def _cmd_assistant(args) -> int:
+    params = {}
+    if args.assistant_cmd == "ask":
+        operation = "ask"
+        params["question"] = args.text
+    elif args.assistant_cmd == "interpret":
+        operation = "interpret"
+        params["structured"] = args.structured
+    elif args.assistant_cmd == "propose":
+        operation = "propose_config"
+        params["request"] = args.text
+    else:  # pragma: no cover - argparse constrains this
+        raise ValueError(args.assistant_cmd)
+    response = asyncio.run(assistant_request(
+        args.socket, operation, params, timeout=args.timeout))
+    result = response["result"]
+    if operation == "ask":
+        print(result["answer"])
+    elif operation == "interpret" and not args.structured:
+        print(result["interpretation"])
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
@@ -193,7 +244,39 @@ def main(argv=None) -> int:
                    help="machine baseline JSON (default: beside state file)")
     s.add_argument("--once", action="store_true",
                    help="publish one snapshot and exit")
+    s.add_argument("--model", default=os.environ.get("ATLAS_MODEL", ""),
+                   help="Qwen3-4B Q4_K_M GGUF; enables the assistant")
+    s.add_argument("--llama-cli",
+                   default=os.environ.get("ATLAS_LLAMA_CLI") or None,
+                   help="llama-completion path")
+    s.add_argument("--accelerator", choices=("cpu", "cuda", "rocm"),
+                   default=os.environ.get("ATLAS_ACCELERATOR", "cpu"))
+    s.add_argument("--model-context", type=int, default=8192)
+    s.add_argument("--model-timeout", type=float, default=300.0)
+    s.add_argument("--assistant-socket",
+                   default=os.environ.get("ATLAS_ASSISTANT_SOCKET") or None)
+    s.add_argument("--memory-file",
+                   default=os.environ.get("ATLAS_MEMORY_FILE") or None)
+    s.add_argument("--printer-config",
+                   default=os.environ.get("ATLAS_PRINTER_CONFIG") or None,
+                   help="read-only config source for classified previews")
     s.set_defaults(func=_cmd_serve)
+
+    a = sub.add_parser("assistant", help="query the running local assistant")
+    a.add_argument(
+        "--socket", default=os.path.expanduser(
+            "~/.local/state/atlas/assistant.sock"))
+    a.add_argument("--timeout", type=float, default=300.0)
+    assistant_sub = a.add_subparsers(dest="assistant_cmd", required=True)
+    ask = assistant_sub.add_parser("ask", help="ask about current machine state")
+    ask.add_argument("text")
+    interpret = assistant_sub.add_parser(
+        "interpret", help="interpret the current incident")
+    interpret.add_argument("--structured", action="store_true")
+    propose = assistant_sub.add_parser(
+        "propose", help="draft and classify a printer.cfg edit")
+    propose.add_argument("text")
+    a.set_defaults(func=_cmd_assistant)
 
     args = p.parse_args(argv)
     return args.func(args)

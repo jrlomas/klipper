@@ -140,6 +140,12 @@ class LlamaCppBackend(ModelBackend):
     def available(self) -> bool:
         if self._llama is not None:
             return True
+        # A runtime without weights is not an available backend.  The old
+        # probe only checked for llama.cpp itself, which let selection report
+        # a real backend and then fail on the first request because no model
+        # path had ever been configured.
+        if not self.model_path or not os.path.isfile(self.model_path):
+            return False
         return self._binding_available() or self._find_cli() is not None
 
     def enforce_budget(self) -> int:

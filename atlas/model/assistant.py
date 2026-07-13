@@ -14,6 +14,16 @@ from ..apply import Proposal
 from . import prompts
 
 
+def answer_question(backend, question, timeline, rag_index=None, k=4):
+    """Answer a read-only operator question grounded in current facts."""
+    summary = prompts.timeline_summary(timeline)
+    query = "%s\n%s" % (question, summary)
+    hits = rag_index.query(query, k=k) if rag_index is not None else None
+    prompt = prompts.build_assistant_prompt(question, summary, hits)
+    return backend.generate(
+        prompt, system=prompts.SYSTEM_ASSISTANT).text
+
+
 def interpret_incident(backend, timeline, rag_index=None, k=4,
                        structured=False):
     """Explain an incident timeline. Returns text, or a dict if structured.
