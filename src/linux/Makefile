@@ -26,6 +26,15 @@ $(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp
 	@echo "  Compiling (C++) $@"
 	$(Q)$(CXX) $(CXXFLAGS_udpdg) -c $< -o $@
 
+# Serial console framing v2 (BCH): the frame_v2 C++ shim. datagram.o + bch.o
+# are already in udpdg-objs above.
+ifeq ($(CONFIG_WANT_CONSOLE_FRAMING_V2),y)
+OBJS_klipper.elf += $(OUT)src/generic/framing_v2.o
+$(OUT)src/generic/framing_v2.o: src/generic/framing_v2.cpp
+	@echo "  Compiling (C++) $@"
+	$(Q)$(CXX) $(CXXFLAGS_udpdg) -c $< -o $@
+endif
+
 $(OUT)lib/intentproto/src/%.o: lib/intentproto/src/%.cpp
 	@echo "  Compiling (C++) $@"
 	$(Q)mkdir -p $(OUT)lib/intentproto/src
