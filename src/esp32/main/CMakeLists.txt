@@ -70,6 +70,7 @@ set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/spi.c
     ${KLIPPER_ROOT}/src/esp32/i2c.c
     ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
+    ${KLIPPER_ROOT}/src/esp32/watchdog.c
     ${KLIPPER_ROOT}/src/esp32/wifi.c
     # In-band update mapped onto ESP-IDF OTA (FD-0001 doc 11)
     ${KLIPPER_ROOT}/src/esp32/ota.c)

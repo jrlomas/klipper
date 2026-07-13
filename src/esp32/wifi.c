@@ -13,8 +13,6 @@
 
 #include <string.h> // strncpy
 #include "sdkconfig.h" // CONFIG_KLIPPER_WIFI_SSID
-#include "freertos/FreeRTOS.h" // pdMS_TO_TICKS
-#include "freertos/task.h" // vTaskDelay
 #include "esp_event.h" // esp_event_loop_create_default
 #include "esp_log.h" // ESP_LOGI
 #include "esp_netif.h" // esp_netif_init
@@ -32,8 +30,13 @@ wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
         // Reconnect forever - the mcu-side intention horizon and the
         // host's retransmit machinery ride out the outage
         ESP_LOGW(TAG, "disconnected, reconnecting");
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_wifi_connect();
+        // Event handlers run on the system event task; do not block it.
+        // IDF serializes connection attempts and emits another disconnect
+        // event if this attempt fails, giving an indefinite retry loop.
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK)
+            ESP_LOGW(TAG, "reconnect request failed: %s",
+                     esp_err_to_name(err));
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&ev->ip_info.ip));

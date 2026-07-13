@@ -27,7 +27,7 @@
 
 static struct task_wake traj_event_wake;
 
-static uint32_t
+static inline uint32_t
 trajq_horizon_us(struct trajq *tq)
 {
     int32_t ticks = tq->horizon_clock - timer_read_time();
@@ -484,6 +484,12 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 void
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
 {
+    if (!timesync_class0_ok()) {
+        // A rebase is the anchor for subsequent Class-0 segments.  Do not
+        // translate it through a mapping that is still moving or stale.
+        tq->dropped++;
+        return;
+    }
     // The anchor is a machine-time instant (FD-0001 doc 01);
     // identity when timesync is unconfigured
     clock = timesync_clock_to_local(clock);

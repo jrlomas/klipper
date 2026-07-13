@@ -108,6 +108,7 @@ esp32_appcpu_start(void)
     // concurrently with core 0 (ESP32 DPORT access hazard; see
     // soc/dport_access.h).
     periph_module_enable(PERIPH_TIMG0_MODULE); // klipper timer (T0)
+    periph_module_enable(PERIPH_TIMG1_MODULE); // bare-core watchdog
     periph_module_enable(PERIPH_HSPI_MODULE);
     periph_module_enable(PERIPH_VSPI_MODULE);
     periph_module_enable(PERIPH_I2C0_MODULE);

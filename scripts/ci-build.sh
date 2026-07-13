@@ -78,6 +78,7 @@ for TEST in \
     test/paradigm_validator_test.py \
     test/segment_lib_test.py \
     test/session_bridge_test.py \
+    test/timesync_gate_test.py \
     test/traj_higher_order_test.py \
     test/traj_pwm_feed_test.py \
     test/traj_pwm_fitter_test.py \

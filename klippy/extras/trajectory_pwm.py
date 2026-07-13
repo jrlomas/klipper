@@ -242,6 +242,16 @@ class TrajectoryPWM:
         self.last_plan = None
         self.mcu.register_config_callback(self._build_config)
 
+    def _require_machine_time(self):
+        lookup_object = getattr(self.printer, 'lookup_object', None)
+        timesync = (lookup_object('timesync', None)
+                    if lookup_object is not None else None)
+        if (timesync is not None
+                and not timesync.is_mcu_synced(self.mcu.get_name())):
+            raise self.printer.command_error(
+                "Machine-time discipline for %s is not converged; refusing"
+                " trajectory Class-0 traffic" % (self.mcu.get_name(),))
+
     def _build_config(self):
         self.oid = self.mcu.create_oid()
         self.mcu.request_move_queue_slot()
@@ -279,6 +289,7 @@ class TrajectoryPWM:
     def rebase(self, print_time, pos_native):
         # Anchor the chained position stream at pos_native (caller's
         # units) as of print_time.  Required before any segment.
+        self._require_machine_time()
         pos_su = int(round(pos_native * SUBUNITS))
         clock = self.mcu.print_time_to_clock(print_time)
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
@@ -292,10 +303,12 @@ class TrajectoryPWM:
         # Queue one constant-acceleration span.  velocity is Q16.16
         # sub-units/tick, accel is sub-units/tick^2 (32 fractional
         # bits) - the same wire encoding the segment fitter emits.
+        self._require_machine_time()
         self.queue_cmd.send([self.oid, flags, duration_ticks,
                              velocity, accel])
 
     def hold(self, duration_ticks):
+        self._require_machine_time()
         self.hold_cmd.send([self.oid, duration_ticks])
 
     def get_position(self):
@@ -356,6 +369,7 @@ class TrajectoryPWM:
         # knots[0] when unanchored or after an underrun; a continuing
         # call must start where the previous one ended.  Returns the
         # exact end value in native units.
+        self._require_machine_time()
         if self.queue_cmd is None:
             raise self.printer.command_error(
                 "trajectory_pwm %s is not configured yet" % (self.name,))

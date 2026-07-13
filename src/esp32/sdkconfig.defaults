@@ -18,6 +18,9 @@ CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 # The klipper task on core 1 yields via task notifications; do not
 # watchdog core 1's idle task
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# A subscribed klipper task that stops feeding is a firmware failure: make the
+# component architecture reboot instead of only printing a watchdog warning.
+CONFIG_ESP_TASK_WDT_PANIC=y
 
 # Allow gptimer alarm reprogramming from the timer ISR
 CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM=y

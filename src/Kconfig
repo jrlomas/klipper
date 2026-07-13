@@ -201,6 +201,10 @@ config WANT_TRAJECTORY
     bool
     depends on HAVE_GPIO && !MACH_AVR
     default y if !HAVE_LIMITED_CODE_SIZE
+    # Exact Q32.32 fitting, underrun ramps, sampled outputs, and the
+    # machine-time filter use bounded 64-bit ratios outside the step-edge
+    # solver.  Targets without a native 64-bit divider link libgcc's helper.
+    select HAVE_SOFTWARE_DIVIDE_REQUIRED
 config WANT_TRAJECTORY_PWM
     # Sampled PWM/DAC actuator backend (FD-0001 doc 04). Needs both
     # the trajectory segment core and a hard PWM output to sample onto.

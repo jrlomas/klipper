@@ -338,6 +338,14 @@ class TrajectoryStepper:
         if sk is None:
             return
         active_time = self.ffi_lib.itersolve_check_active(sk, flush_time)
+        if ((active_time or self.anchored)
+                and not self.owner.is_mcu_synced(self.mcu)):
+            # Do not advance segfit or the persisted intention twin while
+            # the firmware's Class-0 gate will reject these same segments.
+            # Failing before send preserves one shared view of what ran.
+            raise self.mcu.error(
+                "Machine-time discipline for %s is not converged; refusing"
+                " trajectory Class-0 traffic" % (self.mcu.get_name(),))
         if not self.anchored:
             if not active_time:
                 return
@@ -473,6 +481,7 @@ class TrajectoryQueuing:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.steppers = []
+        self.timesync = None
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
         # Advanced single-joint Bezier move is opt-in and hazardous (it
@@ -560,6 +569,11 @@ class TrajectoryQueuing:
     def get_trajectory_steppers(self):
         return list(self.steppers)
 
+    def is_mcu_synced(self, mcu):
+        if self.timesync is None:
+            return True
+        return self.timesync.is_mcu_synced(mcu.get_name())
+
     # Kinematics whose XY(Z) rails move together for ordinary motion, so
     # a paradigm split ACROSS rails is also a split coordination group.
     COUPLED_KINEMATICS = ('corexy', 'corexz', 'delta', 'deltesian',
@@ -604,6 +618,7 @@ class TrajectoryQueuing:
 
     def _handle_connect(self):
         self._validate_paradigm_groups()
+        self.timesync = self.printer.lookup_object('timesync', None)
         for ts in self.steppers:
             ts.connect()
         if self.steppers:

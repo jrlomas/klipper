@@ -35,7 +35,7 @@ static struct rx_slot {
     struct sockaddr_in src;
     uint8_t data[UDPDG_DATAGRAM_MAX];
 } rx_ring[RX_SLOTS];
-static volatile uint8_t rx_head, rx_tail;
+static uint32_t rx_head, rx_tail;
 
 // Source of the last datagram handed to the console, and the last
 // source that passed authentication (only the latter is replied to)
@@ -47,7 +47,8 @@ static void
 udp_rx_task(void *arg)
 {
     for (;;) {
-        struct rx_slot *s = &rx_ring[rx_head];
+        uint32_t head = rx_head; // producer-owned
+        struct rx_slot *s = &rx_ring[head];
         socklen_t sl = sizeof(s->src);
         int ret = recvfrom(udp_sock, s->data, sizeof(s->data), 0
                            , (struct sockaddr *)&s->src, &sl);
@@ -55,12 +56,14 @@ udp_rx_task(void *arg)
             vTaskDelay(1);
             continue;
         }
-        uint8_t next = (rx_head + 1) % RX_SLOTS;
-        if (next == rx_tail)
+        uint32_t next = (head + 1) % RX_SLOTS;
+        if (next == __atomic_load_n(&rx_tail, __ATOMIC_ACQUIRE))
             // Ring full - drop; the frame layer's ARQ recovers
             continue;
         s->len = ret;
-        rx_head = next;
+        // Publish the complete slot to core 1. The acquire in recv pairs
+        // with this release so data and source precede the index update.
+        __atomic_store_n(&rx_head, next, __ATOMIC_RELEASE);
         udp_console_note_rx();
         board_wake_main();
     }
@@ -69,21 +72,25 @@ udp_rx_task(void *arg)
 static int32_t
 udp_port_recv(void *ctx, uint8_t *buf, uint32_t cap)
 {
-    if (rx_tail == rx_head)
+    (void)ctx;
+    uint32_t tail = rx_tail; // consumer-owned
+    if (tail == __atomic_load_n(&rx_head, __ATOMIC_ACQUIRE))
         return 0;
-    struct rx_slot *s = &rx_ring[rx_tail];
+    struct rx_slot *s = &rx_ring[tail];
     uint32_t len = s->len;
     if (len > cap)
         len = cap;
     memcpy(buf, s->data, len);
     rx_candidate = s->src;
-    rx_tail = (rx_tail + 1) % RX_SLOTS;
+    // Release the slot only after core 1 has copied it and its source.
+    __atomic_store_n(&rx_tail, (tail + 1) % RX_SLOTS, __ATOMIC_RELEASE);
     return len;
 }
 
 static void
 udp_port_rx_accepted(void *ctx)
 {
+    (void)ctx;
     tx_peer = rx_candidate;
     have_peer = 1;
 }
@@ -91,6 +98,7 @@ udp_port_rx_accepted(void *ctx)
 static void
 udp_port_send(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     if (!have_peer)
         return;
     sendto(udp_sock, data, len, 0, (const struct sockaddr *)&tx_peer
@@ -100,6 +108,7 @@ udp_port_send(void *ctx, const uint8_t *data, uint32_t len)
 static void
 udp_port_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
+    (void)ctx;
     sendto(udp_sock, data, len, 0,
            (const struct sockaddr *)&rx_candidate, sizeof(rx_candidate));
 }

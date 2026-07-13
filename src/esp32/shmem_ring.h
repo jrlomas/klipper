@@ -156,7 +156,10 @@ struct shmem_console_shared {
     uint8_t psk[64];
     uint32_t psk_len;
     uint32_t trust_network;
-    volatile uint32_t core1_alive;
+    uint32_t core1_alive;
+    // Bare core command_reset publishes this request; the IDF modem task
+    // performs the chip restart without exposing any IDF call to core 1.
+    uint32_t reset_request;
 };
 
 extern struct shmem_console_shared esp32_shmem;

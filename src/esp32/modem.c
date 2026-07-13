@@ -27,6 +27,7 @@
 #include "freertos/FreeRTOS.h" // xTaskCreatePinnedToCore
 #include "freertos/task.h"
 #include "esp_log.h" // ESP_LOGE
+#include "esp_system.h" // esp_restart
 #include "lwip/sockets.h" // socket
 #include "generic/udp_datagram.h" // UDPDG_DATAGRAM_MAX
 #include "internal.h" // esp32_modem_start
@@ -87,6 +88,10 @@ modem_task(void *arg)
         }
 
         modem_check_core1_fault();
+        if (__atomic_load_n(&esp32_shmem.reset_request, __ATOMIC_ACQUIRE)) {
+            ESP_LOGW(TAG, "core 1 requested chip reset");
+            esp_restart();
+        }
     }
 }
 

@@ -51,7 +51,10 @@ class SecondaryLink:
             'timesync_state flags=%c prime_count=%c rate=%u last_err=%i'
             ' machine_ref=%u local_ref=%u')
         self.last_state = {'flags': 0, 'last_err': 0, 'rate': 0}
+        self.freewheel_time = 0.
+        self.last_beacon_time = None
     def setup(self, freewheel_time, converge_window):
+        self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
                              int(converge_window * self.mcu_freq)])
     def relay(self, seq, machine_clock, systime):
@@ -59,11 +62,22 @@ class SecondaryLink:
             systime))
         self.relay_cmd.send([seq, machine_clock & 0xffffffff,
                              local_est & 0xffffffff])
+        # systime is the host-monotonic instant corresponding to the
+        # primary's sampled machine clock. It is also the host's freshness
+        # witness for the firmware freewheel gate.
+        self.last_beacon_time = systime
     def query(self):
         self.last_state = self.query_cmd.send([])
         return self.last_state
-    def is_converged(self):
-        return bool(self.last_state['flags'] & TS_CONVERGED)
+    def is_converged(self, eventtime=None):
+        if not self.last_state['flags'] & TS_CONVERGED:
+            return False
+        if eventtime is not None and self.freewheel_time:
+            if (self.last_beacon_time is None
+                    or eventtime - self.last_beacon_time
+                    > self.freewheel_time):
+                return False
+        return True
 
 class MachineTimeSync:
     def __init__(self, config):
@@ -78,6 +92,7 @@ class MachineTimeSync:
         self.primary = None
         self.read_cmd = None
         self.secondaries = []
+        self._last_converged = {}
         self.prime_remaining = 0
         self.beacon_timer = self.reactor.register_timer(self._beacon_event)
         self.printer.register_event_handler('klippy:ready',
@@ -98,6 +113,7 @@ class MachineTimeSync:
             return
         self.primary = primary
         self.secondaries = []
+        self._last_converged = {}
         for name, mcu in self.printer.lookup_objects(module='mcu'):
             if mcu is primary:
                 continue
@@ -124,6 +140,7 @@ class MachineTimeSync:
         self.reactor.update_timer(self.beacon_timer, self.reactor.NEVER)
         self.primary = None
         self.secondaries = []
+        self._last_converged = {}
     # Beacon relay loop
     def _beacon_event(self, eventtime):
         self.read_cmd.send()
@@ -149,19 +166,30 @@ class MachineTimeSync:
             self.prime_remaining -= 1
             if not self.prime_remaining:
                 self._check_convergence()
+        else:
+            # Keep the host-side gate current after startup. This query is
+            # ordered behind the relay on each MCU command queue and runs at
+            # the steady beacon cadence (about 1Hz), not in the 50ms burst.
+            self._check_convergence()
     def _check_convergence(self):
         for link in self.secondaries:
             state = link.query()
-            logging.info(
-                "timesync: mcu '%s' flags=%d rate=%d last_err=%d ticks",
-                link.name, state['flags'], state['rate'], state['last_err'])
+            converged = link.is_converged(self.reactor.monotonic())
+            if self._last_converged.get(link.name) != converged:
+                logging.info(
+                    "timesync: mcu '%s' %s flags=%d rate=%d"
+                    " last_err=%d ticks",
+                    link.name, "converged" if converged else "syncing",
+                    state['flags'], state['rate'], state['last_err'])
+                self._last_converged[link.name] = converged
     # Host-visible counterpart of the firmware ingest gate. trajq.c calls
     # timesync_class0_ok() before accepting every segment; clients can use
     # this query to avoid sending work that a syncing secondary will refuse.
     def is_mcu_synced(self, mcu_name):
+        eventtime = self.reactor.monotonic()
         for link in self.secondaries:
             if link.name == mcu_name:
-                return link.is_converged()
+                return link.is_converged(eventtime)
         # Primary (or undisciplined) boards need no beacon sync
         return True
     def get_status(self, eventtime):
@@ -173,7 +201,7 @@ class MachineTimeSync:
         return {
             'machine_time': machine_time,
             'mcus': {link.name: {
-                'converged': link.is_converged(),
+                'converged': link.is_converged(eventtime),
                 'last_err_ticks': link.last_state['last_err'],
                 'rate': link.last_state['rate'],
             } for link in self.secondaries},
@@ -184,6 +212,7 @@ class MachineTimeSync:
             gcmd.respond_info("timesync: no disciplined secondary mcus")
             return
         msgs = []
+        eventtime = self.reactor.monotonic()
         for link in self.secondaries:
             state = link.query()
             ppm = 0.
@@ -192,7 +221,8 @@ class MachineTimeSync:
             msgs.append(
                 "mcu '%s': %s err=%.1fus rate=%+.2fppm" % (
                     link.name,
-                    "CONVERGED" if link.is_converged() else "SYNCING",
+                    ("CONVERGED" if link.is_converged(eventtime)
+                     else "SYNCING"),
                     state['last_err'] / link.mcu_freq * 1e6, ppm))
         gcmd.respond_info("\n".join(msgs))
 
