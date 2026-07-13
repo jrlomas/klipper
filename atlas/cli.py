@@ -17,7 +17,7 @@ import json
 
 from .decode import decode_klippy_log
 from .diagnosis import Matcher, load_catalog
-from .daemon import AtlasDaemon, DEFAULT_MAX_EVENTS
+from .daemon import AtlasDaemon, DEFAULT_HEARTBEAT, DEFAULT_MAX_EVENTS
 from .kb import assemble_bundle, render_issue
 from .view import LiveTail, TimelineFilter, render
 
@@ -114,7 +114,7 @@ def _cmd_serve(args) -> int:
     daemon = AtlasDaemon(
         log_path=args.logfile, state_path=args.state_file,
         catalog_path=args.catalog, interval=args.interval,
-        max_events=args.max_events)
+        max_events=args.max_events, heartbeat=args.heartbeat)
     if args.once:
         state = daemon.poll_once(force=True)
         print(json.dumps(state, indent=2, sort_keys=True))
@@ -172,6 +172,8 @@ def main(argv=None) -> int:
         help="atomic JSON snapshot consumed by API plumbing")
     s.add_argument("--catalog", default=_CATALOG)
     s.add_argument("--interval", type=float, default=0.5)
+    s.add_argument("--heartbeat", type=float, default=DEFAULT_HEARTBEAT,
+                   help="seconds between idle health snapshots")
     s.add_argument("--max-events", type=int, default=DEFAULT_MAX_EVENTS)
     s.add_argument("--once", action="store_true",
                    help="publish one snapshot and exit")

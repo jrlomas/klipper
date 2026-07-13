@@ -120,6 +120,26 @@ def test_idle_poll_does_not_republish():
         print("PASS: idle polling avoids redundant state rewrites")
 
 
+def test_idle_heartbeat_proves_liveness():
+    with tempfile.TemporaryDirectory() as tmp:
+        now = [100.0]
+        log = os.path.join(tmp, "klippy.log")
+        with open(log, "w") as fh:
+            fh.write(START)
+        daemon = AtlasDaemon(
+            log, os.path.join(tmp, "state.json"), tmp, patterns=[],
+            heartbeat=5.0, wall_clock=lambda: now[0])
+        first = daemon.poll_once()
+        now[0] += 4.9
+        assert daemon.poll_once() is first
+        now[0] += 0.1
+        heartbeat = daemon.poll_once()
+        assert heartbeat is not first
+        assert heartbeat["service"]["generation"] == 2
+        assert heartbeat["service"]["updated_at"] == 105.0
+        print("PASS: idle heartbeat distinguishes a quiet daemon from a dead one")
+
+
 def test_source_failure_degrades_without_losing_state():
     with tempfile.TemporaryDirectory() as tmp:
         log = os.path.join(tmp, "klippy.log")
@@ -170,6 +190,7 @@ def main():
     test_waits_for_log_to_appear()
     test_rotation_and_bounded_timeline()
     test_idle_poll_does_not_republish()
+    test_idle_heartbeat_proves_liveness()
     test_source_failure_degrades_without_losing_state()
     test_async_service_stops_cleanly()
     print("ALL PASS")

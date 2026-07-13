@@ -119,8 +119,10 @@ is polled or API'd*; the Atlas daemon owns the three things Moonraker
 cannot host; Mainsail is the face. That boundary is a settled decision —
 see [08-Roadmap.md](08-Roadmap.md).
 
-The first daemon slice is now realized in
+The daemon and API boundary are now realized in
 [`atlas/daemon.py`](../../../atlas/daemon.py): live merged-timeline ownership,
-deterministic diagnosis, and an atomic versioned state snapshot. This keeps the
-next Moonraker component intentionally boring—it exposes that contract and does
-not become a second diagnosis implementation.
+deterministic diagnosis, and an atomic versioned state snapshot with an idle
+heartbeat. The deliberately boring Moonraker component in
+[`moonraker_components/atlas.py`](../../../moonraker_components/atlas.py)
+validates and exposes that contract, reports staleness, and does not become a
+second diagnosis implementation.

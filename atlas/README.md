@@ -24,6 +24,7 @@ honesty; Atlas gives it a mind.
 | `../src/trace.{c,h}` | **A1** structured trace plane (firmware) — `LOG*` macros, IRAM ring, Class-2 stream, dictionary-registered events, F072-fit | ✅ authored¹ |
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
 | `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract | ✅ |
+| `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health endpoints, stale detection, and websocket updates | ✅ |
 | `decode/trace.py` | **A2** host trace collector — decode trace records via the dictionary onto the merged timeline | ✅ |
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
@@ -59,7 +60,7 @@ The real model backend is validated end-to-end by
 real GGUF; the standard suite mocks the model so it runs on CPU.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
-— **144 checks across 14 suites**, all green.
+— **149 checks across 15 suites**, all green.
 
 ## Try it on a real log
 
@@ -88,14 +89,17 @@ $ python3 -m atlas.cli serve ~/printer_data/logs/klippy.log \
 
 The snapshot is written with rename atomicity and is the stable boundary API
 plumbing consumes. Its `timeline` and `diagnosis` objects are the exact contract
-rendered by the Mainsail Atlas panel. Moonraker integration remains deliberately
-thin: read and expose this state; never recompute Atlas facts there.
+rendered by the Mainsail Atlas panel. An idle heartbeat lets consumers tell a
+quiet service from a stopped one. The component in `moonraker_components/`
+validates and exposes this state without recomputing Atlas facts.
 
 ## Tests
 
 ```console
 $ python3 test/atlas_decoder_test.py
 $ python3 test/atlas_diagnosis_test.py
+$ python3 test/atlas_daemon_test.py
+$ python3 test/atlas_moonraker_test.py
 ```
 
 These are part of the deterministic floor and run on any CPU with only

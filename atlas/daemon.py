@@ -19,6 +19,7 @@ from .view import LiveTail, TimelineFilter
 
 STATUS_SCHEMA_VERSION = 1
 DEFAULT_MAX_EVENTS = 2000
+DEFAULT_HEARTBEAT = 5.0
 
 
 def _event_dict(event) -> dict:
@@ -103,12 +104,16 @@ class AtlasDaemon:
 
     def __init__(self, log_path: str, state_path: str, catalog_path: str,
                  interval: float = 0.5, max_events: int = DEFAULT_MAX_EVENTS,
-                 patterns=None, wall_clock=None):
+                 heartbeat: float = DEFAULT_HEARTBEAT, patterns=None,
+                 wall_clock=None):
         if interval <= 0:
             raise ValueError("interval must be positive")
+        if heartbeat <= 0:
+            raise ValueError("heartbeat must be positive")
         self.log_path = os.path.abspath(os.path.expanduser(log_path))
         self.catalog_path = os.path.abspath(os.path.expanduser(catalog_path))
         self.interval = interval
+        self.heartbeat = heartbeat
         self.follower = LiveTail(
             self.log_path, TimelineFilter(ordered=False),
             max_events=max_events)
@@ -118,6 +123,7 @@ class AtlasDaemon:
         self._catalog_signature = None
         self._clock = wall_clock or time.time
         self._last_state = None
+        self._last_publish_at = None
         self._generation = 0
         self._catalog_error = ""
         self._source_error = ""
@@ -194,7 +200,11 @@ class AtlasDaemon:
         rotated = self.follower.rotations != self._last_rotations
         source_changed = (self.follower.source_available
                           != self._last_source_available)
-        changed = force or self._last_state is None or bool(new_events)
+        now = self._clock()
+        heartbeat_due = (self._last_publish_at is not None
+                         and now - self._last_publish_at >= self.heartbeat)
+        changed = (force or self._last_state is None or bool(new_events)
+                   or heartbeat_due)
         changed = (changed or catalog_changed or rotated or source_changed
                    or error_changed)
         if not changed:
@@ -208,6 +218,7 @@ class AtlasDaemon:
                              self._service_status())
         self.publisher.publish(state)
         self._last_state = state
+        self._last_publish_at = now
         return state
 
     async def serve(self, stop_event=None) -> None:

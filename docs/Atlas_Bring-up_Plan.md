@@ -58,7 +58,11 @@ and gates every commit. No hardware, no GPU, no model.
 - [ ] **Always-on service.** *Do:* `python3 test/atlas_daemon_test.py`.
   *Expect:* the service waits for the log, follows appends/rotation, bounds its
   timeline, diagnoses deterministically, and atomically publishes the exact
-  Mainsail status contract. *Pass:* ALL PASS.
+  Mainsail status contract. An idle heartbeat proves liveness. *Pass:* ALL PASS.
+- [ ] **Moonraker boundary.** *Do:*
+  `python3 test/atlas_moonraker_test.py`. *Expect:* schema/size validation,
+  last-good retention, stale detection, status/incidents/health endpoints, and
+  transition-only websocket updates. *Pass:* ALL PASS.
 - [ ] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.
