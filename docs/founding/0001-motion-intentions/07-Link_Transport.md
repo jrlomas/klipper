@@ -131,8 +131,9 @@ capability + header bits).
   for wired RTTs and stays untouched for compatibility.
 * **ARQ tuning:** the existing RTT-estimated retransmit machinery
   (`serialqueue.c`, RFC 6298-style) applies with WiFi-appropriate
-  floors; keepalive datagrams maintain liveness and NAT/AP state
-  during idle.
+  floors. Klipper's periodic clock query supplies authenticated idle
+  traffic at about 1Hz, maintaining liveness and NAT/AP state without a
+  second keepalive command.
 * **Class mapping** ([03-Traffic_Classes.md](03-Traffic_Classes.md)):
   Class 0 and 1 are acked and erasure-protected; Class 2 telemetry may
   be sent as unacked datagrams and simply lost under congestion — the

@@ -1,8 +1,8 @@
 # FD-0001: ESP32 Architecture Stance
 
 Status: Partial in HELIX 0.9; ESP-IDF v5.3.2 Xtensa builds pass for the
-component, component-RMT, and modem variants, but runtime bring-up and the
-listed modem/stepper follow-ups remain.
+component, component-RMT, and modem variants with watchdog/reset contracts,
+but runtime bring-up and the listed modem/stepper follow-ups remain.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has
@@ -86,6 +86,13 @@ IRAM. Every register sequence is source-verified against ESP-IDF
 v5.3.2 and both architectures host-compile/link, but the modem
 architecture has **not yet run on silicon** — see the bring-up
 checklist in [docs/ESP32.md](../../ESP32.md).
+
+Both stages have a rebooting liveness contract. Component mode subscribes
+the Klipper task to IDF's task watchdog and enables panic-on-timeout. Modem
+mode feeds a register-level Timer Group 1 MWDT from the bare scheduler; its
+`reset` command asks core 0 to execute `esp_restart()` and relies on that MWDT
+if the modem core cannot respond. Cross-core ring publication uses explicit
+acquire/release atomics.
 
 ## Command parity with STM32
 

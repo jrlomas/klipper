@@ -202,6 +202,11 @@ protocol fully visible to it.  A full ring drops the datagram -
 identical recovery contract to a wired port's rx/tx overflow (frame
 layer ARQ / host retransmit).
 
+The component architecture's separate UDP receive ring follows the same
+rule explicitly: the producer release-stores a completed slot index, the
+Klipper consumer acquire-loads it, and the consumer release-stores the freed
+slot. No `volatile` field is treated as a cross-core memory barrier.
+
 Wakeups are polled, not signalled: core 1 checks the rx ring in its
 `irq_poll()`; the modem task alternates a 1ms-timeout `recvfrom`
 with a tx-ring drain.  Board->host latency is bounded by ~1ms + the
@@ -648,17 +653,31 @@ variants with pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0:
 
 | variant | configuration | application image | partition free |
 | --- | --- | ---: | ---: |
-| component | default | `0xc43c0` | 48% |
-| component-RMT | `sdkconfig.defaults.rmt` | `0xc4d20` | 48% |
-| modem | `sdkconfig.defaults.modem` | `0xbec90` | 49% |
+| component | default | `0xc44b0` | 48% |
+| component-RMT | `sdkconfig.defaults.rmt` | `0xc4e00` | 48% |
+| modem | `sdkconfig.defaults.modem` | `0xbef00` | 49% |
 
 The first real builds exposed and fixed two issues that the stub path
 missed: disabled Kconfig booleans are absent from `sdkconfig.h`, and
 the private vector assembly needed the configured `EXCSAVE_1` special-
 register definition.  The dictionary flow executes in these builds,
 the APP-CPU boot sequence remains checked against ESP-IDF v5.3.2
-sources, and the SPSC ring remains TSan/ASan-tested.  The images have
-**not run on hardware**.  Remaining work, in rough order:
+sources, and the SPSC ring remains TSan/ASan-tested. Fresh generated
+configurations confirm `CONFIG_ESP_TASK_WDT_PANIC=y` in every variant.
+
+The component Klipper task subscribes to ESP-IDF's task watchdog; a missed
+feed panics and reboots. The modem Klipper core owns Timer Group 1's MWDT
+directly with a 500ms system-reset stage. Its `reset` command release-publishes
+a request to core 0 for `esp_restart()`, while the MWDT remains the bounded
+fallback if core 0 is wedged. Component mode calls `esp_restart()` directly.
+
+WiFi disconnect handling requests reconnect without blocking IDF's event
+task. Ordinary Klipper clock queries continue at about 1Hz while motion is
+idle, so they already keep the UDP/session path active; a separate semantic
+keepalive packet would duplicate that traffic. The socket stays bound across
+station reassociation, and the rebooting watchdog covers a wedged task.
+
+The images have **not run on hardware**. Remaining work, in rough order:
 
 * On-hardware bring-up: the component arch first, then the modem arch's
   [devkit checklist](#devkit-bring-up-checklist) (APP-CPU boot,
@@ -666,8 +685,6 @@ sources, and the SPSC ring remains TSan/ASan-tested.  The images have
 * A level-1 bare-core timer ISR through `appcpu_vectors.S` (replacing
   polled dispatch) once hardware allows comparing the two; then
   reinstating `rmt_step.c` on the bare core.
-* Keepalive datagrams during idle (NAT/AP state) and lwIP socket
-  reconnect handling.
 * Measure whether the optional `fec_k=2` path's 50% packet overhead helps
   the target WiFi loss profile.
 * On-silicon bring-up of the RMT step backend (see the
@@ -675,7 +692,6 @@ sources, and the SPSC ring remains TSan/ASan-tested.  The images have
   step verification as a homing-position cross-check; FOC backend
   integration.
 * Ethernet (RMII) bringup variant of `wifi.c`.
-* Chip reset command, watchdog (component arch; on the bare core a
-  register-level TIMG watchdog).
-* A native klippy UDP transport (FD-0001 doc 05) replacing the pty
-  bridge.
+* A native klippy UDP transport (FD-0001 doc 05) replacing the pty bridge is
+  an optional host-path simplification; the tested bridge is the supported
+  correctness path today.

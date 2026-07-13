@@ -14,17 +14,20 @@ built on Klipper 0.13.0.
 > development milestone, not a software-complete release**. Its core
 > protocol, host, linuxprocess firmware, trajectory, recovery, and tooling
 > paths pass the off-silicon suites. Real ARM native-RMII and pinned Xtensa
-> ESP32 builds now pass; board runtime bring-up, the time-sync Class-0
-> convergence gate, and downstream OAMS updater registration remain. None
-> of the motion-critical paths has yet been
+> ESP32 builds now pass, as does the authenticated ARM W5500 build. The
+> host and firmware both enforce the machine-time Class-0 convergence gate.
+> Board runtime bring-up and downstream OAMS product-key provisioning remain;
+> the latter stays deliberately fail-closed. None of the motion-critical
+> paths has yet been
 > validated on a running printer. Treat 0.9 as a developer preview; every
 > capability is opt-in and classic Klipper remains beside it. **Do not run
 > 0.9 on hardware you are not prepared to supervise closely.** See the
 > [implementation status audit](Helix_Implementation_Status.md) for the
 > verified boundary.
 >
-> **Road to 1.0.** Close the remaining integration seams, then bring the
-> result up on real hardware and correct what that exposes. That validated
+> **Road to 1.0.** Bring the workstation checkpoint up on real hardware,
+> provision the applicable product signing keys, and correct what that
+> exposes. That validated
 > state becomes **HELIX 1.0** — the initial production release. Until then
 > the version stays at 0.9. The exact, checkable acceptance path is the
 > [HELIX Test &amp; Bring-up Plan](Helix_Test_Plan.md).

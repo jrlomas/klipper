@@ -19,9 +19,9 @@ and Ethernet boards.
 
 ## The documents
 
-HELIX 0.9 implements the core architecture, but it is not uniformly
-software-complete: several target and host-integration seams remain before
-hardware bring-up. See [Releases](../../Releases.md), the
+HELIX 0.9 implements the deterministic workstation architecture. Target
+runtime proof and product provisioning remain before a production release.
+See [Releases](../../Releases.md), the
 [implementation status audit](../../Helix_Implementation_Status.md), and the
 [Test &amp; Bring-up Plan](../../Helix_Test_Plan.md). Each document's own
 status line records its more precise state.
@@ -33,7 +33,7 @@ status line records its more precise state.
 | [02-Intention_Protocol.md](02-Intention_Protocol.md) | Segment semantics, wire format, FPU-free execution, queue/refill, underrun | Implemented — HELIX 0.9 |
 | [03-Traffic_Classes.md](03-Traffic_Classes.md) | Scheduled / Prompt / Telemetry classes | Implemented — HELIX 0.9 |
 | [04-Actuator_Backends.md](04-Actuator_Backends.md) | Segment core vs backends; stepper, FOC/BLDC, PWM/DAC | Implemented — HELIX 0.9 |
-| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Core implemented off-silicon |
+| [05-Host_Architecture.md](05-Host_Architecture.md) | Impact on klippy/chelper; the segment fitter | Implemented and workstation-tested |
 | [06-Migration.md](06-Migration.md) | Fork stance, coexistence, validation differ, phases, risk register | Adopted — HELIX 0.9 |
 | [07-Link_Transport.md](07-Link_Transport.md) | BCH FEC framing v2, UDP over WiFi/Ethernet, mandatory link auth, ESP32 | Core and target builds pass; board runtime validation remains |
 | [08-Failure_Recovery.md](08-Failure_Recovery.md) | Pause-and-hold, execution log, heater failsafe hold, resume | Implemented — HELIX 0.9 |
@@ -42,7 +42,7 @@ status line records its more precise state.
 | [11-Bootloader.md](11-Bootloader.md) | First-class bootloader: one image, in-band authenticated updates | Implemented — HELIX 0.9 |
 | [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Partial — Xtensa builds pass; board runtime and follow-ups pending |
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
-| [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Design — timing substrate exists; host enforcement future |
+| [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Implemented off-silicon; hardware validation pending |
 
 ## Reading order
 

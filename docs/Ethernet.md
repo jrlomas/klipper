@@ -12,9 +12,10 @@ Two paths are provided:
   it.
 
 !!! warning "Compile-checked, not hardware-validated here"
-    The native path **builds and links with the real ARM toolchain** for
-    STM32F407 and STM32F765, and its framing and stateful socket adapter
-    pass host tests. Neither Ethernet transport has been run against a
+    The W5500 and native paths **build and link with the real ARM toolchain**;
+    native RMII is covered on STM32F407 and STM32F765, and its framing and
+    stateful socket adapter pass host tests. Neither Ethernet transport has
+    been run against a
     physical PHY in this project. Register, DMA, clock, and pin behavior
     therefore remain a board-bring-up item, not validated firmware.
 
@@ -64,6 +65,13 @@ whole datagrams with the RX/TX ring pointers (`Sn_RX_RD` / `Sn_TX_WR`)
 and `Sn_CR` `RECV` / `SEND`. A received UDP datagram is prefixed in the
 socket RX buffer by an 8-byte packet-info header (source IP, source
 port, length) which the driver parses to latch the peer.
+
+Every reset/socket-command wait is bounded. The receive header is checked
+against both the actual RX count and the 2KiB socket buffer before copying,
+and unstable hardware counters cannot spin forever. A 250ms health check
+detects a reset/closed socket; reinitialization retries once per second and
+clears the authenticated reply peer, so no pre-reset address is trusted after
+recovery.
 
 ### Wiring
 
@@ -189,13 +197,15 @@ normally should leave it off.
 
 ### Workstation evidence
 
-Commit `8c7d368c` adds persistent CI configurations for both maintained
-families. With `arm-none-eabi-gcc` 13.2.1 they compile and link as follows:
+Commits `8c7d368c` and `3d75b65b` add persistent CI configurations for both
+native-RMII families and the W5500 console. With `arm-none-eabi-gcc` 13.2.1
+they compile and link as follows:
 
 | configuration | session mode | text | data | bss |
 | --- | --- | ---: | ---: | ---: |
-| `stm32f407-rmii.config` | authenticated | 65,510 | 64 | 27,616 |
-| `stm32f765-rmii.config` | authenticated + pair FEC | 63,146 | 64 | 27,632 |
+| `stm32f407-w5500.config` | authenticated | 65,138 | 64 | 16,880 |
+| `stm32f407-rmii.config` | authenticated | 65,622 | 64 | 27,616 |
+| `stm32f765-rmii.config` | authenticated + pair FEC | 63,230 | 64 | 27,632 |
 
 These configurations are included automatically by `scripts/ci-build.sh`.
 They establish configuration, compiler, linker, and flash/RAM-fit evidence;

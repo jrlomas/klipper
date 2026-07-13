@@ -87,6 +87,8 @@ nav:
     - Helix_Commands.md
     - Helix_Implementation_Status.md
     - Helix_Test_Plan.md
+    - Atlas_Bring-up_Plan.md
+    - Atlas_Model_Eval.md
   - Overview.md
   - Features.md
   - FAQ.md
@@ -157,6 +159,15 @@ nav:
       - founding/0001-motion-intentions/14-Heterogeneous_Fleets.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
+      - founding/0002-companion-system/00-Vision.md
+      - founding/0002-companion-system/01-Compute-Tiers.md
+      - founding/0002-companion-system/02-Trace-Observability.md
+      - founding/0002-companion-system/03-Blackbox-Decoder.md
+      - founding/0002-companion-system/04-Diagnosis-Engine.md
+      - founding/0002-companion-system/05-Knowledge-Base.md
+      - founding/0002-companion-system/06-Provisioning-Fleet-Coherence.md
+      - founding/0002-companion-system/07-LLM-Layer.md
+      - founding/0002-companion-system/08-Roadmap.md
       - founding/0002-companion-system/HANDOFF.md
   - Device Specific Documents:
     - Example_Configs.md

@@ -1,6 +1,7 @@
 # FD-0001: Host Architecture
 
-Status: Core implemented in HELIX 0.9; time-sync host integration remains.
+Status: Core and machine-time host preflight implemented and
+workstation-tested in HELIX 0.9; hardware timing validation remains.
 
 This document maps the redesign onto the existing host code
 (`klippy/` and `klippy/chelper/`): what survives untouched, what is
@@ -67,6 +68,13 @@ For each migrated joint, per flush interval:
    invariant), at trapq move boundaries (natural fit boundaries), and
    at the duration caps of
    [02-Intention_Protocol.md](02-Intention_Protocol.md).
+
+Before any rebase or segment mutates the fitter's chained anchor, the owner
+checks the target MCU through `timesync.is_mcu_synced()`. That state is
+refreshed at the steady beacon cadence and includes the same freewheel-age
+bound as firmware. A stale secondary therefore fails on the host before the
+persisted intention twin advances, while firmware independently rejects the
+same unsynchronized Class-0 anchor/segment if a caller bypasses the host.
 
 **The honesty point this document must state plainly:** with input shaping
 and pressure advance active, the joint trajectory is *not* piecewise

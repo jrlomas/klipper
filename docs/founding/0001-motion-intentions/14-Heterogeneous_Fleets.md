@@ -1,7 +1,7 @@
 # FD-0001: Heterogeneous Fleets — Firehose and Intent Boards Together
 
-Status: Design — the coexistence model for mixed v1/v2 fleets (host
-enforcement is future work; the timing substrate exists today)
+Status: Implemented off-silicon in HELIX 0.9: the shared timing substrate,
+single-paradigm config validator, and classic-step escape hatch all exist.
 
 A real machine will not convert all at once. On the same printer you will
 have boards running Klipper's classic **step firehose** (the host
@@ -89,18 +89,20 @@ The rule, therefore:
 This is not a limitation of the timeline — it is honesty about semantics.
 Mixed *machines* are first-class; mixed *coordination groups* are not.
 
-### The escape hatch: firehose-compat
+### The escape hatch: classic-step compatibility
 
 If a machine genuinely must split a coordination group, an intent-capable
-board can drive a specific axis in **firehose-compat mode** — it already
-speaks stock v1, so it accepts the host's pre-computed step times for that
-axis and joins a firehose coordination group. The whole spanning move is
-then planned in the firehose paradigm, and that axis **forgoes HELIX
+board can drive a specific axis in **classic-step mode** — leave that
+stepper's `motion_protocol` at its default instead of setting it to
+`trajectory`. The board already speaks stock v1, so it accepts the host's
+pre-computed step times for that axis and joins a firehose coordination
+group. The whole spanning move is then planned in the firehose paradigm,
+and that axis **forgoes HELIX
 recovery** (pause-and-hold, deep buffering) for the duration. This is an
 explicit, opt-in fallback, never the default — offered so no machine is
 *impossible* to wire, not because it is a good place to be.
 
-## What exists, and what is future work
+## What exists
 
 - **Exists today:** the timing substrate. `clocksync` disciplines firehose
   boards; the machine-time beacon ([doc 01](01-Time_Model.md)) disciplines
@@ -110,9 +112,10 @@ explicit, opt-in fallback, never the default — offered so no machine is
   legacy steppers, and rejects a partial conversion of coupled kinematics
   (corexy/delta-class, whose rails move as one group) — with an error that
   names the offending steppers and cites this document.
-- **Future work (host, Atlas-era):** the firehose-compat mode on an
-  intent board (running a specific axis on pre-computed steps to join a
-  firehose coordination group).
+- **Classic-step escape hatch:** firmware keeps both the stock `queue_step`
+  and trajectory command surfaces, and the host selects them per stepper
+  with `motion_protocol`. An all-classic coordination group on an
+  intent-capable board therefore works without a third execution mode.
 
 ## Relationship to other documents
 
