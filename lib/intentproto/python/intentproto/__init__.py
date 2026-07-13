@@ -117,6 +117,30 @@ size_t ip_datagram_encode(ip_datagram_tx *tx, uint8_t *out,
 size_t ip_datagram_parity_flush(ip_datagram_tx *tx, uint8_t *out);
 int ip_datagram_decode(ip_datagram_rx *rx, uint8_t *data, size_t len,
                        size_t *frames_off, int *cls);
+typedef struct ip_secure_session ip_secure_session;
+ip_secure_session *ip_secure_session_create(int is_initiator,
+                                            const uint8_t *psk,
+                                            size_t psk_len,
+                                            const uint8_t *board_id,
+                                            size_t id_len,
+                                            const uint8_t *my_random16,
+                                            uint32_t rekey);
+void ip_secure_session_free(ip_secure_session *s);
+size_t ip_secure_session_start(ip_secure_session *s, uint8_t *out,
+                               size_t cap);
+size_t ip_secure_session_on_handshake(ip_secure_session *s,
+                                      const uint8_t *msg, size_t len,
+                                      uint8_t *out, size_t cap);
+int ip_secure_session_established(const ip_secure_session *s);
+int ip_secure_session_failed(const ip_secure_session *s);
+size_t ip_secure_session_peer_id(const ip_secure_session *s, uint8_t *out,
+                                 size_t cap);
+size_t ip_secure_session_encode(ip_secure_session *s, uint8_t *out,
+                                size_t cap, const uint8_t *frames,
+                                size_t len, int cls);
+int ip_secure_session_decode(ip_secure_session *s, uint8_t *data,
+                             size_t len, size_t *frames_off, int *cls);
+void ip_secure_session_rekey(ip_secure_session *s);
 size_t ip_datagram_take_recovered(ip_datagram_rx *rx, uint8_t *out,
                                   size_t cap);
 
@@ -347,6 +371,80 @@ def frame_v2_decode(frame):
     return payload, seq[0], corr[0]
 
 
+class SecureSession(object):
+    # The DTLS-class authenticated session (session_sec.hpp) behind the
+    # C ABI: HKDF session keys from the PSK + exchanged nonces, epoch
+    # rotation, per-board identity, a replay window. Auth-only.
+    def __init__(self, initiator, psk, board_id=b"", random16=None,
+                 rekey=0):
+        import os as _os
+        self._ffi, self._lib = _ensure_ready()
+        if random16 is None:
+            random16 = _os.urandom(16)
+        if len(random16) != 16:
+            raise ValueError("random16 must be exactly 16 bytes")
+        self._s = self._lib.ip_secure_session_create(
+            1 if initiator else 0, bytes(psk), len(psk),
+            bytes(board_id), len(board_id), bytes(random16),
+            rekey)
+        if self._s == self._ffi.NULL:
+            raise ValueError("secure session create failed (empty psk?)")
+
+    def close(self):
+        if self._s is not None:
+            self._lib.ip_secure_session_free(self._s)
+            self._s = None
+
+    def start(self):
+        out = self._ffi.new("uint8_t[256]")
+        n = self._lib.ip_secure_session_start(self._s, out, 256)
+        return bytes(self._ffi.buffer(out, n))
+
+    def on_handshake(self, msg):
+        out = self._ffi.new("uint8_t[256]")
+        n = self._lib.ip_secure_session_on_handshake(
+            self._s, bytes(msg), len(msg), out, 256)
+        return bytes(self._ffi.buffer(out, n)) if n else None
+
+    @property
+    def established(self):
+        return bool(self._lib.ip_secure_session_established(self._s))
+
+    @property
+    def failed(self):
+        return bool(self._lib.ip_secure_session_failed(self._s))
+
+    def peer_id(self):
+        out = self._ffi.new("uint8_t[64]")
+        n = self._lib.ip_secure_session_peer_id(self._s, out, 64)
+        return bytes(self._ffi.buffer(out, n))
+
+    def encode(self, frames, cls=0):
+        frames = bytes(frames)
+        out = self._ffi.new("uint8_t[]", len(frames) + 32)
+        n = self._lib.ip_secure_session_encode(
+            self._s, out, len(frames) + 32, frames, len(frames), cls)
+        if not n:
+            raise ValueError("session encode failed (not established?)")
+        return bytes(self._ffi.buffer(out, n))
+
+    def decode(self, data):
+        # Returns (frames, cls); raises on auth failure / malformed /
+        # replay so callers cannot accidentally ignore a rejection.
+        buf = self._ffi.new("uint8_t[]", bytes(data))
+        off = self._ffi.new("size_t *")
+        cls = self._ffi.new("int *")
+        r = self._lib.ip_secure_session_decode(
+            self._s, buf, len(data), off, cls)
+        if r < 0:
+            raise ValueError({-1: "auth failure", -2: "malformed",
+                              -3: "replay/stale epoch"}.get(r, r))
+        return bytes(self._ffi.buffer(buf + off[0], r)), cls[0]
+
+    def rekey(self):
+        self._lib.ip_secure_session_rekey(self._s)
+
+
 class HostSession(object):
     # A retransmit-window host session (host.hpp) behind the C ABI.
     #   on_write(frame_bytes)     - transport transmit hook (required)
@@ -469,7 +567,7 @@ __all__ = [
     "get_ffi", "build", "abi_version", "version_string",
     "crc16_ccitt", "vlq_encode", "vlq_decode",
     "frame_v2_encode", "frame_v2_decode", "FRAME_V2_OVERHEAD",
-    "HostSession", "Device",
+    "HostSession", "Device", "SecureSession",
     "FRAMING_LEGACY", "FRAMING_PROBING",
     "CLASS_SCHEDULED", "CLASS_PROMPT", "CLASS_TELEMETRY",
 ]

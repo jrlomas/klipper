@@ -13,6 +13,7 @@
 
 #include "intentproto/datagram.hpp"
 #include "intentproto/host.hpp"
+#include "intentproto/session_sec.hpp"
 #include "intentproto/proto.hpp"
 
 #include <stdlib.h>
@@ -334,6 +335,90 @@ int ip_command_index_by_name(const char* name) {
         if (!strcmp(c->name, name))
             return idx;
     return -1;
+}
+
+// ---- secure session (session_sec.hpp) ----
+// The wrapper owns a copy of the PSK (SecureSession stores a pointer).
+struct ip_secure_session {
+    SecureSession s;
+    uint8_t psk[64];
+};
+
+ip_secure_session* ip_secure_session_create(int is_initiator,
+                                            const uint8_t* psk,
+                                            size_t psk_len,
+                                            const uint8_t* board_id,
+                                            size_t id_len,
+                                            const uint8_t* my_random16,
+                                            uint32_t rekey) {
+    if (!psk || !psk_len || !my_random16)
+        return nullptr;
+    ip_secure_session* w =
+        (ip_secure_session*)malloc(sizeof(ip_secure_session));
+    if (!w)
+        return nullptr;
+    if (psk_len > sizeof(w->psk))
+        psk_len = sizeof(w->psk);
+    memcpy(w->psk, psk, psk_len);
+    w->s.init(is_initiator ? SecRole::Initiator : SecRole::Responder,
+              w->psk, psk_len, board_id, id_len, my_random16,
+              rekey ? rekey : SEC_DEFAULT_REKEY);
+    return w;
+}
+
+void ip_secure_session_free(ip_secure_session* s) {
+    free(s);
+}
+
+size_t ip_secure_session_start(ip_secure_session* s, uint8_t* out,
+                               size_t cap) {
+    return s->s.start(out, cap);
+}
+
+size_t ip_secure_session_on_handshake(ip_secure_session* s,
+                                      const uint8_t* msg, size_t len,
+                                      uint8_t* out, size_t cap) {
+    return s->s.on_handshake(msg, len, out, cap);
+}
+
+int ip_secure_session_established(const ip_secure_session* s) {
+    return s->s.established();
+}
+
+int ip_secure_session_failed(const ip_secure_session* s) {
+    return s->s.failed();
+}
+
+size_t ip_secure_session_peer_id(const ip_secure_session* s, uint8_t* out,
+                                 size_t cap) {
+    size_t n = s->s.peer_id_len();
+    if (n > cap)
+        n = cap;
+    memcpy(out, s->s.peer_id(), n);
+    return n;
+}
+
+size_t ip_secure_session_encode(ip_secure_session* s, uint8_t* out,
+                                size_t cap, const uint8_t* frames,
+                                size_t len, int cls) {
+    return s->s.datagram_encode(out, cap, frames, len,
+                                class_of_int(cls));
+}
+
+int ip_secure_session_decode(ip_secure_session* s, uint8_t* data,
+                             size_t len, size_t* frames_off, int* cls) {
+    const uint8_t* frames = nullptr;
+    TrafficClass tc = TrafficClass::Scheduled;
+    int r = s->s.datagram_decode(data, len, &frames, &tc);
+    if (r > 0 && frames_off)
+        *frames_off = (size_t)(frames - data);
+    if (cls)
+        *cls = (int)tc;
+    return r;
+}
+
+void ip_secure_session_rekey(ip_secure_session* s) {
+    s->s.rekey();
 }
 
 } // extern "C"
