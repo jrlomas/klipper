@@ -52,11 +52,15 @@ size_t finish_key(Appender& a) {
 // JSON key — built by the shared message_key() so the JSON and the
 // extension_desc stream can never disagree. A key that does not fit
 // the (generous) local buffer fails the whole build, matching the
-// out-of-capacity behavior everywhere else.
+// out-of-capacity behavior everywhere else. Sized for real registries:
+// OAMS's 10-field oams_cmd_stats key is ~190 chars, which the previous
+// 128-byte scratch rejected — failing the whole dictionary build.
+// build_dictionary runs on desktop tooling (mkdict/dump_dict/bootsim),
+// not on the MCU hot path, so the stack cost is irrelevant.
 void message_key_json(Appender& a, const char* name,
                       const char* const* pnames, const ParamType* ptypes,
                       uint8_t n) {
-    char key[128];
+    char key[256];
     if (!message_key(key, sizeof(key), name, pnames, ptypes, n)) {
         a.overflow = true;
         return;
