@@ -149,11 +149,17 @@ app_main(void)
     if (esp32_appcpu_start() < 0)
         return;
 #else
-    if (esp32_udp_port_setup(CONFIG_KLIPPER_UDP_PORT, psk_buf, psk_len) < 0)
-        return;
-
     // Motion/scheduler on core 1
     xTaskCreatePinnedToCore(klipper_task, "klipper", 8192, NULL
                             , configMAX_PRIORITIES - 3, NULL, 1);
+
+    // The datagram console's optional secure-session setup samples the
+    // klipper GPTimer to create its per-boot nonce.  The timer belongs to
+    // the core-1 scheduler task, so do not initialize that console until
+    // the task has created and started it.
+    while (!esp32_timer_ready())
+        vTaskDelay(1);
+    if (esp32_udp_port_setup(CONFIG_KLIPPER_UDP_PORT, psk_buf, psk_len) < 0)
+        return;
 #endif
 }

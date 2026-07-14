@@ -52,6 +52,18 @@
 // In-band update maps onto ESP-IDF OTA (FD-0001 doc 11); see ota.c.
 #define CONFIG_WANT_BOOTLOADER 1
 
+// Datagram session negotiation is an optional strengthening above the
+// always-authenticated static UDP envelope.  sdkconfig owns the per-board
+// identity so an ESP-IDF build can use the same responder as the Makefile
+// targets without a second generated autoconf file.
+#ifdef CONFIG_KLIPPER_DATAGRAM_SESSION
+#define CONFIG_WANT_DATAGRAM_SESSION 1
+#define CONFIG_DATAGRAM_SESSION_ID CONFIG_KLIPPER_DATAGRAM_SESSION_ID
+#else
+#define CONFIG_WANT_DATAGRAM_SESSION 0
+#define CONFIG_DATAGRAM_SESSION_ID ""
+#endif
+
 // The WiFi/RTOS environment cannot honor tick-exact step pulse
 // timing guarantees (FD-0001 doc 07's caution); the classic stepper
 // backend compiles and runs but is experimental on this chip.

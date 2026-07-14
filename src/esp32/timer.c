@@ -26,6 +26,13 @@
 extern portMUX_TYPE klipper_mux; // irq.c
 
 static gptimer_handle_t klipper_timer;
+static volatile uint8_t klipper_timer_ready;
+
+uint8_t
+esp32_timer_ready(void)
+{
+    return klipper_timer_ready;
+}
 
 // Return the current time (in clock ticks); klipper time is the low
 // 32 bits of the 64-bit hardware count - wraparound arithmetic is
@@ -95,5 +102,9 @@ esp32_timer_setup(void)
                                                      , NULL));
     ESP_ERROR_CHECK(gptimer_enable(klipper_timer));
     ESP_ERROR_CHECK(gptimer_start(klipper_timer));
+    // app_main() waits for this before it initializes the UDP console.
+    // Session initialization samples timer_read_time() for a per-boot nonce,
+    // so it must not run while klipper_timer is still NULL.
+    klipper_timer_ready = 1;
     timer_kick();
 }

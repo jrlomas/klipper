@@ -16,8 +16,9 @@ firmware" -> Architecture; FD-0001
 
 * **component** (stage 1, default): klipper compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
-  present on both cores.  This is the original, toolchain-validated
-  build; target runtime validation remains pending.
+  present on both cores.  Its authenticated session console has run on
+  a classic dual-core Lolin32; motion and peripheral qualification remain
+  pending.
 * **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
   klipper** — no RTOS, no IDF calls, register-level peripherals,
   IRAM-resident hot path — and core 0 is reduced to a network
@@ -32,7 +33,7 @@ Both share the identical console stack:
 klippy (serial protocol, unchanged)
    |          pty
 lib/intentproto/tools/udp_bridge.py     (host)
-   |          UDP datagrams: [u16 seq][u8 flags][frames][8B HMAC-SHA256]
+   |          static HMAC datagrams or rotating-key secure session
 src/generic/udp_console.c               (mcu, transport independent)
 src/generic/udp_datagram.cpp            (C shim over lib/intentproto)
    |          struct udp_console_ops {recv, send, rx_accepted}
@@ -49,6 +50,11 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   mandatory; running without it requires the explicit
   "trust network" confession on both ends.  Responses are only ever
   sent to the source address of the last *authenticated* datagram.
+* `CONFIG_KLIPPER_DATAGRAM_SESSION` (on by default) additionally offers a
+  three-message, PSK-authenticated session with rotating traffic keys,
+  replay protection, and a board identity verified by the host.  Once it is
+  established, static datagrams cannot bypass it.  The legacy static HMAC
+  envelope remains available only for backward-compatible bootstrap.
 * The socket itself sits behind a three-function ops struct, so the
   identical glue serves ESP32 WiFi, ESP32 Ethernet (RMII - replace
   the WiFi bringup with `esp_eth`, the binding is unchanged), and the
@@ -304,8 +310,12 @@ What a devkit owner runs, in order, to convert "source-verified" to
 dual-core silicon):
 
 1. **Component-arch smoke test first**: build/flash the default
-   architecture, join WiFi, run the udp_bridge + `scripts/console.py`
-   identify handshake.  Proves toolchain, board, credentials, PSK.
+   architecture, join WiFi, run the session bridge + `klippy/console.py`
+   identify handshake.  On 2026-07-13 this passed on a Lolin32 over a
+   wired-host/WiFi-board LAN path: the board identity was verified, the
+   112-command dictionary loaded, and periodic `stats` keep-alives remained
+   continuous during a non-motion soak.  This proves the component console,
+   credentials, PSK, and session path; it does not qualify motion hardware.
 2. **Modem build boots core 0**: flash the modem build; expect
    `klipper_modem: modem shuttling datagrams on udp port ...` then
    `klipper_appcpu: core 1 running bare klipper (after ~Xms)` on the
@@ -532,9 +542,14 @@ cd /path/to/klipper/src/esp32
 idf.py set-target esp32
 idf.py menuconfig       # "Klipper firmware": architecture, WiFi SSID/
                         # password, UDP port, optional build-time PSK,
-                        # TRUST_NETWORK
+                        # session identity, TRUST_NETWORK
 idf.py build flash monitor
 ```
+
+Set the configured flash size to the physical board geometry before flashing
+(the verified Lolin32 uses 4MB).  Temporary test credentials must be supplied
+through an isolated SDKCONFIG file or `menuconfig`; an existing local
+`sdkconfig` takes precedence over `SDKCONFIG_DEFAULTS` values.
 
 This builds the (default) component architecture; for the modem
 architecture see
@@ -586,14 +601,19 @@ python3 -c "import secrets; print(secrets.token_hex(32))" > ~/printer_psk
 
 ## Connecting klippy
 
-klippy speaks its normal serial protocol; the bridge turns a pty
-into authenticated datagrams:
+klippy speaks its normal serial protocol; the recommended bridge turns a pty
+into a rotating-key authenticated session and verifies the board identity:
 
 ```
-python3 lib/intentproto/tools/udp_bridge.py \
-    --board <board-ip>:41414 --psk-file ~/printer_psk \
+<klippy-python> lib/intentproto/tools/udp_bridge.py --session \
+    --board-id <configured-session-id> --board <board-ip>:41414 \
+    --psk-file ~/printer_psk \
     --pty /tmp/klipper_esp32
 ```
+
+`<klippy-python>` is the Python environment that runs Klippy; it supplies the
+project's required CFFI binding.  Omit `--session --board-id` only when
+connecting to an older static-HMAC-only board.
 
 printer.cfg:
 
@@ -621,7 +641,7 @@ python3 lib/intentproto/tools/udp_bridge.py \
     --board 127.0.0.1:45988 --psk-file /tmp/psk \
     --pty /tmp/klipper_udp --listen-port 45989
 
-# then point klippy (or scripts/console.py) at /tmp/klipper_udp
+# then point klippy (or klippy/console.py) at /tmp/klipper_udp
 ```
 
 `-t` instead of `-k` selects the unauthenticated trust-network mode

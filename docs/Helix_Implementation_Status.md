@@ -14,7 +14,7 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (workstation code checkpoint `3d75b65b`) | Includes the Helix transport/security review, host Class-0 preflight, ESP resilience work, and real ARM W5500/RMII plus ESP-IDF builds; this document is committed on top as the status checkpoint. |
+| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (current checkpoint) | Includes the Helix transport/security review, host Class-0 preflight, ESP resilience work, real ARM W5500/RMII plus ESP-IDF builds, and the Lolin32 secure-session hardware validation recorded below. |
 | `jrlomas/mainsail` | `fe5d30a9` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
@@ -54,6 +54,14 @@ work. They do not convert any unchecked target or hardware item into a pass.
   core now have rebooting watchdog contracts, `reset` works in both
   architectures, WiFi reconnect no longer blocks the IDF event task, and the
   component UDP ring publishes slots with acquire/release ordering.
+* A classic dual-core Lolin32 has run the component architecture on the real
+  wired-host/WiFi-board LAN path.  Its 4MB flash geometry was verified, its
+  authenticated rotating-key session presented the configured board identity,
+  the 112-command dictionary loaded through Klippy, and periodic MCU `stats`
+  keep-alives remained continuous during a non-motion soak.  Startup testing
+  also found and fixed session nonce initialization before the GPTimer was
+  ready.  This is component-console evidence only, not motion or peripheral
+  qualification.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
   image. The path includes configurable pins and reset, bounded MDIO,
@@ -84,10 +92,10 @@ repository at this checkpoint. The following work requires boards,
 measurements, a product security decision, or belongs to an explicitly
 optional later architecture:
 
-* **ESP32:** all maintained variants now have real Xtensa compiler/linker
-  evidence, reconnect behavior, and watchdog/reset contracts. Board runtime
-  remains unvalidated; the ESP32 guide lists the devkit procedure plus ISR
-  timing, FEC measurement, RMII, and RMT/PCNT/FOC follow-ups.
+* **ESP32:** the Lolin32 component console now has real board evidence, while
+  the modem image, timer/ISR jitter, FEC behavior, RMII, RMT/PCNT/FOC, and
+  actual motion/peripheral paths remain unvalidated.  The ESP32 guide lists
+  the required next measurements.
 * **OAMS updater:** the canonical boot core and chunked `flash_sign` handler
   are vendored downstream, but the in-band update commands are deliberately
   unregistered because the product signing key and coexistence policy have

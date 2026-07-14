@@ -109,6 +109,7 @@ idf_component_register(
         ${KLIPPER_ROOT}/lib/intentproto/src/datagram.cpp
         ${KLIPPER_ROOT}/lib/intentproto/src/bch.cpp
         ${KLIPPER_ROOT}/lib/intentproto/src/hmac.cpp
+        ${KLIPPER_ROOT}/lib/intentproto/src/session_sec.cpp
     PRIV_INCLUDE_DIRS ${KLIPPER_INCLUDES}
     PRIV_REQUIRES driver esp_adc esp_wifi nvs_flash lwip esp_netif
         esp_event esp_timer app_update spi_flash

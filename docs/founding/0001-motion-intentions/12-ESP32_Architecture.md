@@ -1,8 +1,9 @@
 # FD-0001: ESP32 Architecture Stance
 
 Status: Partial in HELIX 0.9; ESP-IDF v5.3.2 Xtensa builds pass for the
-component, component-RMT, and modem variants with watchdog/reset contracts,
-but runtime bring-up and the listed modem/stepper follow-ups remain.
+component, component-RMT, and modem variants with watchdog/reset contracts.
+The component UDP/session console has now run on a Lolin32 over a real LAN;
+the modem and listed motion/stepper follow-ups remain unvalidated.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has

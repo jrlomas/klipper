@@ -42,6 +42,7 @@ void board_set_main_task(void *task_handle);
 
 // timer.c (component arch)
 void esp32_timer_setup(void);
+uint8_t esp32_timer_ready(void);
 
 // adc.c / gpio.c
 #define ESP32_GPIO_COUNT 40

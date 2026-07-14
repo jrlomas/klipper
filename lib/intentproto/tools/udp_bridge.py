@@ -13,6 +13,9 @@
 # Usage:
 #   udp_bridge.py --board 192.168.1.50:41414 --psk-file /path/psk \
 #                 --pty /tmp/intentproto-toolhead
+#   udp_bridge.py --session --board-id toolhead-01 \
+#                 --board 192.168.1.50:41414 --psk-file /path/psk \
+#                 --pty /tmp/intentproto-toolhead
 #   ... then in the printer config:  [mcu toolhead] serial: /tmp/...
 #
 # An unauthenticated link requires the explicit --trust-network
@@ -340,6 +343,40 @@ async def amain(args):
     elif not args.trust_network:
         raise SystemExit("authentication is mandatory: give --psk-file, or"
                          " confess --trust-network for an isolated segment")
+    if args.session:
+        if args.trust_network:
+            raise SystemExit("--session requires --psk-file; it cannot run"
+                             " on a trust-network link")
+        if not args.board_id:
+            raise SystemExit("--session requires --board-id")
+        # Keep the static bridge self-contained, but reuse Klippy's session
+        # bridge for the rotating-key handshake and data pump.  The import is
+        # deliberately late: intentproto_transport imports DatagramCodec from
+        # this module for its static mode.
+        here = os.path.dirname(os.path.abspath(__file__))
+        klippy = os.path.normpath(os.path.join(here, '..', '..', '..',
+                                               'klippy'))
+        if klippy not in sys.path:
+            sys.path.insert(0, klippy)
+        from intentproto_transport import TransportBridge
+        try:
+            bridge = TransportBridge(
+                'datagram', args.pty, psk=psk,
+                udp_board=(host, int(port)), udp_listen=args.listen_port,
+                session=True, board_id=args.board_id.encode('utf-8'))
+        except ModuleNotFoundError as e:
+            if e.name != 'cffi':
+                raise
+            raise SystemExit("--session requires the Klippy Python"
+                             " environment (its cffi dependency is missing)")
+        try:
+            bridge.open()
+            logging.info("session established with board identity %s",
+                         bridge.peer_id.decode('utf-8', 'replace'))
+            await asyncio.Event().wait()
+        finally:
+            bridge.close()
+        return
     bridge = Bridge((host, int(port)), psk, args.pty, args.fec_k)
     bridge.open_pty()
     loop = asyncio.get_running_loop()
@@ -360,6 +397,12 @@ def main():
                    " unless --trust-network)")
     p.add_argument("--trust-network", action="store_true",
                    help="explicitly run unauthenticated")
+    p.add_argument("--session", action="store_true",
+                   help="use the authenticated rotating-key UDP session"
+                   " (requires --psk-file and --board-id)")
+    p.add_argument("--board-id",
+                   help="expected authenticated board identity in session"
+                   " mode")
     p.add_argument("--fec-k", type=int, choices=(0, 2), default=0,
                    help="XOR erasure pair blocks (2 = on, 0 = off; must"
                    " match the board's -f)")

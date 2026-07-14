@@ -73,6 +73,24 @@ config KLIPPER_UDP_PORT
         UDP port the datagram console listens on.  The host side is
         lib/intentproto/tools/udp_bridge.py --board <ip>:<port>.
 
+config KLIPPER_DATAGRAM_SESSION
+    bool "Use the authenticated rotating-key UDP session"
+    default y
+    help
+        Offer the HELIX three-message session on top of the static HMAC
+        datagram floor.  A session gives each connection fresh keys and a
+        resettable replay epoch, so a board reboot can be re-established
+        without coordinating static datagram sequence counters.  Hosts that
+        only implement the static authenticated envelope remain compatible.
+
+config KLIPPER_DATAGRAM_SESSION_ID
+    string "UDP session board identity"
+    depends on KLIPPER_DATAGRAM_SESSION
+    default "esp32"
+    help
+        Identity authenticated by the session handshake.  Set a distinct
+        value for each deployed board and require the same value at the host.
+
 config KLIPPER_FEC_PAIR
     bool "Protect each UDP data pair with XOR parity"
     default n
