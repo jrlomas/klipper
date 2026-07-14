@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(ROOT, 'klippy', 'extras'))
 
 import timesync
 import mcu as klippy_mcu
+import msgproto
 import stepper as klippy_stepper
 sys.modules['chelper'] = types.ModuleType('chelper')
 import trajectory_queuing
@@ -51,6 +52,28 @@ def test_trajectory_anchor_uses_physical_step_space():
     pos_su = stepper.commanded_to_mcu_position_su(.166667)
     want = round((.166667 + .028) / .00125 * 65536.)
     assert pos_su == want
+
+
+def test_signed_trajectory_readback_preserves_negative_corexy_position():
+    stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
+    stepper._oid = 4
+    stepper._get_position_cmd = FakeCommand({
+        'clock': 1234, 'pos': 3493649149})
+    stepper._mcu = types.SimpleNamespace(
+        clock32_to_clock64=lambda clock: clock)
+    stepper._last_traj_readback = None
+    clock, mcu_pos = stepper._query_traj_readback()
+    assert clock == 1234
+    assert mcu_pos == round(-801318147 / 65536.)
+    assert stepper._last_traj_readback == (clock, mcu_pos)
+
+
+def test_signed_protocol_field_normalizes_high_bit_wire_value():
+    encoded = []
+    msgproto.PT_uint32().encode(encoded, 3493649149)
+    value, end = msgproto.PT_int32().parse(bytes(encoded), 0)
+    assert end == len(encoded)
+    assert value == -801318147
 
 
 class FakeMCU:
@@ -367,6 +390,10 @@ def main():
     test_trajectory_anchor_uses_physical_step_space()
     print("PASS: trajectory anchors preserve the physical MCU position"
           " offset")
+    test_signed_trajectory_readback_preserves_negative_corexy_position()
+    print("PASS: negative CoreXY trajectory readback remains signed")
+    test_signed_protocol_field_normalizes_high_bit_wire_value()
+    print("PASS: signed protocol fields normalize high-bit wire values")
     test_secondary_freshness()
     print("PASS: host freewheel freshness mirrors the firmware gate")
     test_mixed_frequency_rate_representation()

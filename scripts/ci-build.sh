@@ -73,7 +73,9 @@ finish_test helix_library "Test intentproto library and C/Python bindings"
 start_test helix_host "Test Helix workstation host paths"
 for TEST in \
     test/helix_flash_test.py \
+    test/helix_motion_audit_test.py \
     test/helix_status_test.py \
+    test/failure_recovery_resume_test.py \
     test/intentproto_transport_test.py \
     test/paradigm_validator_test.py \
     test/segment_lib_test.py \

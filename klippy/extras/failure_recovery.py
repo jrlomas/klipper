@@ -57,6 +57,11 @@ EL_TRUNCATING = (EL_UNDERRUN, EL_TRIGGER)
 EL_STOP_TYPES = (EL_SEG_DONE, EL_UNDERRUN, EL_HOLD, EL_TRIGGER)
 
 
+def _signed32(value):
+    value = int(value) & 0xffffffff
+    return value - (1 << 32) if value & 0x80000000 else value
+
+
 class HeaterHold:
     def __init__(self, fr, config, heater_section):
         self.printer = config.get_printer()
@@ -189,7 +194,7 @@ class McuExecLog:
 
     def _handle_data(self, params):
         record = (params['seq'], params['type'], params['src'],
-                  params['clock'], params['pos'], params['aux'])
+                  params['clock'], _signed32(params['pos']), params['aux'])
         self.records.append(record)
         if self._drain_records is not None:
             self._drain_records.append(record)
@@ -268,6 +273,7 @@ class FailureRecovery:
         self.link_paused_mcus = set()
         # Last motion-resume reconciliation result (for status)
         self.last_recovery = None
+        self._shutdown_drain_pending = False
         self.printer.register_event_handler("klippy:mcu_identify",
                                             self._handle_mcu_identify)
         self.printer.register_event_handler("klippy:connect",
@@ -331,9 +337,25 @@ class FailureRecovery:
         return eventtime + PING_INTERVAL
 
     def _handle_shutdown(self):
+        # Shutdown handlers run under reactor.assert_no_pause().  A query
+        # command waits for its response and therefore cannot run here.
+        # Defer the reliable Class-1 drain until the reactor leaves that
+        # critical section; the MCU remains queryable in shutdown state.
+        if self._shutdown_drain_pending:
+            return
+        self._shutdown_drain_pending = True
+        self.printer.get_reactor().register_callback(
+            self._drain_shutdown_execlogs)
+
+    def _drain_shutdown_execlogs(self, eventtime):
+        self._shutdown_drain_pending = False
         # Flight recorder: drain what the boards actually executed
         for el in self.execlogs:
-            records = el.drain()
+            try:
+                records = el.drain()
+            except Exception:
+                logging.exception("execlog shutdown drain failed")
+                continue
             if records:
                 logging.info("execlog(%s): %d records: %s",
                              el.mcu.get_status(None).get('mcu', '?'),

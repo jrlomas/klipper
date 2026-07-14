@@ -109,8 +109,13 @@ Field definitions:
   (i.e. Q sub-units/tick² with 32 fractional bits) — the same
   "delta-of-the-delta" pattern as today's `queue_step add` argument,
   one level up. Resolution: 2⁻³² sub-unit/tick².
-* `pos` — signed 32-bit in sub-units (±2³¹ sub-units = ±32768 native
-  units; at a typical 1280 microsteps/mm that is ±25 m of travel).
+* `pos` — signed 32-bit in sub-units (±2³¹ sub-units = ±32768
+  microsteps). That is ±204.8 mm at 160 microsteps/mm, but only ±25.6 mm
+  at 1280 microsteps/mm. A host must reject an anchor outside this range;
+  extending the absolute-position range requires a versioned wider-position
+  wire shape, not truncation. Decoders must also normalize the low 32 bits
+  to two's-complement signed form even when an intermediate transport or
+  variadic encoder presents the same wire bits in an unsigned container.
 * `flags` — bit 0 proposed: *hold-at-end* hint — prefer position hold
   over underrun ramp if the queue empties after this segment (see
   underrun policy). Bits 6–7 carry the **segment polynomial order**

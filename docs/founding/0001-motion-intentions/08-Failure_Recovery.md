@@ -49,9 +49,17 @@ Delivery has two modes:
   retained and drained *reliably* via Class-1 pull commands
   (`execlog_dump oid=%c seq=%u count=%c`). The read-only query and dump
   commands remain permitted while the MCU is in shutdown, and a final query on
-  the same command queue is the response barrier proving all dump records have
-  arrived. Recovery must never depend on records that were droppable while
-  things were going wrong.
+the same command queue is the response barrier proving all dump records have
+arrived. Recovery must never depend on records that were droppable while
+things were going wrong.
+
+Klippy invokes shutdown handlers inside a reactor no-pause critical section,
+while a reliable query must wait for its response. The shutdown handler
+therefore schedules the Class-1 drain as a reactor callback and returns; the
+callback runs after the critical section and can use the response barrier
+without causing a second host exception. Execution positions are normalized
+to signed 32-bit form before persistence so a negative CoreXY trigger remains
+negative in both reconciliation and the Atlas flight record.
 
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped

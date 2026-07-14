@@ -55,8 +55,9 @@ class PT_uint32:
             c = s[pos]
             pos += 1
             v = (v<<7) | (c & 0x7f)
-        if not self.signed:
-            v = int(v & 0xffffffff)
+        v = int(v & 0xffffffff)
+        if self.signed and v & 0x80000000:
+            v -= 1 << 32
         return v, pos
 
 class PT_int32(PT_uint32):

@@ -6,6 +6,11 @@ import json
 import sys
 
 
+def signed32(value):
+    value = int(value) & 0xffffffff
+    return value - (1 << 32) if value & 0x80000000 else value
+
+
 def _smul_shr(a, t, shift):
     value = (abs(a) * t) >> shift
     return -value if a < 0 else value
@@ -45,6 +50,11 @@ def replay_pulses(fields, mpos):
         return [], mpos
     direction = 1 if finish > start else -1
     pulses = []
+    # A monotonic span cannot cross more whole-step boundaries than its
+    # endpoint displacement plus the two fractional endpoint boundaries.
+    # Fail closed if a corrupt position seed would otherwise make replay
+    # iterate billions of times.
+    max_pulses = (abs(finish - start) >> 48) + 2
     previous_t = 0
     while True:
         boundary = ((2 * mpos + direction) << 47)
@@ -53,6 +63,8 @@ def replay_pulses(fields, mpos):
                 break
         elif finish > boundary:
             break
+        if len(pulses) >= max_pulses:
+            raise ValueError("pulse replay exceeds endpoint displacement")
         low, high = previous_t, duration
         while low < high:
             middle = (low + high) // 2
@@ -98,6 +110,13 @@ def audit(records):
     rebases = {}
     segments_by_oid = {}
 
+    def checked_replay(fields, mpos, context):
+        try:
+            return replay_pulses(fields, mpos)
+        except ValueError as exc:
+            errors.append("%s: %s" % (context, exc))
+            return [], mpos
+
     by_actuator = {}
     for record in intentions:
         fields = record["fields"]
@@ -139,7 +158,8 @@ def audit(records):
                               % actuator)
                 pulses = []
             else:
-                pulses, mpos = replay_pulses(fields, mpos)
+                pulses, mpos = checked_replay(
+                    fields, mpos, "%s intention replay" % actuator)
             pulse_clocks.extend(clock for clock, unused in pulses)
             last_clock = fields["end_clock"]
             last_acc = fields["end_acc_q32"]
@@ -162,7 +182,8 @@ def audit(records):
     unique = {}
     intended_oids = set(segments_by_oid)
     for record in executions:
-        fields = record["fields"]
+        fields = dict(record["fields"])
+        fields["position_su"] = signed32(fields["position_su"])
         if intended_oids and fields["src_oid"] not in intended_oids:
             continue
         unique[(record.get("source"), fields["seq"])] = fields
@@ -194,8 +215,9 @@ def audit(records):
                                       " oid=%d clock=%d" % (
                                           oid, fields["mcu_clock"]))
                     else:
-                        pulses, mpos = replay_pulses(
-                            expected_fields[key], mpos)
+                        pulses, mpos = checked_replay(
+                            expected_fields[key], mpos,
+                            "oid=%d execution replay" % oid)
                         executed_pulses[oid].extend(pulses)
                         executed_mpos[oid] = mpos
             else:
@@ -235,7 +257,8 @@ def audit(records):
                 else:
                     partial = dict(segment, duration=elapsed,
                                    end_acc_q32=segment_pos(segment, elapsed))
-                    pulses, mpos = replay_pulses(partial, mpos)
+                    pulses, mpos = checked_replay(
+                        partial, mpos, "oid=%d trigger replay" % oid)
                     executed_pulses[oid].extend(pulses)
                     executed_mpos[oid] = mpos
                     nearest = (fields["position_su"] + 32768) // 65536

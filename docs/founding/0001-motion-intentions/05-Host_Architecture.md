@@ -88,6 +88,11 @@ Each rebase therefore establishes a constant logical-to-physical sub-unit
 offset which the fitter applies to every later sample.  The wire rebase carries
 both the continuous physical sub-unit anchor and the integer physical step
 counter; neither is inferred from the logical trapq coordinate.
+Trajectory readback is normalized to signed 32-bit form before it updates that
+offset; this matters for the negative member of a CoreXY pair after a homing
+trigger. The host range-checks both rebase fields before shifting or encoding
+them, so an out-of-range absolute anchor fails with a named trajectory error
+instead of overflowing CFFI or silently wrapping on the wire.
 
 Klipper transmits scheduled commands before their execution clocks.  A rebase
 whose clock is at or beyond the previous emitted horizon is therefore queued

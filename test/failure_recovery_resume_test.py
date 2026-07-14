@@ -34,8 +34,14 @@ from extras.failure_recovery import (  # noqa: E402
 # ---- Stubs -----------------------------------------------------------
 
 class FakeReactor:
+    def __init__(self):
+        self.callbacks = []
+
     def monotonic(self):
         return 0.
+
+    def register_callback(self, callback):
+        self.callbacks.append(callback)
 
 
 class FakeGcode:
@@ -224,6 +230,49 @@ def test_execlog_drain_uses_response_barrier_and_deduplicates():
     print("PASS: execlog drain waits on a response barrier and deduplicates")
 
 
+def test_execlog_normalizes_negative_position():
+    class Recorder:
+        def __init__(self):
+            self.persisted = []
+        def _record_execution(self, mcu, record):
+            self.persisted.append(record)
+
+    el = fr.McuExecLog.__new__(fr.McuExecLog)
+    el.fr = Recorder()
+    el.mcu = FakeMcu('mcu')
+    el.size = 16
+    el.records = collections.deque(maxlen=16)
+    el._drain_records = None
+    el._persisted_order = collections.deque()
+    el._persisted_seqs = set()
+    el._handle_data({'seq': 1, 'type': 2, 'src': 7, 'clock': 1234,
+                     'pos': 3493649149, 'aux': 0})
+    assert el.records[-1][4] == -801318147
+    assert el.fr.persisted[-1][4] == -801318147
+    print("PASS: execution log persists negative positions as signed")
+
+
+def test_shutdown_drain_is_deferred_outside_no_pause_handler():
+    class ExecLog:
+        def __init__(self):
+            self.calls = 0
+        def drain(self):
+            self.calls += 1
+            return []
+
+    printer = FakePrinter()
+    f = make_fr(printer)
+    el = ExecLog()
+    f.execlogs = [el]
+    f._handle_shutdown()
+    assert el.calls == 0
+    assert len(printer.reactor.callbacks) == 1
+    printer.reactor.callbacks.pop()(0.)
+    assert el.calls == 1
+    assert not f._shutdown_drain_pending
+    print("PASS: shutdown schedules flight-log drain after no-pause scope")
+
+
 # ---- Scenarios -------------------------------------------------------
 
 def test_normal_resume():
@@ -321,6 +370,8 @@ def test_board_reset():
 
 def main():
     test_execlog_drain_uses_response_barrier_and_deduplicates()
+    test_execlog_normalizes_negative_position()
+    test_shutdown_drain_is_deferred_outside_no_pause_handler()
     test_normal_resume()
     test_underrun_truncated()
     test_board_reset()

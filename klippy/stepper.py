@@ -6,6 +6,11 @@
 import math, logging, collections
 import chelper
 
+
+def _signed32(value):
+    value = int(value) & 0xffffffff
+    return value - (1 << 32) if value & 0x80000000 else value
+
 class error(Exception):
     pass
 
@@ -210,7 +215,8 @@ class MCU_stepper:
         # Read the trajectory stepper's live position accumulator.
         # traj_position reports integer sub-units (1 microstep = 2^16)
         params = self._get_position_cmd.send([self._oid])
-        mcu_pos = int(round(params['pos'] / 65536.))
+        pos_su = _signed32(params['pos'])
+        mcu_pos = int(round(pos_su / 65536.))
         clock = self._mcu.clock32_to_clock64(params['clock'])
         self._last_traj_readback = (clock, mcu_pos)
         return clock, mcu_pos
@@ -226,9 +232,9 @@ class MCU_stepper:
             return None
         params = self._get_position_cmd.send([self._oid])
         clock = self._mcu.clock32_to_clock64(params['clock'])
-        self._last_traj_readback = (clock,
-                                    int(round(params['pos'] / 65536.)))
-        return clock, params['pos']
+        pos_su = _signed32(params['pos'])
+        self._last_traj_readback = (clock, int(round(pos_su / 65536.)))
+        return clock, pos_su
     def sync_to_held_position(self, pos_subunits):
         # Bring the host mcu-position offset into agreement with the
         # board's authoritative held accumulator on resume (doc 08).

@@ -359,6 +359,14 @@ class TrajectoryStepper:
         # step space across homing and SET_POSITION.
         pos_su = self.mcu_stepper.commanded_to_mcu_position_su(pos_mm)
         mcu_pos = self.mcu_stepper.get_mcu_position(pos_mm)
+        if not (-2147483648 <= pos_su <= 2147483647):
+            raise self.mcu.error(
+                "Trajectory anchor for %s exceeds the signed 32-bit"
+                " position range: %d subunits" % (self.name, pos_su))
+        if not (-2147483648 <= mcu_pos <= 2147483647):
+            raise self.mcu.error(
+                "Trajectory anchor for %s exceeds the signed 32-bit"
+                " microstep range: %d" % (self.name, mcu_pos))
         position_offset_su = pos_su - pos_mm * self.su_per_mm
         acc = pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)
