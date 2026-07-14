@@ -203,7 +203,9 @@ F072** it was designed to fit.
   2026-07-13, explicitly confirmed Pico and EBB36 USB plans rebuilt from the
   archived Kconfig, verified detached Ed25519 signatures, required exact
   byte equality with the signed artifacts, flashed, and appended successful
-  jobs to `atlas-provision-audit.json`. Both boards booted `9d111f1b`.
+  jobs to `atlas-provision-audit.json`. The same gate was repeated for the
+  long-axis trajectory correction on 2026-07-14; both boards booted
+  `fdad253f`, passed all five self-tests, and reported fleet lockstep.
 - [x] **ABI-hash handshake.** *Do:* bake the protocol hash into an image;
   connect. *Expect:* a matching board reads *lockstep*; a stale one is
   offered a signed flash. *Pass:* `HELIX_STATUS` reported both live boards at

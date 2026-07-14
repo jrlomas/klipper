@@ -245,9 +245,12 @@ Prove the wire before you trust it to carry motion.
   Expect: joint listed, anchored, commanded position readable, sub-unit
   resolution and higher-order support reported.
   Pass: state == anchored, position sane.
-- [ ] **4.2 — Single move.** Command a short move via normal G-code.
+- [~] **4.2 — Single move.** Command a short move via normal G-code.
   Expect: the host emits segments; the MCU synthesizes steps and arrives.
-  Pass: measured end position == commanded within one step.
+  Pass: measured end position == commanded within one step. On 2026-07-14,
+  the V0 completed independent X and Y homing and a complete `G28 Z` override
+  (5 mm lift, two trigger approaches, retract, and move to Z=30). Klipper
+  remained ready and reported Z=30; an external endpoint measurement remains.
 - [ ] **4.3 — Chained moves / no drift.** Run a long back-and-forth
   (≥1000 segments) that returns to the origin.
   Pass: returns to origin exactly (fixed-point integration; matches 0.6
@@ -259,7 +262,7 @@ Prove the wire before you trust it to carry motion.
 - [ ] **4.5 — Velocity/accel limits honored.** Compare commanded vs
   measured motion profile.
   Pass: within limits; no audible/visible step loss.
-- [ ] **4.6 — Deterministic wire/execution audit.** After the move, run
+- [~] **4.6 — Deterministic wire/execution audit.** After the move, run
   `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
   with a narrow `--start` / `--end` machine-time window. The audit replays
   every half-step crossing from the exact persisted wire coefficients and
@@ -268,7 +271,11 @@ Prove the wire before you trust it to carry motion.
   intentions without MCU execution records fail the audit.
   Pass: both coupled joints end in explicit holds; zero underruns, clock or
   accumulator discontinuities, unmatched execution endpoints, or trigger
-  position differences.
+  position differences. The 2026-07-14 Z window (`309.3..318.8`) passed with
+  126 planned segments, five holds, 73,995 executed pulses, 124 matched
+  boundaries, two triggers, a 964-tick minimum interval, and zero errors. The
+  long search crossed the signed phase boundary while its unwrapped host twin
+  continued below -2³¹ sub-units. A fresh coupled X/Y audit remains.
 
 ---
 
@@ -317,11 +324,14 @@ queue.
 Requires `WANT_TRIGGER_SOURCE`. This is a **capability unlock**, not just
 a faster stop — test both the latency and the things polling could not do.
 
-- [ ] **7.1 — Edge-interrupt endstop.** With
+- [~] **7.1 — Edge-interrupt endstop.** With
   `hardware_endstop_trigger` on (default), home one axis.
   Expect: the stop fires on the pin edge in hardware; the trigger tick is
   latched in hardware, not sampled by a software timer.
-  Pass: homes repeatably; trigger position variance ≤ legacy polled path.
+  Pass: homes repeatably; trigger position variance ≤ legacy polled path. The
+  V0 Z endstop produced two hardware execution-log trigger records during a
+  successful `G28 Z` on 2026-07-14, and both reconciled exactly in the motion
+  audit. The repeatability series and legacy-polling comparison remain.
 - [ ] **7.2 — Latency vs polling.** Compare stop latency with
   `hardware_endstop_trigger: False` (forced legacy) vs on.
   Pass: hardware path stops measurably sooner; record both numbers.

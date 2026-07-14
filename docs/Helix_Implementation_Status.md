@@ -1,6 +1,6 @@
 # HELIX 0.9 Implementation Status
 
-Last workstation audit: 2026-07-13.
+Last workstation and V0 hardware audit: 2026-07-14.
 
 This page is the boundary between code that exists, code that has actually
 run in workstation verification, target integration that remains, and tests
@@ -14,7 +14,7 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `9d111f1b` on `claude/software-redesign-impl-finn0j` (evidence checkpoint) | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, and reset recovery recorded below. |
+| `jrlomas/klipper` | `fdad253f` on `claude/software-redesign-impl-finn0j` | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, reset recovery, and the V0 trajectory-homing corrections recorded below. |
 | `jrlomas/mainsail` | `0631ec0b` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; the Atlas timeline is bounded/resized; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
@@ -89,11 +89,12 @@ work. They do not convert any unchecked target or hardware item into a pass.
   64 MHz). The signed
   provisioning executor verified Ed25519 signatures, rebuilt from archived
   Kconfig, required exact artifact equality, flashed both normal bootloader
-  paths, and recorded the successful jobs. Both boards booted `9d111f1b`,
+  paths, and recorded the successful jobs. Both boards booted `fdad253f`,
   advertised ABI `27141a58f61f9fbc`, and `HELIX_STATUS` reported fleet
   lockstep.
 * All five live self-tests passed on both V0 boards after a standard
-  `FIRMWARE_RESTART`; Pico RTT was 0.20 ms and EBB36 RTT 0.23 ms. Both MCU
+  `FIRMWARE_RESTART`; at the current checkpoint Pico RTT was 0.20 ms and
+  EBB36 RTT 0.35 ms. Both MCU
   reset implementations re-enumerated, reconfigured, and returned Klipper to
   ready without manual intervention.
 * The 64 MHz EBB36 disciplined to the 12 MHz Pico's machine time for ten
@@ -107,6 +108,17 @@ work. They do not convert any unchecked target or hardware item into a pass.
   exactly 192 sequence gaps, and paced draining left zero unaccounted gaps or
   write errors. This validates the trace carrier and accounting, not the
   motion-path `step_underrun` call-site or trace-off step-timing cost.
+* Trajectory homing now has live V0 evidence. Independent `G28 X` and `G28 Y`
+  completed. The Z override then exposed and fixed three distinct defects:
+  signed trigger readback, an unsealed lift-to-home rebase boundary, and the
+  former ±32768-microstep accumulator range. Signed, byte-reproducible
+  `fdad253f` images were flashed to both boards; `G28 Z` completed its lift,
+  two trigger approaches, retract, and move to Z=30 while Klipper remained
+  ready. Its narrow flight-recorder audit replayed 126 planned segments and
+  73,995 executed pulses, matched 124 completed boundaries and two trigger
+  stops, found five explicit holds, and reported zero errors. The recorded
+  unwrapped path crossed -2³¹ sub-units while the compact wire phase wrapped
+  exactly as designed.
 * The deterministic Atlas decoder diagnosed a genuine earlier host/MCU
   `sync_beacon` format fault from the live V0 log and captured the unmatched
   case for the knowledge base. Its real-machine GitHub-issue bundle passed
@@ -155,10 +167,11 @@ and firmware-reset recovery. The Lolin32 evidence above separately establishes
 the authenticated WiFi component/modem console and controlled-loss pair FEC.
 
 The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
-remain material: actual trajectory motion, trace-off step timing, scoped
-cross-MCU action, endstop/trigger timing, PWM waveform quality, heater hold,
-fault injection, soak, real printing, V2.4 CAN, constrained F072 silicon,
-native RMII/W5500 PHYs, product-key provisioning, and Pi/Hailo deployment.
+remain material: trajectory drift/underrun/stress tests, trigger repeatability
+and latency comparison, trace-off step timing, scoped cross-MCU action, PWM
+waveform quality, heater hold, fault injection, soak, real printing, V2.4 CAN,
+constrained F072 silicon, native RMII/W5500 PHYs, product-key provisioning,
+and Pi/Hailo deployment.
 USB success on the V0 is not implicit CAN sign-off for the V2.4.
 
 HELIX should not be called 1.0 or production-ready until the applicable
