@@ -44,7 +44,8 @@ struct segfit {
     // Chained anchor: exact Q32.32 sub-unit position and the print
     // time / tick count it corresponds to.
     double anchor_print_time;
-    int64_t acc;
+    int64_t acc;             // modulo-2^64 Q32.32 wire phase
+    double anchor_su;        // unwrapped physical position in sub-units
     uint64_t gen_ticks;       // ticks fitted since the anchor
     // Sample buffer for the segment currently being grown
     double *tau, *y;          // ticks since segment start, su offset
@@ -94,10 +95,17 @@ segfit_set_anchor(struct segfit *sf, double print_time, int64_t acc)
 {
     sf->anchor_print_time = print_time;
     sf->acc = acc;
+    sf->anchor_su = acc / 4294967296.;
     sf->gen_ticks = 0;
     sf->num_samples = 0;
     sf->num_segs = 0;
     sf->s2 = sf->s3 = sf->s4 = sf->sy1 = sf->sy2 = 0.;
+}
+
+void __visible
+segfit_set_anchor_position(struct segfit *sf, double position_su)
+{
+    sf->anchor_su = position_su;
 }
 
 void __visible
@@ -142,7 +150,8 @@ mul64x32_half(int64_t a, uint32_t b)
 static int64_t
 traj_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
 {
-    int64_t delta = ((int64_t)velocity * duration) << 16;
+    int64_t delta = (int64_t)(
+        (uint64_t)((int64_t)velocity * duration) << 16);
     if (accel)
         delta += mul64x32_half((int64_t)accel * duration, duration);
     return delta;
@@ -405,7 +414,8 @@ emit_segment(struct segfit *sf, int n)
 
     // Advance the exact chained anchor with the integer convention
     int64_t delta = traj_end_delta(T, vw, aw);
-    sf->acc += delta;
+    sf->acc = (int64_t)((uint64_t)sf->acc + (uint64_t)delta);
+    sf->anchor_su += delta / 4294967296.;
     sf->gen_ticks += T;
 
     // Re-express any remaining samples relative to the new anchor
@@ -431,7 +441,7 @@ int __visible
 segfit_generate(struct segfit *sf, double flush_time)
 {
     sf->num_segs = 0;
-    double anchor_su = sf->acc / 4294967296.;
+    double anchor_su = sf->anchor_su;
     uint64_t window_end =
         (uint64_t)((flush_time - sf->anchor_print_time) * sf->mcu_freq);
     struct move *cursor = NULL;
@@ -469,7 +479,7 @@ segfit_generate(struct segfit *sf, double flush_time)
             int emit_n = ok ? sf->num_samples : sf->num_samples - 1;
             if (emit_segment(sf, emit_n))
                 return -1;
-            anchor_su = sf->acc / 4294967296.;
+            anchor_su = sf->anchor_su;
             if (sf->num_segs >= SEGFIT_MAX_SEGS)
                 break;
         }

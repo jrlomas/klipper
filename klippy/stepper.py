@@ -11,6 +11,16 @@ def _signed32(value):
     value = int(value) & 0xffffffff
     return value - (1 << 32) if value & 0x80000000 else value
 
+
+def _unwrap_subunits(position_su, mcu_position):
+    # position_su is the signed low word of the modulo trajectory phase;
+    # mcu_position is the unwrapped integer microstep counter.  Select the
+    # congruent sub-unit position nearest that physical counter.
+    position_su = _signed32(position_su)
+    center = int(mcu_position) * 65536
+    turns = (center - position_su + (1 << 31)) // (1 << 32)
+    return position_su + turns * (1 << 32)
+
 class error(Exception):
     pass
 
@@ -98,7 +108,8 @@ class MCU_stepper:
                                     int(self._invert_dir), step_pulse_ticks)
             self._get_position_cmd = self._mcu.lookup_query_command(
                 "traj_get_position oid=%c",
-                "traj_position oid=%c clock=%u pos=%i", oid=self._oid)
+                "traj_position oid=%c clock=%u pos=%i mcu_pos=%i",
+                oid=self._oid)
             return
         invert_step = self._invert_step
         # Check if can enable "step on both edges"
@@ -212,28 +223,28 @@ class MCU_stepper:
         mcu_steps = (cmd_pos + self._mcu_position_offset) / self._step_dist
         return int(round(mcu_steps * 65536.))
     def _query_traj_readback(self):
-        # Read the trajectory stepper's live position accumulator.
-        # traj_position reports integer sub-units (1 microstep = 2^16)
+        # Read the trajectory stepper's live physical microstep counter.
+        # The paired position field is its modulo low-word phase.
         params = self._get_position_cmd.send([self._oid])
-        pos_su = _signed32(params['pos'])
-        mcu_pos = int(round(pos_su / 65536.))
+        mcu_pos = _signed32(params['mcu_pos'])
         clock = self._mcu.clock32_to_clock64(params['clock'])
         self._last_traj_readback = (clock, mcu_pos)
         return clock, mcu_pos
     def read_traj_held_subunits(self):
         # Sub-unit-exact readback of a trajectory stepper's held
         # position accumulator for the FD-0001 doc 08 resume
-        # reconciler.  traj_position reports integer sub-units (1
-        # microstep = 2^16); this held accumulator is the board's
-        # authoritative position when it never rebooted.  Returns
+        # reconciler. traj_position pairs a modulo sub-unit phase with the
+        # physical microstep counter so the host can unwrap it; this held
+        # accumulator is authoritative when the board never rebooted. Returns
         # (clock64, pos_subunits) or None outside trajectory mode /
         # debug output.
         if self._traj is None or self._mcu.is_fileoutput():
             return None
         params = self._get_position_cmd.send([self._oid])
         clock = self._mcu.clock32_to_clock64(params['clock'])
-        pos_su = _signed32(params['pos'])
-        self._last_traj_readback = (clock, int(round(pos_su / 65536.)))
+        mcu_pos = _signed32(params['mcu_pos'])
+        pos_su = _unwrap_subunits(params['pos'], mcu_pos)
+        self._last_traj_readback = (clock, mcu_pos)
         return clock, pos_su
     def sync_to_held_position(self, pos_subunits):
         # Bring the host mcu-position offset into agreement with the

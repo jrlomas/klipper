@@ -45,7 +45,15 @@ def build_mcu_solver():
         ctypes.c_uint32, ctypes.c_int64, ctypes.c_int32,
         ctypes.POINTER(ctypes.c_uint32)]
     solver.helix_test_solve_step.restype = ctypes.c_int
+    solver.helix_test_target16.argtypes = [
+        ctypes.c_int64, ctypes.c_int32, ctypes.c_int32]
+    solver.helix_test_target16.restype = ctypes.c_int64
     return solver
+
+
+def signed_i64(value):
+    value &= (1 << 64) - 1
+    return value - (1 << 64) if value & (1 << 63) else value
 
 
 def append_move(lib, tq, start_z, distance, speed, accel):
@@ -106,7 +114,8 @@ def fitted_segments(start_z, distance, speed, accel, end_time):
     sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
     lib.segfit_setup(sf, sk, MCU_FREQ, SU_PER_MM, 32768., .001)
     anchor_su = round(start_z / STEP_DIST * 65536.)
-    lib.segfit_set_anchor(sf, START_TIME, anchor_su << 32)
+    lib.segfit_set_anchor(sf, START_TIME, signed_i64(anchor_su << 32))
+    lib.segfit_set_anchor_position(sf, anchor_su)
     segments = []
     while lib.segfit_get_gen_time(sf) < end_time - 1.e-9:
         count = lib.segfit_generate(sf, end_time)
@@ -134,9 +143,8 @@ def helix_pulses(solver, start_z, distance, speed, accel, end_time):
         direction = (1 if velocity > 0 else -1 if velocity < 0
                      else 1 if acceleration > 0 else -1 if acceleration < 0
                      else 1 if vend > 0 else -1)
-        boundary = ((2 * mpos + 1) << 47 if direction > 0
-                    else (2 * mpos - 1) << 47)
-        target16 = (boundary - acc) >> 16
+        target16 = solver.helix_test_target16(
+            signed_i64(acc), mpos, direction)
         t_prev = 0
         while True:
             step_t = ctypes.c_uint32()
@@ -155,6 +163,22 @@ def helix_pulses(solver, start_z, distance, speed, accel, end_time):
             duration, velocity, acceleration)
         start_clock += duration
     return pulses, mpos
+
+
+def check_phase_boundaries(solver):
+    # The low trajectory phase wraps every 65536 microsteps while the physical
+    # counter remains unwrapped.  At an exact step center the next threshold
+    # must always remain one half-step away on either side of every wrap.
+    for mpos in (32767, 32768, 32769, -32767, -32768, -32769, 200000):
+        center_acc = signed_i64((mpos * 65536) << 32)
+        assert solver.helix_test_target16(center_acc, mpos, 1) == 1 << 31
+        assert solver.helix_test_target16(center_acc, mpos, -1) == -(1 << 31)
+        offset_acc = signed_i64((mpos * 65536 + 12345) << 32)
+        assert solver.helix_test_target16(offset_acc, mpos, 1) == (
+            (32768 - 12345) << 16)
+        assert solver.helix_test_target16(offset_acc, mpos, -1) == (
+            (-32768 - 12345) << 16)
+    print("PASS: MCU half-step thresholds remain local across phase wrap")
 
 
 def compare_case(solver, name, start_z, distance, speed, accel,
@@ -184,9 +208,11 @@ def compare_case(solver, name, start_z, distance, speed, accel,
 
 def main():
     solver = build_mcu_solver()
+    check_phase_boundaries(solver)
     compare_case(solver, 'homing profile', 0., 5., 20., 300.)
     compare_case(solver, 'trigger prefix', 0., 5., 20., 300., .035)
     compare_case(solver, 'reverse retract', .180, -3., 10., 300.)
+    compare_case(solver, 'phase wrap', 39., 4., 20., 300.)
     return 0
 
 

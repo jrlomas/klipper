@@ -262,6 +262,17 @@ traj_stepper_test_cruise_recurrence(void)
 #endif
 
 // Set up solver state when a segment becomes active
+static int64_t
+traj_stepper_calc_target16(int64_t acc, int32_t mpos, int32_t dir)
+{
+    int32_t phase_mpos = (uint16_t)mpos;
+    if (phase_mpos & 0x8000)
+        phase_mpos -= 0x10000;
+    int32_t half_phase = 2 * phase_mpos + (dir > 0 ? 1 : -1);
+    uint64_t boundary = (uint64_t)(int64_t)half_phase << 47;
+    return (int64_t)(boundary - (uint64_t)acc) >> 16;
+}
+
 static void
 traj_stepper_load(struct traj_stepper *s)
 {
@@ -278,9 +289,10 @@ traj_stepper_load(struct traj_stepper *s)
     // crosses the half-step boundary around it.  mpos is deliberately
     // independent of tq->acc -- a logical coordinate rebase must not invent
     // physical pulses or reset the MCU's step count.
-    int64_t boundary = dir > 0 ? ((2LL * s->mpos + 1) << 47)
-                               : ((2LL * s->mpos - 1) << 47);
-    s->target16 = (boundary - tq->acc) >> 16;
+    // tq->acc is a modulo-2^64 phase.  Reduce the physical counter to the
+    // matching 65536-microstep phase and subtract as unsigned arithmetic so
+    // crossing +/-2^31 sub-units remains a small, well-defined delta.
+    s->target16 = traj_stepper_calc_target16(tq->acc, s->mpos, dir);
     if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK))
         traj_cruise_setup(s);
     else
@@ -401,7 +413,8 @@ traj_stepper_stop(struct trajq *tq)
         uint32_t t = timer_read_time() - tq->seg_start_clock;
         if (t > tq->duration)
             t = tq->duration;
-        tq->acc += trajq_pos_at_seg(tq, t) << 16;
+        tq->acc = trajq_acc_add(
+            tq->acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
         tq->seg_start_clock += t;
     }
 }
@@ -527,17 +540,19 @@ command_traj_get_position(uint32_t *args)
     irq_disable();
     uint32_t now = timer_read_time();
     int64_t acc = tq->acc;
+    int32_t mpos = s->mpos;
     if (tq->flags & TQF_ACTIVE) {
         uint32_t t = now - tq->seg_start_clock;
         if (!timer_is_before(now, tq->seg_start_clock)) {
             if (t > tq->duration)
                 t = tq->duration;
-            acc += trajq_pos_at_seg(tq, t) << 16;
+            acc = trajq_acc_add(
+                acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
         }
     }
     irq_enable();
-    sendf("traj_position oid=%c clock=%u pos=%i"
-          , oid, now, (int32_t)(acc >> 32));
+    sendf("traj_position oid=%c clock=%u pos=%i mcu_pos=%i"
+          , oid, now, (int32_t)(acc >> 32), mpos);
 }
 DECL_COMMAND(command_traj_get_position, "traj_get_position oid=%c");
 

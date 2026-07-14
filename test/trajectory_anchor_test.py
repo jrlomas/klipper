@@ -167,6 +167,45 @@ def main():
     lib.trapq_finalize_moves(tail_tq, tail_end + 1., 0.)
     assert lib.segfit_generate(tail_sf, tail_end + .010) < 0
     print("PASS: inactive sentinel discontinuity fails closed")
+
+    # Z homing reserves the full rail search distance even when the physical
+    # switch triggers early. At 800 microsteps/mm a 181.5mm plan crosses the
+    # old signed-Q32.32 position boundary more than four times. The fitter
+    # must keep its unwrapped sampling coordinate while chaining the wire
+    # phase modulo 2^64.
+    wide_tq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    wide_sk = ffi.gc(lib.cartesian_stepper_alloc(b'z'), lib.free)
+    wide_step_dist = .00125
+    wide_su_per_mm = 65536. / wide_step_dist
+    lib.itersolve_set_trapq(wide_sk, wide_tq, wide_step_dist)
+    wide_start = 180.
+    wide_distance = -181.5
+    wide_speed = 20.
+    wide_accel = 300.
+    wide_at = wide_speed / wide_accel
+    wide_ad = .5 * wide_accel * wide_at * wide_at
+    wide_ct = (abs(wide_distance) - 2. * wide_ad) / wide_speed
+    wide_end = 60. + 2. * wide_at + wide_ct
+    lib.trapq_append(wide_tq, 60., wide_at, wide_ct, wide_at,
+                     0., 0., wide_start, 0., 0., -1.,
+                     0., wide_speed, wide_accel)
+    wide_sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(wide_sf, wide_sk, MCU_FREQ, wide_su_per_mm,
+                     32768., SAMPLE_TIME)
+    lib.segfit_set_position_offset(
+        wide_sf, -wide_start * wide_su_per_mm)
+    lib.segfit_set_anchor(wide_sf, 60., 0)
+    lib.segfit_set_anchor_position(wide_sf, 0.)
+    wide_segments = []
+    horizon = 60.050
+    while horizon < wide_end + .050:
+        wide_segments.extend(collect_segments(
+            lib, wide_sf, min(horizon, wide_end)))
+        horizon += .050
+    assert wide_segments
+    assert all(abs(v) < 2**31 - 1 and abs(a) < 2**31 - 1
+               for _, v, a in wide_segments)
+    print("PASS: 181.5mm Z homing plan crosses modular position safely")
     return 0
 
 

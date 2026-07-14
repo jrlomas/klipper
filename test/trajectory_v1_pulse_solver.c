@@ -53,3 +53,11 @@ helix_test_solve_step(uint32_t duration, int32_t velocity, int32_t accel,
     s.q16_end = trajq_end_delta_seg(&s.tq) >> 16;
     return traj_solve_step(&s, step_t);
 }
+
+// Exercise the production modulo-phase boundary calculation independently of
+// timer/GPIO state so boundary-focused Python vectors can cover phase wrap.
+int64_t
+helix_test_target16(int64_t acc, int32_t mpos, int32_t dir)
+{
+    return traj_stepper_calc_target16(acc, mpos, dir);
+}

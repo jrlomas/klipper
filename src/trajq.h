@@ -8,9 +8,9 @@
 // Trajectory intention protocol (FD-0001): positions are in
 // sub-units (1 native unit = 2^16 sub-units); velocity is Q16.16
 // sub-units/tick; accel is sub-units/tick^2 with 32 fractional bits.
-// The chained position accumulator carries sub-units with 32
-// fractional bits (Q32.32) so integration of the quantized
-// polynomial is exact across segments.
+// The chained position accumulator carries the low 32 position bits with 32
+// fractional bits. Integration is exact modulo 2^64; the stepper's separate
+// physical microstep counter unwraps that phase for arbitrary travel.
 #define TRAJ_SUBUNIT_SHIFT 16
 #define TRAJ_MAX_DURATION (1 << 26)
 
@@ -76,7 +76,7 @@ struct trajq {
     struct move_queue_head mq;
     const struct trajq_backend_ops *ops;
     // Exact chained position at the START of the current segment
-    // (Q32.32 sub-units); the authoritative anchor.
+    // (modulo-2^64 Q32.32 sub-units); the authoritative wire phase.
     int64_t acc;
     // Local clock of the start of the current segment (when active)
     // or of the next segment to start (when idle).
@@ -100,6 +100,23 @@ struct trajq {
     uint32_t event_clock;
     int32_t event_pos;
 };
+
+static inline int64_t
+trajq_acc_add(int64_t acc, int64_t delta)
+{
+    // Signed overflow is undefined in C, but the trajectory phase is
+    // deliberately modulo 2^64 so crossing the signed position boundary is
+    // ordinary motion, not overflow.
+    return (int64_t)((uint64_t)acc + (uint64_t)delta);
+}
+
+static inline int64_t
+trajq_q16_to_acc(int64_t position16)
+{
+    // Preserve the two's-complement bit pattern without left-shifting a
+    // negative signed value (undefined behavior in C).
+    return (int64_t)((uint64_t)position16 << 16);
+}
 
 enum { TQ_ADV_SEG, TQ_ADV_IDLE, TQ_ADV_REBASE };
 

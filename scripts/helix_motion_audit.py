@@ -165,9 +165,10 @@ def audit(records):
             last_acc = fields["end_acc_q32"]
             stream_prev = event
             terminal_holds += event == "hold"
-            expected_ends.add((oid, last_clock & 0xffffffff, last_acc >> 32))
+            wire_end = signed32(last_acc >> 32)
+            expected_ends.add((oid, last_clock & 0xffffffff, wire_end))
             expected_fields[(oid, last_clock & 0xffffffff,
-                             last_acc >> 32)] = fields
+                             wire_end)] = fields
             segments_by_oid.setdefault(oid, []).append(fields)
         if stream and stream_prev != "hold":
             errors.append("%s: recorded path does not end in a hold" % actuator)
@@ -242,7 +243,7 @@ def audit(records):
                                              fields["mcu_clock"]))
             else:
                 segment, elapsed = min(containing, key=lambda item: item[1])
-                expected = segment_pos(segment, elapsed) >> 32
+                expected = signed32(segment_pos(segment, elapsed) >> 32)
                 if expected != fields["position_su"]:
                     errors.append("trigger position mismatch oid=%d:"
                                   " expected=%d executed=%d" % (
@@ -262,7 +263,7 @@ def audit(records):
                     executed_pulses[oid].extend(pulses)
                     executed_mpos[oid] = mpos
                     nearest = (fields["position_su"] + 32768) // 65536
-                    if mpos != nearest:
+                    if (mpos - nearest) & 0xffff:
                         errors.append("trigger physical-step mismatch oid=%d:"
                                       " replayed=%d recorded-position=%d" % (
                                           oid, mpos, nearest))

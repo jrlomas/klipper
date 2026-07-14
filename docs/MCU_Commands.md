@@ -333,15 +333,16 @@ and coexist with the legacy queue_step path.
   of the given 'duration'.
 
 * `trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i` : Anchors the
-  chained position stream, declaring that continuous position 'pos' (in
-  sub-units) is reached at the given 'clock' time and separately restoring
-  the physical integer microstep counter 'mcu_pos'. Sent before the first
-  segment of a motion and whenever the accumulator must be re-anchored. The
-  separate counter preserves step phase across homing and logical coordinate
-  changes.
+  chained position stream, declaring the signed low 32-bit phase 'pos' (in
+  sub-units) at the given 'clock' time and separately restoring the physical
+  integer microstep counter 'mcu_pos'. Sent before the first segment of a
+  motion and whenever the accumulator must be re-anchored. The separate
+  counter preserves and unwraps step phase across homing, long travel, and
+  logical coordinate changes.
 
 * `traj_get_position oid=%c` : Generates a "traj_position oid=%c
-  clock=%u pos=%i" response with the current interpolated position.
+  clock=%u pos=%i mcu_pos=%i" response with the current interpolated
+  low-word phase and physical microstep counter.
 
 * `traj_query oid=%c` : Generates a "traj_status oid=%c flags=%c
   queued=%hu dropped=%hu horizon_clock=%u pos=%i" response reporting

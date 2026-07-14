@@ -282,7 +282,7 @@ class TrajectoryPWM:
             "traj_pwm_rebase oid=%c clock=%u pos=%i", cq=cmd_queue)
         self.get_pos_cmd = self.mcu.lookup_query_command(
             "traj_pwm_get_position oid=%c",
-            "traj_position oid=%c clock=%u pos=%i", oid=self.oid,
+            "traj_position oid=%c clock=%u pos=%i mcu_pos=%i", oid=self.oid,
             cq=cmd_queue)
 
     # ---- position anchor / segment feed API ------------------------

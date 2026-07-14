@@ -58,14 +58,21 @@ def test_signed_trajectory_readback_preserves_negative_corexy_position():
     stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
     stepper._oid = 4
     stepper._get_position_cmd = FakeCommand({
-        'clock': 1234, 'pos': 3493649149})
+        'clock': 1234, 'pos': 3493649149, 'mcu_pos': -12227})
     stepper._mcu = types.SimpleNamespace(
         clock32_to_clock64=lambda clock: clock)
     stepper._last_traj_readback = None
     clock, mcu_pos = stepper._query_traj_readback()
     assert clock == 1234
-    assert mcu_pos == round(-801318147 / 65536.)
+    assert mcu_pos == -12227
     assert stepper._last_traj_readback == (clock, mcu_pos)
+
+
+def test_wide_trajectory_readback_unwraps_from_physical_counter():
+    # Low position word wrapped negative just above +32768 microsteps.
+    pos_su = (32768 * 65536 + 12345) & 0xffffffff
+    assert klippy_stepper._unwrap_subunits(pos_su, 32768) == (
+        32768 * 65536 + 12345)
 
 
 def test_signed_protocol_field_normalizes_high_bit_wire_value():
@@ -329,14 +336,30 @@ def test_wire_record_preserves_exact_segment_coefficients():
     assert rebase == {
         'event': 'rebase', 'start_clock': 1_000_000,
         'end_clock': 1_000_000, 'position_su': 100,
+        'absolute_position_su': 100,
         'acc_q32': 100 << 32, 'mcu_position': 2}
     assert segment['start_clock'] == 1_000_000
     assert segment['end_clock'] == 1_050_000
     assert segment['velocity'] == 65536 and segment['accel'] == 0
     assert segment['start_position_su'] == 100
     assert segment['end_position_su'] == 50_100
+    assert segment['absolute_start_position_su'] == 100
+    assert segment['absolute_end_position_su'] == 50_100
     assert segment['start_acc_q32'] == 100 << 32
     assert segment['end_acc_q32'] == 50_100 << 32
+
+    # Flight records keep an unwrapped host twin while exposing the exact
+    # signed low word the MCU executes across a phase boundary.
+    stepper.owner.records = []
+    wide_start = (1 << 31) - 100
+    stepper._wire_rebase(2_000_000, wide_start, 32768)
+    stepper._wire_segment(0, 200, 65536, 0)
+    rebase, segment = stepper.owner.records
+    assert rebase['position_su'] == wide_start
+    assert rebase['absolute_position_su'] == wide_start
+    assert segment['start_position_su'] == wide_start
+    assert segment['end_position_su'] == -(1 << 31) + 100
+    assert segment['absolute_end_position_su'] == (1 << 31) + 100
 
 
 def test_rebase_waits_for_previous_horizon():
@@ -352,6 +375,8 @@ def test_rebase_waits_for_previous_horizon():
             self.offset = offset
         def segfit_set_anchor(self, segfit, print_time, acc):
             self.anchor = (print_time, acc)
+        def segfit_set_anchor_position(self, segfit, position_su):
+            self.anchor_position = position_su
 
     stepper = trajectory_queuing.TrajectoryStepper.__new__(
         trajectory_queuing.TrajectoryStepper)
@@ -386,6 +411,8 @@ def test_active_path_is_held_before_rebase_boundary():
             self.offset = offset
         def segfit_set_anchor(self, segfit, print_time, acc):
             self.anchor = (print_time, acc)
+        def segfit_set_anchor_position(self, segfit, position_su):
+            self.anchor_position = position_su
 
     stepper = trajectory_queuing.TrajectoryStepper.__new__(
         trajectory_queuing.TrajectoryStepper)
@@ -449,6 +476,8 @@ def main():
           " offset")
     test_signed_trajectory_readback_preserves_negative_corexy_position()
     print("PASS: negative CoreXY trajectory readback remains signed")
+    test_wide_trajectory_readback_unwraps_from_physical_counter()
+    print("PASS: wrapped trajectory phase unwraps from physical steps")
     test_signed_protocol_field_normalizes_high_bit_wire_value()
     print("PASS: signed protocol fields normalize high-bit wire values")
     test_secondary_freshness()

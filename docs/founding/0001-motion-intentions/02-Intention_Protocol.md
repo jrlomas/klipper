@@ -92,7 +92,7 @@ quantization phase as the legacy `itersolve`/`stepcompress` path.
 MCU→host messages:
 
 ```
-traj_position oid=%c clock=%u pos=%i          (reply, Class 1)
+traj_position oid=%c clock=%u pos=%i mcu_pos=%i  (reply, Class 1)
 traj_underrun oid=%c clock=%u pos=%i          (event, Class 1)
 traj_status oid=%c horizon_clock=%u free_slots=%hu   (telemetry, Class 2)
 ```
@@ -109,13 +109,18 @@ Field definitions:
   (i.e. Q sub-units/tick² with 32 fractional bits) — the same
   "delta-of-the-delta" pattern as today's `queue_step add` argument,
   one level up. Resolution: 2⁻³² sub-unit/tick².
-* `pos` — signed 32-bit in sub-units (±2³¹ sub-units = ±32768
-  microsteps). That is ±204.8 mm at 160 microsteps/mm, but only ±25.6 mm
-  at 1280 microsteps/mm. A host must reject an anchor outside this range;
-  extending the absolute-position range requires a versioned wider-position
-  wire shape, not truncation. Decoders must also normalize the low 32 bits
-  to two's-complement signed form even when an intermediate transport or
-  variadic encoder presents the same wire bits in an unsigned container.
+* `pos` — the signed representation of the **low 32 bits** of position in
+  sub-units. It is a modulo phase, not a range-limited absolute coordinate,
+  and therefore wraps every 65536 microsteps. The chained Q32.32 accumulator
+  integrates quantized coefficients exactly modulo 2⁶⁴. The host retains the
+  unwrapped coordinate used for fitting and flight recording.
+* `mcu_pos` — signed 32-bit physical microsteps. On rebase it establishes the
+  integer step counter independently of the continuous low-word phase. On
+  readback the host selects the `pos` value congruent modulo 2³² that is
+  nearest `mcu_pos × 65536`, recovering the exact unwrapped sub-unit
+  coordinate. This pair permits long travel while preserving a compact
+  command. Decoders normalize both signed fields even when an intermediate
+  transport or variadic encoder presents their wire bits as unsigned.
 * `flags` — bit 0 proposed: *hold-at-end* hint — prefer position hold
   over underrun ramp if the queue empties after this segment (see
   underrun policy). Bits 6–7 carry the **segment polynomial order**
@@ -284,9 +289,10 @@ host-side `stepcompress.c` fits *offline* today; the classic
 `interval += add` recurrence emerges naturally as its constant-
 acceleration limit.
 
-State per actuator: 64-bit position accumulator `q_acc` (sub-units),
-current segment coefficients (v, a in extended internal precision),
-elapsed segment time `t` (ticks), last step interval.
+State per actuator: 64-bit modulo-Q32.32 position phase `q_acc`, a separate
+signed 32-bit physical microstep counter, current segment coefficients (v, a
+in extended internal precision), elapsed segment time `t` (ticks), and last
+step interval.
 
 Each step event must answer: *at what tick does q(t) next cross a
 microstep boundary?* — i.e. solve q(t*) = q_target where

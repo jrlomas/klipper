@@ -75,7 +75,9 @@ traj_pwm_event(struct timer *t)
         uint32_t elapsed = p->time.waketime - tq->seg_start_clock;
         if (elapsed < tq->duration) {
             // Sample q(dt) directly and write the mapped output level
-            int64_t acc = tq->acc + (trajq_pos_at_seg(tq, elapsed) << 16);
+            int64_t acc = trajq_acc_add(
+                tq->acc, trajq_q16_to_acc(
+                    trajq_pos_at_seg(tq, elapsed)));
             traj_pwm_write(p, acc);
             p->time.waketime += p->sample_ticks;
             return SF_RESCHEDULE;
@@ -127,7 +129,8 @@ traj_pwm_stop(struct trajq *tq)
         uint32_t t = timer_read_time() - tq->seg_start_clock;
         if (t > tq->duration)
             t = tq->duration;
-        tq->acc += trajq_pos_at_seg(tq, t) << 16;
+        tq->acc = trajq_acc_add(
+            tq->acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
         tq->seg_start_clock += t;
     }
 }
@@ -228,12 +231,13 @@ command_traj_pwm_get_position(uint32_t *args)
         if (!timer_is_before(now, tq->seg_start_clock)) {
             if (t > tq->duration)
                 t = tq->duration;
-            acc += trajq_pos_at_seg(tq, t) << 16;
+            acc = trajq_acc_add(
+                acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
         }
     }
     irq_enable();
-    sendf("traj_position oid=%c clock=%u pos=%i"
-          , oid, now, (int32_t)(acc >> 32));
+    sendf("traj_position oid=%c clock=%u pos=%i mcu_pos=%i"
+          , oid, now, (int32_t)(acc >> 32), 0);
 }
 DECL_COMMAND(command_traj_pwm_get_position, "traj_pwm_get_position oid=%c");
 

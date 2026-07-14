@@ -82,7 +82,7 @@ trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
     int64_t dv = (int64_t)velocity * duration;
     if (dv >= (1LL << 47) || dv <= -(1LL << 47))
         shutdown("traj segment overflow");
-    int64_t delta = dv << 16;
+    int64_t delta = trajq_q16_to_acc(dv);
     if (accel) {
         int64_t w = (int64_t)accel * duration;
         delta += mul64x32_half(w, duration);
@@ -235,7 +235,7 @@ trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
 static void
 trajq_apply_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
 {
-    tq->acc = (int64_t)pos << 32;
+    tq->acc = (int64_t)((uint64_t)(uint32_t)pos << 32);
     tq->seg_start_clock = clock;
     if (tq->ops->rebase)
         tq->ops->rebase(tq, aux);
@@ -294,7 +294,7 @@ int
 trajq_advance(struct trajq *tq)
 {
     // Chain: advance the exact anchor across the finished segment
-    tq->acc += trajq_end_delta_seg(tq);
+    tq->acc = trajq_acc_add(tq->acc, trajq_end_delta_seg(tq));
     tq->seg_start_clock += tq->duration;
     int32_t v_end = trajq_velocity_at_seg(tq, tq->duration);
     execlog_append(EL_SEG_DONE, tq->oid, tq->seg_start_clock

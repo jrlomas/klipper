@@ -85,14 +85,20 @@ cap and arrive with a start clock several seconds in the past.
 The sampled kinematic coordinate is logical joint space, while homing and
 `SET_POSITION` may leave the MCU in a different physical step coordinate.
 Each rebase therefore establishes a constant logical-to-physical sub-unit
-offset which the fitter applies to every later sample.  The wire rebase carries
-both the continuous physical sub-unit anchor and the integer physical step
-counter; neither is inferred from the logical trapq coordinate.
-Trajectory readback is normalized to signed 32-bit form before it updates that
-offset; this matters for the negative member of a CoreXY pair after a homing
-trigger. The host range-checks both rebase fields before shifting or encoding
-them, so an out-of-range absolute anchor fails with a named trajectory error
-instead of overflowing CFFI or silently wrapping on the wire.
+offset which the fitter applies to every later sample. The host fitter keeps
+that physical anchor unwrapped; the wire carries its signed low 32-bit phase
+plus the integer physical step counter. The MCU integrates the phase modulo
+2⁶⁴ and uses the independent counter to select each next half-step boundary,
+so crossing a phase wrap neither changes direction nor invents a pulse.
+
+Trajectory readback returns both fields. The host normalizes their signed wire
+representations, then unwraps the phase to the congruent sub-unit coordinate
+nearest the physical counter. This matters both for a negative CoreXY member
+after a homing trigger and for a Z search spanning more than 32768 microsteps.
+Only the physical `mcu_pos` retains the signed 32-bit range check; truncating
+an absolute sub-unit anchor to the documented low-word phase is intentional.
+The flight recorder stores both that exact wire phase and an unwrapped host
+twin advanced from the same quantized coefficients.
 
 Klipper transmits scheduled commands before their execution clocks.  A rebase
 whose clock is at or beyond the previous emitted horizon is therefore queued

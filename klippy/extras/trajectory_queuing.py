@@ -67,6 +67,11 @@ def _clamp_i32(x):
     return int(x)
 
 
+def _signed_i32(x):
+    x = int(x) & 0xffffffff
+    return x - (1 << 32) if x & 0x80000000 else x
+
+
 def _smul_shr(a, t, sh):
     # trunc_toward_zero(a * t) >> sh
     neg = a < 0
@@ -184,8 +189,9 @@ class TrajectoryStepper:
         # reconciler (FD-0001 doc 08) diffs against what the board
         # actually executed.  Each entry is
         # (start_clock, end_clock, end_pos_subunits) taken from the
-        # exact chained anchor the fitter maintains (segfit_get_anchor
-        # is the Q32.32 accumulator).  Bounded like the execlog ring.
+        # exact unwrapped host twin advanced from the same quantized wire
+        # coefficients as the MCU's modulo-Q32.32 phase. Bounded like the
+        # execlog ring.
         record_size = config.getint('motion_intention_record',
                                     DEFAULT_INTENTION_RECORD, minval=16)
         self.intentions = collections.deque(maxlen=record_size)
@@ -336,17 +342,19 @@ class TrajectoryStepper:
         if duration <= 0:
             raise self.mcu.error("BEZIER_MOVE duration must be positive")
         anchor_su = int(ctrl_su[0])
+        anchor_wire_su = _signed_i32(anchor_su)
         # Rebase this joint at the first control point, then emit.
         self.note_rebase_needed()
         anchor_mcu_pos = int(round(anchor_su / SUBUNITS))
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_su,
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_wire_su,
                               anchor_mcu_pos],
                              minclock=self.rebase_min_clock,
                              reqclock=clock)
         self._wire_rebase(clock, anchor_su, anchor_mcu_pos)
         self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
-                                       anchor_su << 32)
+                                       anchor_wire_su << 32)
+        self.ffi_lib.segfit_set_anchor_position(self.segfit, anchor_su)
         self.anchored = False   # standalone emit; not fitter-driven
         end_delta = self.queue_bezier_segment(duration, ctrl_su)
         end_su = anchor_su + int(end_delta >> 32)
@@ -369,24 +377,22 @@ class TrajectoryStepper:
         # stepper position offset so the wire anchor stays in physical MCU
         # step space across homing and SET_POSITION.
         pos_su = self.mcu_stepper.commanded_to_mcu_position_su(pos_mm)
+        wire_pos_su = _signed_i32(pos_su)
         mcu_pos = self.mcu_stepper.get_mcu_position(pos_mm)
-        if not (-2147483648 <= pos_su <= 2147483647):
-            raise self.mcu.error(
-                "Trajectory anchor for %s exceeds the signed 32-bit"
-                " position range: %d subunits" % (self.name, pos_su))
         if not (-2147483648 <= mcu_pos <= 2147483647):
             raise self.mcu.error(
                 "Trajectory anchor for %s exceeds the signed 32-bit"
                 " microstep range: %d" % (self.name, mcu_pos))
         position_offset_su = pos_su - pos_mm * self.su_per_mm
-        acc = pos_su << 32
+        acc = wire_pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)
         if self.rebase_min_clock and clock < self.rebase_min_clock:
             raise self.mcu.error(
                 "Trajectory boundary for %s overlaps the previous hold:"
                 " rebase clock %d < horizon %d" % (
                     self.name, clock, self.rebase_min_clock))
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos],
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff,
+                              wire_pos_su, mcu_pos],
                              minclock=self.rebase_min_clock,
                              reqclock=clock)
         self._wire_rebase(clock, pos_su, mcu_pos)
@@ -394,6 +400,7 @@ class TrajectoryStepper:
         self.ffi_lib.segfit_set_position_offset(self.segfit,
                                                 position_offset_su)
         self.ffi_lib.segfit_set_anchor(self.segfit, print_time, acc)
+        self.ffi_lib.segfit_set_anchor_position(self.segfit, pos_su)
         self.anchored = True
         self.need_rebase = False
         # Record the (re-)anchor point in the host intention twin.
@@ -432,7 +439,7 @@ class TrajectoryStepper:
             # no synthetic pre-roll is needed for boundary safety.
             anchor_time = active_time
             self._anchor(anchor_time)
-        prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        prev_acc = self._chained_acc()
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
         # Once itersolve reports no activity, the relevant trapq moves may
         # already have moved to history.  Sampling the remaining head
@@ -455,7 +462,7 @@ class TrajectoryStepper:
         # is already seconds in the past.  Seal the prefix generated for this
         # step-generation horizon so every queued segment is delivered while
         # it is still future motion.
-        prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        prev_acc = self._chained_acc()
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
         n = self.ffi_lib.segfit_finalize(self.segfit)
         if n < 0:
@@ -489,7 +496,7 @@ class TrajectoryStepper:
     def _record_intention(self, prev_acc, prev_time):
         # Append (start_clock, end_clock, end_pos_subunits) for the span
         # just emitted, straight off the fitter's exact chained anchor.
-        acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        acc = self._chained_acc()
         if acc == prev_acc:
             return  # nothing emitted / anchor unchanged
         end_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
@@ -499,6 +506,12 @@ class TrajectoryStepper:
         except Exception:
             return
         self.intentions.append((start_clock, end_clock, int(acc >> 32)))
+
+    def _chained_acc(self):
+        wire_acc = getattr(self, 'wire_acc', None)
+        if wire_acc is not None:
+            return int(wire_acc)
+        return int(self.ffi_lib.segfit_get_anchor(self.segfit))
 
     # ---- resume reconciliation (FD-0001 doc 08) ----
     def get_intention_record(self):
@@ -527,7 +540,9 @@ class TrajectoryStepper:
         clock = int(clock)
         pos_su = int(pos_su)
         mcu_pos = int(round(pos_su / SUBUNITS))
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
+        wire_pos_su = _signed_i32(pos_su)
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff,
+                              wire_pos_su, mcu_pos])
         self._wire_rebase(clock, pos_su, mcu_pos)
         try:
             print_time = self.mcu.clock_to_print_time(clock)
@@ -535,7 +550,8 @@ class TrajectoryStepper:
             self.ffi_lib.segfit_set_position_offset(
                 self.segfit, pos_su - pos_mm * self.su_per_mm)
             self.ffi_lib.segfit_set_anchor(self.segfit, print_time,
-                                           pos_su << 32)
+                                           wire_pos_su << 32)
+            self.ffi_lib.segfit_set_anchor_position(self.segfit, pos_su)
             self.anchored = True
             self.need_rebase = False
         except Exception:
@@ -574,9 +590,12 @@ class TrajectoryStepper:
     def _wire_rebase(self, clock, pos_su, mcu_pos):
         self.wire_clock = int(clock)
         self.wire_acc = int(pos_su) << 32
+        wire_pos_su = _signed_i32(pos_su)
         self._record_wire({
             'event': 'rebase', 'start_clock': self.wire_clock,
-            'end_clock': self.wire_clock, 'position_su': int(pos_su),
+            'end_clock': self.wire_clock,
+            'position_su': int(wire_pos_su),
+            'absolute_position_su': int(pos_su),
             'acc_q32': int(self.wire_acc),
             'mcu_position': int(mcu_pos),
         })
@@ -588,7 +607,7 @@ class TrajectoryStepper:
             return
         start_clock = self.wire_clock
         start_acc = self.wire_acc
-        start_pos = self.wire_acc >> 32
+        start_abs_pos = self.wire_acc >> 32
         self.wire_acc += py_end_delta_ho(
             duration, velocity, accel, jerk, snap, crackle)
         self.wire_clock += int(duration)
@@ -598,8 +617,10 @@ class TrajectoryStepper:
             'duration': int(duration), 'flags': int(flags),
             'velocity': int(velocity), 'accel': int(accel),
             'jerk': int(jerk), 'snap': int(snap), 'crackle': int(crackle),
-            'start_position_su': int(start_pos),
-            'end_position_su': int(self.wire_acc >> 32),
+            'start_position_su': _signed_i32(start_abs_pos),
+            'end_position_su': _signed_i32(self.wire_acc >> 32),
+            'absolute_start_position_su': int(start_abs_pos),
+            'absolute_end_position_su': int(self.wire_acc >> 32),
             'start_acc_q32': int(start_acc),
             'end_acc_q32': int(self.wire_acc),
         })

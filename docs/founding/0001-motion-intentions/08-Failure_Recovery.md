@@ -58,8 +58,11 @@ while a reliable query must wait for its response. The shutdown handler
 therefore schedules the Class-1 drain as a reactor callback and returns; the
 callback runs after the critical section and can use the response barrier
 without causing a second host exception. Execution positions are normalized
-to signed 32-bit form before persistence so a negative CoreXY trigger remains
-negative in both reconciliation and the Atlas flight record.
+to signed 32-bit low-word phase before persistence so a negative CoreXY
+trigger remains negative in both reconciliation and the Atlas flight record.
+Live position queries pair that phase with the physical microstep counter; the
+host unwraps the pair before reconciliation, including across long-axis phase
+wraps.
 
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped
