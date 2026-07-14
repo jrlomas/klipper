@@ -30,13 +30,13 @@ def main():
 
     sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
     lib.segfit_setup(sf, sk, MCU_FREQ, SU_PER_MM, 32768., SAMPLE_TIME)
-    queued = lib.segfit_get_position(sf, 9.999)
+    queued = lib.segfit_get_position(sf, 10.)
     stale = lib.itersolve_get_commanded_pos(sk)
     assert abs(stale) < 1e-12
     assert abs(queued - start) < 1e-12, (queued, start)
 
     anchor_su = round(queued * SU_PER_MM)
-    lib.segfit_set_anchor(sf, 9.999, anchor_su << 32)
+    lib.segfit_set_anchor(sf, 10., anchor_su << 32)
     emitted = []
     n = lib.segfit_generate(sf, 10.100)
     segs = lib.segfit_get_segs(sf)
@@ -47,8 +47,8 @@ def main():
     emitted.extend((segs[i].duration, segs[i].velocity, segs[i].accel)
                    for i in range(n))
     assert emitted
-    # The stream may contain the legitimate 1 ms pre-roll hold, but must not
-    # synthesize the old ~167 mm/s catch-up segment across a false zero anchor.
+    # The stream must not synthesize the old ~167 mm/s catch-up segment across
+    # a false zero/pre-roll anchor.
     max_v_mm_s = max(abs(v) / 65536. * MCU_FREQ / SU_PER_MM
                      for _, v, _ in emitted)
     assert max_v_mm_s < 4., max_v_mm_s

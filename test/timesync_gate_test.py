@@ -146,6 +146,31 @@ class UnsyncedOwner:
         return False
 
 
+class SyncedOwner:
+    def is_mcu_synced(self, mcu):
+        return True
+
+
+class AnchorFFI:
+    def __init__(self, active_time):
+        self.active_time = active_time
+
+    def itersolve_check_active(self, sk, flush_time):
+        return self.active_time
+
+    def segfit_get_anchor(self, segfit):
+        return 0
+
+    def segfit_get_gen_time(self, segfit):
+        return self.active_time
+
+    def segfit_generate(self, segfit, flush_time):
+        return 0
+
+    def segfit_get_segs(self, segfit):
+        return []
+
+
 class UnsyncedTimeSync:
     def is_mcu_synced(self, mcu_name):
         return False
@@ -177,6 +202,27 @@ def test_trajectory_fails_before_fitter_advance():
         raise AssertionError("unsynchronized Class-0 traffic was accepted")
 
 
+def test_trajectory_anchor_starts_at_activity():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    stepper.ffi_lib = AnchorFFI(12.5)
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.intentions = []
+    anchors = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper.flush(13., 13.)
+    assert anchors == [12.5]
+
+
 def test_value_trajectory_fails_before_fitter_advance():
     pwm = trajectory_pwm.TrajectoryPWM.__new__(trajectory_pwm.TrajectoryPWM)
     pwm.printer = FakePrinter()
@@ -203,6 +249,8 @@ def main():
     print("PASS: relay regression suppresses noisy endpoint estimates")
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
+    test_trajectory_anchor_starts_at_activity()
+    print("PASS: trajectory anchor starts at first activity")
     test_value_trajectory_fails_before_fitter_advance()
     print("PASS: value fitting fails before unsynchronized send")
 

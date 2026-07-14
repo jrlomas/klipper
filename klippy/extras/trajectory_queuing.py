@@ -351,8 +351,13 @@ class TrajectoryStepper:
         if not self.anchored:
             if not active_time:
                 return
-            # Anchor slightly before the first activity in the window
-            anchor_time = max(active_time - 0.001, 0.)
+            # Anchor exactly where activity begins.  A pre-roll can sample a
+            # previous held sentinel when a replacement trapq starts at a new
+            # position (notably the retract after a homing trigger), forcing
+            # the fitter to encode the position discontinuity as a one-sample
+            # velocity spike.  The firmware advances pure holds correctly, so
+            # no synthetic pre-roll is needed for boundary safety.
+            anchor_time = active_time
             self._anchor(anchor_time)
         prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
