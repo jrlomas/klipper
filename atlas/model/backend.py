@@ -38,6 +38,7 @@ class Completion:
     tool_calls: list = field(default_factory=list)  # [{name, arguments}]
     backend: str = ""
     stub: bool = False
+    usage: dict = field(default_factory=dict)
 
 
 class ModelBackend:
@@ -52,6 +53,9 @@ class ModelBackend:
     def generate(self, prompt, schema=None, tools=None, max_tokens=512,
                  system=None) -> Completion:         # pragma: no cover
         raise NotImplementedError
+
+    def status(self) -> dict:
+        return {"loaded": None, "usage": {}}
 
 
 class StubBackend(ModelBackend):
@@ -73,6 +77,9 @@ class StubBackend(ModelBackend):
 
     def available(self) -> bool:
         return True
+
+    def status(self) -> dict:
+        return {"loaded": True, "usage": {}, "transport": "scripted"}
 
     def generate(self, prompt, schema=None, tools=None, max_tokens=512,
                  system=None) -> Completion:
@@ -112,6 +119,7 @@ class LlamaCppBackend(ModelBackend):
         self.cli_path = cli_path
         self.cli_runner = cli_runner or subprocess.run
         self.timeout = timeout
+        self.last_usage = {}
 
     @staticmethod
     def _binding_available() -> bool:
@@ -153,6 +161,15 @@ class LlamaCppBackend(ModelBackend):
         return self.profile.check(self.profile.model, self.params_b,
                                   self.quant)
 
+    def status(self) -> dict:
+        return {
+            "loaded": self._llama is not None,
+            "usage": dict(self.last_usage),
+            "transport": ("python-binding" if self._llama is not None
+                          else "llama.cpp-cli"),
+            "context_tokens": self.n_ctx,
+        }
+
     def _ensure_loaded(self):
         if self._llama is None:
             if not self.model_path:
@@ -188,6 +205,7 @@ class LlamaCppBackend(ModelBackend):
             kwargs["tool_choice"] = "auto"
 
         out = llama.create_chat_completion(**kwargs)
+        self.last_usage = dict(out.get("usage") or {})
         msg = out["choices"][0]["message"]
         text = _clean_model_text(msg.get("content"))
         calls = []
@@ -201,7 +219,8 @@ class LlamaCppBackend(ModelBackend):
                     args = {"_raw": args}
             calls.append({"name": fn.get("name"), "arguments": args})
         return Completion(text=text, tool_calls=calls,
-                          backend="%s:%s" % (self.name, self.accelerator))
+                          backend="%s:%s" % (self.name, self.accelerator),
+                          usage=dict(self.last_usage))
 
     def _generate_cli(self, prompt, schema, tools, max_tokens, system):
         cli = self._find_cli()
@@ -305,6 +324,10 @@ class HailoBackend(ModelBackend):
         # Hailo SDK installed select an unimplemented backend and fail only on
         # the first operator request.
         return False
+
+    def status(self) -> dict:
+        return {"loaded": False, "usage": {},
+                "transport": "not-implemented"}
 
     def generate(self, prompt, schema=None, tools=None,
                  max_tokens=512, system=None) -> Completion:  # pragma: no cover

@@ -9,15 +9,11 @@ deploy-profile budget guard in [`atlas/model/`](../../../atlas/model/), the
 eval harness in [`atlas/eval/`](../../../atlas/eval/), and the per-machine
 memory file + RAG index in [`atlas/memory/`](../../../atlas/memory/). The
 model backend is wired to **llama.cpp** and the official pinned
-**Qwen3-4B Q4_K_M** passes the workstation CPU smoke and labelled suite.
-The deploy target remains Pi 5 + Hailo-10H; GPU execution/evaluation, target
-model compilation, target metrics, and live-machine mutation remain open. The
-CUDA (`sm_75`) and ROCm (`gfx1200`) llama.cpp binaries compile and link on the
-workstation, but its current execution environment exposes no GPU device nodes,
-so no GPU inference result is claimed. On the
-workstation, daemon-owned inference, private IPC, authenticated Moonraker
-relays, terminal commands, and the Mainsail companion interface are built and
-tested together.
+**Qwen3-4B Q4_K_M** passed the legacy workstation CPU/CUDA/ROCm transport
+smoke. Corpus-v2 model-quality evaluation, target compilation/metrics, and
+live-machine mutation remain open. On the workstation, daemon-owned inference,
+same-UID private IPC, Moonraker-policy relays, terminal commands, and the
+Mainsail companion interface are built and tested together.
 
 This is the plane other printer stacks are not even considering: a machine
 you can *ask*, and (carefully) *tell*. But the entire value of the plane
@@ -52,10 +48,11 @@ both.
 That is now the live daemon path, not only a serialization contract. Atlas
 creates the file mode-private and atomically, retains one opaque local machine
 token, mirrors learned monitor baselines and deduplicated diagnoses, and
-rebuilds retrieval when memory changes. Retrieval uses a deterministic
-token-hash index so grounding remains available on the base tier without a
-second model; the local LLM performs the non-deterministic interpretation of
-the retrieved facts.
+rebuilds retrieval when memory changes. Retrieval uses deterministic BM25 over
+real terms, exposes per-document scores and weak retrieval, and remains
+available on the base tier without a second model. The local LLM performs the
+non-deterministic interpretation. Timeline, config, memory, retrieval, and
+conversation content are fenced as untrusted prompt data.
 
 ## Generate & control — behind the risk tier
 
@@ -67,12 +64,13 @@ next depends on a **risk tier — decided by code, not by the model:**
 | Tier | Examples | Behaviour |
 | --- | --- | --- |
 | **Catastrophic / safety-affecting** | thermal limits, endstop/probe config, kinematics, driver current, anything that can damage the machine or a person | **Always confirm.** Never auto-applied. |
-| **Consequential but reversible** | pin remaps, macro logic, speed/accel defaults | Auto-apply **allowed**, with a one-click undo and an audit entry; a preview is offered. |
+| **Consequential but reversible** | explicitly allowlisted speed/accel defaults and service paths/timeouts | Auto-apply **allowed**, with a one-click undo and an audit entry; a preview is offered. |
 | **Cosmetic / non-functional** | display menu layout, UI labels, colours, wording | **Auto-apply.** |
 
-The rule is **"auto-apply when not catastrophic,"** and the load-bearing
-detail is that a **deterministic classifier** — not the model — decides the
-tier from the diff. This is realized in
+The load-bearing detail is that a **deterministic classifier** — not the model
+— decides the tier from the diff. Unknown sections, plugin keys, pin/control
+surfaces, macro bodies, and shell/G-code fields default to **confirm**. Only an
+explicit allowlist may avoid confirmation. This is realized in
 [`atlas/apply/classify.py`](../../../atlas/apply/classify.py), driving the
 draft→validate→classify→apply pipeline in
 [`atlas/apply/pipeline.py`](../../../atlas/apply/pipeline.py). **The safety
@@ -84,7 +82,10 @@ The real-file path is
 [`atlas/apply/live.py`](../../../atlas/apply/live.py): it rejects stale drafts
 with compare-and-swap, preserves file modes, fsyncs an atomic replacement,
 persists the complete audit in a mode-private SQLite journal, rolls back when
-the injected Klippy reload fails, and can undo after a process restart.
+the injected Klippy reload fails, and can undo after a process restart. It
+remains intentionally unwired from daemon, IPC, Moonraker, and Mainsail until
+the Phase 4 board-rig test proves proposal-token consumption, expiry, reload,
+rollback, and undo end to end.
 
 Every applied change — at any tier — is **journaled to the machine's memory
 with its diff**, so *undo* and *"what did Atlas change?"* are always
@@ -98,10 +99,14 @@ harness ([`atlas/eval/harness.py`](../../../atlas/eval/harness.py)) was
 stood up **early and stub-model-first**, and its metrics are exactly the
 ones that matter:
 
-- **diagnosis accuracy** against a labelled case set;
-- **config-edit correctness** against golden diffs;
-- and — the load-bearing metric — **correct refusal / confirm on the
-  safety tier.**
+- deterministic matcher and safety-classifier invariants;
+- targeted config-edit correctness against golden semantic diffs;
+- diagnosis-narrative signals and uncertainty behavior;
+- and prompt-injection resistance.
+
+Corpus v2 has 50 cases across those six separately reported categories. It
+publishes no cross-category overall score. Stub results prove contracts only;
+the pinned model must be evaluated independently on CUDA, ROCm, and Hailo.
 
 That last one is the whole ballgame: if a model swap silently started
 auto-applying a kinematics change, the harness catches it. And because the

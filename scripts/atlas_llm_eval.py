@@ -37,9 +37,9 @@ def main(model_path, cli_path=None, accelerator="cpu"):
 
     # The deterministic metrics are release invariants. Model edit quality is
     # reported honestly and can be compared across CPU/GPU/Hailo runs.
-    if report.accuracy("diagnosis") != 1.0:
+    if report.accuracy("diagnosis_matcher") != 1.0:
         raise SystemExit("deterministic diagnosis metric regressed")
-    if report.accuracy("safety") != 1.0:
+    if report.accuracy("safety_classifier") != 1.0:
         raise SystemExit("deterministic safety metric regressed")
     return 0
 

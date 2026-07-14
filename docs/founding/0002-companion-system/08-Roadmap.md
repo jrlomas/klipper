@@ -50,10 +50,11 @@ base vs the intelligence tier.
   profile guard ([`atlas/model/`](../../../atlas/model/)), the eval harness
   ([`atlas/eval/`](../../../atlas/eval/)), and the memory + RAG index
   ([`atlas/memory/`](../../../atlas/memory/)) — with the backend wired to
-  llama.cpp. The official pinned Qwen3-4B Q4_K_M passes the real-model
-  workstation smoke and all 9 labelled eval cases. It also runs as a
-  daemon-owned assistant behind mode-private IPC, authenticated Moonraker
-  endpoints, terminal commands, and the Mainsail companion panel. A live CPU
+  llama.cpp. The official pinned Qwen3-4B Q4_K_M passes the legacy real-model
+  workstation transport smoke; the 50-case corpus-v2 model-quality run is
+  pending. It also runs as a daemon-owned assistant behind same-UID private
+  IPC, Moonraker-policy endpoints, terminal commands, and the Mainsail
+  companion panel. A live CPU
   run proved grounded Q&A and a safety-classified, non-applied config preview.
   The daemon also owns the atomic private machine-memory file, mirrors learned
   baselines/diagnoses into it, and refreshes deterministic retrieval.
@@ -86,9 +87,10 @@ recorded here as the settled record; the rationale for the last four is in
   **Hailo-10H / AI HAT+ 2** (8 GB). Base and ASR-accel tiers run the
   deterministic floor without an LLM. (Argument:
   [01-Compute-Tiers.md](01-Compute-Tiers.md).)
-- ✅ **Auto-apply** — **"auto-apply when not catastrophic,"** with a
-  deterministic (non-LLM) classifier setting the risk tier and every change
-  journaled + undoable. (Mechanism: [07-LLM-Layer.md](07-LLM-Layer.md);
+- ✅ **Risk-tiered apply** — a deterministic (non-LLM) classifier sets the
+  risk tier; unknown/plugin/executable semantics confirm by default, while
+  only explicit reversible/cosmetic allowlists may auto-apply. Every live
+  change will be journaled + undoable. (Mechanism: [07-LLM-Layer.md](07-LLM-Layer.md);
   realized in [`atlas/apply/`](../../../atlas/apply/).)
 - ✅ **Acceptance is public** — the full KB lifecycle runs on GitHub Issues
   with a written, fixed-vocabulary rationale for every accept and reject.
@@ -135,9 +137,9 @@ The open items are settled; FD-0002 has split into this numbered series;
 Milestones A and B are realized. Milestone C's safety contracts, pinned
 llama.cpp runtime, grounded conversational service, structured preview path,
 Moonraker boundary, terminal client, Mainsail face, and workstation quality
-preflight are green. CUDA and ROCm accelerator binaries also compile for the
-two workstation adapters; GPU execution remains blocked on device passthrough.
-What remains is hardware-bound: GPU evaluation, Pi 5 + Hailo-10H compilation
+preflight are green. CUDA and ROCm accelerator binaries compile and completed
+the legacy v1 smoke; corpus-v2 GPU quality evaluation remains open. What
+remains includes that workstation evaluation plus Pi 5 + Hailo-10H compilation
 and validation, and live-machine apply/reload/undo trials. Voice remains
 Milestone D. The floor is honest, the service is usable, and the model drafts
 behind the deterministic gate without being trusted to decide safety.

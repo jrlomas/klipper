@@ -5,14 +5,12 @@
 #   SAFETY        - thermal limits, endstop/probe, kinematics scale, driver
 #                   current, heater/stepper pins: can damage the machine or
 #                   a person. Always confirm; never auto-applied.
-#   CONSEQUENTIAL - macro logic, speed/accel defaults, pin remaps, fans:
+#   CONSEQUENTIAL - explicitly allowlisted speed/accel/service defaults:
 #                   reversible. Auto-apply allowed with undo + audit.
 #   COSMETIC      - display layout, labels, macro descriptions: auto-apply.
 #
-# The rule is "auto-apply when not catastrophic," and the default for an
-# *unrecognised* change is CONSEQUENTIAL (auto-apply with undo), never
-# COSMETIC — a change we don't understand is at least worth an undo entry,
-# and anything touching a safety section is caught before it gets there.
+# Unknown config semantics are confirmation-by-default. Only explicitly
+# allowlisted reversible or cosmetic changes may avoid confirmation.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -32,7 +30,11 @@ _SAFETY_SECTIONS = frozenset({
     "heater_bed", "extruder", "extruder1", "extruder2", "extruder3",
     "heater_generic", "probe", "bltouch", "smart_effector", "safe_z_home",
     "verify_heater", "tmc2209", "tmc2208", "tmc2130", "tmc2660", "tmc5160",
-    "tmc2240", "temperature_fan",
+    "tmc2240", "temperature_fan", "gcode_shell_command", "delayed_gcode",
+    "output_pin", "pwm_tool", "servo", "static_digital_output",
+    "static_pwm_output", "mcu", "multi_pin", "homing_override",
+    "endstop_phase", "filament_switch_sensor", "filament_motion_sensor",
+    "load_cell", "hx711s", "adxl345",
 })
 
 # Keys that are safety-affecting in *any* section.
@@ -46,7 +48,19 @@ _SAFETY_KEYS = frozenset({
     "homing_speed", "second_homing_speed", "homing_retract_dist",
     "endstop_pin", "heater_pin", "sensor_pin", "sensor_type",
     "step_pin", "dir_pin", "enable_pin", "z_offset", "x_offset",
-    "y_offset", "pin",
+    "y_offset", "pin", "gcode", "command", "script", "runout_gcode",
+    "insert_gcode",
+})
+
+_CONSEQUENTIAL_KEYS = frozenset({
+    "max_velocity", "max_accel", "max_accel_to_decel",
+    "minimum_cruise_ratio", "square_corner_velocity", "max_z_velocity",
+    "max_z_accel", "timeout", "path", "recover_velocity",
+})
+
+_CONSEQUENTIAL_SECTIONS = frozenset({
+    "printer", "idle_timeout", "pause_resume", "respond", "save_variables",
+    "virtual_sdcard", "exclude_object", "firmware_retraction",
 })
 
 # Sections whose non-logic keys are cosmetic.
@@ -70,18 +84,20 @@ def classify_change(change) -> RiskTier:
         return RiskTier.SAFETY
 
     if st == "gcode_macro":
-        # A macro description is cosmetic; the gcode body is logic
-        # (reversible, but not cosmetic — it can command motion/temps).
+        # Macro bodies can command arbitrary motion, heat, pins, and shell
+        # bridges. Descriptions alone are cosmetic.
         return RiskTier.COSMETIC if key == "description" \
-            else RiskTier.CONSEQUENTIAL
+            else RiskTier.SAFETY
     if st in _COSMETIC_SECTIONS:
         return RiskTier.COSMETIC if key in _COSMETIC_KEYS \
             else RiskTier.CONSEQUENTIAL
     if key in _COSMETIC_KEYS:
         return RiskTier.COSMETIC
+    if st in _CONSEQUENTIAL_SECTIONS and key in _CONSEQUENTIAL_KEYS:
+        return RiskTier.CONSEQUENTIAL
 
-    # Unrecognised: at least reversible-with-undo, never silently cosmetic.
-    return RiskTier.CONSEQUENTIAL
+    # Unrecognised plugin/section/key semantics require explicit confirmation.
+    return RiskTier.SAFETY
 
 
 def classify_changeset(changes) -> tuple:

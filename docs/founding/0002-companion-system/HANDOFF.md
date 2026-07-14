@@ -152,11 +152,11 @@ These are settled. Build on them.
 - **Model.** The **Qwen3 dense family** (tool-calling + structured output
   are functional requirements, not preferences). Default **Qwen3-4B
   Q4_K_M**; the exact pin is versioned *data* in the repo.
-- **Auto-apply is risk-tiered** — "auto-apply when not catastrophic." A
-  **deterministic, non-LLM classifier** sets the tier from the diff:
-  safety-affecting → always confirm; consequential-reversible → auto-apply
-  with undo + audit; cosmetic → auto-apply. Everything journaled and
-  reversible.
+- **Apply is risk-tiered and unknown means confirm.** A deterministic,
+  non-LLM classifier sets the tier from the diff: safety-affecting,
+  executable, plugin, or unrecognized semantics → always confirm; explicitly
+  allowlisted consequential-reversible changes → auto-apply with undo + audit;
+  cosmetic → auto-apply. Everything live will be journaled and reversible.
 - **Component boundary.** **Moonraker** owns state that *changes but is
   polled/API'd* (jobs, report submission, KB pulls, feedback). A
   **standalone Atlas daemon** owns the always-on monitor, the model

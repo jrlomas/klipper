@@ -11,11 +11,13 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-from .harness import (DiagnosisCase, ConfigEditCase, SafetyCase,
-                      CaseResult, EvalReport, EvalHarness)
+from .harness import (CORPUS_VERSION, DiagnosisCase, ConfigEditCase,
+                      SafetyCase, NarrativeCase, InjectionCase,
+                      UncertaintyCase, CaseResult, EvalReport, EvalHarness)
 from .samples import SAMPLE_CASES
 
 __all__ = [
-    "DiagnosisCase", "ConfigEditCase", "SafetyCase", "CaseResult",
+    "CORPUS_VERSION", "DiagnosisCase", "ConfigEditCase", "SafetyCase",
+    "NarrativeCase", "InjectionCase", "UncertaintyCase", "CaseResult",
     "EvalReport", "EvalHarness", "SAMPLE_CASES",
 ]

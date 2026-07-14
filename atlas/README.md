@@ -51,16 +51,18 @@ bring-up work (HANDOFF §5):
 | --- | --- |
 | `apply/` | the **non-LLM risk classifier** plus draft→validate→classify→apply. The live path uses compare-and-swap, atomic config writes, durable audit, reload rollback, and restart-safe undo. The safety gate never depends on the model. |
 | `model/` | the `ModelBackend` abstraction (stub/cuda/rocm/cpu/hailo) + the **deploy-profile budget guard** (refuses anything past Qwen3-4B / ~6 GB even on a big dev card) + `LlamaCppBackend.generate` wired to llama.cpp (schema→JSON grammar, tools→tool-calling) and the prompt/tool-schema contracts + assistant helpers. |
-| `eval/` | the eval harness — diagnosis accuracy, structured config-edit correctness, and the load-bearing **safety-tier refusal** metric — runnable stub-first or against real GGUF weights, always reported against the deploy profile and actual accelerator provenance. |
-| `memory/` | the daemon-owned, atomic mode-private **machine memory** (quirks, mirrored baselines, diagnoses, journaled changes) + the **RAG index** over the KB + memory, with deterministic token-hash retrieval on every compute tier. |
+| `eval/` | corpus-v2 evaluation — deterministic matcher/classifier invariants reported separately from targeted config edits, diagnosis narrative, prompt-injection resistance, and uncertainty behavior; no misleading combined overall score. |
+| `memory/` | the daemon-owned, atomic mode-private **machine memory** (quirks, mirrored baselines, diagnoses, journaled changes) + inspectable deterministic **BM25 retrieval** over the KB + memory on every compute tier. |
 
 The workstation path is a usable product seam, not only a model helper:
-the daemon hosts inference, Moonraker relays authenticated typed requests,
+the daemon hosts inference, Moonraker relays typed requests under Moonraker's
+configured authorization policy,
 the Mainsail Atlas panel provides bounded conversational chat and config
 previews, and `atlas assistant` provides the same operations from a terminal.
 The assistant refuses to start with an implicit stub or a missing model. Live
-config mutation remains disabled at this workstation checkpoint: proposals are
-classified, hashed, given a short-lived token, and shown as previews. Applying,
+config mutation remains disabled at this workstation checkpoint: targeted
+section/key proposals are constructed deterministically, classified, hashed,
+given a short-lived token, and shown as previews. Applying,
 reloading, rollback, and undo on a real printer remain Phase 4 board-rig work.
 
 **Milestone B** seeds the first curated failure patterns —
@@ -125,9 +127,11 @@ $ python3 -m atlas.cli assistant interpret
 $ python3 -m atlas.cli assistant propose "Rename the START_PRINT macro"
 ```
 
-Questions are grounded in the current timeline, the active pattern catalog,
-and optional machine memory. Conversation context is carried by the client,
-bounded to eight messages / 16 KiB, and is not persisted by the daemon.
+Questions are grounded in the current timeline, a bounded read-only config
+excerpt, the active pattern catalog, and optional machine memory. Conversation
+context is carried by the client, bounded to eight messages / 8 KiB, and is
+not persisted by the daemon. Timeline, config, retrieval, memory, and history
+content are fenced as untrusted prompt data.
 The daemon creates `memory.json` with mode `0600`, assigns an opaque local
 machine token, mirrors learned monitor baselines and deduplicated diagnoses,
 and atomically refreshes the RAG corpus when those facts change.

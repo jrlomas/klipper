@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
 
 from atlas.apply import (ApplyPipeline, Change, Proposal,  # noqa: E402
+                         apply_config_edits,
                          RiskTier, classify_change, classify_changeset,
                          decision_for, diff_configs, parse_config)
 
@@ -104,16 +105,61 @@ def test_cosmetic():
     print("PASS: descriptions/labels are COSMETIC; display logic isn't")
 
 
-def test_consequential_default():
-    # A macro body and an unknown key default to CONSEQUENTIAL (never
-    # silently cosmetic).
+def test_confirmation_by_default():
+    # Executable macro bodies and unknown plugin semantics require explicit
+    # confirmation; only allowlisted reversible values are consequential.
     assert classify_change(
         Change("gcode_macro X", "gcode", "change", "G28", "G28 X")
-    ) == RiskTier.CONSEQUENTIAL
+    ) == RiskTier.SAFETY
     assert classify_change(
         Change("some_new_module", "mystery_option", "add", "", "1")
+    ) == RiskTier.SAFETY
+    assert classify_change(
+        Change("printer", "max_velocity", "change", "300", "250")
     ) == RiskTier.CONSEQUENTIAL
-    print("PASS: macro bodies and unknown keys default to CONSEQUENTIAL")
+    print("PASS: executable/unknown semantics confirm; allowlist is reversible")
+
+
+def test_targeted_config_editor_preserves_unrelated_text():
+    before = ("# top\n[printer]\nmax_velocity: 300 # retained\n"
+              "# adjacent comment\nmax_accel: 3000\n\n"
+              "[gcode_macro X]\ngcode:\n  G28\n  M400\n")
+    after = apply_config_edits(before, [{
+        "section": "printer", "key": "max_velocity",
+        "operation": "set", "value": "250"}])
+    assert "max_velocity: 250 # retained" in after
+    assert "# adjacent comment\nmax_accel: 3000" in after
+    assert "gcode:\n  G28\n  M400" in after
+    assert len(diff_configs(before, after)) == 1
+    print("PASS: targeted editor changes one key and preserves file context")
+
+
+def test_targeted_config_editor_rejects_ambiguous_or_noop_edits():
+    for edits in ([{"section": "printer", "key": "max_velocity",
+                    "operation": "set", "value": "300"}],
+                  [{"section": "missing", "key": "x",
+                    "operation": "remove"}]):
+        try:
+            apply_config_edits(CFG_A, edits)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid targeted edit was accepted")
+    print("PASS: targeted editor rejects no-op and missing removals")
+
+
+def test_targeted_editor_replaces_complete_multiline_value():
+    before = ("[gcode_macro X]\ngcode:\n  G28\n  # inside body\n\n"
+              "  M104 S200\n\n# outside body\n[display]\ntext: hi\n")
+    after = apply_config_edits(before, [{
+        "section": "gcode_macro X", "key": "gcode",
+        "operation": "set", "value": "G28 X\nM400"}])
+    assert "M104 S200" not in after
+    assert "G28 X\n    M400" in after
+    assert "# outside body\n[display]" in after
+    changes = diff_configs(before, after)
+    assert len(changes) == 1 and changes[0].key == "gcode"
+    print("PASS: targeted editor replaces a complete commented multiline value")
 
 
 def test_most_conservative_wins():
@@ -178,6 +224,16 @@ def test_pipeline_rejects_noop_and_invalid():
     print("PASS: a no-op proposal is rejected by validation")
 
 
+def test_preview_never_applies_or_journals():
+    after = CFG_A.replace("Start a print", "Preview wording")
+    pipe = ApplyPipeline()
+    result = pipe.preview(Proposal(CFG_A, after))
+    assert result.validation.ok and result.tier == RiskTier.COSMETIC
+    assert result.applied is False and result.entry is None
+    assert pipe.journal.entries == []
+    print("PASS: preview classifies without applying or journaling")
+
+
 def test_journal_audit_trail():
     pipe = ApplyPipeline()
     a2 = CFG_A.replace("Start a print", "Begin print")     # cosmetic
@@ -197,13 +253,17 @@ def main():
     test_safety_by_key()
     test_safety_by_section()
     test_cosmetic()
-    test_consequential_default()
+    test_confirmation_by_default()
+    test_targeted_config_editor_preserves_unrelated_text()
+    test_targeted_config_editor_rejects_ambiguous_or_noop_edits()
+    test_targeted_editor_replaces_complete_multiline_value()
     test_most_conservative_wins()
     test_decision_mapping()
     test_pipeline_safety_requires_confirmation()
     test_pipeline_cosmetic_auto_applies()
     test_pipeline_consequential_auto_with_undo()
     test_pipeline_rejects_noop_and_invalid()
+    test_preview_never_applies_or_journals()
     test_journal_audit_trail()
     print("ALL PASS")
 

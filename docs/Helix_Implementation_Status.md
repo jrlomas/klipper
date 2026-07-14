@@ -14,13 +14,13 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `e1ec0b9e` on `claude/software-redesign-impl-finn0j` | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, V0 trajectory-homing corrections, and the RP2040 interrupt-trigger port recorded below. |
+| `jrlomas/klipper` | current tip of `claude/software-redesign-impl-finn0j` | Contains the reviewed transport/security and V0 hardware work plus the Atlas LLM audit remediation recorded below. Use the published branch tip as the immutable hash; this document does not self-reference its own commit. |
 | `jrlomas/mainsail` | `28807856` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; Atlas is centered, bounded to ten visible events, and responsive; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
 
-These hashes identify the software checkpoint before the next Atlas model
-work. They do not convert any unchecked target or hardware item into a pass.
+These checkpoints do not convert any unchecked target or hardware item into a
+pass.
 
 ## Verified on this workstation
 
@@ -142,6 +142,14 @@ work. They do not convert any unchecked target or hardware item into a pass.
   shares the center dashboard column with Temperatures, shows the newest ten
   matching events, and uses a wrapping, bounded, full-width table so later
   columns remain visible.
+* The Atlas LLM audit remediation replaces whole-config model output with
+  deterministic targeted edits, fences untrusted prompt data, grounds
+  read-only questions in bounded config context, uses scored BM25 retrieval,
+  confirms unknown/executable config semantics by default, verifies structured
+  event references, verifies same-UID IPC peers, and exposes lock-free bounded
+  queue/latency/token/load/error/proposal status. Corpus v2 contains 50 cases
+  with deterministic and model metrics reported separately. Its contract suite
+  passes; a pinned-model v2 CUDA/ROCm run is still required.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.
@@ -153,10 +161,8 @@ success.
 
 ## Deferred integration requiring external inputs
 
-No unblocked, workstation-only HELIX implementation seam remains in this
-repository at this checkpoint. The following work requires boards,
-measurements, a product security decision, or belongs to an explicitly
-optional later architecture:
+The remaining items require boards, measurements, model artifacts, a product
+security decision, or belong to an explicitly optional later architecture:
 
 * **ESP32:** the Lolin32 component and bare-core modem consoles now have real
   board evidence, and controlled-loss pair FEC has recovered traffic on its
@@ -168,6 +174,10 @@ optional later architecture:
   unregistered because the product signing key and coexistence policy have
   not been provisioned. The shipped OAMS bootloader therefore remains on its
   existing Katapult/CRC-only path instead of exposing an unsigned updater.
+* **Atlas model quality:** the 50-case corpus-v2 contract suite is green, but
+  the verified Qwen3-4B artifact was not discoverable in the configured local
+  paths for this audit run. CUDA and ROCm must each record the six per-kind v2
+  metrics; the old 9/9 result remains transport-smoke evidence only.
 * **Optional architecture work:** a native klippy UDP endpoint, bare-core
   ESP32 timer/RMT ISR, and richer packet FEC are optimizations or
   hardware-informed follow-ups, not missing correctness paths in the

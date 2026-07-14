@@ -126,21 +126,24 @@ are required (§8 tier 2).
   a 14B model and pins Qwen3-4B/Q4_K_M; backend selection falls back to a
   stub. *Pass:* ALL PASS.
 - [x] **Eval harness (stub).** *Do:* `python3 test/atlas_eval_test.py`.
-  *Expect:* safety-tier accuracy is 100% (deterministic); diagnosis and
-  config-edit metrics reflect the catalog/model. *Pass:* ALL PASS.
+  *Expect:* corpus v2 reports deterministic matcher/classifier invariants
+  separately from config-edit, narrative, injection, and uncertainty model
+  metrics; no combined overall score. *Pass:* all 50 contract cases pass.
 - [x] **Memory-file & RAG-index formats.** *Do:*
   `python3 test/atlas_memory_test.py`. *Expect:* the per-machine memory
   file is atomically created mode-private, round-trips losslessly, mirrors
   baselines/diagnoses, and journals applied changes; the deterministic
-  token-hash RAG index retrieves relevant patterns, quirks, prior incidents,
-  and machine baselines on every compute tier. *Pass:* ALL PASS. A staged
+  BM25 index retrieves relevant patterns, quirks, prior incidents, and machine
+  baselines and exposes scores/weak retrieval on every compute tier. *Pass:*
+  ALL PASS. A staged
   daemon run created `memory.json` at `0600` with one diagnosis and its monitor
   baseline mirrored.
 - [x] **Assistant service contract.** *Do:*
   `python3 test/atlas_assistant_test.py` and
   `python3 test/atlas_moonraker_test.py`. *Expect:* an explicit real backend,
-  bounded serialized inference, a mode-private Unix socket, authenticated thin
-  API relays, bounded conversational context, and expiring config previews
+  bounded serialized inference with lock-free status, a same-UID mode-private
+  Unix socket, Moonraker-policy API relays, bounded conversational/config
+  context, and expiring targeted config previews
   whose risk is classified outside the model. *Pass:* ALL PASS. Stub serving,
   oversized prompts/history, unknown operations, and implicit config mutation
   are refused.
@@ -216,19 +219,20 @@ F072** it was designed to fit.
   offered a signed flash. *Pass:* `HELIX_STATUS` reported both live boards at
   protocol ABI `27141a58f61f9fbc`, fleet lockstep, action `none`. The stale
   verdict/remediation matrix remains covered by the deterministic fleet test.
-- [x] **Pinned-model CPU preflight.** *Do:* run
+- [x] **Legacy pinned-model CPU transport preflight.** *Do:* run
   `scripts/atlas_llm_smoke.py` and `scripts/atlas_llm_eval.py` against the
-  verified Qwen3-4B Q4_K_M artifact. *Pass:* 9/9 labelled cases, real
-  interpretation, structured config proposal, and deterministic apply path
-  passed. See [Atlas Model Evaluation](Atlas_Model_Eval.md). This is not the
-  required GPU or Hailo result.
+  verified Qwen3-4B Q4_K_M artifact. *Pass:* the legacy v1 9-case transport
+  smoke, real interpretation, structured config proposal, and deterministic
+  preview path passed. It is not a corpus-v2 model-quality result. See
+  [Atlas Model Evaluation](Atlas_Model_Eval.md).
 - [x] **Workstation assistant end to end.** *Do:* run the pinned model behind
   `atlas serve`, ask through the private socket, and request a safety-affecting
   config edit. *Pass:* the grounded answer returned through the live daemon;
   the exact `extruder.max_temp: 280 → 270` draft was classified `SAFETY`,
   required confirmation, returned `applied: false`, and left the source config
-  hash unchanged. The authenticated Moonraker endpoints, terminal client, and
-  Mainsail companion UI are built and green. See
+  hash unchanged. The Moonraker-policy endpoints, terminal client, and Mainsail
+  companion UI are built and green; deployment authorization remains a
+  Moonraker configuration responsibility. See
   [Atlas Model Evaluation](Atlas_Model_Eval.md). This proves workstation
   integration, not live-machine apply.
 - [x] **Accelerator runtime builds.** *Do:* compile the pinned llama.cpp
@@ -239,11 +243,11 @@ F072** it was designed to fit.
   smoke, 1,024-token context). The earlier no-device outcome was the
   restricted execution context, not the host. This proves runtime authoring
   and smoke execution only; it does not satisfy model quality below.
-- [x] **Model quality — authored on GPU.** *Do:* run the eval harness with
+- [ ] **Corpus-v2 model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
-  *Pass:* CUDA and ROCm each recorded 9/9: all four real-model config edits,
-  two diagnoses, and three deterministic safety classifications (100%).
-  *(authored on GPU, validated on Hailo)*
+  *Expect:* record all six per-kind metrics across the 50-case v2 corpus;
+  never collapse deterministic and model cases into one headline. The legacy
+  v1 CUDA/ROCm 9/9 smoke does not satisfy this box.
 - [x] **Budget honesty.** *Do:* run the harness under `--profile deploy`.
   *Expect:* it refuses anything past the Qwen3-4B / ~6 GB ceiling even
   though the card is bigger. *Pass:* an over-budget model is rejected; the

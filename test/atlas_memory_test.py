@@ -2,7 +2,7 @@
 # Standalone unit test for the Atlas memory + RAG formats (FD-0002 §6,§7;
 # Milestone C). Checks the per-machine memory file round-trips
 # losslessly and journals applied changes, and that the RAG index (with a
-# deterministic token-hash retriever) retrieves relevant grounding.
+# deterministic BM25 retriever) retrieves relevant grounding.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -136,7 +136,10 @@ def test_rag_query_orders_by_relevance():
     hits = index.query("heater temperature thermistor problem", k=2)
     assert hits[0][0].id == "pattern:thermal-runaway"
     assert hits[0][1] >= hits[-1][1]               # sorted by score
-    print("PASS: RAG orders results by relevance score")
+    status = index.status()
+    assert status["method"] == "bm25-v1"
+    assert status["last_query"]["scores"][0]["score"] > 0
+    print("PASS: BM25 RAG orders and exposes inspectable relevance scores")
 
 
 def main():

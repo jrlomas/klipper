@@ -122,5 +122,17 @@ class ApplyPipeline:
                            needs_confirmation=needs_conf, applied=True,
                            changes=changes, entry=entry)
 
+    def preview(self, proposal: Proposal) -> ApplyResult:
+        """Validate/classify without applying or creating an audit entry."""
+        validation = self.validate(proposal)
+        if not validation.ok:
+            return ApplyResult(validation=validation)
+        changes = diff_configs(proposal.before, proposal.after)
+        tier, _ = classify_changeset(changes)
+        action, needs_conf = decision_for(tier)
+        return ApplyResult(validation=validation, tier=tier, action=action,
+                           needs_confirmation=needs_conf, applied=False,
+                           changes=changes)
+
     def undo_last(self) -> str:
         return self.journal.undo()
