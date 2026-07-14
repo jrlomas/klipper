@@ -198,7 +198,7 @@ def test_rp2040_flash_command_names_verified_image_directly():
     image = "/verified/release/klipper.uf2"
     command = ProvisionExecutor._flash_command(plan, image)
     assert command == ["python3", "scripts/flash_usb.py", "-t", "rp2040",
-                       "-d", path, image]
+                       "-d", path, "--no-sudo", image]
     assert "FLASH_FILE=" not in " ".join(command)
     print("PASS: RP2040 flasher receives the exact verified image path")
 
@@ -210,7 +210,8 @@ def test_katapult_usb_flash_command_names_image_and_offset():
     image = "/verified/release/klipper.bin"
     command = ProvisionExecutor._flash_command(plan, image)
     assert command == ["python3", "scripts/flash_usb.py", "-t",
-                       "stm32g0b1", "-d", path, "-s", "134225920", image]
+                       "stm32g0b1", "-d", path, "-s", "134225920",
+                       "--no-sudo", image]
     print("PASS: Katapult USB flasher receives exact image and 8 KiB offset")
 
 
@@ -229,7 +230,8 @@ def test_flash_address_ignores_non_address_kconfig_symbols():
     plan = build_plan(board, target, klipper_dir="/tmp/klipper")
     command = ProvisionExecutor._flash_command(
         plan, "/verified/release/klipper.bin")
-    assert command[-3:-1] == ["-s", str(0x08002000)]
+    offset = command.index("-s")
+    assert command[offset:offset + 2] == ["-s", str(0x08002000)]
     print("PASS: non-address STM32 flash selectors cannot corrupt offset")
 
 

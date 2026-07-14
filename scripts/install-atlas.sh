@@ -11,6 +11,7 @@ ATLAS_DATA=""
 MOONRAKER_DIR=""
 PYTHON="$(command -v python3)"
 SYSTEMD_DIR="/etc/systemd/system"
+UDEV_DIR="/etc/udev/rules.d"
 DESTDIR="${DESTDIR:-}"
 NO_START=0
 
@@ -84,11 +85,13 @@ MOONRAKER_CONF="${ATLAS_DATA}/config/moonraker.conf"
 ASVC_FILE="${ATLAS_DATA}/moonraker.asvc"
 COMPONENT_FILE="${MOONRAKER_DIR}/moonraker/components/atlas.py"
 UNIT_FILE="${SYSTEMD_DIR}/atlas.service"
+UDEV_FILE="${UDEV_DIR}/99-atlas-flash.rules"
 
 install -d -m 0700 "$(stage_path "${STATE_DIR}")"
 install -d -m 0755 "$(stage_path "${ATLAS_DATA}/config")"
 install -d -m 0755 "$(stage_path "${MOONRAKER_DIR}/moonraker/components")"
 install -d -m 0755 "$(stage_path "${SYSTEMD_DIR}")"
+install -d -m 0755 "$(stage_path "${UDEV_DIR}")"
 
 install -m 0644 "${SRCDIR}/moonraker_components/atlas.py" \
     "$(stage_path "${COMPONENT_FILE}")"
@@ -123,6 +126,16 @@ sed -e "s|@ATLAS_USER@|${ATLAS_USER}|g" \
     "${SRCDIR}/scripts/atlas.service.in" > "${UNIT_DEST}"
 chmod 0644 "${UNIT_DEST}"
 
+if [ -n "${DESTDIR}" ]; then
+    ATLAS_FLASH_GROUP="${ATLAS_USER}"
+else
+    ATLAS_FLASH_GROUP="$(id -gn "${ATLAS_USER}")"
+fi
+UDEV_DEST="$(stage_path "${UDEV_FILE}")"
+sed -e "s|@ATLAS_FLASH_GROUP@|${ATLAS_FLASH_GROUP}|g" \
+    "${SRCDIR}/scripts/99-atlas-flash.rules.in" > "${UDEV_DEST}"
+chmod 0644 "${UDEV_DEST}"
+
 MOONRAKER_DEST="$(stage_path "${MOONRAKER_CONF}")"
 touch "${MOONRAKER_DEST}"
 if ! grep -q '^\[atlas\]$' "${MOONRAKER_DEST}"; then
@@ -145,6 +158,7 @@ fi
 if [ -z "${DESTDIR}" ]; then
     chown -R "${ATLAS_USER}:${ATLAS_USER}" "${STATE_DIR}"
     chown "${ATLAS_USER}:${ATLAS_USER}" "${ENV_FILE}"
+    udevadm control --reload-rules
     systemctl daemon-reload
     if [ "${NO_START}" -eq 0 ]; then
         systemctl enable --now atlas.service

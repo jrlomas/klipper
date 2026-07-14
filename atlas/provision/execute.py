@@ -134,7 +134,7 @@ class ProvisionExecutor:
                     "can0", "-u", ident, "-f", image]
         if plan.method == "rp2040-usb":
             return ["python3", "scripts/flash_usb.py", "-t", plan.mcu,
-                    "-d", ident, image]
+                    "-d", ident, "--no-sudo", image]
         if plan.method == "katapult-usb":
             address = 0x08000000
             for key in plan.kconfig:
@@ -145,7 +145,7 @@ class ProvisionExecutor:
                     address = int("0800%s" % key[len(prefix):].zfill(4), 16)
                     break
             return ["python3", "scripts/flash_usb.py", "-t", plan.mcu,
-                    "-d", ident, "-s", str(address), image]
+                    "-d", ident, "-s", str(address), "--no-sudo", image]
         if plan.method == "serial":
             raise ProvisionBlocked(
                 "serial flashing cannot guarantee the verified image path")
