@@ -17,6 +17,31 @@ from dataclasses import dataclass, field
 # CONFIG_STM32_FLASH_START_xxxx -> DFU load address 0x0800_xxxx.
 _RE_FLASH_START = re.compile(r"CONFIG_STM32_FLASH_START_([0-9A-Fa-f]+)$")
 
+_ARCH_SELECTORS = (
+    ("stm32", "CONFIG_MACH_STM32"),
+    ("rp", "CONFIG_MACH_RPXXXX"),
+    ("lpc176", "CONFIG_MACH_LPC176X"),
+    ("atsamd", "CONFIG_MACH_ATSAMD"),
+    ("atsam", "CONFIG_MACH_ATSAM"),
+    ("hc32", "CONFIG_MACH_HC32F460"),
+)
+
+
+def _effective_kconfig(board) -> dict:
+    """Add the architecture choice implied by the catalog MCU.
+
+    Kconfig does not infer a parent choice from a selected leaf such as
+    CONFIG_MACH_RP2040. Without CONFIG_MACH_RPXXXX it silently retains the
+    default AVR architecture, so every catalog plan must materialize both.
+    """
+    config = dict(board.kconfig)
+    mcu = board.mcu.lower()
+    for prefix, selector in _ARCH_SELECTORS:
+        if mcu.startswith(prefix):
+            config.setdefault(selector, "y")
+            break
+    return config
+
 
 @dataclass
 class BuildFlashPlan:
@@ -69,7 +94,8 @@ def build_plan(board, target=None, klipper_dir="~/klipper",
     """
     plan = BuildFlashPlan(board_id=board.id, mcu=board.mcu,
                           method=board.flash_method,
-                          kconfig=dict(board.kconfig), klipper_dir=klipper_dir,
+                          kconfig=_effective_kconfig(board),
+                          klipper_dir=klipper_dir,
                           config_out=config_out,
                           target_identifier=(target.identifier
                                              if target is not None else ""))

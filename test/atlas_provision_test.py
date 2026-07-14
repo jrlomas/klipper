@@ -159,6 +159,19 @@ def test_plan_dfu_address_from_kconfig():
     print("PASS: DFU plan derives 0x08008000 load address from Kconfig")
 
 
+def test_plan_materializes_parent_architecture_choice():
+    rp = load_board({
+        "id": "pico", "name": "Pico", "mcu": "rp2040",
+        "flash_method": "rp2040-usb",
+        "kconfig": {"CONFIG_MACH_RP2040": "y", "CONFIG_USB": "y"},
+    })
+    rp_plan = build_plan(rp)
+    assert rp_plan.kconfig["CONFIG_MACH_RPXXXX"] == "y"
+    stm_plan = build_plan(load_board(OCTOPUS))
+    assert stm_plan.kconfig["CONFIG_MACH_STM32"] == "y"
+    print("PASS: catalog leaf MCU choices include their Kconfig architecture")
+
+
 def test_plan_unconfirmed_guard():
     board = load_board({
         "id": "risky", "name": "Risky", "mcu": "stm32f407",
@@ -221,6 +234,7 @@ def main():
     test_can_detection()
     test_custom_hatch_always_present()
     test_plan_dfu_address_from_kconfig()
+    test_plan_materializes_parent_architecture_choice()
     test_plan_unconfirmed_guard()
     test_plan_katapult_can_needs_uuid()
     test_ambiguous_target_blocks_flash()
