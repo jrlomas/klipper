@@ -250,6 +250,7 @@ defs_segfit = """
         , int64_t acc);
     int64_t segfit_get_anchor(struct segfit *sf);
     double segfit_get_gen_time(struct segfit *sf);
+    double segfit_get_position(struct segfit *sf, double print_time);
     int segfit_generate(struct segfit *sf, double flush_time);
     int segfit_finalize(struct segfit *sf);
     struct segfit_seg *segfit_get_segs(struct segfit *sf);

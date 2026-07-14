@@ -321,8 +321,10 @@ class TrajectoryStepper:
         return end_su
 
     def _anchor(self, print_time):
-        sk = self.mcu_stepper.get_stepper_kinematics()
-        pos_mm = self.ffi_lib.itersolve_get_commanded_pos(sk)
+        # Anchor to the queued path at this time.  Trajectory steppers bypass
+        # itersolve_generate_steps(), so that legacy solver's commanded_pos
+        # can be stale after a homing halt or kinematic position change.
+        pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
         pos_su = int(round(pos_mm * self.su_per_mm))
         acc = pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)

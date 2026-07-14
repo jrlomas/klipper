@@ -219,6 +219,20 @@ sample_position(struct segfit *sf, struct move **pm, double print_time)
     return sk->calc_position_cb(sk, m, move_time);
 }
 
+// Return the queued joint position at an absolute print time.  A trajectory
+// stream must anchor to the path it is about to fit, not to sk->commanded_pos:
+// that legacy field is normally advanced by itersolve_generate_steps(), which
+// trajectory steppers deliberately bypass.  The distinction is observable
+// after a homing/probing halt or SET_KINEMATIC_POSITION, where a new trapq may
+// begin at a nonzero position while the legacy solver still holds an older
+// value.
+double __visible
+segfit_get_position(struct segfit *sf, double print_time)
+{
+    struct move *cursor = NULL;
+    return sample_position(sf, &cursor, print_time);
+}
+
 // ---- fitting ----
 
 // Solve the constrained least squares fit q(tau) = v*tau + beta*tau^2
