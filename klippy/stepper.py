@@ -295,7 +295,7 @@ class MCU_stepper:
         return old_sk
     def note_homing_end(self):
         if self._traj is not None:
-            self._traj.note_rebase_needed()
+            self._traj.note_rebase_needed(stopped=True)
             self._query_mcu_position()
             return
         ffi_main, ffi_lib = chelper.get_ffi()

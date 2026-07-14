@@ -69,6 +69,24 @@ For each migrated joint, per flush interval:
    at the duration caps of
    [02-Intention_Protocol.md](02-Intention_Protocol.md).
 
+The flush callback fits through Klipper's **step-generation horizon**
+(`step_gen_time`), not the earlier queue-commit horizon (`flush_time`).  This
+matches the legacy itersolve/stepcompress contract and keeps a freshly emitted
+anchor from already being due when it reaches the MCU.
+
+The sampled kinematic coordinate is logical joint space, while homing and
+`SET_POSITION` may leave the MCU in a different physical step coordinate.
+Each rebase therefore establishes a constant logical-to-physical sub-unit
+offset which the fitter applies to every later sample.  The wire rebase carries
+both the continuous physical sub-unit anchor and the integer physical step
+counter; neither is inferred from the logical trapq coordinate.
+
+Rebase is an immediate executor mutation, so a new rebase is transmitted with
+its serial release time gated at the previous emitted horizon.  A confirmed
+homing trigger, queried stop, or underrun clears that gate because it proves the
+old executor is idle.  This prevents a later logical move from rebasing an
+earlier trajectory which is still physically active.
+
 Before any rebase or segment mutates the fitter's chained anchor, the owner
 checks the target MCU through `timesync.is_mcu_synced()`. That state is
 refreshed at the steady beacon cadence and includes the same freewheel-age

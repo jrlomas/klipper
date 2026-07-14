@@ -166,6 +166,7 @@ class TrajectoryStepper:
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
+        self.rebase_min_clock = 0
         self.su_per_mm = 1.
         # Rolling record of intentions SENT: the host twin the resume
         # reconciler (FD-0001 doc 08) diffs against what the board
@@ -257,9 +258,13 @@ class TrajectoryStepper:
         self.ffi_lib.segfit_setup(self.segfit, sk, freq, self.su_per_mm,
                                   self.tolerance_su, self.sample_time)
 
-    def note_rebase_needed(self):
+    def note_rebase_needed(self, stopped=False):
         self.anchored = False
         self.need_rebase = True
+        if stopped:
+            # A trsync/query or underrun event proves the backend is idle, so
+            # no previous planned horizon needs to delay the next rebase.
+            self.rebase_min_clock = 0
 
     def commanded_pos_su(self):
         # Current commanded joint position in sub-units, from the host
@@ -310,7 +315,10 @@ class TrajectoryStepper:
         self.note_rebase_needed()
         anchor_mcu_pos = int(round(anchor_su / SUBUNITS))
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_su,
-                              anchor_mcu_pos])
+                              anchor_mcu_pos],
+                             minclock=self.rebase_min_clock,
+                             reqclock=clock)
+        self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
                                        anchor_su << 32)
         self.anchored = False   # standalone emit; not fitter-driven
@@ -333,9 +341,15 @@ class TrajectoryStepper:
         # step space across homing and SET_POSITION.
         pos_su = self.mcu_stepper.commanded_to_mcu_position_su(pos_mm)
         mcu_pos = self.mcu_stepper.get_mcu_position(pos_mm)
+        position_offset_su = pos_su - pos_mm * self.su_per_mm
         acc = pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos],
+                             minclock=self.rebase_min_clock,
+                             reqclock=clock)
+        self.rebase_min_clock = 0
+        self.ffi_lib.segfit_set_position_offset(self.segfit,
+                                                position_offset_su)
         self.ffi_lib.segfit_set_anchor(self.segfit, print_time, acc)
         self.anchored = True
         self.need_rebase = False
@@ -393,6 +407,8 @@ class TrajectoryStepper:
             if n > 0:
                 self._send_segs(n)
             self._record_intention(prev_acc, prev_time)
+            self.rebase_min_clock = int(self.mcu.print_time_to_clock(
+                self.ffi_lib.segfit_get_gen_time(self.segfit)))
             self.anchored = False
 
     def _record_intention(self, prev_acc, prev_time):
@@ -439,6 +455,9 @@ class TrajectoryStepper:
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
         try:
             print_time = self.mcu.clock_to_print_time(clock)
+            pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
+            self.ffi_lib.segfit_set_position_offset(
+                self.segfit, pos_su - pos_mm * self.su_per_mm)
             self.ffi_lib.segfit_set_anchor(self.segfit, print_time,
                                            pos_su << 32)
             self.anchored = True
@@ -658,7 +677,7 @@ class TrajectoryQueuing:
         oid = params['oid']
         for ts in self.steppers:
             if ts.oid == oid:
-                ts.note_rebase_needed()
+                ts.note_rebase_needed(stopped=True)
                 logging.warning(
                     "Trajectory underrun on %s: clock=%d pos=%d",
                     ts.name, params['clock'], params['pos'])

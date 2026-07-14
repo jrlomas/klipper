@@ -21,9 +21,11 @@ class FakeCommand:
     def __init__(self, response=None):
         self.response = response
         self.sent = []
+        self.send_options = []
 
-    def send(self, args=None):
+    def send(self, args=None, **kwargs):
         self.sent.append([] if args is None else args)
+        self.send_options.append(kwargs)
         return self.response
 
 
@@ -68,6 +70,9 @@ class FakeMCU:
 
     def get_name(self):
         return 'mcu toolhead'
+
+    def print_time_to_clock(self, print_time):
+        return round(print_time * self.frequency)
 
     def get_constant_float(self, name):
         assert name == 'CLOCK_FREQ'
@@ -242,6 +247,39 @@ def test_trajectory_anchor_starts_at_activity():
     assert ffi_lib.generated_to == [13.4]
 
 
+def test_rebase_waits_for_previous_horizon():
+    class PhysicalStepper:
+        def commanded_to_mcu_position_su(self, pos):
+            return 777
+        def get_mcu_position(self, pos):
+            return 12
+    class RebaseFFI:
+        def segfit_get_position(self, segfit, print_time):
+            return 1.25
+        def segfit_set_position_offset(self, segfit, offset):
+            self.offset = offset
+        def segfit_set_anchor(self, segfit, print_time, acc):
+            self.anchor = (print_time, acc)
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = PhysicalStepper()
+    stepper.ffi_lib = RebaseFFI()
+    stepper.segfit = object()
+    stepper.rebase_cmd = FakeCommand()
+    stepper.oid = 4
+    stepper.su_per_mm = 100.
+    stepper.intentions = []
+    stepper.rebase_min_clock = 9_000_000
+    stepper._anchor(10.)
+    assert stepper.rebase_cmd.sent == [[4, 10_000_000, 777, 12]]
+    assert stepper.rebase_cmd.send_options == [{
+        'minclock': 9_000_000, 'reqclock': 10_000_000}]
+    assert stepper.rebase_min_clock == 0
+    assert stepper.ffi_lib.offset == 652.
+
+
 def test_value_trajectory_fails_before_fitter_advance():
     pwm = trajectory_pwm.TrajectoryPWM.__new__(trajectory_pwm.TrajectoryPWM)
     pwm.printer = FakePrinter()
@@ -274,6 +312,8 @@ def main():
     test_trajectory_anchor_starts_at_activity()
     print("PASS: trajectory anchor starts at activity and fits to the"
           " step-generation horizon")
+    test_rebase_waits_for_previous_horizon()
+    print("PASS: a new rebase waits for the previous physical horizon")
     test_value_trajectory_fails_before_fitter_advance()
     print("PASS: value fitting fails before unsynchronized send")
 

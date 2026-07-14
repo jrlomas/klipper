@@ -251,6 +251,7 @@ defs_segfit = """
         , double sample_time);
     void segfit_set_anchor(struct segfit *sf, double print_time
         , int64_t acc);
+    void segfit_set_position_offset(struct segfit *sf, double offset_su);
     int64_t segfit_get_anchor(struct segfit *sf);
     double segfit_get_gen_time(struct segfit *sf);
     double segfit_get_position(struct segfit *sf, double print_time);

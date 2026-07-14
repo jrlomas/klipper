@@ -13,6 +13,19 @@ SU_PER_MM = 52_428_800.
 SAMPLE_TIME = .001
 
 
+def collect_segments(lib, sf, end_time):
+    emitted = []
+    n = lib.segfit_generate(sf, end_time)
+    segs = lib.segfit_get_segs(sf)
+    emitted.extend((segs[i].duration, segs[i].velocity, segs[i].accel)
+                   for i in range(n))
+    n = lib.segfit_finalize(sf)
+    segs = lib.segfit_get_segs(sf)
+    emitted.extend((segs[i].duration, segs[i].velocity, segs[i].accel)
+                   for i in range(n))
+    return emitted
+
+
 def main():
     import chelper
     ffi, lib = chelper.get_ffi()
@@ -35,17 +48,14 @@ def main():
     assert abs(stale) < 1e-12
     assert abs(queued - start) < 1e-12, (queued, start)
 
-    anchor_su = round(queued * SU_PER_MM)
+    # Model the post-homing physical MCU offset as well: the replacement
+    # trapq is in logical joint coordinates, while the board must continue in
+    # physical step space without a fitted discontinuity.
+    physical_offset = .028
+    anchor_su = round((queued + physical_offset) * SU_PER_MM)
+    lib.segfit_set_position_offset(sf, physical_offset * SU_PER_MM)
     lib.segfit_set_anchor(sf, 10., anchor_su << 32)
-    emitted = []
-    n = lib.segfit_generate(sf, 10.100)
-    segs = lib.segfit_get_segs(sf)
-    emitted.extend((segs[i].duration, segs[i].velocity, segs[i].accel)
-                   for i in range(n))
-    n = lib.segfit_finalize(sf)
-    segs = lib.segfit_get_segs(sf)
-    emitted.extend((segs[i].duration, segs[i].velocity, segs[i].accel)
-                   for i in range(n))
+    emitted = collect_segments(lib, sf, 10.100)
     assert emitted
     # The stream must not synthesize the old ~167 mm/s catch-up segment across
     # a false zero/pre-roll anchor.
@@ -54,6 +64,33 @@ def main():
     assert max_v_mm_s < 4., max_v_mm_s
     print("PASS: nonzero trapq anchor ignores stale commanded_pos"
           " (max fitted velocity %.3f mm/s)" % max_v_mm_s)
+
+    # An X-only CoreXY move must produce the same bounded motion profile for
+    # both A (X+Y) and B (X-Y) joints.  Give them different physical offsets
+    # to prove the offset changes only the anchor, not the fitted velocity.
+    corexy_tq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    lib.trapq_append(corexy_tq, 20., .5, 0., 0., 2., 3., 0.,
+                     1., 0., 0., 3., 3., 0.)
+    profiles = []
+    for kind, offset in ((b'+', .031), (b'-', -.017)):
+        corexy_sk = ffi.gc(lib.corexy_stepper_alloc(kind), lib.free)
+        lib.itersolve_set_trapq(corexy_sk, corexy_tq, .00125)
+        corexy_sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+        lib.segfit_setup(corexy_sf, corexy_sk, MCU_FREQ, SU_PER_MM,
+                         32768., SAMPLE_TIME)
+        logical = lib.segfit_get_position(corexy_sf, 20.)
+        lib.segfit_set_position_offset(corexy_sf, offset * SU_PER_MM)
+        physical = round((logical + offset) * SU_PER_MM)
+        lib.segfit_set_anchor(corexy_sf, 20., physical << 32)
+        profiles.append(collect_segments(lib, corexy_sf, 20.100))
+    assert len(profiles[0]) == len(profiles[1])
+    for aseg, bseg in zip(*profiles):
+        assert aseg[0] == bseg[0]
+        assert abs(aseg[1] - bseg[1]) <= 1, (aseg, bseg)
+        assert abs(aseg[2] - bseg[2]) <= 1, (aseg, bseg)
+    assert profiles[0]
+    assert max(abs(v) for _, v, _ in profiles[0]) < 2**31 - 1
+    print("PASS: CoreXY X homing emits matching bounded A/B profiles")
     return 0
 
 

@@ -37,6 +37,7 @@ struct segfit {
     struct stepper_kinematics *sk;
     double mcu_freq;          // ticks per second
     double su_per_mm;         // sub-units per mm (65536 / microstep dist)
+    double position_offset_su;// commanded joint space -> physical MCU space
     double tolerance;         // max deviation, in sub-units
     uint32_t sample_ticks;    // sampling quantum
     // Chained anchor: exact Q32.32 sub-unit position and the print
@@ -96,6 +97,12 @@ segfit_set_anchor(struct segfit *sf, double print_time, int64_t acc)
     sf->num_samples = 0;
     sf->num_segs = 0;
     sf->s2 = sf->s3 = sf->s4 = sf->sy1 = sf->sy2 = 0.;
+}
+
+void __visible
+segfit_set_position_offset(struct segfit *sf, double offset_su)
+{
+    sf->position_offset_su = offset_su;
 }
 
 int64_t __visible
@@ -393,7 +400,8 @@ segfit_generate(struct segfit *sf, double flush_time)
             break;
         double t_print = sf->anchor_print_time + next_tick / sf->mcu_freq;
         double q_mm = sample_position(sf, &cursor, t_print);
-        double q_su = q_mm * sf->su_per_mm - anchor_su;
+        double q_su = (q_mm * sf->su_per_mm + sf->position_offset_su
+                       - anchor_su);
         // Sample relative to the current segment start
         double tau = (double)(next_tick - sf->gen_ticks);
         double q = q_su;
