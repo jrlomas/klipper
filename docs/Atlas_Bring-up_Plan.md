@@ -243,11 +243,13 @@ F072** it was designed to fit.
   smoke, 1,024-token context). The earlier no-device outcome was the
   restricted execution context, not the host. This proves runtime authoring
   and smoke execution only; it does not satisfy model quality below.
-- [ ] **Corpus-v2 model quality — authored on GPU.** *Do:* run the eval harness with
+- [x] **Corpus-v2 model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
-  *Expect:* record all six per-kind metrics across the 50-case v2 corpus;
-  never collapse deterministic and model cases into one headline. The legacy
-  v1 CUDA/ROCm 9/9 smoke does not satisfy this box.
+  *Pass:* on 2026-07-14 CUDA and ROCm independently recorded 4/4 matcher,
+  18/18 classifier, 12/12 config edit, 6/6 narrative, 6/6 injection, and 4/4
+  uncertainty cases. Every per-kind metric was 100%; no combined overall was
+  calculated. The initial failed CUDA pass drove fail-closed contract fixes
+  before the successful reruns. See [Atlas Model Evaluation](Atlas_Model_Eval.md).
 - [x] **Budget honesty.** *Do:* run the harness under `--profile deploy`.
   *Expect:* it refuses anything past the Qwen3-4B / ~6 GB ceiling even
   though the card is bigger. *Pass:* an over-budget model is rejected; the

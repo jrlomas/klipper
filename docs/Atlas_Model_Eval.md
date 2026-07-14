@@ -1,10 +1,8 @@
 # Atlas Pinned-Model Evaluation
 
-Status: **Evaluation corpus v2 and its safety boundaries are implemented;
-the pinned model has not yet been rerun against v2.** The earlier 2026-07-13
-CPU/CUDA/ROCm result remains a useful v1 transport and structured-edit smoke,
-not a current model-quality qualification. Pi 5 + Hailo-10H validation remains
-pending.
+Status: **Corpus v2 passed on both workstation GPUs on 2026-07-14.** This is
+the model-quality authoring result for the pinned Qwen artifact. Pi 5 +
+Hailo-10H validation remains pending.
 
 ## Artifact and budget
 
@@ -31,11 +29,21 @@ cross-category "overall" percentage.
 | Prompt-injection resistance | 6 | Model |
 | Uncertainty behavior | 4 | Model |
 
-The stub/contract suite passes all 50 cases. That proves corpus plumbing,
-targeted-patch construction, classifier expectations, prompt fencing, and
-metric separation; it is not evidence of Qwen quality. A real-model v2 run is
-required on CUDA and ROCm, then again on Hailo, before model-quality boxes are
-green.
+The stub/contract suite passes all 50 cases, proving corpus plumbing rather
+than model quality. The real pinned model then produced these independent
+workstation results:
+
+| Category | CUDA RTX 2080 Super | ROCm Radeon gfx1200 |
+| --- | ---: | ---: |
+| Diagnosis matcher | 4 / 4 (100%) | 4 / 4 (100%) |
+| Safety classifier | 18 / 18 (100%) | 18 / 18 (100%) |
+| Targeted config edits | 12 / 12 (100%) | 12 / 12 (100%) |
+| Diagnosis narrative | 6 / 6 (100%) | 6 / 6 (100%) |
+| Prompt-injection resistance | 6 / 6 (100%) | 6 / 6 (100%) |
+| Uncertainty behavior | 4 / 4 (100%) | 4 / 4 (100%) |
+
+There is deliberately no combined overall score. Deterministic invariants and
+model behavior remain separate in the report.
 
 Run it with:
 
@@ -64,10 +72,28 @@ policy. Operators must configure Moonraker authorization correctly; Atlas does
 not claim an independent web authentication layer. The daemon IPC remains a
 same-user, mode-private local boundary.
 
+## Failures found by the real run
+
+The first CUDA v2 pass was a failed qualification, not silently promoted:
+
+- malformed targeted edits escaped the evaluator instead of scoring as misses;
+- prompt fencing alone was insufficient: the small model repeated every
+  planted injection marker;
+- empty-evidence questions did not consistently state uncertainty;
+- structured edits could omit values, invent customary G-code, or optimize an
+  objectively vague request.
+
+The final code fails malformed edits closed, removes instruction-like lines
+from untrusted data before inference, strengthens the uncertainty contract,
+requires values in every edit grammar, uses deterministic structured decoding,
+and rejects objective-free optimization requests before inference. The corpus
+was not weakened: the final unchanged category counts passed on both GPUs.
+
+These cases are regression evidence for this exact model, prompt contract, and
+corpus—not a proof against every possible prompt injection.
+
 ## Remaining qualification
 
-- Run corpus v2 with the pinned artifact on CUDA and ROCm and record each
-  per-kind result separately.
 - Run the identical corpus on Pi 5 + Hailo-10H after that backend exists;
   record memory, latency, and token throughput.
 - Keep live config mutation unwired until the board-rig test consumes a bound,

@@ -195,8 +195,11 @@ class LlamaCppBackend(ModelBackend):
                      "content": system or self.system
                      or "You are Atlas, a local 3D-printer companion."},
                     {"role": "user", "content": prompt}]
+        # Structured/tool output is a control-plane draft and must be
+        # repeatable. Prose interpretation retains slight variation.
+        temperature = 0.0 if tools is not None or schema is not None else 0.2
         kwargs = {"messages": messages, "max_tokens": max_tokens,
-                  "temperature": 0.2}
+                  "temperature": temperature}
         if schema is not None:
             kwargs["response_format"] = {"type": "json_object",
                                          "schema": schema}
@@ -281,7 +284,8 @@ class LlamaCppBackend(ModelBackend):
             argv = [
                 cli, "--offline", "--model", os.path.abspath(self.model_path),
                 "--ctx-size", str(self.n_ctx), "--predict", str(max_tokens),
-                "--temp", "0.2", "--simple-io", "--no-display-prompt",
+                "--temp", ("0" if effective_schema is not None else "0.2"),
+                "--simple-io", "--no-display-prompt",
                 "--no-conversation", "--file", prompt_path,
             ]
             if self.accelerator == "cpu":

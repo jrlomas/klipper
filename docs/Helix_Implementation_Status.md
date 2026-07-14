@@ -149,7 +149,8 @@ pass.
   event references, verifies same-UID IPC peers, and exposes lock-free bounded
   queue/latency/token/load/error/proposal status. Corpus v2 contains 50 cases
   with deterministic and model metrics reported separately. Its contract suite
-  passes; a pinned-model v2 CUDA/ROCm run is still required.
+  passes. The pinned model then passed all six per-kind metrics on both CUDA
+  and ROCm on 2026-07-14; Hailo validation remains open.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.
@@ -161,7 +162,7 @@ success.
 
 ## Deferred integration requiring external inputs
 
-The remaining items require boards, measurements, model artifacts, a product
+The remaining items require boards, measurements, a product
 security decision, or belong to an explicitly optional later architecture:
 
 * **ESP32:** the Lolin32 component and bare-core modem consoles now have real
@@ -174,10 +175,9 @@ security decision, or belong to an explicitly optional later architecture:
   unregistered because the product signing key and coexistence policy have
   not been provisioned. The shipped OAMS bootloader therefore remains on its
   existing Katapult/CRC-only path instead of exposing an unsigned updater.
-* **Atlas model quality:** the 50-case corpus-v2 contract suite is green, but
-  the verified Qwen3-4B artifact was not discoverable in the configured local
-  paths for this audit run. CUDA and ROCm must each record the six per-kind v2
-  metrics; the old 9/9 result remains transport-smoke evidence only.
+* **Atlas deploy validation:** workstation corpus v2 is green on CUDA and
+  ROCm. The Hailo backend remains unavailable until Qwen3-4B is compiled and
+  evaluated on the Pi 5 + Hailo-10H target.
 * **Optional architecture work:** a native klippy UDP endpoint, bare-core
   ESP32 timer/RMT ISR, and richer packet FEC are optimizations or
   hardware-informed follow-ups, not missing correctness paths in the

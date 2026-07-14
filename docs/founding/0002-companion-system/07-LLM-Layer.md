@@ -9,9 +9,9 @@ deploy-profile budget guard in [`atlas/model/`](../../../atlas/model/), the
 eval harness in [`atlas/eval/`](../../../atlas/eval/), and the per-machine
 memory file + RAG index in [`atlas/memory/`](../../../atlas/memory/). The
 model backend is wired to **llama.cpp** and the official pinned
-**Qwen3-4B Q4_K_M** passed the legacy workstation CPU/CUDA/ROCm transport
-smoke. Corpus-v2 model-quality evaluation, target compilation/metrics, and
-live-machine mutation remain open. On the workstation, daemon-owned inference,
+**Qwen3-4B Q4_K_M** passes corpus v2 in every separately reported category on
+both workstation GPUs. Target compilation/metrics and live-machine mutation
+remain open. On the workstation, daemon-owned inference,
 same-UID private IPC, Moonraker-policy relays, terminal commands, and the
 Mainsail companion interface are built and tested together.
 
@@ -106,7 +106,8 @@ ones that matter:
 
 Corpus v2 has 50 cases across those six separately reported categories. It
 publishes no cross-category overall score. Stub results prove contracts only;
-the pinned model must be evaluated independently on CUDA, ROCm, and Hailo.
+the pinned model passes independently on CUDA and ROCm, while Hailo validation
+remains required.
 
 That last one is the whole ballgame: if a model swap silently started
 auto-applying a kinematics change, the harness catches it. And because the

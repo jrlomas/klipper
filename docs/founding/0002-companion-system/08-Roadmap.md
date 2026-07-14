@@ -50,15 +50,15 @@ base vs the intelligence tier.
   profile guard ([`atlas/model/`](../../../atlas/model/)), the eval harness
   ([`atlas/eval/`](../../../atlas/eval/)), and the memory + RAG index
   ([`atlas/memory/`](../../../atlas/memory/)) — with the backend wired to
-  llama.cpp. The official pinned Qwen3-4B Q4_K_M passes the legacy real-model
-  workstation transport smoke; the 50-case corpus-v2 model-quality run is
-  pending. It also runs as a daemon-owned assistant behind same-UID private
+  llama.cpp. The official pinned Qwen3-4B Q4_K_M passes all six separately
+  reported categories in the 50-case corpus v2 on both CUDA and ROCm. It also
+  runs as a daemon-owned assistant behind same-UID private
   IPC, Moonraker-policy endpoints, terminal commands, and the Mainsail
   companion panel. A live CPU
   run proved grounded Q&A and a safety-classified, non-applied config preview.
   The daemon also owns the atomic private machine-memory file, mirrors learned
   baselines/diagnoses into it, and refreshes deterministic retrieval.
-  GPU, Hailo, and live-machine apply results remain explicitly unclaimed.
+  Hailo and live-machine apply results remain explicitly unclaimed.
 - **Milestone D — Companion at scale.** Proactive baselines + anomaly
   detection maturing; the users-as-trainers loop running at fleet scale;
   voice (future). Both tiers; intelligence tier for voice/NL.
@@ -137,10 +137,10 @@ The open items are settled; FD-0002 has split into this numbered series;
 Milestones A and B are realized. Milestone C's safety contracts, pinned
 llama.cpp runtime, grounded conversational service, structured preview path,
 Moonraker boundary, terminal client, Mainsail face, and workstation quality
-preflight are green. CUDA and ROCm accelerator binaries compile and completed
-the legacy v1 smoke; corpus-v2 GPU quality evaluation remains open. What
-remains includes that workstation evaluation plus Pi 5 + Hailo-10H compilation
-and validation, and live-machine apply/reload/undo trials. Voice remains
+preflight are green. CUDA and ROCm accelerator binaries compile and corpus v2
+passes every separately reported category on both. What remains is Pi 5 +
+Hailo-10H compilation and validation, and live-machine apply/reload/undo
+trials. Voice remains
 Milestone D. The floor is honest, the service is usable, and the model drafts
 behind the deterministic gate without being trusted to decide safety.
 

@@ -184,7 +184,9 @@ class EvalHarness:
         want = _changeset_key(diff_configs(case.before, case.expect_after))
         ok = got == want
         return CaseResult(case.id, case.kind, ok,
-                          "changeset match" if ok else "changeset mismatch")
+                          "changeset match" if ok else
+                          "expected %r; got %r" % (
+                              sorted(want), sorted(got)))
 
     def _safety(self, case) -> CaseResult:
         overall, _ = classify_changeset(
@@ -230,6 +232,8 @@ def _text_result(case, text) -> CaseResult:
               else "none of required terms present: %s" % (required,))
     if found_forbidden:
         detail += "; forbidden output: %s" % found_forbidden
+    if not ok:
+        detail += "; output=%r" % text[:300]
     return CaseResult(case.id, case.kind, ok, detail)
 
 

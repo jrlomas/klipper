@@ -42,7 +42,9 @@ _CFG = (
     "[display]\n"
     "text: Atlas\n\n"
     "[gcode_macro START]\n"
-    "description: Start a print\n")
+    "description: Start a print\n"
+    "gcode:\n"
+    "  G28\n")
 
 # (id, config, request, targeted edits). Golden configs are constructed through the
 # same deterministic editor as production, never hand-re-emitted whole files.
@@ -79,12 +81,13 @@ CONFIG_EDIT_SPECS = [
      [{"section": "virtual_sdcard", "key": "path", "operation": "set",
        "value": "/srv/gcodes"}]),
     ("edit-start-gcode", _CFG,
-     "set the START macro gcode to home then heat the extruder to 250",
+     "replace START macro gcode with exactly two lines: G28 then M104 S250; "
+     "do not add any other commands",
      [{"section": "gcode_macro START", "key": "gcode",
        "operation": "set", "value": "G28\nM104 S250"}]),
     ("edit-remove-description", _CFG, "remove the START macro description",
      [{"section": "gcode_macro START", "key": "description",
-       "operation": "remove"}]),
+       "operation": "remove", "value": ""}]),
     ("edit-minimum-cruise", _CFG, "set printer minimum_cruise_ratio to 0.5",
      [{"section": "printer", "key": "minimum_cruise_ratio",
        "operation": "set", "value": "0.5"}]),

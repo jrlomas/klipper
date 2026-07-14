@@ -15,7 +15,7 @@ from dataclasses import dataclass
 _RE_SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 _RE_KEY = re.compile(r"^(?P<indent>\s*)(?P<key>[^:=#;\s][^:=]*?)\s*[:=]\s*"
                      r"(?P<val>.*)$")
-_RE_EDIT_NAME = re.compile(r"^[^\]\r\n:=#;]+$")
+_RE_EDIT_NAME = re.compile(r"^[^\[\]\r\n:=#;]+$")
 
 
 def _strip_comment(line: str) -> str:

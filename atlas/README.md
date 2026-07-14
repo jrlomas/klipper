@@ -76,6 +76,9 @@ real GGUF; [`scripts/atlas_llm_eval.py`](../scripts/atlas_llm_eval.py) runs
 the labelled suite against the pinned weights. The recorded workstation
 result is in [`docs/Atlas_Model_Eval.md`](../docs/Atlas_Model_Eval.md).
 The standard suite mocks the model so it runs without weights.
+The pinned corpus-v2 run passed every separately reported category on both
+CUDA and ROCm on 2026-07-14; this remains "authored on GPU, Hailo validation
+pending," not deploy-target sign-off.
 
 Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,moonraker,install,observe,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
 — the complete deterministic Atlas workstation suite, all green. Exact check

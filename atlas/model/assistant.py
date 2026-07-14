@@ -10,6 +10,8 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+import re
+
 from ..apply import Proposal, apply_config_edits
 from . import prompts
 
@@ -91,6 +93,8 @@ def propose_config_edit(backend, request, current_config, rag_index=None,
     Proposal is NOT applied here — the caller runs it through
     ApplyPipeline, which classifies the risk and gates it.
     """
+    if _is_vague_edit_request(request):
+        return None
     hits = rag_index.query(request, k=k) if rag_index is not None else None
     prompt = prompts.build_config_edit_prompt(
         request, config_excerpt(current_config, request=request), hits)
@@ -102,11 +106,29 @@ def propose_config_edit(backend, request, current_config, rag_index=None,
             args = call.get("arguments", {})
             edits = args.get("edits")
             if edits:
-                after = apply_config_edits(current_config, edits)
+                try:
+                    after = apply_config_edits(current_config, edits)
+                except (TypeError, ValueError):
+                    # A grammar-valid tool envelope can still name a missing,
+                    # ambiguous, or semantically invalid target. Fail closed;
+                    # callers report no valid proposal rather than crashing or
+                    # guessing how to repair model output.
+                    return None
                 return Proposal(before=current_config, after=after,
                                 rationale=args.get("rationale", ""),
                                 source="model")
     return None
+
+
+_VAGUE_EDIT = re.compile(
+    r"^(?:please\s+)?(?:make|improve|optimize|fix|tune)\s+"
+    r"(?:(?:my|the)\s+)?(?:printer|config|settings|it)"
+    r"(?:\s+(?:better|faster|safer|nicer))?[.!]?$", re.IGNORECASE)
+
+
+def _is_vague_edit_request(request):
+    """Reject objective-free optimization requests before model inference."""
+    return bool(_VAGUE_EDIT.match(request.strip()))
 
 
 def config_excerpt(current_config, request="", max_chars=12000):
