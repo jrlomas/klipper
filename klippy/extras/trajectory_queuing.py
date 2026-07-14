@@ -38,6 +38,9 @@ SUBUNITS = 65536.
 # scheduled timer interval on every supported trajectory MCU and has no
 # position delta.
 TERMINAL_HOLD_TIME = .001
+BEZIER_QUEUE_MARGIN = .250
+BEZIER_WAIT_MARGIN = .050
+BEZIER_MAX_SEGMENTS = 1024
 
 # Segment polynomial-order flag bits (mirror TSEG_POLY_* in src/trajq.h).
 TSEG_POLY_CUBIC = 1 << 6
@@ -70,6 +73,12 @@ def _clamp_i32(x):
 def _signed_i32(x):
     x = int(x) & 0xffffffff
     return x - (1 << 32) if x & 0x80000000 else x
+
+
+def _snap_bezier_anchor(requested_su, current_su):
+    if abs(requested_su - current_su) > SUBUNITS:
+        return None
+    return current_su
 
 
 def _smul_shr(a, t, sh):
@@ -150,6 +159,124 @@ def bezier_to_wire(ctrl_su, duration):
         true_k = derivs[k - 1] / (D ** k)
         coeffs[key] = _clamp_i32(traj_round(true_k * (2. ** (16 * k))))
     return order, coeffs
+
+
+def _checked_smul_shr(value, ticks, shift):
+    # Mirror src/trajq.c smul_shr()'s signed-int64 guard.  Return None
+    # instead of allowing a commissioning command to shut down the MCU.
+    raw = abs(value) * ticks
+    if (raw >> 32) >> (31 + shift):
+        return None
+    result = raw >> shift
+    return -result if value < 0 else result
+
+
+def _checked_poly_term(coeff, ticks, nmul, nsh, fact):
+    value = coeff
+    for i in range(nmul):
+        value = _checked_smul_shr(
+            value, ticks, 16 if i < nsh else 0)
+        if value is None:
+            return None
+    if fact > 1:
+        value = abs(value) // fact * (-1 if value < 0 else 1)
+    return value
+
+
+def _higher_order_wire_safe(duration, coeffs):
+    # Preflight every fixed-point intermediate used by
+    # trajq_end_delta_seg().  A polynomial's final divided term may fit in
+    # int64 even when its pre-division multiply does not, which is why a
+    # long standalone Bezier must sometimes be subdivided.
+    duration = int(duration)
+    if duration <= 0:
+        return False
+    velocity = int(coeffs.get('v', 0))
+    accel = int(coeffs.get('a', 0))
+    dv = velocity * duration
+    if dv >= (1 << 47) or dv <= -(1 << 47):
+        return False
+    delta = dv << 16
+    if accel:
+        # This is the intended signed-int64 range of mul64x32_half().
+        aterm = abs(accel * duration) * duration >> 1
+        if aterm >= (1 << 63):
+            return False
+        delta += -aterm if accel < 0 else aterm
+    terms = (
+        ('j', 3, 1, 6),
+        ('s', 4, 2, 24),
+        ('c', 5, 3, 120),
+    )
+    for key, nmul, nsh, fact in terms:
+        term = _checked_poly_term(
+            int(coeffs.get(key, 0)), duration, nmul, nsh, fact)
+        if term is None:
+            return False
+        delta += term
+        if delta < -(1 << 63) or delta >= (1 << 63):
+            return False
+    return True
+
+
+def _split_bezier(ctrl, u):
+    # de Casteljau subdivision.  The two returned curves reproduce the
+    # original exactly over [0,u] and [u,1] before wire quantization.
+    levels = [[float(value) for value in ctrl]]
+    while len(levels[-1]) > 1:
+        prev = levels[-1]
+        levels.append([
+            prev[i] + (prev[i + 1] - prev[i]) * u
+            for i in range(len(prev) - 1)])
+    left = [level[0] for level in levels]
+    right = [level[-1] for level in reversed(levels)]
+    return left, right
+
+
+def safe_bezier_segments(ctrl_su, duration, max_segments=BEZIER_MAX_SEGMENTS):
+    # Return wire-safe (duration, integer control points) sub-curves.  Split
+    # at the exact tick ratio so their durations still sum to the requested
+    # duration and their time parameterization remains continuous.  Continue
+    # refinement after overflow safety is reached until every interval and
+    # the chained endpoint are within half a microstep of the source curve.
+    curves = [(int(duration), [float(value) for value in ctrl_su])]
+    tolerance_q32 = int(SUBUNITS / 2) << 32
+    desired_delta_q32 = (traj_round(ctrl_su[-1])
+                         - traj_round(ctrl_su[0])) << 32
+    while True:
+        result = []
+        total_delta = 0
+        safe_and_faithful = True
+        for ticks, ctrl in curves:
+            quantized = [traj_round(value) for value in ctrl]
+            order, coeffs = bezier_to_wire(quantized, ticks)
+            if not _higher_order_wire_safe(ticks, coeffs):
+                safe_and_faithful = False
+                break
+            end_delta = py_end_delta_ho(
+                ticks, coeffs.get('v', 0), coeffs.get('a', 0),
+                coeffs.get('j', 0), coeffs.get('s', 0),
+                coeffs.get('c', 0))
+            expected_delta = (quantized[-1] - quantized[0]) << 32
+            if abs(end_delta - expected_delta) > tolerance_q32:
+                safe_and_faithful = False
+            total_delta += end_delta
+            result.append((ticks, quantized, order, coeffs))
+        if (safe_and_faithful
+                and abs(total_delta - desired_delta_q32) <= tolerance_q32):
+            return result
+        if len(curves) * 2 > max_segments:
+            raise ValueError("Bezier requires too many safe segments")
+        refined = []
+        for ticks, ctrl in curves:
+            if ticks < 2:
+                raise ValueError("Bezier cannot be represented safely on MCU")
+            left_ticks = ticks // 2
+            right_ticks = ticks - left_ticks
+            left, right = _split_bezier(ctrl, left_ticks / float(ticks))
+            refined.append((left_ticks, left))
+            refined.append((right_ticks, right))
+        curves = refined
 # Default deviation tolerance: max(half a microstep, ~5um) is decided
 # host-side in sub-units; see FD-0001 doc 02.
 DEFAULT_TOLERANCE_SU = SUBUNITS / 2.
@@ -267,10 +394,11 @@ class TrajectoryStepper:
         # CONFIG_WANT_TRAJECTORY_HIGHER_ORDER; look them up optionally.
         self.cubic_cmd = self.mcu.try_lookup_command(
             "queue_traj_segment_cubic oid=%c flags=%c duration=%u"
-            " velocity=%i accel=%i jerk=%i")
+            " velocity=%i accel=%i jerk=%i", cq=cmd_queue)
         self.quintic_cmd = self.mcu.try_lookup_command(
             "queue_traj_segment_quintic oid=%c flags=%c duration=%u"
-            " velocity=%i accel=%i jerk=%i snap=%i crackle=%i")
+            " velocity=%i accel=%i jerk=%i snap=%i crackle=%i",
+            cq=cmd_queue)
 
     def connect(self):
         sk = self.mcu_stepper.get_stepper_kinematics()
@@ -333,7 +461,7 @@ class TrajectoryStepper:
         # cubic (4 control points) or quintic (6) Bezier, bypassing the
         # kinematic planner (like FORCE_MOVE).  Requires the caller to have
         # flushed and be holding a print_time; anchors at ctrl_su[0], emits
-        # the segment, and syncs the stepper's position to the exact end.
+        # the segment, and retains the exact end in the wire twin.
         # The toolhead kinematic position is intentionally NOT updated - the
         # caller must correct it (SET_KINEMATIC_POSITION) afterward, exactly
         # as FORCE_MOVE requires.  Returns the end position in sub-units.
@@ -344,13 +472,26 @@ class TrajectoryStepper:
         toolhead = self.owner.printer.lookup_object('toolhead')
         toolhead.flush_step_generation()
         print_time = toolhead.get_last_move_time()
-        # Anchor a hair in the future so the rebase clock is not in the past.
-        anchor_time = print_time + 0.100
+        reactor = self.owner.printer.get_reactor()
+        est_print_time = self.mcu.estimated_print_time(reactor.monotonic())
+        # A standalone command can arrive after the normal toolhead timeline
+        # has gone idle.  Anchor from the live MCU estimate as well as the
+        # queued toolhead horizon, otherwise the firmware correctly rejects
+        # the stale rebase clock as already in the past.
+        anchor_time = max(print_time, est_print_time + BEZIER_QUEUE_MARGIN)
         clock = self.mcu.print_time_to_clock(anchor_time)
         duration = int(round(duration_s * self.mcu.seconds_to_clock(1.)))
         if duration <= 0:
             raise self.mcu.error("BEZIER_MOVE duration must be positive")
-        anchor_su = int(ctrl_su[0])
+        # The public control points are commanded joint coordinates, while
+        # trajectory_rebase and the MCU accumulator live in physical step
+        # space.  Preserve the homing/SET_POSITION offset exactly as normal
+        # fitted motion does in _anchor().
+        wire_ctrl_su = [
+            self.mcu_stepper.commanded_to_mcu_position_su(
+                point / self.su_per_mm)
+            for point in ctrl_su]
+        anchor_su = int(wire_ctrl_su[0])
         anchor_wire_su = _signed_i32(anchor_su)
         # Rebase this joint at the first control point, then emit.
         self.note_rebase_needed()
@@ -365,14 +506,41 @@ class TrajectoryStepper:
                                        anchor_wire_su << 32)
         self.ffi_lib.segfit_set_anchor_position(self.segfit, anchor_su)
         self.anchored = False   # standalone emit; not fitter-driven
-        end_delta = self.queue_bezier_segment(duration, ctrl_su)
-        end_su = anchor_su + int(end_delta >> 32)
-        toolhead.dwell(duration_s + 0.150)
+        try:
+            segments = safe_bezier_segments(wire_ctrl_su, duration)
+        except ValueError as e:
+            raise self.mcu.error("Unsafe BEZIER_MOVE for %s: %s"
+                                 % (self.name, str(e)))
+        total_delta = 0
+        current_wire_su = anchor_su
+        for seg_duration, seg_ctrl, _order, _coeffs in segments:
+            # Quantization may leave a sub-unit mismatch at a split.  Shift
+            # the entire following control polygon onto the exact chained
+            # wire accumulator; translation leaves all derivatives intact.
+            offset_su = current_wire_su - int(seg_ctrl[0])
+            seg_ctrl = [int(point) + offset_su for point in seg_ctrl]
+            end_delta = self.queue_bezier_segment(seg_duration, seg_ctrl)
+            total_delta += end_delta
+            current_wire_su = anchor_su + int(total_delta >> 32)
+        self.last_bezier_segments = len(segments)
+        end_commanded_su = int(ctrl_su[0]) + int(total_delta >> 32)
+        # Standalone commissioning moves do not pass through flush()'s idle
+        # path, so terminate them explicitly instead of allowing an empty
+        # queue to be interpreted as an underrun after the polynomial ends.
+        self._queue_terminal_hold()
+        end_time = anchor_time + duration_s + TERMINAL_HOLD_TIME
+        motion_queuing = self.owner.printer.lookup_object('motion_queuing')
+        motion_queuing.note_mcu_movequeue_activity(end_time)
+        toolhead.dwell(max(0., end_time - print_time) + BEZIER_WAIT_MARGIN)
         toolhead.flush_step_generation()
-        # Keep klippy's stepper bookkeeping consistent with the hardware.
-        self.mcu_stepper.sync_to_held_position(end_su)
+        toolhead.wait_moves()
+        # Keep the existing commanded-to-physical offset until the required
+        # SET_KINEMATIC_POSITION. sync_to_held_position() is a recovery
+        # primitive that derives a new offset from itersolve's commanded-pos
+        # cache; trajectory motion bypasses that cache, so using it here would
+        # make a correct nonzero endpoint appear near zero in status.
         self.note_rebase_needed()
-        return end_su
+        return end_commanded_su
 
     def _anchor(self, print_time):
         # Anchor to the queued path at this time.  Trajectory steppers bypass
@@ -743,16 +911,31 @@ class TrajectoryQueuing:
                              " (quintic); got %d points" % (len(pts_mm),))
         ctrl_su = [int(round(p * ts.su_per_mm)) for p in pts_mm]
         cur = ts.commanded_pos_su()
-        if abs(ctrl_su[0] - cur) > 1:
+        # Status and G-code are decimal millimeters while the held wire twin
+        # retains fractional-microstep subunits.  Requiring one-subunit
+        # equality makes a displayed P0 impossible to re-enter after normal
+        # fitting residue.  Accept at most one physical microstep, then snap
+        # to the authoritative held coordinate below.
+        anchor_su = _snap_bezier_anchor(ctrl_su[0], cur)
+        if anchor_su is None:
             raise gcmd.error("P0 (%.4f mm) must equal the current position"
-                             " (%.4f mm) - anchor the move where the joint is"
+                             " (%.4f mm) within one microstep - anchor the"
+                             " move where the joint is"
                              % (pts_mm[0], cur / ts.su_per_mm))
-        ctrl_su[0] = cur
-        end_su = ts.bezier_move(duration, ctrl_su)
+        ctrl_su[0] = anchor_su
+        self.printer.send_event(
+            "trajectory_queuing:standalone_begin", ts.mcu)
+        try:
+            end_su = ts.bezier_move(duration, ctrl_su)
+        finally:
+            self.printer.send_event(
+                "trajectory_queuing:standalone_end", ts.mcu)
         gcmd.respond_info(
-            "BEZIER_MOVE %s: %d-point Bezier over %.3fs, ended at %.4f mm."
+            "BEZIER_MOVE %s: %d-point Bezier over %.3fs in %d wire"
+            " segment(s), ended at %.4f mm."
             " Kinematic position is now stale - run SET_KINEMATIC_POSITION."
-            % (name, len(pts_mm), duration, end_su / ts.su_per_mm))
+            % (name, len(pts_mm), duration, ts.last_bezier_segments,
+               end_su / ts.su_per_mm))
 
     def register_stepper(self, mcu_stepper, config):
         ts = TrajectoryStepper(self, mcu_stepper, config)

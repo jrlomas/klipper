@@ -155,6 +155,43 @@ def test_bezier_fidelity():
                   0.01)
 
 
+def test_long_bezier_subdivision():
+    # A multi-second standalone curve can have a valid final position while
+    # a pre-division jerk/snap/crackle intermediate exceeds int64.  The host
+    # must subdivide it before transmission and retain sub-microstep fidelity.
+    freq = 12_000_305
+    duration = 2 * freq
+    su_per_mm = 52_428_800
+    cases = (
+        ("cubic", [30, 30, 40, 40]),
+        ("quintic", [40, 40, 40, 30, 30, 30]),
+    )
+    for name, points_mm in cases:
+        points_su = [point * su_per_mm for point in points_mm]
+        _order, unsafe_coeffs = tqm.bezier_to_wire(points_su, duration)
+        if tqm._higher_order_wire_safe(duration, unsafe_coeffs):
+            raise AssertionError("%s regression curve unexpectedly safe"
+                                 % (name,))
+        segments = tqm.safe_bezier_segments(points_su, duration)
+        if len(segments) <= 1:
+            raise AssertionError("%s curve was not subdivided" % (name,))
+        if sum(seg[0] for seg in segments) != duration:
+            raise AssertionError("%s subdivision changed duration" % (name,))
+        delta = 0
+        for ticks, _ctrl, _order, coeffs in segments:
+            if not tqm._higher_order_wire_safe(ticks, coeffs):
+                raise AssertionError("%s emitted unsafe sub-curve" % (name,))
+            delta += tqm.py_end_delta_ho(
+                ticks, coeffs['v'], coeffs['a'], coeffs['j'],
+                coeffs.get('s', 0), coeffs.get('c', 0))
+        expected = (points_su[-1] - points_su[0]) << 32
+        if abs(delta - expected) > int(tqm.SUBUNITS / 2) << 32:
+            raise AssertionError("%s subdivided endpoint exceeds half a step"
+                                 % (name,))
+        print("  %s long curve split into %d wire-safe segments: OK"
+              % (name, len(segments)))
+
+
 def test_degenerate_and_validation():
     su_per_mm = tqm.SUBUNITS
     D = 100000
@@ -186,6 +223,7 @@ def main():
     test_c_vs_python_bit_exact(lib)
     test_zero_drift_chain(lib)
     test_bezier_fidelity()
+    test_long_bezier_subdivision()
     test_degenerate_and_validation()
     print("traj_higher_order_test: OK")
     return 0

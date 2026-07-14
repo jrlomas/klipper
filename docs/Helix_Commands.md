@@ -17,7 +17,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 | Command | Summary |
 | --- | --- |
 | `TRAJECTORY_STATUS` | State of every trajectory actuator — anchored / needs-rebase, commanded position, sub-unit resolution, and whether the firmware supports higher-order segments. |
-| `BEZIER_MOVE STEPPER=<name> DURATION=<s> P0=.. P1=.. P2=.. P3=.. [P4=.. P5=..]` | Advanced/commissioning: drive one trajectory joint along a cubic (4 points) or quintic (6 points) Bézier. Opt-in via `enable_bezier_move`; idle-only; bypasses kinematics (follow with `SET_KINEMATIC_POSITION`). |
+| `BEZIER_MOVE STEPPER=<name> DURATION=<s> P0=.. P1=.. P2=.. P3=.. [P4=.. P5=..]` | Advanced/commissioning: drive one trajectory joint along a cubic (4 points) or quintic (6 points). Opt-in via `enable_bezier_move`; idle-only; bypasses kinematics (requires `[force_move] enable_force_move: True`, then follow with `SET_KINEMATIC_POSITION`). Long curves are split into fixed-point-safe, half-microstep-faithful wire segments; same-MCU periodic TMC checks pause only during the move and resume immediately afterward. |
 
 ### Failure recovery — `[failure_recovery]`
 | Command | Summary |

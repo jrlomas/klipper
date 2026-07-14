@@ -336,6 +336,8 @@ class TMCCommandHelper:
         # Common tmc helpers
         self.echeck_helper = TMCErrorCheck(config, mcu_tmc)
         self.record_helper = TMCStallguardDump(config, mcu_tmc)
+        self._trajectory_suspend_depth = 0
+        self._trajectory_checks_were_active = False
         TMCMicrostepHelper(config, mcu_tmc)
         # Register callbacks
         self.printer.register_event_handler("stepper:sync_mcu_position",
@@ -346,6 +348,12 @@ class TMCCommandHelper:
                                             self._handle_mcu_identify)
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
+        self.printer.register_event_handler(
+            "trajectory_queuing:standalone_begin",
+            self._handle_trajectory_standalone_begin)
+        self.printer.register_event_handler(
+            "trajectory_queuing:standalone_end",
+            self._handle_trajectory_standalone_end)
         # Register commands
         gcode = self.printer.lookup_object("gcode")
         gcode.register_mux_command("SET_TMC_FIELD", "STEPPER", self.name,
@@ -357,6 +365,33 @@ class TMCCommandHelper:
         gcode.register_mux_command("SET_TMC_CURRENT", "STEPPER", self.name,
                                    self.cmd_SET_TMC_CURRENT,
                                    desc=self.cmd_SET_TMC_CURRENT_help)
+    def _handle_trajectory_standalone_begin(self, mcu):
+        if mcu is not self.mcu_tmc.get_mcu():
+            return
+        if not self._trajectory_suspend_depth:
+            self._trajectory_checks_were_active = (
+                self.echeck_helper.check_timer is not None)
+            if self._trajectory_checks_were_active:
+                self.echeck_helper.stop_checks()
+        self._trajectory_suspend_depth += 1
+    def _handle_trajectory_standalone_end(self, mcu):
+        if mcu is not self.mcu_tmc.get_mcu():
+            return
+        if not self._trajectory_suspend_depth:
+            return
+        self._trajectory_suspend_depth -= 1
+        if self._trajectory_suspend_depth:
+            return
+        resume = self._trajectory_checks_were_active
+        self._trajectory_checks_were_active = False
+        # A failed trajectory may already have shut the printer down.  Its
+        # ordinary reconnect path will initialize checks again; do not issue
+        # register reads to a shutdown MCU from a cleanup handler.
+        if resume and not self.printer.is_shutdown():
+            try:
+                self.echeck_helper.start_checks()
+            except self.printer.command_error as e:
+                self.printer.invoke_shutdown(str(e))
     def _init_registers(self, print_time=None):
         # Send registers
         for reg_name in list(self.fields.registers.keys()):

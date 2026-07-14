@@ -319,8 +319,13 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 #   bypassing the kinematic planner. Like [force_move] enable_force_move
 #   this is hazardous - it leaves the toolhead kinematic position stale
 #   (correct it with SET_KINEMATIC_POSITION) - and is intended only for
-#   testing on an idle machine. Requires firmware built with cubic/quintic
-#   support. The default is False.
+#   testing on an idle machine. It requires [force_move] with
+#   enable_force_move: True and firmware built with cubic/quintic support.
+#   Curves are automatically subdivided until every fixed-point MCU
+#   intermediate is safe and the chained endpoint is within half a
+#   microstep. Periodic TMC UART checks on the same MCU pause only for the
+#   bounded standalone move and resume immediately after it becomes idle.
+#   The default is False.
 ```
 
 ### [trajectory_pwm]

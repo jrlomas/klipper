@@ -278,7 +278,10 @@ Prove the wire before you trust it to carry motion.
   Pass: measured end position == commanded within one step. On 2026-07-14,
   the V0 completed independent X and Y homing and a complete `G28 Z` override
   (5 mm lift, two trigger approaches, retract, and move to Z=30). Klipper
-  remained ready and reported Z=30; an external endpoint measurement remains.
+  remained ready and reported Z=30. The operator then confirmed a commanded
+  10 mm move from Z40 to Z30 at 10 mm/s physically raised the V0 bed toward
+  the toolhead, matching the expected kinematic direction. An independent
+  endpoint measurement remains.
 - [x] **4.3 — Chained moves / no drift.** Run a long back-and-forth
   (≥1000 segments) that returns to the origin.
   Pass: returns to origin exactly (fixed-point integration; matches 0.6
@@ -332,15 +335,32 @@ Prove the wire before you trust it to carry motion.
 
 Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
 
-- [ ] **5.1 — Cubic.** `BEZIER_MOVE STEPPER=<n> DURATION=<s> P0..P3`
+- [~] **5.1 — Cubic.** `BEZIER_MOVE STEPPER=<n> DURATION=<s> P0..P3`
   (idle; `enable_bezier_move: True`).
   Pass: joint follows the cubic; ends at P3; follow with
   `SET_KINEMATIC_POSITION` cleanly.
-- [ ] **5.2 — Quintic (jerk &amp; snap limited).** `BEZIER_MOVE … P0..P5`.
+  On 2026-07-14, the V0 Z joint ran a 10 mm / 2 s cubic as eight
+  fixed-point-safe wire segments. The audit matched 8,000 intended and
+  executed pulses, ten boundaries, a 1,991-tick minimum interval, and zero
+  errors. It ended at 40.000273 mm; exact `SET_KINEMATIC_POSITION` preserved
+  CoreXY A/B and the Z wire twin. Operator visual confirmation remains.
+- [~] **5.2 — Quintic (jerk &amp; snap limited).** `BEZIER_MOVE … P0..P5`.
   Pass: smooth motion, no discontinuity at segment joins; ends at P5.
-- [ ] **5.3 — Long higher-order chain.** Confirm the same drift-free
+  On 2026-07-14, the V0 Z joint ran the 10 mm / 2 s quintic return as 32
+  wire segments. The audit matched 8,000 intended and executed pulses, 34
+  boundaries, a 1,599-tick minimum interval, and zero errors. It ended at
+  30.000046 mm and reconciled cleanly. An initial attempt exposed periodic
+  software-TMC-UART reads colliding with higher-order stepping; bounded
+  standalone moves now suspend same-MCU checks only while active and perform
+  the normal checks immediately after becoming idle. The clean retry remained
+  ready with EBB36 timesync converged at 0.8 us. Operator visual confirmation
+  remains.
+- [~] **5.3 — Long higher-order chain.** Confirm the same drift-free
   property as 4.3 with cubic/quintic segments.
   Pass: no accumulated error.
+  The host/MCU integer mirror is bit-exact over a 4,000-segment mixed chain,
+  and the hardware quintic audit passed a 32-segment chain. A >=1,000-segment
+  hardware return-to-origin run remains.
 
 ---
 
@@ -350,7 +370,7 @@ The point of intentions: the segment says *where the joint should be*,
 not which pulses to send. Prove more than one backend behind the same
 queue.
 
-- [ ] **6.1 — Step/dir stepper backend.** (Covered by Phase 4/5 — tick
+- [~] **6.1 — Step/dir stepper backend.** (Covered by Phase 4/5 — tick
   once those pass.)
 - [ ] **6.2 — Sampled PWM/DAC backend.** Requires `WANT_TRAJECTORY_PWM` +
   `config_traj_pwm`. Drive a PWM/DAC actuator (or a scope on the PWM pin)
@@ -595,7 +615,10 @@ Type every new command once on a real machine and confirm it does what
 - [x] **13.2** `TRAJECTORY_STATUS` — per-actuator state, exact wire-twin
   position, resolution, higher-order support. Verified before and after the
   1,071-segment-per-joint V0 stress run on 2026-07-14.
-- [ ] **13.3** `BEZIER_MOVE …` — cubic and quintic (idle, opt-in).
+- [x] **13.3** `BEZIER_MOVE …` — cubic and quintic (idle, opt-in). Both
+  forms completed on the V0 Z joint on 2026-07-14, reported their automatic
+  wire-segment counts and exact endpoints, and accepted the required
+  `SET_KINEMATIC_POSITION` reconciliation.
 - [ ] **13.4** `FAILURE_RECOVERY_STATUS` — holds + paused MCUs.
 - [ ] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake.
 - [ ] **13.6** `RESUME_MOTION` — reconcile + resume.

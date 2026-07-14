@@ -1533,9 +1533,9 @@ class MCU:
                              cq=None, is_async=False):
         return CommandQueryWrapper(self._conn_helper, msgformat, respformat,
                                    oid, cq, is_async)
-    def try_lookup_command(self, msgformat):
+    def try_lookup_command(self, msgformat, cq=None):
         try:
-            return self.lookup_command(msgformat)
+            return self.lookup_command(msgformat, cq=cq)
         except self._serial.get_msgparser().error as e:
             return None
     def alloc_command_queue(self):

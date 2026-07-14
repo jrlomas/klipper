@@ -195,13 +195,24 @@ class MCU_stepper:
         return ffi_lib.itersolve_calc_position_from_coord(
             self._stepper_kinematics, coord[0], coord[1], coord[2])
     def set_position(self, coord):
+        traj_pos_su = None
         if self._traj is not None:
+            # Trajectory motion bypasses itersolve step generation, so its
+            # commanded-position cache may be stale.  Preserve the exact
+            # physical wire position while changing the kinematic coordinate
+            # frame (for example, SET_KINEMATIC_POSITION).
+            wire_acc = getattr(self._traj, 'wire_acc', None)
+            if wire_acc is not None:
+                traj_pos_su = int(wire_acc) >> 32
             self._traj.note_rebase_needed()
         mcu_pos = self.get_mcu_position()
         sk = self._stepper_kinematics
         ffi_main, ffi_lib = chelper.get_ffi()
         ffi_lib.itersolve_set_position(sk, coord[0], coord[1], coord[2])
-        self._set_mcu_position(mcu_pos)
+        if traj_pos_su is None:
+            self._set_mcu_position(mcu_pos)
+        else:
+            self._set_mcu_position_su(traj_pos_su)
     def get_commanded_position(self):
         ffi_main, ffi_lib = chelper.get_ffi()
         return ffi_lib.itersolve_get_commanded_pos(self._stepper_kinematics)
@@ -215,6 +226,9 @@ class MCU_stepper:
         return int(mcu_pos - 0.5)
     def _set_mcu_position(self, mcu_pos):
         mcu_pos_dist = mcu_pos * self._step_dist
+        self._mcu_position_offset = mcu_pos_dist - self.get_commanded_position()
+    def _set_mcu_position_su(self, mcu_pos_su):
+        mcu_pos_dist = mcu_pos_su / 65536. * self._step_dist
         self._mcu_position_offset = mcu_pos_dist - self.get_commanded_position()
     def commanded_to_mcu_position_su(self, cmd_pos):
         # Continuous MCU step-space position for a commanded joint position.
