@@ -94,6 +94,8 @@ def audit(records):
     errors = []
     summaries = []
     expected_ends = set()
+    expected_fields = {}
+    rebases = {}
     segments_by_oid = {}
 
     by_actuator = {}
@@ -117,6 +119,8 @@ def audit(records):
                 last_clock = fields["end_clock"]
                 last_acc = fields["acc_q32"]
                 stream_prev = "rebase"
+                rebases[(oid, fields["start_clock"] & 0xffffffff,
+                         fields["position_su"])] = fields
                 continue
             if last_clock != fields["start_clock"]:
                 errors.append("%s: clock discontinuity %s != %s" % (
@@ -142,6 +146,8 @@ def audit(records):
             stream_prev = event
             terminal_holds += event == "hold"
             expected_ends.add((oid, last_clock & 0xffffffff, last_acc >> 32))
+            expected_fields[(oid, last_clock & 0xffffffff,
+                             last_acc >> 32)] = fields
             segments_by_oid.setdefault(oid, []).append(fields)
         if stream and stream_prev != "hold":
             errors.append("%s: recorded path does not end in a hold" % actuator)
@@ -164,13 +170,34 @@ def audit(records):
         errors.append("no MCU execution records for recorded intentions")
     matched = 0
     triggers = 0
+    executed_pulses = dict((oid, []) for oid in intended_oids)
+    executed_mpos = {}
     for fields in unique.values():
         event = fields["event"]
         key = (fields["src_oid"], fields["mcu_clock"],
                fields["position_su"])
-        if event in ("segment_done", "hold"):
+        if event == "rebase":
+            rebase = rebases.get(key)
+            if rebase is None:
+                errors.append("unmatched execution rebase oid=%d clock=%d"
+                              " pos=%d" % key)
+            else:
+                executed_mpos[fields["src_oid"]] = rebase["mcu_position"]
+        elif event in ("segment_done", "hold"):
             if key in expected_ends:
                 matched += 1
+                if event == "segment_done":
+                    oid = fields["src_oid"]
+                    mpos = executed_mpos.get(oid)
+                    if mpos is None:
+                        errors.append("execution endpoint without rebase"
+                                      " oid=%d clock=%d" % (
+                                          oid, fields["mcu_clock"]))
+                    else:
+                        pulses, mpos = replay_pulses(
+                            expected_fields[key], mpos)
+                        executed_pulses[oid].extend(pulses)
+                        executed_mpos[oid] = mpos
             else:
                 errors.append("unmatched execution endpoint oid=%d clock=%d"
                               " pos=%d" % key)
@@ -199,6 +226,32 @@ def audit(records):
                                   " expected=%d executed=%d" % (
                                       fields["src_oid"], expected,
                                       fields["position_su"]))
+                oid = fields["src_oid"]
+                mpos = executed_mpos.get(oid)
+                if mpos is None:
+                    errors.append("execution trigger without rebase oid=%d"
+                                  " clock=%d" % (oid,
+                                                  fields["mcu_clock"]))
+                else:
+                    partial = dict(segment, duration=elapsed,
+                                   end_acc_q32=segment_pos(segment, elapsed))
+                    pulses, mpos = replay_pulses(partial, mpos)
+                    executed_pulses[oid].extend(pulses)
+                    executed_mpos[oid] = mpos
+                    nearest = (fields["position_su"] + 32768) // 65536
+                    if mpos != nearest:
+                        errors.append("trigger physical-step mismatch oid=%d:"
+                                      " replayed=%d recorded-position=%d" % (
+                                          oid, mpos, nearest))
+    actuator_by_oid = dict((stream[0]["oid"], actuator)
+                           for actuator, stream in by_actuator.items())
+    for oid, pulses in sorted(executed_pulses.items()):
+        clocks = [clock for clock, unused in pulses]
+        intervals = [b - a for a, b in zip(clocks, clocks[1:]) if b > a]
+        summaries.append(
+            "%s oid=%d executed_pulses=%d min_executed_interval_ticks=%s"
+            % (actuator_by_oid.get(oid, "oid%d" % oid), oid, len(pulses),
+               min(intervals) if intervals else "n/a"))
     return summaries, matched, triggers, len(unique), errors
 
 

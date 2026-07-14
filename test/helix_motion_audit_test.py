@@ -43,6 +43,7 @@ def test_clean_path_replays_and_matches_boundaries():
             "start_position_su": finish >> 32,
             "end_position_su": finish >> 32,
             "start_acc_q32": finish, "end_acc_q32": finish}),
+        execution(0, "rebase", 1000, 0),
         execution(1, "segment_done", 1100, finish >> 32),
         execution(2, "segment_done", 1110, finish >> 32),
         execution(3, "hold", 1110, finish >> 32),
@@ -50,7 +51,8 @@ def test_clean_path_replays_and_matches_boundaries():
     summaries, matched, triggers, executed, errors = audit.audit(records)
     assert not errors, errors
     assert summaries and "pulses=2" in summaries[0], summaries
-    assert matched == 3 and triggers == 0 and executed == 3
+    assert any("executed_pulses=2" in summary for summary in summaries)
+    assert matched == 3 and triggers == 0 and executed == 4
     print("PASS: exact wire coefficients replay to matching MCU boundaries")
 
 
