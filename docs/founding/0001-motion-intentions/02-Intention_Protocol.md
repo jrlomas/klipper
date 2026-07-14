@@ -168,6 +168,9 @@ host-side fitter performs the same integration with the same quantized
 coefficients when computing where the next segment must start. Host
 and MCU therefore agree on every segment boundary to the sub-unit,
 forever, without any correction traffic.
+The host also samples an off-grid flush horizon exactly before finalizing a
+span; it therefore does not discard the final fraction of a sampling interval
+at a move or host-flush boundary.
 
 **2. Intra-segment deviation from the ideal trajectory.** Quantizing v
 and a bends the executed parabola away from the ideal one by at most

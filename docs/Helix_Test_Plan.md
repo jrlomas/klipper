@@ -52,7 +52,7 @@ board is powered. These are the guarantees the firmware bring-up leans
 on; if the protocol library or the host emitter is wrong on a
 workstation, no amount of hardware poking will save you.
 
-- [ ] **0.1 — intentproto unit suite.**
+- [x] **0.1 — intentproto unit suite.**
   Do: `cd lib/intentproto && make clean && make test && ./build/run` (or
   run each `build/test_*`).
   Expect: every test binary in `lib/intentproto/tests/` builds and
@@ -60,17 +60,20 @@ workstation, no amount of hardware poking will save you.
   `test_datagram`, `test_session_sec`, `test_ed25519`, `test_can_transport`,
   `test_negotiate`, `test_extdesc`, `test_bootcore`, `test_host`,
   `test_wide`, `test_capi`.
-  Pass: 0 failures, 0 skips.
+  Pass: 0 failures, 0 skips. On 2026-07-14 the clean standalone build passed
+  all C++ tests plus extension binding, UDP-FEC, Python/C Ed25519, C ABI,
+  cffi, packaged-extension, and secure-session round trips. The CFFI checks
+  ran under `/home/jrlomas/klippy-env`, not the dependency-poor system Python.
 
-- [ ] **0.2 — CRC-16 wire vector.**
+- [x] **0.2 — CRC-16 wire vector.**
   Do: confirm `crc16_ccitt` over the ASCII string `123456789` yields
   **0x6F91** (reflected CRC-16/MCRF4XX), not 0x29B1 (`test_proto`
   asserts this).
   Expect/Pass: the check constant is 0x6F91. This is the single most
   common interop trap — a board that answers with the wrong CRC will
-  look "dead" on the wire.
+  look "dead" on the wire. The clean `test_proto` run returned 0x6F91.
 
-- [ ] **0.3 — Dictionary generation & counts.**
+- [x] **0.3 — Dictionary generation & counts.**
   Do: regenerate the compile-time data dictionary and diff the
   command/response counts against the last known-good build.
   Expect: counts unchanged from the recorded baseline; the new HELIX
@@ -78,45 +81,59 @@ workstation, no amount of hardware poking will save you.
   `config_traj_pwm`, `config_trigger_gpio`, `trigger_source_arm`,
   `config_heater_hold`, `config_execlog`, `query_board_syscalls`) are all
   present.
-  Pass: dictionary builds; every expected message id is in it.
+  Pass: dictionary builds; every expected message id is in it. Two clean
+  RP2040 HELIX builds at `70a791ba` produced byte-identical dictionaries:
+  157 commands and 39 responses, with all ten messages above present. These
+  counts are now the recorded baseline for that feature configuration.
 
-- [ ] **0.4 — C-API / cffi host binding.**
+- [x] **0.4 — C-API / cffi host binding.**
   Do: build and run `test_capi`; import the cffi binding from `klippy`.
   Expect: the host can encode/decode a segment and verify an HMAC through
   the same library the MCU uses.
-  Pass: round-trip host→lib→host is byte-identical.
+  Pass: round-trip host→lib→host is byte-identical. The C loopback and all
+  three Python binding tests passed, including authenticated secure-session
+  traffic through the compiled C++ core.
 
-- [ ] **0.5 — Host extras unit tests.**
+- [x] **0.5 — Host extras unit tests.**
   Do: run the Python bench tests in `test/`:
   `asyncio_bridge_test.py`, `helix_status_test.py`,
   `failure_recovery_resume_test.py`, `traj_higher_order_test.py`,
   `traj_pwm_map_test.py`, `endstop_hw_trigger_test.py`.
   Expect: all pass against the mocked MCU.
-  Pass: 0 failures.
+  Pass: 0 failures. All six named tests passed together on 2026-07-14.
 
-- [ ] **0.6 — Segment fitter fidelity.**
+- [x] **0.6 — Segment fitter fidelity.**
   Do: feed the host segment emitter (`chelper/segfit.c` +
   `trajectory_queuing.py`) a set of reference moves (straight, arc,
   jerk-limited corner) and compare the fitted polynomial path against the
   ideal within `motion_tolerance`.
   Expect: max deviation ≤ configured tolerance; a chain of ≥1000 segments
   ends **exactly** on target (drift-free fixed-point integration).
-  Pass: no accumulated drift over the long chain.
+  Pass: no accumulated drift over the long chain. Direct quantized-wire
+  checks recorded worst deviations of 32,245.91 / 32,763.97 / 29,315.09
+  sub-units for the straight / 48-chord quarter-arc / finite-junction corner
+  against a 32,768-sub-unit tolerance. A 4,000-segment mixed cubic/quintic
+  chain was bit-exact at every boundary. This test initially exposed a real
+  sub-sample endpoint truncation; `segfit_generate()` now samples the exact
+  flush horizon, and all prior homing/v1-pulse/wrap regressions remain green.
 
-- [ ] **0.7 — Regression: legacy targets still build.**
+- [x] **0.7 — Regression: legacy targets still build.**
   Do: build `linuxprocess`, an STM32 target (e.g. `stm32f407`), and a
   small target (`stm32g0b1` or the OAMS `stm32f072`).
   Expect: all link.
-  Pass: no build breaks introduced by the fork.
+  Pass: no build breaks introduced by the fork. The final single-pass builds
+  linked linuxprocess (text/data/bss 126,971/5,764/83,040), STM32F407
+  (60,952/64/1,620), and STM32G0B1 (64,612/52/1,516) with GCC 13.2.1.
 
-- [ ] **0.8 — nano_udp stack unit test.**
+- [x] **0.8 — nano_udp stack unit test.**
   Do: run `test/nano_udp/run.sh`.
   Expect: the minimal UDP/IP stack (`src/generic/nano_udp.c`, the RMII
   path) parses/builds datagrams correctly. **Note:** this test compiles
   *only* `nano_udp.c` — it does **not** exercise intentproto framing-v2 or
   datagram auth (those are covered by `test_datagram` / `test_negotiate` /
   `test_host` in 0.1).
-  Pass: clean run.
+  Pass: clean run. Both `nano_udp` packet and state tests passed in the final
+  Phase 0 sweep on 2026-07-14.
 
 ---
 

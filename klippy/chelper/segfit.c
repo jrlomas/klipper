@@ -223,7 +223,12 @@ sample_position(struct segfit *sf, struct move **pm, double print_time)
         m = list_first_entry(&tq->moves, struct move, node);
     }
     // Advance to the move covering print_time
-    while (print_time >= m->print_time + m->move_t) {
+    // Keep an exact end timestamp on the completed move.  The following
+    // sentinel may carry coordinate zero, and treating that sentinel as the
+    // endpoint would manufacture a position discontinuity.  Contiguous real
+    // moves have the same boundary position, so either side is equivalent
+    // there; the completed side is the safe choice for a terminal flush.
+    while (print_time > m->print_time + m->move_t) {
         if (list_is_last(&m->node, &tq->moves))
             break;
         struct move *next = list_next_entry(m, node);
@@ -446,10 +451,20 @@ segfit_generate(struct segfit *sf, double flush_time)
         (uint64_t)((flush_time - sf->anchor_print_time) * sf->mcu_freq);
     struct move *cursor = NULL;
     for (;;) {
-        uint64_t next_tick = sf->gen_ticks
-            + (uint64_t)(sf->num_samples + 1) * sf->sample_ticks;
-        if (next_tick > window_end)
-            break;
+        uint64_t last_sample_tick = sf->gen_ticks;
+        if (sf->num_samples)
+            last_sample_tick += (uint64_t)sf->tau[sf->num_samples - 1];
+        uint64_t next_tick = last_sample_tick + sf->sample_ticks;
+        int final_partial = 0;
+        if (next_tick > window_end) {
+            if (last_sample_tick >= window_end)
+                break;
+            // A flush horizon need not land on the sampling grid.  Include
+            // that exact endpoint so finalize() cannot leave up to one
+            // sample interval of motion unrepresented.
+            next_tick = window_end;
+            final_partial = 1;
+        }
         double t_print = sf->anchor_print_time + next_tick / sf->mcu_freq;
         double q_mm = sample_position(sf, &cursor, t_print);
         double q_su = (q_mm * sf->su_per_mm + sf->position_offset_su
@@ -483,6 +498,8 @@ segfit_generate(struct segfit *sf, double flush_time)
             if (sf->num_segs >= SEGFIT_MAX_SEGS)
                 break;
         }
+        if (final_partial)
+            break;
     }
     return sf->num_segs;
 }

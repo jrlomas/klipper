@@ -78,6 +78,7 @@ for TEST in \
     test/failure_recovery_resume_test.py \
     test/intentproto_transport_test.py \
     test/paradigm_validator_test.py \
+    test/segfit_fidelity_test.py \
     test/segment_lib_test.py \
     test/session_bridge_test.py \
     test/timesync_gate_test.py \

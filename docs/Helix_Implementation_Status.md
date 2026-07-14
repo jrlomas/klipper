@@ -27,6 +27,14 @@ pass.
 * The standalone `intentproto` C/C++ suite, C ABI, CFFI API, extension
   binding, secure-session binding, datagram carrier, segment fitter,
   Ed25519 cross-check, and boot-core tests pass.
+* Phase 0 of the acceptance plan is green in a single 2026-07-14 pass.
+  Direct segfit sampling covers a straight trapezoid, 48-chord quarter arc,
+  and finite-junction-speed corner within the 32,768-sub-unit tolerance; a
+  4,000-segment higher-order chain remains bit-exact. Bring-up exposed and
+  fixed truncation when a flush horizon fell between sampling ticks: the
+  fitter now includes that exact endpoint and retains the completed move at
+  an exact trapq boundary. Linuxprocess, STM32F407, and STM32G0B1 all link
+  after the fix, and the prior homing/pulse/wrap regressions remain green.
 * A real `linuxprocess` firmware proves legacy/v2 dual acceptance, the v2
   latch, and three-bit BCH correction against the host codec.
 * A real `linuxprocess` UDP responder proves the three-message session,

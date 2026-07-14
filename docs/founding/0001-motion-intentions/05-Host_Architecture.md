@@ -81,6 +81,11 @@ anchor from already being due when it reaches the MCU.  It also seals and
 emits the valid partial fit at every callback boundary.  Otherwise a long
 constant-velocity span would remain pending until the 4.096-second duration
 cap and arrive with a start clock several seconds in the past.
+When that horizon lies between regular sampling ticks, the fitter adds the
+exact horizon as a final sample before sealing. At an exact trapq boundary it
+uses the completed move's endpoint, not the inactive sentinel. Together these
+rules prevent either a sub-sample endpoint truncation or a false return to the
+sentinel coordinate.
 
 The sampled kinematic coordinate is logical joint space, while homing and
 `SET_POSITION` may leave the MCU in a different physical step coordinate.
