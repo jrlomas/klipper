@@ -32,6 +32,12 @@ Segments for one actuator form an ordered stream with these rules:
   accumulator integrates exactly the quantized polynomial that was
   transmitted. Only `trajectory_rebase` sets q and C explicitly:
   at motion start, after homing, and after an underrun.
+* **Rebases are ordered barriers.** Because the transport sends future work
+  ahead of time, a rebase at or beyond the current queue horizon is retained
+  behind the existing path. Its continuous anchor and backend auxiliary state
+  (`mcu_pos` for a stepper) take effect together at the boundary. A rebase
+  before the horizon overlaps active motion and is rejected as a firmware
+  fault. A trigger flushes any barrier it has not yet reached.
 * **No velocity sign change inside a segment.** The host splits
   segments at velocity zero-crossings. This is a protocol invariant,
   not an optimization hint: it means direction is constant per segment,
@@ -122,6 +128,11 @@ Field definitions:
 `traj_hold` is the optimized dwell (v = 0, a = 0); because a zero
 polynomial has no quantization error it may use the full 32-bit
 duration range rather than the 2²⁶ cap.
+
+The host terminates each completed planned path with an explicit short hold.
+Consequently queue-empty at nonzero velocity remains unambiguously an
+underrun, while ordinary path boundaries never depend on a fitted terminal
+coefficient rounding to exactly zero.
 
 ### Message size and bandwidth
 

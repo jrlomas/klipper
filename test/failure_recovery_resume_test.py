@@ -21,6 +21,7 @@
 
 import os
 import sys
+import collections
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 "..", "klippy"))
@@ -180,6 +181,49 @@ def make_fr(printer):
     return fr.FailureRecovery(FakeConfig(printer))
 
 
+def test_execlog_drain_uses_response_barrier_and_deduplicates():
+    class Recorder:
+        def __init__(self):
+            self.persisted = []
+        def _record_execution(self, mcu, record):
+            self.persisted.append(record)
+    class Query:
+        def __init__(self):
+            self.calls = 0
+        def send(self, args):
+            self.calls += 1
+            return {'oldest_seq': 10, 'next_seq': 12, 'dropped': 0}
+    class Dump:
+        def __init__(self, el):
+            self.el = el
+        def send(self, args):
+            # Model one record already seen on the live stream and both
+            # records arriving before the final query response barrier.
+            self.el._handle_data({'seq': 10, 'type': 1, 'src': 4,
+                                  'clock': 100, 'pos': 200, 'aux': 0})
+            self.el._handle_data({'seq': 11, 'type': 4, 'src': 4,
+                                  'clock': 110, 'pos': 200, 'aux': 0})
+
+    el = fr.McuExecLog.__new__(fr.McuExecLog)
+    el.fr = Recorder()
+    el.mcu = FakeMcu('mcu')
+    el.oid = 3
+    el.records = collections.deque(maxlen=16)
+    el._drain_records = None
+    el.size = 16
+    el._persisted_order = collections.deque()
+    el._persisted_seqs = set()
+    el.query_cmd = Query()
+    el.dump_cmd = Dump(el)
+    el._handle_data({'seq': 10, 'type': 1, 'src': 4,
+                     'clock': 100, 'pos': 200, 'aux': 0})
+    records = el.drain()
+    assert el.query_cmd.calls == 2
+    assert [r[0] for r in records] == [10, 11]
+    assert len(el.fr.persisted) == 2
+    print("PASS: execlog drain waits on a response barrier and deduplicates")
+
+
 # ---- Scenarios -------------------------------------------------------
 
 def test_normal_resume():
@@ -276,6 +320,7 @@ def test_board_reset():
 
 
 def main():
+    test_execlog_drain_uses_response_barrier_and_deduplicates()
     test_normal_resume()
     test_underrun_truncated()
     test_board_reset()

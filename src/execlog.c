@@ -118,7 +118,11 @@ command_execlog_query(uint32_t *args)
     sendf("execlog_status oid=%c next_seq=%u oldest_seq=%u dropped=%u"
           , el->oid, next, oldest, dropped);
 }
-DECL_COMMAND(command_execlog_query, "execlog_query oid=%c");
+// A fault is when this data matters most.  These are read-only Class-1
+// commands over an already configured ring, so they remain safe after the
+// scheduler has entered shutdown.
+DECL_COMMAND_FLAGS(command_execlog_query, HF_IN_SHUTDOWN,
+                   "execlog_query oid=%c");
 
 // Reliable post-failure pull: the host drains the retained ring in
 // bounded chunks. This is the Class-1 path recovery depends on.
@@ -138,7 +142,8 @@ command_execlog_dump(uint32_t *args)
         seq++;
     }
 }
-DECL_COMMAND(command_execlog_dump, "execlog_dump oid=%c seq=%u count=%c");
+DECL_COMMAND_FLAGS(command_execlog_dump, HF_IN_SHUTDOWN,
+                   "execlog_dump oid=%c seq=%u count=%c");
 
 // Enable/disable live streaming (best-effort telemetry). max_per_wake
 // bounds the send rate; records evicted before they stream are

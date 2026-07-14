@@ -337,7 +337,7 @@ traj_stepper_schedule(struct traj_stepper *s)
             return SF_RESCHEDULE;
         }
         // At segment end
-        if (trajq_advance(tq) == TQ_ADV_SEG) {
+        if (trajq_advance(tq) != TQ_ADV_IDLE) {
             traj_stepper_load(s);
             continue;
         }
@@ -406,9 +406,17 @@ traj_stepper_stop(struct trajq *tq)
     }
 }
 
+static void
+traj_stepper_rebase(struct trajq *tq, int32_t mpos)
+{
+    struct traj_stepper *s = container_of(tq, struct traj_stepper, tq);
+    s->mpos = mpos;
+}
+
 static const struct trajq_backend_ops traj_stepper_ops = {
     .start = traj_stepper_start,
     .stop = traj_stepper_stop,
+    .rebase = traj_stepper_rebase,
 };
 
 // Commands
@@ -505,11 +513,7 @@ void
 command_trajectory_rebase(uint32_t *args)
 {
     struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
-    if (!trajq_rebase(&s->tq, args[1], args[2]))
-        return;
-    // The physical integer counter is distinct from the continuous anchor,
-    // just as it is in legacy stepcompress across homing and SET_POSITION.
-    s->mpos = args[3];
+    trajq_rebase(&s->tq, args[1], args[2], args[3]);
 }
 DECL_COMMAND(command_trajectory_rebase,
              "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i");

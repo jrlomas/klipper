@@ -232,6 +232,17 @@ trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
     move_queue_setup(&tq->mq, sizeof(struct traj_segment));
 }
 
+static void
+trajq_apply_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
+{
+    tq->acc = (int64_t)pos << 32;
+    tq->seg_start_clock = clock;
+    if (tq->ops->rebase)
+        tq->ops->rebase(tq, aux);
+    execlog_append(EL_REBASE, tq->oid, clock, pos, 0);
+    LOG1(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_rebase, clock);
+}
+
 // Load the given coefficients as the active segment. Higher-order
 // coefficients default to zero (a plain quadratic / ramp); the
 // higher-order load path fills them in afterwards.
@@ -308,9 +319,37 @@ trajq_advance(struct trajq *tq)
     }
 
     if (!move_queue_empty(&tq->mq)) {
-        struct move_node *mn = move_queue_pop(&tq->mq);
-        struct traj_segment *seg = container_of(
-            mn, struct traj_segment, node);
+        struct traj_segment *seg;
+        uint8_t rebased = 0;
+        for (;;) {
+            struct move_node *mn = move_queue_pop(&tq->mq);
+            seg = container_of(mn, struct traj_segment, node);
+            tq->queued--;
+            if (seg->kind != TSEGK_REBASE)
+                break;
+            // A rebase terminates one planned path and starts another.  The
+            // old path must have explicitly reached a hold; otherwise this
+            // barrier would conceal a real moving-queue underrun.
+            if (v_end && !(tq->seg_flags & TSEG_HOLD_AT_END)) {
+                move_free(seg);
+                shutdown("Rebase after moving trajectory");
+            }
+            uint32_t clock = seg->duration;
+            if (timer_is_before(clock, tq->seg_start_clock)) {
+                move_free(seg);
+                shutdown("Invalid trajectory rebase clock");
+            }
+            trajq_apply_rebase(tq, clock, seg->velocity, seg->accel);
+            move_free(seg);
+            rebased = 1;
+            v_end = 0;
+            if (move_queue_empty(&tq->mq)) {
+                tq->flags &= ~TQF_ACTIVE;
+                execlog_append(EL_HOLD, tq->oid, tq->seg_start_clock,
+                               (int32_t)(tq->acc >> 32), 0);
+                return TQ_ADV_IDLE;
+            }
+        }
         trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
         tq->jerk = seg->jerk;
@@ -318,8 +357,7 @@ trajq_advance(struct trajq *tq)
         tq->crackle = seg->crackle;
 #endif
         move_free(seg);
-        tq->queued--;
-        return TQ_ADV_SEG;
+        return rebased ? TQ_ADV_REBASE : TQ_ADV_SEG;
     }
 
     // Queue ran dry. Stopped (or told to hold): idle at position.
@@ -371,6 +409,7 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
 
     struct traj_segment *seg = move_alloc();
     seg->flags = flags;
+    seg->kind = TSEGK_MOTION;
     seg->duration = duration;
     seg->velocity = velocity;
     seg->accel = accel;
@@ -429,6 +468,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 
     struct traj_segment *seg = move_alloc();
     seg->flags = flags;
+    seg->kind = TSEGK_MOTION;
     seg->duration = duration;
     seg->velocity = velocity;
     seg->accel = accel;
@@ -480,7 +520,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 #endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 
 int
-trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
+trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
 {
     if (!timesync_class0_ok()) {
         // A rebase is the anchor for subsequent Class-0 segments.  Do not
@@ -491,18 +531,33 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
     // The anchor is a machine-time instant (FD-0001 doc 01);
     // identity when timesync is unconfigured
     clock = timesync_clock_to_local(clock);
+    struct traj_segment *barrier = move_alloc();
+    barrier->kind = TSEGK_REBASE;
+    barrier->flags = 0;
+    barrier->duration = clock;
+    barrier->velocity = pos;
+    barrier->accel = aux;
     irq_disable();
     if (tq->flags & TQF_ACTIVE) {
+        // Klipper transmits scheduled commands ahead of their execution
+        // time.  A rebase at or beyond the current planned horizon is a
+        // queue boundary, not an attempt to mutate the executing segment.
+        if (timer_is_before(clock, tq->horizon_clock)) {
+            irq_enable();
+            move_free(barrier);
+            shutdown("Rebase overlaps active trajectory");
+        }
+        move_queue_push(&barrier->node, &tq->mq);
+        tq->queued++;
+        tq->horizon_clock = clock;
         irq_enable();
-        shutdown("Can't rebase active trajectory");
+        return 1;
     }
-    tq->acc = (int64_t)pos << 32;
-    tq->seg_start_clock = clock;
+    move_free(barrier);
+    trajq_apply_rebase(tq, clock, pos, aux);
     tq->horizon_clock = clock;
     tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING);
     tq->dropped = 0;
-    execlog_append(EL_REBASE, tq->oid, clock, pos, 0);
-    LOG1(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_rebase, clock);
     irq_enable();
     return 1;
 }

@@ -118,6 +118,11 @@ the associated G-Code commands.
 #execlog_size: 256
 #   Number of records retained in each micro-controller's execution
 #   log ring buffer. Must be between 16 and 4096. The default is 256.
+#execlog_stream_max: 8
+#   Maximum execution-log records the MCU may stream per scheduler wake.
+#   Live records are persisted beside Atlas trace/intention events; the
+#   reliable post-failure dump remains authoritative. Set to 0 to disable
+#   live streaming. Must be between 0 and 64. The default is 8.
 #execlog_mcus: mcu
 #   Comma separated list of micro-controller names (as used in the
 #   [mcu] / [mcu my_name] sections) on which to configure an execution

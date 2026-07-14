@@ -27,6 +27,7 @@ struct traj_segment {
     int32_t jerk, snap, crackle;
 #endif
     uint8_t flags;
+    uint8_t kind;
 };
 
 enum {
@@ -36,6 +37,15 @@ enum {
     TSEG_POLY_QUADRATIC = 0 << 6,
     TSEG_POLY_CUBIC = 1 << 6,
     TSEG_POLY_QUINTIC = 2 << 6,
+};
+
+enum {
+    TSEGK_MOTION,
+    // Internal queue barrier produced by trajectory_rebase.  duration holds
+    // the absolute local clock, velocity the new sub-unit anchor, and accel
+    // the backend-specific auxiliary anchor (physical step count for a
+    // stepper).  It is never accepted from a queue_traj_segment wire command.
+    TSEGK_REBASE,
 };
 
 struct trajq;
@@ -48,6 +58,10 @@ struct trajq_backend_ops {
     // Halt motion immediately (trsync trigger or shutdown) and
     // record the live position back into tq->acc. Called irqs off.
     void (*stop)(struct trajq *tq);
+    // Apply backend-specific state at a rebase boundary.  For steppers this
+    // synchronizes the physical integer step counter; value outputs need no
+    // auxiliary state and may leave this NULL. Called irqs off.
+    void (*rebase)(struct trajq *tq, int32_t aux);
 };
 
 enum {
@@ -87,7 +101,7 @@ struct trajq {
     int32_t event_pos;
 };
 
-enum { TQ_ADV_SEG, TQ_ADV_IDLE };
+enum { TQ_ADV_SEG, TQ_ADV_IDLE, TQ_ADV_REBASE };
 
 void trajq_setup(struct trajq *tq, uint8_t oid
                  , const struct trajq_backend_ops *ops
@@ -99,7 +113,7 @@ void trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
                             , int32_t velocity, int32_t accel, int32_t jerk
                             , int32_t snap, int32_t crackle);
 #endif
-int trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos);
+int trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux);
 int trajq_advance(struct trajq *tq);
 void trajq_halt(struct trajq *tq, uint8_t set_flags);
 int64_t trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel);

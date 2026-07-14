@@ -30,6 +30,15 @@ import chelper
 
 SUBUNITS = 65536.
 
+# A completed host path always ends in an explicit zero-velocity segment.
+# Besides making the intended terminal state unambiguous, this prevents a
+# sub-unit fixed-point residue in the final fitted segment from being mistaken
+# for a live velocity when the MCU queue drains (which would correctly invoke
+# its emergency underrun ramp).  One millisecond is long enough to be a safe
+# scheduled timer interval on every supported trajectory MCU and has no
+# position delta.
+TERMINAL_HOLD_TIME = .001
+
 # Segment polynomial-order flag bits (mirror TSEG_POLY_* in src/trajq.h).
 TSEG_POLY_CUBIC = 1 << 6
 TSEG_POLY_QUINTIC = 2 << 6
@@ -167,6 +176,8 @@ class TrajectoryStepper:
         self.anchored = False
         self.need_rebase = True
         self.rebase_min_clock = 0
+        self.wire_clock = None
+        self.wire_acc = None
         self.su_per_mm = 1.
         # Rolling record of intentions SENT: the host twin the resume
         # reconciler (FD-0001 doc 08) diffs against what the board
@@ -224,6 +235,8 @@ class TrajectoryStepper:
         step_dist = self.mcu_stepper.get_step_dist()
         self.su_per_mm = SUBUNITS / step_dist
         freq = self.mcu.seconds_to_clock(1.)
+        self.terminal_hold_ticks = max(
+            1, int(round(TERMINAL_HOLD_TIME * freq)))
         # underrun_decel wire units: sub-units/tick^2 with 32
         # fractional bits
         decel_wire = int(self.underrun_decel * self.su_per_mm
@@ -322,6 +335,7 @@ class TrajectoryStepper:
                               anchor_mcu_pos],
                              minclock=self.rebase_min_clock,
                              reqclock=clock)
+        self._wire_rebase(clock, anchor_su, anchor_mcu_pos)
         self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
                                        anchor_su << 32)
@@ -351,6 +365,7 @@ class TrajectoryStepper:
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos],
                              minclock=self.rebase_min_clock,
                              reqclock=clock)
+        self._wire_rebase(clock, pos_su, mcu_pos)
         self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_position_offset(self.segfit,
                                                 position_offset_su)
@@ -417,10 +432,19 @@ class TrajectoryStepper:
             self._send_segs(n)
         self._record_intention(prev_acc, prev_time)
         if not active_time:
-            # Motion has ended: drop the anchor (the next motion re-anchors
-            # with a fresh rebase).
+            # Motion has ended.  Terminate every joint with an explicit
+            # zero-velocity segment instead of relying on the final fitted
+            # coefficient rounding to exactly zero.  Without this, one side
+            # of a CoreXY pair can enter the MCU's emergency underrun ramp at
+            # the end of an otherwise successful homing retract.
+            self.hold_cmd.send([self.oid, self.terminal_hold_ticks])
+            self._wire_segment(1, self.terminal_hold_ticks, 0, 0)
+            # Drop the anchor (the next motion re-anchors with a fresh
+            # rebase).  Include the terminal hold in the physical horizon.
+            end_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
+                        + TERMINAL_HOLD_TIME)
             self.rebase_min_clock = int(self.mcu.print_time_to_clock(
-                self.ffi_lib.segfit_get_gen_time(self.segfit)))
+                end_time))
             self.anchored = False
 
     def _record_intention(self, prev_acc, prev_time):
@@ -465,6 +489,7 @@ class TrajectoryStepper:
         pos_su = int(pos_su)
         mcu_pos = int(round(pos_su / SUBUNITS))
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
+        self._wire_rebase(clock, pos_su, mcu_pos)
         try:
             print_time = self.mcu.clock_to_print_time(clock)
             pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
@@ -500,9 +525,51 @@ class TrajectoryStepper:
                 continue
             if not s.velocity and not s.accel:
                 self.hold_cmd.send([self.oid, s.duration])
+                self._wire_segment(1, s.duration, 0, 0)
             else:
                 self.queue_cmd.send([self.oid, s.flags, s.duration,
                                      s.velocity, s.accel])
+                self._wire_segment(s.flags, s.duration,
+                                   s.velocity, s.accel)
+
+    def _wire_rebase(self, clock, pos_su, mcu_pos):
+        self.wire_clock = int(clock)
+        self.wire_acc = int(pos_su) << 32
+        self._record_wire({
+            'event': 'rebase', 'start_clock': self.wire_clock,
+            'end_clock': self.wire_clock, 'position_su': int(pos_su),
+            'acc_q32': int(self.wire_acc),
+            'mcu_position': int(mcu_pos),
+        })
+
+    def _wire_segment(self, flags, duration, velocity, accel,
+                      jerk=0, snap=0, crackle=0):
+        if (getattr(self, 'wire_clock', None) is None
+                or getattr(self, 'wire_acc', None) is None):
+            return
+        start_clock = self.wire_clock
+        start_acc = self.wire_acc
+        start_pos = self.wire_acc >> 32
+        self.wire_acc += py_end_delta_ho(
+            duration, velocity, accel, jerk, snap, crackle)
+        self.wire_clock += int(duration)
+        self._record_wire({
+            'event': 'hold' if flags & 1 else 'segment',
+            'start_clock': start_clock, 'end_clock': self.wire_clock,
+            'duration': int(duration), 'flags': int(flags),
+            'velocity': int(velocity), 'accel': int(accel),
+            'jerk': int(jerk), 'snap': int(snap), 'crackle': int(crackle),
+            'start_position_su': int(start_pos),
+            'end_position_su': int(self.wire_acc >> 32),
+            'start_acc_q32': int(start_acc),
+            'end_acc_q32': int(self.wire_acc),
+        })
+
+    def _record_wire(self, fields):
+        record = getattr(getattr(self, 'owner', None),
+                         'record_wire_intention', None)
+        if record is not None:
+            record(self, fields)
 
     def queue_bezier_segment(self, duration, ctrl_su):
         # Emit one cubic (4 control points) or quintic (6 control points)
@@ -521,6 +588,8 @@ class TrajectoryStepper:
                     % (self.name,))
             self.cubic_cmd.send([self.oid, base_flags, duration,
                                  c['v'], c['a'], c['j']])
+            self._wire_segment(base_flags | TSEG_POLY_CUBIC, duration,
+                               c['v'], c['a'], c['j'])
             return py_end_delta_ho(duration, c['v'], c['a'], c['j'])
         if self.quintic_cmd is None:
             raise self.mcu.error(
@@ -528,6 +597,8 @@ class TrajectoryStepper:
                 % (self.name,))
         self.quintic_cmd.send([self.oid, base_flags, duration,
                                c['v'], c['a'], c['j'], c['s'], c['c']])
+        self._wire_segment(base_flags | TSEG_POLY_QUINTIC, duration,
+                           c['v'], c['a'], c['j'], c['s'], c['c'])
         return py_end_delta_ho(duration, c['v'], c['a'], c['j'],
                                c['s'], c['c'])
 
@@ -537,6 +608,7 @@ class TrajectoryQueuing:
         self.printer = config.get_printer()
         self.steppers = []
         self.timesync = None
+        self.atlas_trace = None
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
         # Advanced single-joint Bezier move is opt-in and hazardous (it
@@ -675,6 +747,7 @@ class TrajectoryQueuing:
     def _handle_connect(self):
         self._validate_paradigm_groups()
         self.timesync = self.printer.lookup_object('timesync', None)
+        self.atlas_trace = self.printer.lookup_object('atlas_trace', None)
         for ts in self.steppers:
             ts.connect()
         if self.steppers:
@@ -694,6 +767,11 @@ class TrajectoryQueuing:
                     "Trajectory underrun on %s: clock=%d pos=%d",
                     ts.name, params['clock'], params['pos'])
                 break
+
+    def record_wire_intention(self, ts, fields):
+        if self.atlas_trace is not None:
+            self.atlas_trace.record_intention(ts.mcu, ts.name, ts.oid,
+                                               fields)
 
 
 def load_config(config):

@@ -40,7 +40,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging
+import collections, logging
 
 PIN_MIN_TIME = 0.100
 EXECLOG_DEFAULT_SIZE = 256
@@ -159,12 +159,16 @@ class HeaterHold:
 
 class McuExecLog:
     def __init__(self, fr, mcu, size):
+        self.fr = fr
         self.mcu = mcu
         self.size = size
         self.oid = mcu.create_oid()
         mcu.register_config_callback(self._build_config)
-        self.query_cmd = self.dump_cmd = None
-        self.records = []
+        self.query_cmd = self.dump_cmd = self.stream_cmd = None
+        self.records = collections.deque(maxlen=size)
+        self._drain_records = None
+        self._persisted_order = collections.deque()
+        self._persisted_seqs = set()
 
     def _build_config(self):
         self.mcu.add_config_cmd("config_execlog oid=%d size=%d"
@@ -176,25 +180,41 @@ class McuExecLog:
             oid=self.oid, cq=cq)
         self.dump_cmd = self.mcu.lookup_command(
             "execlog_dump oid=%c seq=%u count=%c", cq=cq)
+        self.stream_cmd = self.mcu.lookup_command(
+            "execlog_stream oid=%c max_per_wake=%c", cq=cq)
         self.mcu.register_serial_response(
             self._handle_data,
             "execlog_data oid=%c seq=%u type=%c src=%c clock=%u pos=%i"
             " aux=%u", self.oid)
 
     def _handle_data(self, params):
-        self.records.append(
-            (params['seq'], params['type'], params['src'],
-             params['clock'], params['pos'], params['aux']))
+        record = (params['seq'], params['type'], params['src'],
+                  params['clock'], params['pos'], params['aux'])
+        self.records.append(record)
+        if self._drain_records is not None:
+            self._drain_records.append(record)
+        seq = record[0]
+        if seq not in self._persisted_seqs:
+            if len(self._persisted_order) >= self.size:
+                self._persisted_seqs.remove(self._persisted_order.popleft())
+            self._persisted_order.append(seq)
+            self._persisted_seqs.add(seq)
+            self.fr._record_execution(self.mcu, record)
+
+    def start(self, stream_max):
+        if self.stream_cmd is not None and not self.mcu.is_fileoutput():
+            self.stream_cmd.send([self.oid, stream_max])
 
     # Reliable post-failure drain (Class-1 pull)
     def drain(self):
         if self.query_cmd is None or self.mcu.is_fileoutput():
             return []
-        self.records = []
+        self._drain_records = []
         try:
             status = self.query_cmd.send([self.oid])
         except Exception:
             logging.exception("execlog drain failed")
+            self._drain_records = None
             return []
         seq = status['oldest_seq']
         end = status['next_seq']
@@ -202,7 +222,15 @@ class McuExecLog:
             count = min(16, end - seq)
             self.dump_cmd.send([self.oid, seq, count])
             seq += count
-        return self.records
+        # A query on the same command queue is a response barrier: its reply
+        # cannot arrive until every preceding dump command and execlog_data
+        # response has been processed by the board and serial thread.
+        self.query_cmd.send([self.oid])
+        records = self._drain_records
+        self._drain_records = None
+        # The live stream and reliable dump may overlap.  Preserve sequence
+        # order while returning each retained record once.
+        return list({r[0]: r for r in records}.values())
 
 
 class FailureRecovery:
@@ -210,6 +238,8 @@ class FailureRecovery:
         self.printer = config.get_printer()
         self.execlog_size = config.getint(
             'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
+        self.execlog_stream_max = config.getint(
+            'execlog_stream_max', 8, minval=0, maxval=64)
         self.holds = {}
         # Opt-in: route the execlog drain through the asyncio<->reactor
         # bridge seam (FD-0001 doc 05) instead of the direct reactor
@@ -282,6 +312,8 @@ class FailureRecovery:
             self.execlogs.append(McuExecLog(self, mcu, self.execlog_size))
 
     def _handle_connect(self):
+        for el in self.execlogs:
+            el.start(self.execlog_stream_max)
         # Arm heater holds at their configured targets and start pings
         reactor = self.printer.get_reactor()
         if self.holds:
@@ -306,6 +338,14 @@ class FailureRecovery:
                 logging.info("execlog(%s): %d records: %s",
                              el.mcu.get_status(None).get('mcu', '?'),
                              len(records), records[-32:])
+
+    def _record_execution(self, mcu, record):
+        # Atlas owns the bounded JSONL persistence boundary.  Keep failure
+        # recovery usable without Atlas, but when it is loaded persist the
+        # reliable execution plane beside trace events in machine time.
+        atlas = self.printer.lookup_object('atlas_trace', None)
+        if atlas is not None:
+            atlas.record_execution(mcu, record)
     # Link-loss pause-and-hold (mcu 'on_comm_timeout: pause')
     def _handle_comm_pause(self, mcu_name):
         # Invoked (in reactor context) by mcu.py when a link times out

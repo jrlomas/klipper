@@ -373,6 +373,9 @@ resumed (FD-0001
   "execlog_data oid=%c seq=%u type=%c src=%c clock=%u pos=%i aux=%u"
   response.
 
+  Both `execlog_query` and `execlog_dump` remain available after an MCU
+  shutdown so the retained evidence can be drained before firmware restart.
+
 * `execlog_stream oid=%c max_per_wake=%c` : Enables/disables
   best-effort live streaming of new records, bounded to 'max_per_wake'
   records per task wake.

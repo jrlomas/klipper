@@ -89,11 +89,20 @@ offset which the fitter applies to every later sample.  The wire rebase carries
 both the continuous physical sub-unit anchor and the integer physical step
 counter; neither is inferred from the logical trapq coordinate.
 
-Rebase is an immediate executor mutation, so a new rebase is transmitted with
-its serial release time gated at the previous emitted horizon.  A confirmed
-homing trigger, queried stop, or underrun clears that gate because it proves the
-old executor is idle.  This prevents a later logical move from rebasing an
-earlier trajectory which is still physically active.
+Klipper transmits scheduled commands before their execution clocks.  A rebase
+whose clock is at or beyond the previous emitted horizon is therefore queued
+as an ordered executor barrier; the continuous anchor and physical integer
+step phase both change only when that barrier is reached.  An overlapping
+rebase remains a firmware shutdown.  A confirmed homing trigger, queried stop,
+or underrun flushes queued barriers together with queued motion.  This keeps a
+later logical move from rebasing an earlier physical trajectory merely because
+its packet arrived early.
+
+At the end of every planned path the host emits a one-millisecond `traj_hold`
+for every participating actuator.  This is a zero-displacement terminal state,
+not a dwell visible to kinematics.  It prevents a tiny fixed-point residual in
+one fitted CoreXY stream from looking like live velocity when its queue drains;
+a genuinely moving empty queue still takes the configured underrun ramp.
 
 Before any rebase or segment mutates the fitter's chained anchor, the owner
 checks the target MCU through `timesync.is_mcu_synced()`. That state is
@@ -101,6 +110,12 @@ refreshed at the steady beacon cadence and includes the same freewheel-age
 bound as firmware. A stale secondary therefore fails on the host before the
 persisted intention twin advances, while firmware independently rejects the
 same unsynchronized Class-0 anchor/segment if a caller bypasses the host.
+
+The host also persists each exact wire rebase and segment (clock, duration,
+flags, coefficients, and chained start/end position) into the Atlas JSONL
+boundary.  Combined with the MCU execution-log records on the same mapped time
+axis, this is sufficient to replay the deterministic step solver and audit a
+homing run without relying on console timing or motor sound.
 
 **The honesty point this document must state plainly:** with input shaping
 and pressure advance active, the joint trajectory is *not* piecewise

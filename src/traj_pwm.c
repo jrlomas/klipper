@@ -83,7 +83,15 @@ traj_pwm_event(struct timer *t)
         // Reached the end of the active segment: load the next one (or
         // a synthesized underrun ramp), or idle.  The core keeps the
         // ramp going down to v=0; we just keep sampling it.
-        if (trajq_advance(tq) == TQ_ADV_SEG)
+        int advance = trajq_advance(tq);
+        if (advance == TQ_ADV_REBASE) {
+            // A queued rebase may intentionally leave a gap between two
+            // paths.  Resume sampling at the new absolute start instead of
+            // interpreting the unsigned pre-start delta as an elapsed span.
+            p->time.waketime = tq->seg_start_clock;
+            return SF_RESCHEDULE;
+        }
+        if (advance == TQ_ADV_SEG)
             continue;
         // Idle (hold-at-end or latched underrun): freeze the output at
         // the exact end position and stop sampling.
@@ -201,7 +209,7 @@ void
 command_traj_pwm_rebase(uint32_t *args)
 {
     struct traj_pwm *p = traj_pwm_oid_lookup(args[0]);
-    trajq_rebase(&p->tq, args[1], args[2]);
+    trajq_rebase(&p->tq, args[1], args[2], 0);
 }
 DECL_COMMAND(command_traj_pwm_rebase,
              "traj_pwm_rebase oid=%c clock=%u pos=%i");

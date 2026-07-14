@@ -45,6 +45,9 @@ class FakeMcu:
     def create_oid(self):
         return 7
 
+    def get_name(self):
+        return self.name
+
     def register_config_callback(self, callback):
         self.callbacks.append(callback)
 
@@ -241,10 +244,35 @@ def test_sequence_gaps_and_firmware_drops_are_visible():
         print("PASS: host sequence gaps and firmware drops remain explicit")
 
 
+def test_execution_and_wire_intention_share_machine_time():
+    with tempfile.TemporaryDirectory() as tmp:
+        output = os.path.join(tmp, "trace.jsonl")
+        manager, printer, mcus = _setup(output)
+        manager.record_intention(mcus["mcu"], "stepper_x", 4, {
+            "event": "segment", "start_clock": 2_000_000,
+            "end_clock": 2_050_000, "duration": 50_000,
+            "flags": 0, "velocity": 65536, "accel": 0,
+            "start_position_su": 0, "end_position_su": 3276,
+        })
+        manager.record_execution(
+            mcus["mcu"], (12, 1, 4, 2_050_000, 3276, 0))
+        records = [json.loads(line)
+                   for line in pathlib.Path(output).read_text().splitlines()]
+        assert [r["kind"] for r in records] == ["intention", "execution"]
+        assert records[0]["machine_time"] == 12.
+        assert records[0]["fields"]["velocity"] == 65536
+        assert records[1]["machine_time"] == 12.05
+        assert records[1]["fields"]["event"] == "segment_done"
+        assert records[1]["fields"]["position_su"] == 3276
+        print("PASS: wire coefficients and execution records share one"
+              " machine-time axis")
+
+
 def main():
     test_configures_and_tolerates_rolling_firmware()
     test_trace_data_renders_and_writes_common_time()
     test_sequence_gaps_and_firmware_drops_are_visible()
+    test_execution_and_wire_intention_share_machine_time()
     print("ALL PASS")
 
 

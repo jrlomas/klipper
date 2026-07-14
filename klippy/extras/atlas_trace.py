@@ -29,6 +29,16 @@ LEVELS = {
 DEFAULT_OUTPUT = "~/printer_data/logs/atlas-telemetry.jsonl"
 LEVEL_SEVERITY = {0: "error", 1: "warning", 2: "info", 3: "debug"}
 FORMAT_FIELD = re.compile(r"(\w+)=%([uix])")
+EXECUTION_TYPES = {
+    1: "segment_done",
+    2: "trigger",
+    3: "underrun",
+    4: "hold",
+    5: "rebase",
+    6: "heater",
+    7: "fault",
+    8: "discipline",
+}
 
 
 def _signed(value):
@@ -307,6 +317,52 @@ class AtlasTrace:
         for link in self.links.values():
             link.query()
         return eventtime + self.query_interval
+
+    def record_execution(self, mcu_obj, record):
+        """Persist one MCU execution-log record on the machine-time axis."""
+        seq, rtype, src, clock, pos, aux = record
+        clock64 = mcu_obj.clock32_to_clock64(clock)
+        machine_time = mcu_obj.clock_to_print_time(clock64)
+        name = EXECUTION_TYPES.get(rtype, "type%d" % rtype)
+        severity = "warning" if rtype in (3, 7) else "info"
+        self.writer.write({
+            "kind": "execution",
+            "machine_time": machine_time,
+            "source": "mcu/%s/execution" % mcu_obj.get_name(),
+            "severity": severity,
+            "summary": "%s src=%d pos=%d aux=%d" % (
+                name, src, pos, aux),
+            "fields": {
+                "event": name,
+                "record_type": rtype,
+                "seq": seq,
+                "src_oid": src,
+                "mcu_clock": clock,
+                "position_su": pos,
+                "aux": aux,
+                "time_basis": "klipper_print_time",
+            },
+        })
+
+    def record_intention(self, mcu_obj, actuator, oid, fields):
+        """Persist the exact host wire coefficients for pulse replay."""
+        start_clock = int(fields['start_clock'])
+        event = fields['event']
+        payload = dict(fields)
+        payload.update({
+            'actuator': actuator,
+            'oid': oid,
+            'time_basis': 'klipper_print_time',
+        })
+        self.writer.write({
+            'kind': 'intention',
+            'machine_time': mcu_obj.clock_to_print_time(start_clock),
+            'source': 'host/%s/%s' % (mcu_obj.get_name(), actuator),
+            'severity': 'info',
+            'summary': '%s %s oid=%d clock=%d' % (
+                actuator, event, oid, start_clock),
+            'fields': payload,
+        })
 
     def _get_link(self, gcmd):
         name = gcmd.get("MCU", "mcu")

@@ -198,6 +198,15 @@ class AnchorFFI:
         return []
 
 
+class EndedFFI(AnchorFFI):
+    def __init__(self, end_time):
+        super().__init__(0.)
+        self.end_time = end_time
+
+    def segfit_get_gen_time(self, segfit):
+        return self.end_time
+
+
 class UnsyncedTimeSync:
     def is_mcu_synced(self, mcu_name):
         return False
@@ -251,6 +260,54 @@ def test_trajectory_anchor_starts_at_activity():
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
     assert ffi_lib.finalized == 1
+
+
+def test_trajectory_end_always_queues_terminal_hold():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    stepper.ffi_lib = EndedFFI(12.5)
+    stepper.segfit = object()
+    stepper.oid = 4
+    stepper.anchored = True
+    stepper.intentions = []
+    stepper.hold_cmd = FakeCommand()
+    stepper.terminal_hold_ticks = 1000
+    stepper.rebase_min_clock = 0
+    stepper._send_segs = lambda n: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    stepper.flush(12.6, 12.6)
+    assert stepper.hold_cmd.sent == [[4, 1000]]
+    assert stepper.rebase_min_clock == 12_501_000
+    assert not stepper.anchored
+
+
+def test_wire_record_preserves_exact_segment_coefficients():
+    class RecordingOwner:
+        def __init__(self):
+            self.records = []
+        def record_wire_intention(self, ts, fields):
+            self.records.append(dict(fields))
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = RecordingOwner()
+    stepper._wire_rebase(1_000_000, 100, 2)
+    stepper._wire_segment(0, 50_000, 65536, 0)
+    rebase, segment = stepper.owner.records
+    assert rebase == {
+        'event': 'rebase', 'start_clock': 1_000_000,
+        'end_clock': 1_000_000, 'position_su': 100,
+        'acc_q32': 100 << 32, 'mcu_position': 2}
+    assert segment['start_clock'] == 1_000_000
+    assert segment['end_clock'] == 1_050_000
+    assert segment['velocity'] == 65536 and segment['accel'] == 0
+    assert segment['start_position_su'] == 100
+    assert segment['end_position_su'] == 50_100
+    assert segment['start_acc_q32'] == 100 << 32
+    assert segment['end_acc_q32'] == 50_100 << 32
 
 
 def test_rebase_waits_for_previous_horizon():
@@ -318,6 +375,12 @@ def main():
     test_trajectory_anchor_starts_at_activity()
     print("PASS: trajectory anchor starts at activity and fits to the"
           " step-generation horizon")
+    test_trajectory_end_always_queues_terminal_hold()
+    print("PASS: every completed trajectory queues an explicit terminal"
+          " hold")
+    test_wire_record_preserves_exact_segment_coefficients()
+    print("PASS: flight recording preserves exact wire coefficients and"
+          " chained endpoints")
     test_rebase_waits_for_previous_horizon()
     print("PASS: a new rebase waits for the previous physical horizon")
     test_value_trajectory_fails_before_fitter_advance()

@@ -42,11 +42,16 @@ Delivery has two modes:
   ([03-Traffic_Classes.md](03-Traffic_Classes.md)). The host persists
   a rolling window to disk. This is also the *flight recorder* for
   debugging: "what did the MCU execute in the 100 ms before the
-  fault" becomes an answerable question.
+  fault" becomes an answerable question. The same JSONL boundary records the
+  host's exact wire coefficients as `intention` records and the MCU ring as
+  `execution` records, both mapped to Klipper print time.
 * **Post-failure dump** (after any pause/fault): the ring buffer is
   retained and drained *reliably* via Class-1 pull commands
-  (`log_dump oid=%c seq=%u`). Recovery must never depend on records
-  that were droppable while things were going wrong.
+  (`execlog_dump oid=%c seq=%u count=%c`). The read-only query and dump
+  commands remain permitted while the MCU is in shutdown, and a final query on
+  the same command queue is the response barrier proving all dump records have
+  arrived. Recovery must never depend on records that were droppable while
+  things were going wrong.
 
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped

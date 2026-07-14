@@ -259,6 +259,14 @@ Prove the wire before you trust it to carry motion.
 - [ ] **4.5 — Velocity/accel limits honored.** Compare commanded vs
   measured motion profile.
   Pass: within limits; no audible/visible step loss.
+- [ ] **4.6 — Deterministic wire/execution audit.** After the move, run
+  `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
+  with a narrow `--start` / `--end` machine-time window. The audit replays
+  every half-step crossing from the exact persisted wire coefficients and
+  matches each MCU flight-recorder boundary.
+  Pass: both coupled joints end in explicit holds; zero underruns, clock or
+  accumulator discontinuities, unmatched execution endpoints, or trigger
+  position differences.
 
 ---
 
@@ -364,8 +372,10 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   Pass: geometry after resume matches before the fault (measure a witness
   feature); volatile joints correctly demand re-homing.
 - [ ] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
-  Pass: retained MCU execution logs drain to the Klipper log and explain
-  the interruption.
+  Pass: retained MCU execution logs drain to the Klipper log even while the
+  MCU is shut down, live `execution` records share Atlas machine time with
+  exact host `intention` coefficients, and the records explain the
+  interruption.
 - [ ] **8.7 — Full replug cycle under print.** Combine 8.3–8.5 during an
   actual short print; reseat a toolhead cable.
   Pass: the part survives; no cold-bed detach; layers align across the
