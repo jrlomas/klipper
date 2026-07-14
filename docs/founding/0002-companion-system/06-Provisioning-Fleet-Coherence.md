@@ -57,7 +57,7 @@ of the exact board. A bootloader-specific signature can narrow the set, but an
 ambiguous signature never becomes an automatic guess.
 
 The catalog is **data in this repo** ([`atlas/provision/boards/`](../../../atlas/provision/boards/),
-a 53-board catalog across the major vendors), reviewed like code and
+a 54-board catalog across the major vendors), reviewed like code and
 versioned like everything else in the shared brain
 ([05-Knowledge-Base.md](05-Knowledge-Base.md)). Pick a board, click once,
 run.

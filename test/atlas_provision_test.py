@@ -218,6 +218,7 @@ def test_on_disk_catalog_optional():
     assert "custom" in ids                    # hatch always present
     # At least one real board plus the custom entry.
     assert len(cat) >= 2
+    assert "btt-ebb36-42-v1.2-g0b1-usb" in ids
     for b in cat:
         assert b.id and b.mcu is not None
     print("PASS: on-disk board catalog loads (%d entries incl. custom)"

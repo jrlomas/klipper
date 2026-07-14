@@ -183,10 +183,10 @@ F072** it was designed to fit.
   auto-guess. *Pass:* on 2026-07-13 the running SKR Pico and EBB36 were
   detected through their stable USB serial paths. The shared Klipper
   `1d50:614e` identity honestly produced unresolved MCU-family sets (six
-  RP2040 candidates including `btt-skr-pico-v1.0`; ten G0B1 candidates
-  including `btt-ebb36-42-v1.2-g0b1`) instead of guessing a PCB. Hardware
-  inspection confirms those two catalog entries; the exact board remains a
-  required confirmation input to a flash job.
+  RP2040 candidates including `btt-skr-pico-v1.0`; eleven G0B1 candidates
+  including the USB-specific `btt-ebb36-42-v1.2-g0b1-usb`) instead of
+  guessing a PCB. Hardware inspection confirms those two catalog entries;
+  the exact board remains a required confirmation input to a flash job.
 - [ ] **One-touch build+flash.** *Do:* run the plan for that board.
   *Expect:* it builds and flashes over the existing bootloader. *Pass:*
   the board boots the new image. **Never flash on UNCONFIRMED.**

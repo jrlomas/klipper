@@ -29,6 +29,13 @@ PICO = load_board({
     "kconfig": {"CONFIG_MACH_RP2040": "y", "CONFIG_USB": "y",
                 "CONFIG_USBSERIAL": "y"},
 })
+EBB_USB = load_board({
+    "id": "ebb-usb", "name": "EBB USB", "mcu": "stm32g0b1",
+    "flash_method": "katapult-usb", "usb_ids": ["1d50:6177"],
+    "kconfig": {"CONFIG_MACH_STM32G0B1": "y",
+                "CONFIG_STM32_FLASH_START_2000": "y",
+                "CONFIG_USB": "y", "CONFIG_USBSERIAL": "y"},
+})
 
 
 def test_real_ed25519_verifier_fails_closed():
@@ -171,6 +178,17 @@ def test_rp2040_flash_command_names_verified_image_directly():
     print("PASS: RP2040 flasher receives the exact verified image path")
 
 
+def test_katapult_usb_flash_command_names_image_and_offset():
+    path = "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_test-if00"
+    target = DetectedBoard("klipper-usb", path, [EBB_USB])
+    plan = build_plan(EBB_USB, target)
+    image = "/verified/release/klipper.bin"
+    command = ProvisionExecutor._flash_command(plan, image)
+    assert command == ["python3", "scripts/flash_usb.py", "-t",
+                       "stm32g0b1", "-d", path, "-s", "134225920", image]
+    print("PASS: Katapult USB flasher receives exact image and 8 KiB offset")
+
+
 def main():
     test_real_ed25519_verifier_fails_closed()
     test_executor_uses_argv_signed_gate_and_private_audit()
@@ -178,6 +196,7 @@ def main():
     test_fleet_remediation_reuses_signed_executor()
     test_mismatched_build_never_reaches_flash()
     test_rp2040_flash_command_names_verified_image_directly()
+    test_katapult_usb_flash_command_names_image_and_offset()
     print("ALL PASS")
 
 
