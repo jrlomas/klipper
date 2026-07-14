@@ -6,6 +6,7 @@
 
 #include <stdint.h> // uint32_t
 #include "board/misc.h" // bootloader_request
+#include "command.h" // DECL_CONSTANT
 #include "generic/armcm_reset.h" // try_request_canboot
 #include "hardware/structs/clocks.h" // clock_hw_t
 #include "hardware/structs/pll.h" // pll_hw_t
@@ -63,6 +64,11 @@ bootloader_request(void)
 #define FREQ_SYS (CONFIG_MACH_RP2040 ? 200000000 : CONFIG_CLOCK_FREQ)
 #define FBDIV (FREQ_SYS == 200000000 ? 100 : 125)
 #define FREQ_USB 48000000
+
+// CLOCK_FREQ is the crystal-derived scheduler/timestamp timebase.  Export
+// the independently configured processor/peripheral clock as well so hosts
+// do not mistake the RP2040's 12MHz timer tick for its actual 200MHz core.
+DECL_CONSTANT("MCU_CORE_FREQ", FREQ_SYS);
 
 void set_vsel(void)
 {
