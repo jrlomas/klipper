@@ -17,7 +17,12 @@ sys.path.insert(0, os.path.join(ROOT, "klippy"))
 import chelper
 
 
+# The normal per-actuator encoding proves its quantization in the executing
+# EBB36 timer domain; absolute rebases remain scheduled in machine time.
 MCU_FREQ = 64_000_000.
+LOCAL_FREQ = 64_000_000.
+RATE_SHIFT = 24
+RATE_RAW = round(LOCAL_FREQ / MCU_FREQ * (1 << RATE_SHIFT))
 # Live V0 / EBB36: 22.67895 mm rotation distance, 50:10 gear ratio,
 # 200 full steps/rev, 16 microsteps.
 STEP_DIST = 22.67895 / (5. * 200. * 16.)
@@ -27,6 +32,20 @@ SAMPLE_TIME = .001
 SAMPLE_TICKS = round(MCU_FREQ * SAMPLE_TIME)
 Q32 = 2. ** 32
 START_TIME = 5.
+
+
+def derivative_to_local(value, order):
+    scaled = int(value)
+    for _ in range(order):
+        numerator = scaled * (1 << RATE_SHIFT)
+        numerator += (-RATE_RAW // 2 if numerator < 0 else RATE_RAW // 2)
+        scaled = -((-numerator) // RATE_RAW) if numerator < 0 \
+            else numerator // RATE_RAW
+    return scaled
+
+
+def duration_to_local(duration):
+    return (duration * RATE_RAW + (1 << (RATE_SHIFT - 1))) >> RATE_SHIFT
 
 
 def append_profile(lib, trapq, print_time, start_e, distance, speed, accel,
@@ -110,6 +129,8 @@ def fit_path(distance, speed, accel, pressure_advance=0.,
     acc = anchor_su << 32
     elapsed = 0
     worst = 0.
+    worst_local_endpoint = 0.
+    worst_local_path = 0.
     signs = set()
     for duration, velocity, acceleration, jerk, snap, crackle, flags in segments:
         assert flags & (3 << 6) == 2 << 6
@@ -138,6 +159,37 @@ def fit_path(distance, speed, accel, pressure_advance=0.,
             worst = max(worst, abs(got - want))
         acc += int(lib.segfit_end_delta_ho(
             duration, velocity, acceleration, jerk, snap, crackle))
+        local_duration = duration_to_local(duration)
+        local_coeffs = [derivative_to_local(value, order)
+                        for order, value in enumerate(
+                            (velocity, acceleration, jerk, snap, crackle), 1)]
+        wire_delta = int(lib.segfit_end_delta_ho(
+            duration, velocity, acceleration, jerk, snap, crackle))
+        local_delta = int(lib.segfit_end_delta_ho(
+            local_duration, *local_coeffs))
+        denominator = local_duration << 16
+        residual = wire_delta - local_delta
+        correction = (abs(residual) + denominator // 2) // denominator
+        local_coeffs[0] += -correction if residual < 0 else correction
+        local_delta = int(lib.segfit_end_delta_ho(
+            local_duration, *local_coeffs))
+        worst_local_endpoint = max(
+            worst_local_endpoint, abs(local_delta - wire_delta) / Q32)
+        for ticks in offsets:
+            local_ticks = duration_to_local(ticks)
+            wire_pos = (velocity / 65536. * ticks
+                        + .5 * acceleration / Q32 * ticks ** 2
+                        + jerk / 2. ** 48 * ticks ** 3 / 6.
+                        + snap / 2. ** 64 * ticks ** 4 / 24.
+                        + crackle / 2. ** 80 * ticks ** 5 / 120.)
+            lv, la, lj, ls, lc = local_coeffs
+            local_pos = (lv / 65536. * local_ticks
+                          + .5 * la / Q32 * local_ticks ** 2
+                          + lj / 2. ** 48 * local_ticks ** 3 / 6.
+                          + ls / 2. ** 64 * local_ticks ** 4 / 24.
+                          + lc / 2. ** 80 * local_ticks ** 5 / 120.)
+            worst_local_path = max(
+                worst_local_path, abs(local_pos - wire_pos))
         elapsed += duration
 
     assert worst <= TOLERANCE_SU + 1., worst
@@ -146,9 +198,13 @@ def fit_path(distance, speed, accel, pressure_advance=0.,
         sf, math.nextafter(activity_end, activity_start))
     endpoint_error_su = abs(endpoint_mm - source_end_mm) * SU_PER_MM
     assert endpoint_error_su <= TOLERANCE_SU + 1., endpoint_error_su
+    assert worst_local_endpoint <= TOLERANCE_SU + 1., worst_local_endpoint
+    assert worst_local_path <= TOLERANCE_SU + 1., worst_local_path
     return {
         'segments': len(segments),
         'worst_su': worst,
+        'local_endpoint_su': worst_local_endpoint,
+        'local_path_su': worst_local_path,
         'endpoint_error_su': endpoint_error_su,
         'endpoint_mm': endpoint_mm,
         'signs': signs,

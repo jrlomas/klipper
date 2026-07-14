@@ -16,7 +16,7 @@
 #include "command.h" // shutdown
 #include "execlog.h" // execlog_append
 #include "sched.h" // sched_wake_task
-#include "timesync.h" // timesync_ticks_to_local
+#include "timesync.h" // machine-time to local execution conversion
 #include "trajq.h" // trajq_setup
 #if CONFIG_WANT_TRACE
 #include "trace.h" // LOG*
@@ -221,6 +221,27 @@ trajq_end_delta_seg(struct trajq *tq)
     return d;
 }
 
+// Correct local velocity by the smallest integer wire amount that makes the
+// locally executed polynomial land on the authoritative machine-time wire
+// endpoint. Higher derivatives retain their rate-scaled shape; this removes
+// their accumulated coefficient-rounding residue without cross-segment drift.
+static int32_t
+endpoint_velocity_correction(int64_t wire_delta, int64_t local_delta,
+                             uint32_t local_duration)
+{
+    int64_t residual = wire_delta - local_delta;
+    int64_t denominator = (int64_t)local_duration << 16;
+    int64_t correction = residual / denominator;
+    int64_t remainder = residual % denominator;
+    uint64_t magnitude = remainder < 0
+        ? -(uint64_t)remainder : (uint64_t)remainder;
+    if (magnitude * 2 >= (uint64_t)denominator)
+        correction += residual < 0 ? -1 : 1;
+    if (correction > INT32_MAX || correction < INT32_MIN)
+        shutdown("traj segment overflow");
+    return (int32_t)correction;
+}
+
 void
 trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
             , uint32_t underrun_decel)
@@ -257,6 +278,10 @@ trajq_load(struct trajq *tq, uint8_t flags, uint32_t duration
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
     tq->jerk = tq->snap = tq->crackle = 0;
 #endif
+    // Internal locally synthesized segments (underrun ramps) use their
+    // local polynomial as the authoritative delta. Wire segments replace
+    // this with their retained machine-time delta after loading.
+    tq->wire_delta = trajq_end_delta(duration, velocity, accel);
 }
 
 // Synthesize a deceleration-to-zero ramp from velocity v_end.
@@ -294,7 +319,7 @@ int
 trajq_advance(struct trajq *tq)
 {
     // Chain: advance the exact anchor across the finished segment
-    tq->acc = trajq_acc_add(tq->acc, trajq_end_delta_seg(tq));
+    tq->acc = trajq_acc_add(tq->acc, tq->wire_delta);
     tq->seg_start_clock += tq->duration;
     int32_t v_end = trajq_velocity_at_seg(tq, tq->duration);
     execlog_append(EL_SEG_DONE, tq->oid, tq->seg_start_clock
@@ -351,6 +376,7 @@ trajq_advance(struct trajq *tq)
             }
         }
         trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
+        tq->wire_delta = seg->wire_delta;
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
         tq->jerk = seg->jerk;
         tq->snap = seg->snap;
@@ -393,9 +419,16 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
         tq->dropped++;
         return;
     }
-    // Segment durations arrive in machine time (identity when
-    // timesync is unconfigured)
-    duration = timesync_ticks_to_local(duration);
+    // The normal host fitter quantizes in this actuator's local timer domain
+    // so its error proof includes the actual derivative resolution. A
+    // machine-domain encoding remains supported for shared/broadcast users.
+    uint8_t local_time = flags & TSEG_LOCAL_TIME;
+    int64_t wire_delta = trajq_end_delta(duration, velocity, accel);
+    if (!local_time) {
+        duration = timesync_ticks_to_local(duration);
+        velocity = timesync_derivative_to_local(velocity, 1);
+        accel = timesync_derivative_to_local(accel, 2);
+    }
     if (!duration)
         shutdown("Invalid traj segment");
     if (duration > TRAJ_MAX_DURATION && (velocity || accel))
@@ -404,12 +437,22 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
     if (flags & TSEG_POLY_MASK)
         // Polynomial orders beyond quadratic are not negotiated
         shutdown("Invalid traj segment");
+    if (!local_time) {
+        int32_t correction = endpoint_velocity_correction(
+            wire_delta, trajq_end_delta(duration, velocity, accel), duration);
+        int64_t corrected_velocity = (int64_t)velocity + correction;
+        if (corrected_velocity > INT32_MAX
+            || corrected_velocity < INT32_MIN)
+            shutdown("traj segment overflow");
+        velocity = corrected_velocity;
+    }
     // Validate coefficient ranges up front (also computed on advance)
     trajq_end_delta(duration, velocity, accel);
 
     struct traj_segment *seg = move_alloc();
     seg->flags = flags;
     seg->kind = TSEGK_MOTION;
+    seg->wire_delta = wire_delta;
     seg->duration = duration;
     seg->velocity = velocity;
     seg->accel = accel;
@@ -434,6 +477,7 @@ trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
     }
     // Idle: this segment starts at the current anchor clock
     trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
+    tq->wire_delta = seg->wire_delta;
     tq->flags |= TQF_ACTIVE;
     tq->ops->start(tq);
     irq_enable();
@@ -454,7 +498,21 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
         tq->dropped++;
         return;
     }
-    duration = timesync_ticks_to_local(duration);
+    uint8_t local_time = flags & TSEG_LOCAL_TIME;
+    struct trajq wire;
+    trajq_load(&wire, flags, duration, velocity, accel);
+    wire.jerk = jerk;
+    wire.snap = snap;
+    wire.crackle = crackle;
+    int64_t wire_delta = trajq_end_delta_seg(&wire);
+    if (!local_time) {
+        duration = timesync_ticks_to_local(duration);
+        velocity = timesync_derivative_to_local(velocity, 1);
+        accel = timesync_derivative_to_local(accel, 2);
+        jerk = timesync_derivative_to_local(jerk, 3);
+        snap = timesync_derivative_to_local(snap, 4);
+        crackle = timesync_derivative_to_local(crackle, 5);
+    }
     if (!duration)
         shutdown("Invalid traj segment");
     if (duration > TRAJ_MAX_DURATION)
@@ -466,9 +524,25 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
     if (order == TSEG_POLY_CUBIC && (snap || crackle))
         shutdown("Invalid traj segment");
 
+    if (!local_time) {
+        struct trajq local;
+        trajq_load(&local, flags, duration, velocity, accel);
+        local.jerk = jerk;
+        local.snap = snap;
+        local.crackle = crackle;
+        int32_t correction = endpoint_velocity_correction(
+            wire_delta, trajq_end_delta_seg(&local), duration);
+        int64_t corrected_velocity = (int64_t)velocity + correction;
+        if (corrected_velocity > INT32_MAX
+            || corrected_velocity < INT32_MIN)
+            shutdown("traj segment overflow");
+        velocity = corrected_velocity;
+    }
+
     struct traj_segment *seg = move_alloc();
     seg->flags = flags;
     seg->kind = TSEGK_MOTION;
+    seg->wire_delta = wire_delta;
     seg->duration = duration;
     seg->velocity = velocity;
     seg->accel = accel;
@@ -488,6 +562,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
     // the (idle) active slot so the shared evaluator sees the coeffs.
     if (!(tq->flags & TQF_ACTIVE)) {
         trajq_load(tq, seg->flags, seg->duration, seg->velocity, seg->accel);
+        tq->wire_delta = seg->wire_delta;
         tq->jerk = jerk;
         tq->snap = snap;
         tq->crackle = crackle;

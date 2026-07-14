@@ -41,11 +41,19 @@ TERMINAL_HOLD_TIME = .001
 BEZIER_QUEUE_MARGIN = .250
 BEZIER_WAIT_MARGIN = .050
 BEZIER_MAX_SEGMENTS = 1024
+# The host may perform synchronous work (notably sensorless-homing TMC UART
+# setup/restore) between creating a drip trapq and the trajectory callback
+# that transmits its first rebase.  Reserve one motion-queue generation
+# window so the scheduled rebase is still safely in the future when it
+# reaches the MCU.  This also retains enough trapq history for kinematic
+# pre/post scan windows used by pressure advance and input shaping.
+TRAJECTORY_KIN_FLUSH_DELAY = .100
 
 # Segment polynomial-order flag bits (mirror TSEG_POLY_* in src/trajq.h).
 TSEG_POLY_CUBIC = 1 << 6
 TSEG_POLY_QUINTIC = 2 << 6
 TSEG_POLY_MASK = 3 << 6
+TSEG_LOCAL_TIME = 1 << 1
 
 # ---- Higher-order (cubic / quintic) Bezier segments (FD-0001 doc 02) ----
 #
@@ -366,18 +374,40 @@ class TrajectoryStepper:
         # unless it was declared volatile.
         return self.is_relative or not self.homing_volatile
 
+    def _machine_mcu(self):
+        getter = getattr(getattr(self, 'owner', None),
+                         'get_machine_mcu', None)
+        return getter() if getter is not None else self.mcu
+
+    def _machine_freq(self):
+        return self._machine_mcu().seconds_to_clock(1.)
+
+    def _machine_clock(self, print_time):
+        return self._machine_mcu().print_time_to_clock(print_time)
+
+    def _machine_duration(self, local_duration):
+        local_freq = self.mcu.seconds_to_clock(1.)
+        return max(1, int(round(
+            local_duration * self._machine_freq() / local_freq)))
+
+    def _local_clock_for_machine_clock(self, machine_clock):
+        machine_mcu = self._machine_mcu()
+        print_time = machine_mcu.clock_to_print_time(machine_clock)
+        return self.mcu.print_time_to_clock(print_time)
+
     # Called from MCU_stepper._build_config
     def build_config(self, step_pin, dir_pin, invert_step, invert_dir,
                      step_pulse_ticks):
         step_dist = self.mcu_stepper.get_step_dist()
         self.su_per_mm = SUBUNITS / step_dist
-        freq = self.mcu.seconds_to_clock(1.)
+        local_freq = self.mcu.seconds_to_clock(1.)
+        machine_freq = self._machine_freq()
         self.terminal_hold_ticks = max(
-            1, int(round(TERMINAL_HOLD_TIME * freq)))
+            1, int(round(TERMINAL_HOLD_TIME * machine_freq)))
         # underrun_decel wire units: sub-units/tick^2 with 32
         # fractional bits
         decel_wire = int(self.underrun_decel * self.su_per_mm
-                         / (freq * freq) * 2.**32 + .5)
+                         / (local_freq * local_freq) * 2.**32 + .5)
         self.mcu.add_config_cmd(
             "config_traj_stepper oid=%d step_pin=%s dir_pin=%s"
             " invert_step=%d invert_dir=%d step_pulse_ticks=%u"
@@ -491,7 +521,8 @@ class TrajectoryStepper:
         # queued toolhead horizon, otherwise the firmware correctly rejects
         # the stale rebase clock as already in the past.
         anchor_time = max(print_time, est_print_time + BEZIER_QUEUE_MARGIN)
-        clock = self.mcu.print_time_to_clock(anchor_time)
+        clock = self._machine_clock(anchor_time)
+        local_clock = self.mcu.print_time_to_clock(anchor_time)
         duration = int(round(duration_s * self.mcu.seconds_to_clock(1.)))
         if duration <= 0:
             raise self.mcu.error("BEZIER_MOVE duration must be positive")
@@ -510,8 +541,10 @@ class TrajectoryStepper:
         anchor_mcu_pos = int(round(anchor_su / SUBUNITS))
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_wire_su,
                               anchor_mcu_pos],
-                             minclock=self.rebase_min_clock,
-                             reqclock=clock)
+                             minclock=(self._local_clock_for_machine_clock(
+                                 self.rebase_min_clock)
+                                 if self.rebase_min_clock else 0),
+                             reqclock=local_clock)
         self._wire_rebase(clock, anchor_su, anchor_mcu_pos)
         self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
@@ -574,7 +607,8 @@ class TrajectoryStepper:
                 " microstep range: %d" % (self.name, mcu_pos))
         position_offset_su = pos_su - pos_mm * self.su_per_mm
         acc = wire_pos_su << 32
-        clock = self.mcu.print_time_to_clock(print_time)
+        clock = self._machine_clock(print_time)
+        local_clock = self.mcu.print_time_to_clock(print_time)
         if self.rebase_min_clock and clock < self.rebase_min_clock:
             raise self.mcu.error(
                 "Trajectory boundary for %s overlaps the previous hold:"
@@ -582,8 +616,10 @@ class TrajectoryStepper:
                     self.name, clock, self.rebase_min_clock))
         self.rebase_cmd.send([self.oid, clock & 0xffffffff,
                               wire_pos_su, mcu_pos],
-                             minclock=self.rebase_min_clock,
-                             reqclock=clock)
+                             minclock=(self._local_clock_for_machine_clock(
+                                 self.rebase_min_clock)
+                                 if self.rebase_min_clock else 0),
+                             reqclock=local_clock)
         self._wire_rebase(clock, pos_su, mcu_pos)
         self.rebase_min_clock = 0
         self.ffi_lib.segfit_set_position_offset(self.segfit,
@@ -608,6 +644,57 @@ class TrajectoryStepper:
         # Match the legacy itersolve/stepcompress path and generate through the
         # step-generation horizon.
         gen_time = step_gen_time
+        scan_pre = self.ffi_lib.itersolve_get_gen_steps_pre_active(sk)
+        scan_post = self.ffi_lib.itersolve_get_gen_steps_post_active(sk)
+        if not scan_pre and not scan_post:
+            return self._flush_standard_activity(sk, gen_time)
+        return self._flush_scan_activity(sk, gen_time)
+
+    def _flush_standard_activity(self, sk, gen_time):
+        # Preserve the qualified homing/ordinary-axis behavior when the
+        # kinematics declares no scan window. In particular, homing drip mode
+        # can replace an interrupted trapq while future rebase barriers are
+        # already queued; ending at the nominal trapq boundary early would
+        # inject another hold into that ordered stream.
+        active_time = self.ffi_lib.itersolve_check_active(sk, gen_time)
+        if ((active_time or self.anchored)
+                and not self.owner.is_mcu_synced(self.mcu)):
+            raise self.mcu.error(
+                "Machine-time discipline for %s is not converged; refusing"
+                " trajectory Class-0 traffic" % (self.mcu.get_name(),))
+        if not self.anchored:
+            if not active_time:
+                return
+            self._anchor(active_time)
+        prev_acc = self._chained_acc()
+        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+        n = (self.ffi_lib.segfit_generate(self.segfit, gen_time)
+             if active_time else 0)
+        if n < 0:
+            raise self.mcu.error(
+                "Trajectory for %s exceeds representable wire limits"
+                % (self.name,))
+        self._send_segs(n)
+        self._record_intention(prev_acc, prev_time)
+        prev_acc = self._chained_acc()
+        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+        n = self.ffi_lib.segfit_finalize(self.segfit)
+        if n < 0:
+            raise self.mcu.error(
+                "Trajectory for %s exceeds representable wire limits"
+                % (self.name,))
+        if n > 0:
+            self._send_segs(n)
+        self._record_intention(prev_acc, prev_time)
+        if not active_time:
+            self._queue_terminal_hold()
+            self.anchored = False
+
+    def _flush_scan_activity(self, sk, gen_time):
+        # A nonzero kinematic scan window is real actuator motion outside the
+        # nominal trapq interval (pressure-advance and input-shaper pre/post
+        # roll). Fit its complete connected activity window rather than
+        # converting the leading displacement into a rebase.
         activity_cursor = getattr(self, 'activity_cursor', 0.)
         from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
                      if self.anchored else activity_cursor)
@@ -702,8 +789,8 @@ class TrajectoryStepper:
             return  # nothing emitted / anchor unchanged
         end_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
         try:
-            start_clock = int(self.mcu.print_time_to_clock(prev_time))
-            end_clock = int(self.mcu.print_time_to_clock(end_time))
+            start_clock = int(self._machine_clock(prev_time))
+            end_clock = int(self._machine_clock(end_time))
         except Exception:
             return
         self.intentions.append((start_clock, end_clock, int(acc >> 32)))
@@ -738,15 +825,16 @@ class TrajectoryStepper:
         # rather than teleporting to a stale commanded position.
         if self.rebase_cmd is None:
             return
-        clock = int(clock)
+        local_clock = int(clock)
+        print_time = self.mcu.clock_to_print_time(local_clock)
+        clock = int(self._machine_clock(print_time))
         pos_su = int(pos_su)
         mcu_pos = int(round(pos_su / SUBUNITS))
         wire_pos_su = _signed_i32(pos_su)
         self.rebase_cmd.send([self.oid, clock & 0xffffffff,
-                              wire_pos_su, mcu_pos])
+                              wire_pos_su, mcu_pos], reqclock=local_clock)
         self._wire_rebase(clock, pos_su, mcu_pos)
         try:
-            print_time = self.mcu.clock_to_print_time(clock)
             pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
             self.ffi_lib.segfit_set_position_offset(
                 self.segfit, pos_su - pos_mm * self.su_per_mm)
@@ -779,10 +867,12 @@ class TrajectoryStepper:
             s = segs[i]
             if not s.duration:
                 continue
+            machine_duration = self._machine_duration(s.duration)
             if (not s.velocity and not s.accel and not s.jerk
                     and not s.snap and not s.crackle):
-                self.hold_cmd.send([self.oid, s.duration])
-                self._wire_segment(1, s.duration, 0, 0)
+                self.hold_cmd.send([self.oid, machine_duration])
+                self._wire_segment(1, machine_duration, 0, 0,
+                                   exec_duration=s.duration)
                 continue
             order = s.flags & TSEG_POLY_MASK
             if order == TSEG_POLY_QUINTIC:
@@ -790,18 +880,22 @@ class TrajectoryStepper:
                     raise self.mcu.error(
                         "Firmware for %s lacks quintic trajectory support"
                         % (self.name,))
-                base_flags = s.flags & ~TSEG_POLY_MASK
+                base_flags = ((s.flags & ~TSEG_POLY_MASK)
+                              | TSEG_LOCAL_TIME)
                 self.quintic_cmd.send(
                     [self.oid, base_flags, s.duration, s.velocity, s.accel,
                      s.jerk, s.snap, s.crackle])
                 self._wire_segment(
-                    s.flags, s.duration, s.velocity, s.accel,
-                    s.jerk, s.snap, s.crackle)
+                    s.flags | TSEG_LOCAL_TIME, machine_duration,
+                    s.velocity, s.accel, s.jerk, s.snap, s.crackle,
+                    exec_duration=s.duration)
             elif not order:
-                self.queue_cmd.send([self.oid, s.flags, s.duration,
+                local_flags = s.flags | TSEG_LOCAL_TIME
+                self.queue_cmd.send([self.oid, local_flags, s.duration,
                                      s.velocity, s.accel])
-                self._wire_segment(s.flags, s.duration,
-                                   s.velocity, s.accel)
+                self._wire_segment(local_flags, machine_duration,
+                                   s.velocity, s.accel,
+                                   exec_duration=s.duration)
             else:
                 raise self.mcu.error(
                     "Unsupported fitted polynomial order 0x%x for %s"
@@ -821,20 +915,23 @@ class TrajectoryStepper:
         })
 
     def _wire_segment(self, flags, duration, velocity, accel,
-                      jerk=0, snap=0, crackle=0):
+                      jerk=0, snap=0, crackle=0, exec_duration=None):
         if (getattr(self, 'wire_clock', None) is None
                 or getattr(self, 'wire_acc', None) is None):
             return
         start_clock = self.wire_clock
         start_acc = self.wire_acc
         start_abs_pos = self.wire_acc >> 32
+        if exec_duration is None:
+            exec_duration = duration
         self.wire_acc += py_end_delta_ho(
-            duration, velocity, accel, jerk, snap, crackle)
+            exec_duration, velocity, accel, jerk, snap, crackle)
         self.wire_clock += int(duration)
         self._record_wire({
             'event': 'hold' if flags & 1 else 'segment',
             'start_clock': start_clock, 'end_clock': self.wire_clock,
-            'duration': int(duration), 'flags': int(flags),
+            'duration': int(duration),
+            'execution_duration': int(exec_duration), 'flags': int(flags),
             'velocity': int(velocity), 'accel': int(accel),
             'jerk': int(jerk), 'snap': int(snap), 'crackle': int(crackle),
             'start_position_su': _signed_i32(start_abs_pos),
@@ -860,7 +957,8 @@ class TrajectoryStepper:
         # so the caller can advance its anchor without any drift.
         duration = int(duration)
         order, c = bezier_to_wire(ctrl_su, duration)
-        base_flags = 0
+        base_flags = TSEG_LOCAL_TIME
+        machine_duration = self._machine_duration(duration)
         if order == TSEG_POLY_CUBIC:
             if self.cubic_cmd is None:
                 raise self.mcu.error(
@@ -868,8 +966,9 @@ class TrajectoryStepper:
                     % (self.name,))
             self.cubic_cmd.send([self.oid, base_flags, duration,
                                  c['v'], c['a'], c['j']])
-            self._wire_segment(base_flags | TSEG_POLY_CUBIC, duration,
-                               c['v'], c['a'], c['j'])
+            self._wire_segment(base_flags | TSEG_POLY_CUBIC,
+                               machine_duration, c['v'], c['a'], c['j'],
+                               exec_duration=duration)
             return py_end_delta_ho(duration, c['v'], c['a'], c['j'])
         if self.quintic_cmd is None:
             raise self.mcu.error(
@@ -877,8 +976,9 @@ class TrajectoryStepper:
                 % (self.name,))
         self.quintic_cmd.send([self.oid, base_flags, duration,
                                c['v'], c['a'], c['j'], c['s'], c['c']])
-        self._wire_segment(base_flags | TSEG_POLY_QUINTIC, duration,
-                           c['v'], c['a'], c['j'], c['s'], c['c'])
+        self._wire_segment(base_flags | TSEG_POLY_QUINTIC,
+                           machine_duration, c['v'], c['a'], c['j'],
+                           c['s'], c['c'], exec_duration=duration)
         return py_end_delta_ho(duration, c['v'], c['a'], c['j'],
                                c['s'], c['c'])
 
@@ -999,6 +1099,12 @@ class TrajectoryQueuing:
     def get_trajectory_steppers(self):
         return list(self.steppers)
 
+    def get_machine_mcu(self):
+        # FD-0001 defines machine time as the primary MCU's physical clock.
+        # Segment coefficients and durations use this one domain on every
+        # link; secondary firmware converts them once at ingest.
+        return self.printer.lookup_object('mcu')
+
     def is_mcu_synced(self, mcu):
         if self.timesync is None:
             return True
@@ -1054,6 +1160,14 @@ class TrajectoryQueuing:
             ts.connect()
         if self.steppers:
             mq = self.printer.lookup_object('motion_queuing')
+            kin_flush_delay = TRAJECTORY_KIN_FLUSH_DELAY
+            for ts in self.steppers:
+                sk = ts.mcu_stepper.get_stepper_kinematics()
+                kin_flush_delay = max(
+                    kin_flush_delay,
+                    ts.ffi_lib.itersolve_get_gen_steps_pre_active(sk),
+                    ts.ffi_lib.itersolve_get_gen_steps_post_active(sk))
+            mq.register_kin_flush_delay(kin_flush_delay)
             mq.register_flush_callback(self._flush)
 
     def _flush(self, flush_time, step_gen_time):

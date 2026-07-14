@@ -16,6 +16,10 @@
 
 struct traj_segment {
     struct move_node node;
+    // Exact Q32.32 endpoint delta of the machine-time wire polynomial.
+    // Execution coefficients below are converted to the local timer domain;
+    // retaining this one value preserves host/MCU zero-drift chaining.
+    int64_t wire_delta;
     uint32_t duration;
     int32_t velocity;
     int32_t accel;
@@ -32,6 +36,9 @@ struct traj_segment {
 
 enum {
     TSEG_HOLD_AT_END = 1 << 0,
+    // Duration and derivatives have already been quantized in the executing
+    // MCU's local timer domain. Absolute rebase clocks remain machine time.
+    TSEG_LOCAL_TIME = 1 << 1,
     // bits 6-7 carry the segment polynomial order (00 = quadratic)
     TSEG_POLY_MASK = 3 << 6,
     TSEG_POLY_QUADRATIC = 0 << 6,
@@ -78,6 +85,7 @@ struct trajq {
     // Exact chained position at the START of the current segment
     // (modulo-2^64 Q32.32 sub-units); the authoritative wire phase.
     int64_t acc;
+    int64_t wire_delta;
     // Local clock of the start of the current segment (when active)
     // or of the next segment to start (when idle).
     uint32_t seg_start_clock;

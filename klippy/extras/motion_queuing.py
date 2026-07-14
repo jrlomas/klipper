@@ -41,6 +41,11 @@ class PrinterMotionQueuing:
         self.flush_callbacks = []
         # Kinematic step generation scan window time tracking
         self.kin_flush_delay = SDS_CHECK_TIME
+        # Low-level generators outside syncemitter (for example the Helix
+        # trajectory fitter) may need trapq history and delivery lead of
+        # their own.  Keep that requirement separate because the normal
+        # syncemitter scan-window rescan below runs after connect events.
+        self.external_kin_flush_delay = SDS_CHECK_TIME
         # MCU tracking
         self.all_mcus = [m for n, m in printer.lookup_objects(module='mcu')]
         self.mcu = self.all_mcus[0]
@@ -122,9 +127,14 @@ class PrinterMotionQueuing:
     # Kinematic step generation scan window time tracking
     def get_kin_flush_delay(self):
         return self.kin_flush_delay
+    def register_kin_flush_delay(self, delay):
+        self.external_kin_flush_delay = max(
+            self.external_kin_flush_delay, float(delay))
+        self.kin_flush_delay = max(self.kin_flush_delay,
+                                   self.external_kin_flush_delay)
     def check_step_generation_scan_windows(self):
         ffi_main, ffi_lib = chelper.get_ffi()
-        kin_flush_delay = SDS_CHECK_TIME
+        kin_flush_delay = self.external_kin_flush_delay
         for se in self.syncemitters:
             sk = ffi_lib.syncemitter_get_stepper_kinematics(se)
             if sk == ffi_main.NULL:

@@ -33,6 +33,7 @@
 #include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_COMMAND_FLAGS
 #include "execlog.h" // execlog_append
+#include "sched.h" // sched_shutdown
 #include "timesync.h" // timesync_ticks_to_local
 #include "timesync_math.h" // timesync_err_to_adj
 
@@ -83,6 +84,28 @@ timesync_ticks_to_local(uint32_t machine_ticks)
     // Round to nearest: duration truncation would otherwise
     // accumulate up to a tick of drift per ingested segment.
     return ((uint64_t)machine_ticks * ts->rate + RATE_HALF) >> RATE_SHIFT;
+}
+
+int32_t
+timesync_derivative_to_local(int32_t value, uint8_t order)
+{
+    struct timesync_state *ts = &timesync;
+    if (!(ts->flags & TS_ENABLED) || !value)
+        return value;
+    // If local ticks l advance at r ticks per machine tick m, then
+    // d^n q/dl^n = d^n q/dm^n / r^n. Apply the same rounded Q8.24
+    // division once per derivative order. The practical rate bounds and
+    // the signed wire range keep each intermediate in int64.
+    uint32_t rate = ts->rate;
+    int64_t scaled = value;
+    while (order--) {
+        int64_t numerator = scaled * RATE_ONE;
+        numerator += numerator < 0 ? -(int64_t)(rate / 2) : rate / 2;
+        scaled = numerator / rate;
+        if (scaled > INT32_MAX || scaled < INT32_MIN)
+            shutdown("traj segment overflow");
+    }
+    return (int32_t)scaled;
 }
 
 uint32_t

@@ -12,6 +12,9 @@
 
 // Convert a machine-time duration (ticks) to local clock ticks
 uint32_t timesync_ticks_to_local(uint32_t machine_ticks);
+// Convert a polynomial derivative from machine-tick units to local-tick
+// units. order=1 is velocity, 2 acceleration, through 5 crackle.
+int32_t timesync_derivative_to_local(int32_t value, uint8_t order);
 // Convert a 32-bit machine-time instant to the local clock domain
 uint32_t timesync_clock_to_local(uint32_t machine_clock);
 // Report whether Class-0 (motion) ingest may trust the mapping:

@@ -14,6 +14,7 @@ import mcu as klippy_mcu
 import msgproto
 import stepper as klippy_stepper
 sys.modules['chelper'] = types.ModuleType('chelper')
+import motion_queuing
 import trajectory_queuing
 import trajectory_pwm
 
@@ -137,6 +138,12 @@ class FakeMCU:
     def print_time_to_clock(self, print_time):
         return round(print_time * self.frequency)
 
+    def clock_to_print_time(self, clock):
+        return clock / self.frequency
+
+    def seconds_to_clock(self, duration):
+        return round(duration * self.frequency)
+
     def get_constant_float(self, name):
         assert name == 'CLOCK_FREQ'
         return self.frequency
@@ -215,6 +222,15 @@ class FakeMCUStepper:
 
 
 class GuardFFI:
+    def itersolve_get_gen_steps_pre_active(self, sk):
+        return 0.
+
+    def itersolve_get_gen_steps_post_active(self, sk):
+        return 0.
+
+    def itersolve_check_active(self, sk, flush_time):
+        return 1.
+
     def segfit_get_gen_time(self, segfit):
         return 0.
 
@@ -241,6 +257,16 @@ class AnchorFFI:
         self.checked_to = []
         self.generated_to = []
         self.finalized = 0
+
+    def itersolve_get_gen_steps_pre_active(self, sk):
+        return 0.
+
+    def itersolve_get_gen_steps_post_active(self, sk):
+        return 0.
+
+    def itersolve_check_active(self, sk, flush_time):
+        self.checked_to.append(flush_time)
+        return self.active_time
 
     def segfit_check_activity(self, segfit, from_time, through_time):
         self.checked_to.append(through_time)
@@ -281,6 +307,17 @@ class EndedFFI(AnchorFFI):
     def segfit_check_activity(self, segfit, from_time, through_time):
         self.checked_to.append(through_time)
         return 0
+
+
+class ScanWindowFFI(AnchorFFI):
+    def itersolve_get_gen_steps_pre_active(self, sk):
+        return .020
+
+    def itersolve_get_gen_steps_post_active(self, sk):
+        return .020
+
+    def segfit_get_activity_start(self, segfit):
+        return self.active_time - .020
 
 
 class UnsyncedTimeSync:
@@ -336,6 +373,41 @@ def test_trajectory_anchor_starts_at_activity():
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
     assert ffi_lib.finalized == 1
+
+
+def test_trajectory_anchor_includes_kinematic_scan_preroll():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = ScanWindowFFI(12.5)
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.intentions = []
+    anchors = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper.flush(13., 13.4)
+    assert anchors == [12.48]
+    assert ffi_lib.checked_to == [13.4]
+    assert ffi_lib.generated_to == [13.4]
+    assert ffi_lib.finalized == 1
+
+
+def test_external_generator_delay_survives_scan_window_rescan():
+    mq = motion_queuing.PrinterMotionQueuing.__new__(
+        motion_queuing.PrinterMotionQueuing)
+    mq.kin_flush_delay = motion_queuing.SDS_CHECK_TIME
+    mq.external_kin_flush_delay = motion_queuing.SDS_CHECK_TIME
+    mq.register_kin_flush_delay(
+        trajectory_queuing.TRAJECTORY_KIN_FLUSH_DELAY)
+    assert mq.kin_flush_delay == .100
+    assert mq.external_kin_flush_delay == .100
 
 
 def test_trajectory_end_always_queues_terminal_hold():
@@ -415,24 +487,38 @@ def test_g1_quintic_segments_use_higher_order_wire_command():
                 duration=12000, velocity=101, accel=202, jerk=303,
                 snap=404, crackle=505,
                 flags=trajectory_queuing.TSEG_POLY_QUINTIC)]
+    class MixedClockOwner:
+        def __init__(self):
+            self.machine = FakeMCU(12_000_000.)
+            self.records = []
+        def get_machine_mcu(self):
+            return self.machine
+        def record_wire_intention(self, ts, fields):
+            self.records.append(dict(fields))
 
     stepper = trajectory_queuing.TrajectoryStepper.__new__(
         trajectory_queuing.TrajectoryStepper)
     stepper.ffi_lib = SegmentFFI()
     stepper.segfit = object()
-    stepper.mcu = FakeMCU()
+    stepper.owner = MixedClockOwner()
+    stepper.mcu = FakeMCU(64_000_000.)
     stepper.name = 'stepper_x'
     stepper.oid = 7
     stepper.queue_cmd = FakeCommand()
     stepper.quintic_cmd = FakeCommand()
     stepper.hold_cmd = FakeCommand()
-    stepper.wire_clock = None
-    stepper.wire_acc = None
+    stepper.wire_clock = 1_000_000
+    stepper.wire_acc = 0
     stepper._send_segs(1)
     assert stepper.quintic_cmd.sent == [
-        [7, 0, 12000, 101, 202, 303, 404, 505]]
+        [7, trajectory_queuing.TSEG_LOCAL_TIME,
+         12000, 101, 202, 303, 404, 505]]
     assert stepper.queue_cmd.sent == []
     assert stepper.hold_cmd.sent == []
+    record = stepper.owner.records[-1]
+    assert record['duration'] == 2250
+    assert record['execution_duration'] == 12000
+    assert record['end_clock'] == 1_002_250
 
 
 def test_rebase_waits_for_previous_horizon():
@@ -566,6 +652,11 @@ def main():
     test_trajectory_anchor_starts_at_activity()
     print("PASS: trajectory anchor starts at activity and fits to the"
           " step-generation horizon")
+    test_trajectory_anchor_includes_kinematic_scan_preroll()
+    print("PASS: trajectory anchors include pressure-advance and shaping"
+          " scan preroll")
+    test_external_generator_delay_survives_scan_window_rescan()
+    print("PASS: trajectory transport reserves its motion-generation lead")
     test_trajectory_end_always_queues_terminal_hold()
     print("PASS: every completed trajectory queues an explicit terminal"
           " hold")
