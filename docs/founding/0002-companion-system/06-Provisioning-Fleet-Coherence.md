@@ -43,6 +43,12 @@ The companion then does the mechanical work:
   ([`atlas/provision/plan.py`](../../../atlas/provision/plan.py)), over the
   first-class in-band bootloader FD-0001 already ships.
 
+The execution gate verifies the detached Ed25519 signature, builds from the
+catalog Kconfig, requires that build to byte-match the verified release
+artifact, and passes that exact artifact path to the flasher. A successfully
+verified decoy beside a different `out/klipper.*` can therefore never satisfy
+the gate.
+
 Detection is deliberately confidence-bounded. A running Klipper USB device
 uses the shared `1d50:614e` identity: its product string proves the MCU family,
 not the physical PCB. Atlas therefore returns the matching catalog family,

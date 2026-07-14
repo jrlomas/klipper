@@ -1,5 +1,6 @@
 # Non-shell, auditable provisioning execution jobs.
 
+import filecmp
 import json
 import os
 import subprocess
@@ -65,8 +66,9 @@ class ProvisionExecutor:
                 else:
                     handle.write("%s=%s\n" % (
                         key, "y" if value in ("y", True) else value))
-        commands = [["make", "olddefconfig"], ["make"]]
-        commands.append(self._flash_command(plan, image))
+        kconfig_arg = "KCONFIG_CONFIG=%s" % config_path
+        commands = [["make", kconfig_arg, "olddefconfig"],
+                    ["make", kconfig_arg]]
         completed = []
         started = self.clock()
         try:
@@ -75,11 +77,34 @@ class ProvisionExecutor:
                     raise ProvisionBlocked("job cancelled before %s" % command[0])
                 self.runner(command, cwd)
                 completed.append(command)
+            built = self._built_artifact(plan, cwd)
+            if not os.path.isfile(built):
+                raise ProvisionBlocked("build did not produce %s" % built)
+            # Verify again after the build. This closes the case where the
+            # supplied image aliases the build output and was overwritten
+            # after the preflight verification.
+            if not self.verifier(image):
+                raise ProvisionBlocked("signed image verification required")
+            if not filecmp.cmp(built, image, shallow=False):
+                raise ProvisionBlocked(
+                    "built artifact does not match the verified signed image")
+            flash_command = self._flash_command(plan, image)
+            if cancel is not None and cancel():
+                raise ProvisionBlocked("job cancelled before %s"
+                                       % flash_command[0])
+            self.runner(flash_command, cwd)
+            completed.append(flash_command)
         except Exception as exc:
             self._audit(plan, image, started, "failed", completed, str(exc))
             raise
         self._audit(plan, image, started, "complete", completed, "")
         return completed
+
+    @staticmethod
+    def _built_artifact(plan, cwd):
+        filename = ("klipper.uf2" if plan.method == "rp2040-usb"
+                    else "klipper.bin")
+        return os.path.join(cwd, "out", filename)
 
     @staticmethod
     def _flash_command(plan, image):
@@ -95,9 +120,20 @@ class ProvisionExecutor:
         if plan.method == "katapult-can":
             return ["python3", "lib/katapult/scripts/flash_can.py", "-i",
                     "can0", "-u", ident, "-f", image]
-        if plan.method in ("katapult-usb", "rp2040-usb", "serial"):
-            return ["make", "flash", "FLASH_DEVICE=%s" % ident,
-                    "FLASH_FILE=%s" % image]
+        if plan.method == "rp2040-usb":
+            return ["python3", "scripts/flash_usb.py", "-t", plan.mcu,
+                    "-d", ident, image]
+        if plan.method == "katapult-usb":
+            address = 0x08000000
+            for key in plan.kconfig:
+                prefix = "CONFIG_STM32_FLASH_START_"
+                if key.startswith(prefix):
+                    address = int("0800%s" % key[len(prefix):].zfill(4), 16)
+            return ["python3", "scripts/flash_usb.py", "-t", plan.mcu,
+                    "-d", ident, "-s", str(address), image]
+        if plan.method == "serial":
+            raise ProvisionBlocked(
+                "serial flashing cannot guarantee the verified image path")
         raise ProvisionBlocked("flash method %s requires manual action"
                                % plan.method)
 

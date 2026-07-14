@@ -23,6 +23,12 @@ BOARD = load_board({
     "kconfig": {"CONFIG_MACH_STM32F446": "y",
                 "CONFIG_STM32_FLASH_START_8000": "y"},
 })
+PICO = load_board({
+    "id": "pico", "name": "Pico", "mcu": "rp2040",
+    "flash_method": "rp2040-usb", "usb_ids": ["2e8a:0003"],
+    "kconfig": {"CONFIG_MACH_RP2040": "y", "CONFIG_USB": "y",
+                "CONFIG_USBSERIAL": "y"},
+})
 
 
 def test_real_ed25519_verifier_fails_closed():
@@ -53,9 +59,15 @@ def test_executor_uses_argv_signed_gate_and_private_audit():
         image = pathlib.Path(tmp) / "signed.bin"
         image.write_bytes(b"signed")
         commands = []
+        def run(argv, cwd):
+            commands.append((argv, cwd))
+            if argv[0] == "make" and "olddefconfig" not in argv:
+                output = pathlib.Path(cwd) / "out" / "klipper.bin"
+                output.parent.mkdir(exist_ok=True)
+                output.write_bytes(image.read_bytes())
         executor = ProvisionExecutor(
             pathlib.Path(tmp) / "audit.json",
-            runner=lambda argv, cwd: commands.append((argv, cwd)))
+            runner=run)
         try:
             executor.execute(plan, image, confirmed=True)
         except ProvisionBlocked as exc:
@@ -67,6 +79,9 @@ def test_executor_uses_argv_signed_gate_and_private_audit():
         assert done == [entry[0] for entry in commands]
         assert all(isinstance(arg, list) for arg, _ in commands)
         assert commands[-1][0][0] == "dfu-util"
+        assert commands[-1][0][-1] == str(image.resolve())
+        assert all(any(arg.startswith("KCONFIG_CONFIG=") for arg in cmd)
+                   for cmd, _ in commands[:2])
         audit = pathlib.Path(tmp) / "audit.json"
         assert (audit.stat().st_mode & 0o777) == 0o600
         assert json.loads(audit.read_text())[0]["status"] == "complete"
@@ -100,8 +115,13 @@ def test_fleet_remediation_reuses_signed_executor():
         plan = build_plan(BOARD, target, klipper_dir=tmp)
         image = pathlib.Path(tmp) / "signed.bin"
         image.write_bytes(b"x")
+        def run(argv, cwd):
+            if argv[0] == "make" and "olddefconfig" not in argv:
+                output = pathlib.Path(cwd) / "out" / "klipper.bin"
+                output.parent.mkdir(exist_ok=True)
+                output.write_bytes(image.read_bytes())
         executor = ProvisionExecutor(pathlib.Path(tmp) / "audit.json",
-                                     runner=lambda argv, cwd: None,
+                                     runner=run,
                                      verifier=lambda path: True)
         report = check_board(
             "host", 0x00010001,
@@ -109,8 +129,46 @@ def test_fleet_remediation_reuses_signed_executor():
         commands = remediate_board(
             report, executor, plan, image, confirmed=True)
         assert commands[-1][0] == "dfu-util"
-        print("PASS: fleet repair is the same confirmed signed "
-              "provisioning job")
+    print("PASS: fleet repair is the same confirmed signed "
+          "provisioning job")
+
+
+def test_mismatched_build_never_reaches_flash():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = DetectedBoard("dfu", "0483:df11", [BOARD])
+        plan = build_plan(BOARD, target, klipper_dir=tmp)
+        image = pathlib.Path(tmp) / "signed.bin"
+        image.write_bytes(b"signed release")
+        commands = []
+        def run(argv, cwd):
+            commands.append(argv)
+            if argv[0] == "make" and "olddefconfig" not in argv:
+                output = pathlib.Path(cwd) / "out" / "klipper.bin"
+                output.parent.mkdir(exist_ok=True)
+                output.write_bytes(b"different build")
+        executor = ProvisionExecutor(pathlib.Path(tmp) / "audit.json",
+                                     runner=run,
+                                     verifier=lambda path: True)
+        try:
+            executor.execute(plan, image, confirmed=True)
+        except ProvisionBlocked as exc:
+            assert "does not match" in str(exc)
+        else:
+            raise AssertionError("mismatched build reached the flash command")
+        assert not any(command[0] == "dfu-util" for command in commands)
+        print("PASS: byte mismatch between build and signed image blocks flash")
+
+
+def test_rp2040_flash_command_names_verified_image_directly():
+    path = "/dev/serial/by-id/usb-Klipper_rp2040_test-if00"
+    target = DetectedBoard("klipper-usb", path, [PICO])
+    plan = build_plan(PICO, target)
+    image = "/verified/release/klipper.uf2"
+    command = ProvisionExecutor._flash_command(plan, image)
+    assert command == ["python3", "scripts/flash_usb.py", "-t", "rp2040",
+                       "-d", path, image]
+    assert "FLASH_FILE=" not in " ".join(command)
+    print("PASS: RP2040 flasher receives the exact verified image path")
 
 
 def main():
@@ -118,6 +176,8 @@ def main():
     test_executor_uses_argv_signed_gate_and_private_audit()
     test_hard_blockers_cannot_be_confirmed_away()
     test_fleet_remediation_reuses_signed_executor()
+    test_mismatched_build_never_reaches_flash()
+    test_rp2040_flash_command_names_verified_image_directly()
     print("ALL PASS")
 
 

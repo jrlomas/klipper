@@ -21,6 +21,7 @@ _RE_FLASH_START = re.compile(r"CONFIG_STM32_FLASH_START_([0-9A-Fa-f]+)$")
 @dataclass
 class BuildFlashPlan:
     board_id: str
+    mcu: str
     method: str
     kconfig: dict = field(default_factory=dict)
     steps: list = field(default_factory=list)      # shell commands, in order
@@ -66,7 +67,8 @@ def build_plan(board, target=None, klipper_dir="~/klipper",
     concrete device/uuid/port); when absent the plan uses placeholders and
     flags that the target must be filled in.
     """
-    plan = BuildFlashPlan(board_id=board.id, method=board.flash_method,
+    plan = BuildFlashPlan(board_id=board.id, mcu=board.mcu,
+                          method=board.flash_method,
                           kconfig=dict(board.kconfig), klipper_dir=klipper_dir,
                           config_out=config_out,
                           target_identifier=(target.identifier

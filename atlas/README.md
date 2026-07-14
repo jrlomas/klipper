@@ -32,7 +32,7 @@ honesty; Atlas gives it a mind.
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
 | `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
-| `provision/` | **A6** board catalog (53 boards), confidence-bounded USB/CAN detection (including running Klipper peers), planner, and non-shell confirmed job runner with real Ed25519 verification and private audit | ✅ hardware exercised |
+| `provision/` | **A6** board catalog (53 boards), confidence-bounded USB/CAN detection (including running Klipper peers), planner, and non-shell confirmed job runner with Ed25519 verification, build/artifact identity, exact-path flashing, and private audit | ✅ detection hardware-exercised; flash pending |
 | `fleet/` | **A7** protocol/ABI hash generated into every firmware dictionary + live `HELIX_STATUS` lockstep verdict; remediation reuses the signed provisioning runner | ✅ software; hardware transition pending |
 | `kb/` | **A8** blackbox bundle/redaction, consent-bound outbox, structured feedback, GitHub intake, and signed atomic catalog activation/rollback | ✅ |
 
