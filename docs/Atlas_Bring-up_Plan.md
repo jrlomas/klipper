@@ -215,6 +215,18 @@ F072** it was designed to fit.
 
 ## Phase 4 — Diagnosis & apply on a live machine (board rig)
 
+- [x] **Workstation host + V0 integration baseline.** *Do:* migrate the
+  printer data from its Pi SD card; run this Klipper branch with Moonraker and
+  the Atlas-enabled Mainsail fork; connect the SKR Pico and EBB36 over USB.
+  *Pass:* on 2026-07-13 all three services were enabled at boot, Klipper
+  reached `ready`, both MCUs configured, Mainsail served the live printer, and
+  an eight-second link sample advanced both MCUs' synchronized send/receive
+  sequences with zero new retransmissions and zero invalid bytes. Temperature
+  telemetry from the bed, hotend, chamber, Pico, EBB36, and workstation was
+  live. No homing or motion was performed. This test used Klipper's stock
+  USB/serial protocol; it did **not** exercise the HELIX datagram carrier,
+  `intentproto`, FEC, or the ESP32 modem path. It establishes the known-good
+  V0 control baseline, not the later V2.4 CAN or HELIX transport sign-off.
 - [ ] **Blackbox on a real fault.** *Do:* provoke a real fault; run
   `atlas diagnose`. *Expect:* a coherent incident narrative + a captured
   case (or a matched pattern). *Pass:* the narrative reflects what
