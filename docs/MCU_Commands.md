@@ -416,9 +416,9 @@ relays its beacons so secondary boards can discipline their clocks
   relayed beacon to a secondary - the primary's 'machine_clock' and the
   host's estimate of the secondary's local clock at that instant.
 
-* `timesync_setup freewheel_ticks=%u converge_window=%u` : Configures a
-  secondary's discipline filter with its freewheel budget and
-  convergence-error window.
+* `timesync_setup freewheel_ticks=%u converge_window=%u nominal_rate=%u` :
+  Starts a new secondary discipline epoch with its freewheel budget,
+  convergence-error window, and Q8.24 nominal local/machine clock ratio.
 
 * `timesync_query` : Generates a "timesync_state flags=%c prime_count=%c
   rate=%u last_err=%i machine_ref=%u local_ref=%u" response describing

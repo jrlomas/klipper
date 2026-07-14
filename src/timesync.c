@@ -42,8 +42,6 @@
 // one while retaining sub-ppm resolution throughout the supported range.
 #define RATE_MIN (RATE_ONE / 128)
 #define RATE_MAX (RATE_ONE * 128U)
-// Slew limit: at most 500ppm of rate bias per beacon interval
-#define MAX_SLEW ((int32_t)(RATE_ONE / 2000))
 // Largest per-interval rate correction considered meaningful (Q8.24)
 #define MAX_ADJ (RATE_ONE / 4)
 // Beacons blended before the filter leaves the priming phase
@@ -60,6 +58,7 @@ struct timesync_state {
     // Discipline filter state
     uint32_t rate_base; // PI integrator: clock ratio estimate, Q8.24
     uint32_t last_machine, last_local; // raw previous beacon sample
+    uint32_t prime_machine, prime_local; // first sample of priming span
     uint32_t beacon_rx_local; // local clock at last beacon receipt
     uint32_t freewheel_ticks; // stale budget in local ticks (0=none)
     uint32_t converge_window; // |err| bound in local ticks (0=priming only)
@@ -199,6 +198,8 @@ command_sync_beacon_relay(uint32_t *args)
     if (!(ts->flags & TS_PRIMED)) {
         // First beacon: step the mapping onto the sample
         timesync_set_mapping(ts, m, l, ts->rate_base);
+        ts->prime_machine = m;
+        ts->prime_local = l;
         ts->last_machine = m;
         ts->last_local = l;
         ts->beacon_rx_local = now;
@@ -210,18 +211,18 @@ command_sync_beacon_relay(uint32_t *args)
     if (dm <= 0)
         // Out-of-order or repeated machine timestamp
         return;
-    uint32_t dl = l - ts->last_local;
     if (ts->prime_count < PRIME_TARGET) {
-        // Priming: measure the raw crystal ratio across the interval
-        // and step the mapping onto each sample (Class-0 is not yet
-        // enabled, so steps are harmless).
-        uint32_t meas = clamp_rate(((uint64_t)dl << RATE_SHIFT) / dm);
-        if (ts->prime_count == 1)
-            ts->rate_base = meas;
-        else
+        // Priming: measure over the full span since the first sample.
+        // Per-interval estimates over the 50ms host burst magnify USB
+        // timestamp jitter and can seed the discipline loop far from the
+        // known nominal clock ratio.
+        int32_t prime_dm = m - ts->prime_machine;
+        uint32_t prime_dl = l - ts->prime_local;
+        if (prime_dm > 0)
             ts->rate_base = clamp_rate(
-                (int64_t)ts->rate_base
-                + ((int64_t)meas - ts->rate_base) / 2);
+                ((uint64_t)prime_dl << RATE_SHIFT) / prime_dm);
+        // Class-0 is not yet enabled, so stepping onto each priming sample
+        // is harmless.
         timesync_set_mapping(ts, m, l, ts->rate_base);
         ts->prime_count++;
     } else {
@@ -239,10 +240,11 @@ command_sync_beacon_relay(uint32_t *args)
             (int64_t)ts->rate_base + (adj >> 5));
         // Proportional: slew out a quarter of the offset per interval
         int32_t slew = adj >> 2;
-        if (slew > MAX_SLEW)
-            slew = MAX_SLEW;
-        else if (slew < -MAX_SLEW)
-            slew = -MAX_SLEW;
+        int32_t max_slew = ts->rate_base / 2000;
+        if (slew > max_slew)
+            slew = max_slew;
+        else if (slew < -max_slew)
+            slew = -max_slew;
         timesync_set_mapping(ts, m, predicted
                              , clamp_rate((int64_t)ts->rate_base + slew));
         ts->last_err = err;
@@ -273,15 +275,22 @@ void
 command_timesync_setup(uint32_t *args)
 {
     struct timesync_state *ts = &timesync;
-    if (!(ts->flags & TS_ENABLED)) {
-        ts->flags = TS_ENABLED;
-        ts->rate = ts->rate_base = RATE_ONE;
-    }
+    // Setup establishes a new host/MCU epoch. Never retain convergence or
+    // mapping anchors from an earlier Klipper configuration.
+    ts->flags = TS_ENABLED;
+    ts->rate = ts->rate_base = clamp_rate(args[2]);
+    ts->machine_ref = ts->local_ref = 0;
+    ts->last_machine = ts->last_local = 0;
+    ts->prime_machine = ts->prime_local = 0;
+    ts->beacon_rx_local = 0;
+    ts->last_err = 0;
+    ts->last_seq = ts->prime_count = ts->good_count = 0;
     ts->freewheel_ticks = args[0];
     ts->converge_window = args[1];
 }
 DECL_COMMAND(command_timesync_setup,
-             "timesync_setup freewheel_ticks=%u converge_window=%u");
+             "timesync_setup freewheel_ticks=%u converge_window=%u"
+             " nominal_rate=%u");
 
 void
 command_timesync_query(uint32_t *args)

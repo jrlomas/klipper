@@ -51,6 +51,10 @@ crystal ticks — but the contract changes:
   mismatch is then tracked around the nominal ratio. Conversion is one
   32×32→64 multiply plus shift **per segment at ingest** — never per step,
   and never on the interrupt path.
+* At setup, the host seeds this rate from the two advertised `CLOCK_FREQ`
+  constants. Beacon priming measures residual oscillator drift across the
+  full priming span; it does not try to rediscover a large nominal ratio
+  from individual short USB intervals.
 
 Rationale for ingest-time conversion over host-side conversion
 (today's model): it makes segments *identical for every board* (one

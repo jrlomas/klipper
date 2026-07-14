@@ -44,10 +44,13 @@ class SecondaryLink:
         self.name = mcu.get_name()
         self.mcu_freq = mcu.get_constant_float('CLOCK_FREQ')
         self.nominal_rate = self.mcu_freq / primary_freq
+        self.nominal_rate_raw = round(
+            self.nominal_rate * (1 << RATE_SHIFT))
         self.relay_cmd = mcu.lookup_command(
             'sync_beacon_relay seq=%c machine_clock=%u local_est=%u')
         self.setup_cmd = mcu.lookup_command(
-            'timesync_setup freewheel_ticks=%u converge_window=%u')
+            'timesync_setup freewheel_ticks=%u converge_window=%u'
+            ' nominal_rate=%u')
         self.query_cmd = mcu.lookup_query_command(
             'timesync_query',
             'timesync_state flags=%c prime_count=%c rate=%u last_err=%i'
@@ -58,7 +61,8 @@ class SecondaryLink:
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
-                             int(converge_window * self.mcu_freq)])
+                             int(converge_window * self.mcu_freq),
+                             self.nominal_rate_raw])
     def relay(self, seq, machine_clock, systime):
         local_est = int(_get_clocksync(self.mcu).systime_to_local_clock(
             systime))

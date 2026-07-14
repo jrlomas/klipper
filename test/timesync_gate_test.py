@@ -82,7 +82,8 @@ def test_secondary_freshness():
     link.query()
     assert link.is_converged(24.999)
     assert not link.is_converged(25.001)
-    assert mcu.commands['timesync_setup'].sent == [[5_000_000, 10]]
+    assert mcu.commands['timesync_setup'].sent == [
+        [5_000_000, 10, 1 << timesync.RATE_SHIFT]]
     assert mcu.commands['sync_beacon_relay'].sent == [[7, 1000, 20_000_000]]
 
 
@@ -93,6 +94,9 @@ def test_mixed_frequency_rate_representation():
     relative_error_ppm = (decoded / link.nominal_rate - 1.) * 1e6
     assert encoded < 2**32
     assert abs(relative_error_ppm) < .02
+    link.setup(5., .000010)
+    assert link.mcu.commands['timesync_setup'].sent == [
+        [320_000_000, 640, encoded]]
 
 
 class FakeStepperKinematics:
