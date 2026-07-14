@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(ROOT, 'klippy'))
 sys.path.insert(0, os.path.join(ROOT, 'klippy', 'extras'))
 
 import timesync
+import mcu as klippy_mcu
 sys.modules['chelper'] = types.ModuleType('chelper')
 import trajectory_queuing
 import trajectory_pwm
@@ -28,6 +29,13 @@ class FakeCommand:
 class FakeClockSync:
     def systime_to_local_clock(self, systime):
         return int(systime * 1_000_000.)
+
+
+def test_real_mcu_exposes_clocksync():
+    clocksync = object()
+    mcu = klippy_mcu.MCU.__new__(klippy_mcu.MCU)
+    mcu._clocksync = clocksync
+    assert mcu.get_clocksync() is clocksync
 
 
 class FakeMCU:
@@ -146,6 +154,8 @@ def test_value_trajectory_fails_before_fitter_advance():
 
 
 def main():
+    test_real_mcu_exposes_clocksync()
+    print("PASS: the real MCU API exposes its per-link clock regression")
     test_secondary_freshness()
     print("PASS: host freewheel freshness mirrors the firmware gate")
     test_trajectory_fails_before_fitter_advance()

@@ -1557,6 +1557,11 @@ class MCU:
     def get_constant_float(self, name):
         return self._serial.get_msgparser().get_constant_float(name)
     # ClockSync wrappers
+    def get_clocksync(self):
+        # Machine-time beacon relays need both directions of the per-link
+        # host/MCU regression, which are intentionally implemented by the
+        # ClockSync object rather than duplicated here.
+        return self._clocksync
     def print_time_to_clock(self, print_time):
         return self._clocksync.print_time_to_clock(print_time)
     def clock_to_print_time(self, clock):
