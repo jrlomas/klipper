@@ -79,7 +79,9 @@ local clock at the moment the primary's counter read `machine_clock` —
 using its per-link min-RTT-filtered offset measurements (the same
 technique `clocksync.py` uses today; measurement quality is anchored
 by the smallest observed round-trip, which is unaffected by mean
-latency).
+latency). A short trailing regression over those extended cross-link
+samples supplies the relay endpoint, reducing the leverage of any single
+USB regression update while retaining the measured oscillator ratio.
 
 On receipt, the secondary updates its (offset, rate) pair through a
 slew-limited proportional-integral filter: offset errors are corrected

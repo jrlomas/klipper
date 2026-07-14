@@ -567,10 +567,12 @@ The following information is available in the
 - `mcus.<mcu_name>.machine_ref` and `local_ref`: The current 32-bit mapping
   anchors published by the secondary micro-controller.
 - `mcus.<mcu_name>.relay_machine_clock`, `relay_local_est`, and
-  `sample_rate`: The latest host relay sample (using extended clocks) and
-  the local-ticks-per-machine-tick ratio measured between the two most recent
-  relay samples. These fields make host-regression and MCU-filter faults
-  distinguishable during bring-up.
+  `relay_rate`: The latest host relay sample (using extended clocks) and the
+  fitted local-ticks-per-machine-tick rate sent to the secondary.
+- `mcus.<mcu_name>.raw_local_est` and `sample_rate`: The unfiltered latest
+  cross-link estimate and ratio between the two most recent raw samples.
+  Comparing these with the relay fields makes host-regression noise and
+  MCU-filter faults distinguishable during bring-up.
 
 ## trajectory_queuing
 

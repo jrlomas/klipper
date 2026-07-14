@@ -39,8 +39,9 @@ def test_real_mcu_exposes_clocksync():
 
 
 class FakeMCU:
-    def __init__(self, frequency=1_000_000.):
+    def __init__(self, frequency=1_000_000., clocksync=None):
         self.frequency = frequency
+        self.clocksync = clocksync or FakeClockSync()
         self.commands = {
             'sync_beacon_relay': FakeCommand(),
             'timesync_setup': FakeCommand(),
@@ -60,7 +61,7 @@ class FakeMCU:
         return self.frequency
 
     def get_clocksync(self):
-        return FakeClockSync()
+        return self.clocksync
 
     def lookup_command(self, fmt):
         return self.commands[fmt.split()[0]]
@@ -100,6 +101,27 @@ def test_mixed_frequency_rate_representation():
     link.setup(5., .000010)
     assert link.mcu.commands['timesync_setup'].sent == [
         [320_000_000, 640, encoded]]
+
+
+class NoisyClockSync:
+    def __init__(self, noise):
+        self.noise = iter(noise)
+
+    def systime_to_local_clock(self, systime):
+        return int(systime * 1_000_000.) + next(self.noise)
+
+
+def test_relay_regression_rejects_endpoint_jitter():
+    noise = [0, 100, -100, 50, -50, 80, -80, 1000]
+    mcu = FakeMCU(clocksync=NoisyClockSync(noise))
+    link = timesync.SecondaryLink(mcu, 1_000_000.)
+    for index in range(8):
+        link.relay(index, index * 1_000_000, float(index))
+    raw = 7_001_000
+    sent = mcu.commands['sync_beacon_relay'].sent[-1][2]
+    assert link.last_raw_local_est == raw
+    assert abs(sent - 7_000_000) < abs(raw - 7_000_000) / 2
+    assert abs(link.relay_rate - 1.) < .0001
 
 
 class FakeStepperKinematics:
@@ -177,6 +199,8 @@ def main():
     print("PASS: host freewheel freshness mirrors the firmware gate")
     test_mixed_frequency_rate_representation()
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
+    test_relay_regression_rejects_endpoint_jitter()
+    print("PASS: relay regression suppresses noisy endpoint estimates")
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
     test_value_trajectory_fails_before_fitter_advance()

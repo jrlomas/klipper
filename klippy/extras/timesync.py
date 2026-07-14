@@ -29,6 +29,7 @@ PRIME_INTERVAL = 0.050
 FREEWHEEL_TIME = 5.0        # doc 01 freewheel budget on beacon loss
 CONVERGE_WINDOW = 0.000010  # +-10us inter-MCU sync error target
 RATE_SHIFT = 24             # firmware Q8.24 local/machine tick ratio
+RELAY_FIT_SAMPLES = 16      # smooth cross-link regression endpoint jitter
 
 # timesync_state flag bits (must match src/timesync.c)
 TS_ENABLED = 1
@@ -60,22 +61,44 @@ class SecondaryLink:
         self.last_beacon_time = None
         self.last_machine_clock = None
         self.last_local_est = None
+        self.last_raw_local_est = None
         self.sample_rate = None
+        self.relay_rate = None
+        self.relay_samples = []
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
                              int(converge_window * self.mcu_freq),
                              self.nominal_rate_raw])
     def relay(self, seq, machine_clock, systime):
-        local_est = int(_get_clocksync(self.mcu).systime_to_local_clock(
+        raw_local_est = int(_get_clocksync(self.mcu).systime_to_local_clock(
             systime))
         if self.last_machine_clock is not None:
             machine_delta = machine_clock - self.last_machine_clock
-            local_delta = local_est - self.last_local_est
+            local_delta = raw_local_est - self.last_raw_local_est
             if machine_delta > 0:
                 self.sample_rate = local_delta / machine_delta
+        self.relay_samples.append((machine_clock, raw_local_est))
+        del self.relay_samples[:-RELAY_FIT_SAMPLES]
+        local_est = raw_local_est
+        if len(self.relay_samples) >= 3:
+            # Regress with x relative to the current machine clock. This
+            # preserves float precision for long-running 64-bit epochs and
+            # estimates the current endpoint from the whole trailing span,
+            # reducing the leverage of one noisy USB regression update.
+            xs = [m - machine_clock for m, _l in self.relay_samples]
+            ys = [l for _m, l in self.relay_samples]
+            xmean = sum(xs) / len(xs)
+            ymean = sum(ys) / len(ys)
+            variance = sum((x - xmean) ** 2 for x in xs)
+            if variance:
+                covariance = sum((x - xmean) * (y - ymean)
+                                 for x, y in zip(xs, ys))
+                self.relay_rate = covariance / variance
+                local_est = int(round(ymean - self.relay_rate * xmean))
         self.last_machine_clock = machine_clock
         self.last_local_est = local_est
+        self.last_raw_local_est = raw_local_est
         self.relay_cmd.send([seq, machine_clock & 0xffffffff,
                              local_est & 0xffffffff])
         # systime is the host-monotonic instant corresponding to the
@@ -201,12 +224,13 @@ class MachineTimeSync:
             state = link.query()
             logging.debug(
                 "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
-                " sample_rate=%s flags=%d prime=%d rate=%d err=%d"
+                " raw_l=%s sample_rate=%s relay_rate=%s"
+                " flags=%d prime=%d rate=%d err=%d"
                 " map_m=%d map_l=%d",
                 link.name, link.last_machine_clock, link.last_local_est,
-                link.sample_rate, state['flags'], state['prime_count'],
-                state['rate'], state['last_err'], state['machine_ref'],
-                state['local_ref'])
+                link.last_raw_local_est, link.sample_rate, link.relay_rate,
+                state['flags'], state['prime_count'], state['rate'],
+                state['last_err'], state['machine_ref'], state['local_ref'])
             converged = link.is_converged(self.reactor.monotonic())
             if self._last_converged.get(link.name) != converged:
                 logging.info(
@@ -243,7 +267,9 @@ class MachineTimeSync:
                 'local_ref': link.last_state.get('local_ref', 0),
                 'relay_machine_clock': link.last_machine_clock,
                 'relay_local_est': link.last_local_est,
+                'raw_local_est': link.last_raw_local_est,
                 'sample_rate': link.sample_rate,
+                'relay_rate': link.relay_rate,
             } for link in self.secondaries},
         }
     cmd_TIMESYNC_STATUS_help = "Report machine-time beacon discipline state"
