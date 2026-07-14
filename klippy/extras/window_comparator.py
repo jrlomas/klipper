@@ -38,9 +38,9 @@ class WindowComparator:
         self._last_lower_trigger_time = 0.0
 
         # Register response handlers with OID
-        self.mcu.register_response(
+        self.mcu.register_serial_response(
             self._handle_comp_upper_trigger, "comp_upper_trigger")
-        self.mcu.register_response(
+        self.mcu.register_serial_response(
             self._handle_comp_lower_trigger, "comp_lower_trigger")
 
         # Register with MCU - moved to build_config
@@ -94,7 +94,7 @@ class WindowComparator:
         self.mcu.add_config_cmd(
             "config_comp oid=%d pin=%s upper=%d lower=%d" % (
                 self.oid, self.pin, self.upper_threshold, self.lower_threshold))
-        self.mcu.register_response(
+        self.mcu.register_serial_response(
             self._handle_comp_state, "comp_state", self.oid)
 
     def _handle_comp_upper_trigger(self, params):
