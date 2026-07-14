@@ -174,6 +174,7 @@ class AnchorFFI:
         self.active_time = active_time
         self.checked_to = []
         self.generated_to = []
+        self.finalized = 0
 
     def itersolve_check_active(self, sk, flush_time):
         self.checked_to.append(flush_time)
@@ -187,6 +188,10 @@ class AnchorFFI:
 
     def segfit_generate(self, segfit, flush_time):
         self.generated_to.append(flush_time)
+        return 0
+
+    def segfit_finalize(self, segfit):
+        self.finalized += 1
         return 0
 
     def segfit_get_segs(self, segfit):
@@ -245,6 +250,7 @@ def test_trajectory_anchor_starts_at_activity():
     assert anchors == [12.5]
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
+    assert ffi_lib.finalized == 1
 
 
 def test_rebase_waits_for_previous_horizon():

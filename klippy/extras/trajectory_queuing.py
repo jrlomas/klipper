@@ -397,16 +397,24 @@ class TrajectoryStepper:
             n = 0
         self._send_segs(n)
         self._record_intention(prev_acc, prev_time)
+        # Do not retain a valid candidate across host flush callbacks.  A
+        # long constant-velocity phase may keep fitting until the 4.096s wire
+        # duration cap; if it is only emitted then, its declared start clock
+        # is already seconds in the past.  Seal the prefix generated for this
+        # step-generation horizon so every queued segment is delivered while
+        # it is still future motion.
+        prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
+        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+        n = self.ffi_lib.segfit_finalize(self.segfit)
+        if n < 0:
+            logging.warning("segfit finalize overflow on %s", self.name)
+            n = 0
+        if n > 0:
+            self._send_segs(n)
+        self._record_intention(prev_acc, prev_time)
         if not active_time:
-            # Motion has ended: flush the partial span so the joint
-            # lands exactly on target, then drop the anchor (the next
-            # motion re-anchors with a fresh rebase).
-            prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
-            prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-            n = self.ffi_lib.segfit_finalize(self.segfit)
-            if n > 0:
-                self._send_segs(n)
-            self._record_intention(prev_acc, prev_time)
+            # Motion has ended: drop the anchor (the next motion re-anchors
+            # with a fresh rebase).
             self.rebase_min_clock = int(self.mcu.print_time_to_clock(
                 self.ffi_lib.segfit_get_gen_time(self.segfit)))
             self.anchored = False

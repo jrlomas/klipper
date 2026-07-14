@@ -91,6 +91,32 @@ def main():
     assert profiles[0]
     assert max(abs(v) for _, v, _ in profiles[0]) < 2**31 - 1
     print("PASS: CoreXY X homing emits matching bounded A/B profiles")
+
+    # Reproduce a long sensorless-homing cruise while the host advances its
+    # generation horizon in 250ms increments.  Each callback must finalize
+    # and send that prefix; retaining it until the 4.096s protocol cap would
+    # make the segment start clock several seconds stale.
+    stream_tq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    lib.trapq_append(stream_tq, 30., 0., 8., 0., 0., 0., 0.,
+                     1., 0., 0., 20., 20., 0.)
+    stream_sk = ffi.gc(lib.corexy_stepper_alloc(b'+'), lib.free)
+    lib.itersolve_set_trapq(stream_sk, stream_tq, .00625)
+    stream_sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    stream_su_per_mm = 65536. / .00625
+    lib.segfit_setup(stream_sf, stream_sk, MCU_FREQ, stream_su_per_mm,
+                     32768., SAMPLE_TIME)
+    lib.segfit_set_anchor(stream_sf, 30., 0)
+    streamed = []
+    for index in range(1, 21):
+        horizon = 30. + index * .250
+        streamed.extend(collect_segments(lib, stream_sf, horizon))
+        assert abs(lib.segfit_get_gen_time(stream_sf) - horizon) < 2.e-6
+    assert streamed
+    assert max(duration for duration, _, _ in streamed) <= .251 * MCU_FREQ
+    velocities = [velocity for _, velocity, _ in streamed]
+    assert all(abs(velocity - 1145325) <= 128
+               for velocity in velocities), velocities
+    print("PASS: incremental homing flush seals every <=251ms prefix")
     return 0
 
 

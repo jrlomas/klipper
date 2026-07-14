@@ -72,7 +72,10 @@ For each migrated joint, per flush interval:
 The flush callback fits through Klipper's **step-generation horizon**
 (`step_gen_time`), not the earlier queue-commit horizon (`flush_time`).  This
 matches the legacy itersolve/stepcompress contract and keeps a freshly emitted
-anchor from already being due when it reaches the MCU.
+anchor from already being due when it reaches the MCU.  It also seals and
+emits the valid partial fit at every callback boundary.  Otherwise a long
+constant-velocity span would remain pending until the 4.096-second duration
+cap and arrive with a start clock several seconds in the past.
 
 The sampled kinematic coordinate is logical joint space, while homing and
 `SET_POSITION` may leave the MCU in a different physical step coordinate.
