@@ -176,8 +176,10 @@ class McuExecLog:
             oid=self.oid, cq=cq)
         self.dump_cmd = self.mcu.lookup_command(
             "execlog_dump oid=%c seq=%u count=%c", cq=cq)
-        self.mcu.register_serial_response(self._handle_data, "execlog_data",
-                                          self.oid)
+        self.mcu.register_serial_response(
+            self._handle_data,
+            "execlog_data oid=%c seq=%u type=%c src=%c clock=%u pos=%i"
+            " aux=%u", self.oid)
 
     def _handle_data(self, params):
         self.records.append(

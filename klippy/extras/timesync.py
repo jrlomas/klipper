@@ -128,7 +128,7 @@ class MachineTimeSync:
             logging.info("timesync: no secondary mcus to discipline")
             return
         primary.register_serial_response(self._handle_sync_beacon,
-                                         'sync_beacon')
+                                         'sync_beacon seq=%c clock=%u')
         for link in self.secondaries:
             link.setup(self.freewheel_time, self.converge_window)
         # Priming burst, then drop to the 1 Hz cadence (doc 01 startup)

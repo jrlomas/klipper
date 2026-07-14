@@ -19,6 +19,11 @@ sys.modules["mcu"] = fake_mcu_module
 
 from extras import atlas_trace  # noqa: E402
 
+TRACE_DATA_RESPONSE = (
+    "trace_data oid=%c seq=%u clock=%u event=%hu sub=%c level=%c data=%*s")
+TRACE_STATUS_RESPONSE = (
+    "trace_status oid=%c next_seq=%u oldest_seq=%u dropped=%u")
+
 
 class FakeCommand:
     def __init__(self):
@@ -196,7 +201,7 @@ def test_trace_data_renders_and_writes_common_time():
         output = os.path.join(tmp, "trace.jsonl")
         manager, printer, mcus = _setup(output)
         manager._ready()
-        callback = mcus["ebb36"].responses[("trace_data", 7)]
+        callback = mcus["ebb36"].responses[(TRACE_DATA_RESPONSE, 7)]
         callback({
             "oid": 7, "seq": 4, "clock": 2_000_000,
             "event": 1, "sub": 1, "level": 1,
@@ -217,12 +222,12 @@ def test_sequence_gaps_and_firmware_drops_are_visible():
     with tempfile.TemporaryDirectory() as tmp:
         manager, printer, mcus = _setup(os.path.join(tmp, "trace.jsonl"))
         manager._ready()
-        data_cb = mcus["mcu"].responses[("trace_data", 7)]
+        data_cb = mcus["mcu"].responses[(TRACE_DATA_RESPONSE, 7)]
         base = {"oid": 7, "clock": 1, "event": 1, "sub": 1,
                 "level": 2, "data": b""}
         data_cb(dict(base, seq=1))
         data_cb(dict(base, seq=4))
-        status_cb = mcus["mcu"].responses[("trace_status", 7)]
+        status_cb = mcus["mcu"].responses[(TRACE_STATUS_RESPONSE, 7)]
         status_cb({"next_seq": 10, "oldest_seq": 6, "dropped": 3})
         status = manager.links["mcu"].get_status()
         assert status["sequence_gaps"] == 2

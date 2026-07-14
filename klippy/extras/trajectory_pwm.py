@@ -256,8 +256,9 @@ class TrajectoryPWM:
         self.oid = self.mcu.create_oid()
         self.mcu.request_move_queue_slot()
         # Route this actuator's underrun events now that the oid exists.
-        self.mcu.register_serial_response(self._handle_underrun,
-                                          "traj_underrun", self.oid)
+        self.mcu.register_serial_response(
+            self._handle_underrun,
+            "traj_underrun oid=%c clock=%u pos=%i", self.oid)
         self.max_value = int(self.mcu.get_constant_float("PWM_MAX"))
         cycle_ticks = self.mcu.seconds_to_clock(self.cycle_time)
         sample_ticks = max(1, self.mcu.seconds_to_clock(self.sample_time))

@@ -562,8 +562,9 @@ class TrajectoryQueuing:
         ts = TrajectoryStepper(self, mcu_stepper, config)
         self.steppers.append(ts)
         mcu = mcu_stepper.get_mcu()
-        mcu.register_serial_response(self._handle_underrun, "traj_underrun",
-                                     mcu_stepper.get_oid())
+        mcu.register_serial_response(
+            self._handle_underrun,
+            "traj_underrun oid=%c clock=%u pos=%i", mcu_stepper.get_oid())
         return ts
 
     def get_trajectory_steppers(self):

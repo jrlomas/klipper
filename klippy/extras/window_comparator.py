@@ -39,9 +39,9 @@ class WindowComparator:
 
         # Register response handlers with OID
         self.mcu.register_serial_response(
-            self._handle_comp_upper_trigger, "comp_upper_trigger")
+            self._handle_comp_upper_trigger, "comp_upper_trigger pin=%u")
         self.mcu.register_serial_response(
-            self._handle_comp_lower_trigger, "comp_lower_trigger")
+            self._handle_comp_lower_trigger, "comp_lower_trigger pin=%u")
 
         # Register with MCU - moved to build_config
         self.mcu.register_config_callback(self._build_config)
@@ -95,7 +95,9 @@ class WindowComparator:
             "config_comp oid=%d pin=%s upper=%d lower=%d" % (
                 self.oid, self.pin, self.upper_threshold, self.lower_threshold))
         self.mcu.register_serial_response(
-            self._handle_comp_state, "comp_state", self.oid)
+            self._handle_comp_state,
+            "comp_state oid=%c pin=%u in_window=%c upper_out=%c lower_out=%c",
+            self.oid)
 
     def _handle_comp_upper_trigger(self, params):
         """Handle upper threshold exceeded trigger"""

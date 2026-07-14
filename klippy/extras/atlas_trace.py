@@ -153,9 +153,13 @@ class AtlasTraceLink:
             "trace_stream oid=%c max_per_wake=%c", cq=cq)
         self.query_cmd = self.mcu.lookup_command("trace_query oid=%c", cq=cq)
         self.mcu.register_serial_response(
-            self._handle_data, "trace_data", self.oid)
+            self._handle_data,
+            "trace_data oid=%c seq=%u clock=%u event=%hu sub=%c level=%c"
+            " data=%*s", self.oid)
         self.mcu.register_serial_response(
-            self._handle_status, "trace_status", self.oid)
+            self._handle_status,
+            "trace_status oid=%c next_seq=%u oldest_seq=%u dropped=%u",
+            self.oid)
         self.renderer = TraceRenderer(
             self.mcu.get_enumerations(), self.mcu.get_constants())
 
