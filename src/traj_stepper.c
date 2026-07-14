@@ -58,6 +58,13 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
 {
     struct trajq *tq = &s->tq;
     int32_t dir = s->dir;
+    // A boundary wake may enter here with the segment already exhausted.
+    // In particular, a pure hold has zero velocity throughout.  Treating
+    // that state as another zero-velocity poll would reschedule the timer at
+    // the same (now expired) segment-end clock forever instead of allowing
+    // traj_stepper_schedule() to advance the queue.
+    if (s->t_prev >= tq->duration)
+        return 0;
     // Does this segment reach the target at all?
     if (dir > 0 ? s->q16_end < s->target16 : s->q16_end > s->target16)
         return 0;
@@ -108,6 +115,22 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
     *step_t = t;
     return 1;
 }
+
+#if CONFIG_WANT_SELF_TEST
+// Exercise the exact state reached at a pure-hold boundary without touching
+// GPIO or the live queue.  The built-in trajectory kernel self-test calls
+// this on real silicon as a regression for same-clock timer livelock.
+uint_fast8_t
+traj_stepper_test_hold_boundary(void)
+{
+    struct traj_stepper s = { };
+    uint32_t step_t = 0;
+    s.tq.duration = 12000;
+    s.t_prev = s.tq.duration;
+    s.dir = -1;
+    return traj_solve_step(&s, &step_t) == 0;
+}
+#endif
 
 // Set up solver state when a segment becomes active
 static void

@@ -22,6 +22,7 @@
 #include "autoconf.h" // CONFIG_WANT_TRAJECTORY
 #if CONFIG_WANT_TRAJECTORY
 #include "trajq.h" // trajq_end_delta
+uint_fast8_t traj_stepper_test_hold_boundary(void);
 #endif
 
 enum {
@@ -128,6 +129,10 @@ test_traj_kernel(uint32_t *value)
             *value = (uint32_t)(i << 16) | (uint32_t)(got & 0xffff);
             return ST_FAIL;
         }
+    }
+    if (!traj_stepper_test_hold_boundary()) {
+        *value = 0x80000000;
+        return ST_FAIL;
     }
     *value = ARRAY_SIZE(traj_golden);
     return ST_PASS;
