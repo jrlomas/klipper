@@ -232,10 +232,11 @@ def test_sequence_gaps_and_firmware_drops_are_visible():
         data_cb(dict(base, seq=1))
         data_cb(dict(base, seq=4))
         status_cb = mcus["mcu"].responses[(TRACE_STATUS_RESPONSE, 7)]
-        status_cb({"next_seq": 10, "oldest_seq": 6, "dropped": 3})
+        status_cb({"next_seq": 10, "oldest_seq": 6, "dropped": 1})
         status = manager.links["mcu"].get_status()
         assert status["sequence_gaps"] == 2
-        assert status["dropped"] == 3
+        assert status["dropped"] == 1
+        assert status["unaccounted_gaps"] == 1
         assert status["next_seq"] == 10 and status["oldest_seq"] == 6
         print("PASS: host sequence gaps and firmware drops remain explicit")
 

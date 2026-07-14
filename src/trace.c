@@ -171,6 +171,12 @@ command_trace_query(uint32_t *args)
     uint32_t oldest = next > t->size ? next - t->size : 0;
     sendf("trace_status oid=%c next_seq=%u oldest_seq=%u dropped=%u"
           , t->oid, next, oldest, dropped);
+    // A query is also the paced opportunity to drain one more batch. Avoid
+    // immediately re-waking trace_task when a batch is exhausted: that can
+    // outrun the MCU response queue and create losses outside the ring's
+    // explicit accounting on slower links.
+    if (t->stream_max && t->stream_next < next)
+        sched_wake_task(&trace_wake);
 }
 DECL_COMMAND(command_trace_query, "trace_query oid=%c");
 
@@ -224,10 +230,8 @@ trace_task(void)
         irq_enable();
         if (seq >= next)
             break;
-        if (!budget--) {
-            sched_wake_task(&trace_wake);
+        if (!budget--)
             break;
-        }
         struct trace_record r;
         if (trace_fetch(t, seq, &r))
             trace_send(t, &r);

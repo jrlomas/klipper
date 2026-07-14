@@ -546,6 +546,22 @@ objects:
   temperature seen by the sensor since the Klipper host software was
   last restarted.
 
+## atlas_trace
+
+The following information is available in the
+[atlas_trace](Config_Reference.md#atlas_trace) object:
+- `output`, `write_errors`, `ring_size`, and `stream_max`: The JSONL target,
+  host write failures, per-MCU ring capacity, and configured send budget.
+- `mcus.<mcu_name>.available` and `reason`: Whether that board advertises
+  trace support, with an explanation for rolling-upgrade peers that do not.
+- `records`, `last_seq`, and `last_machine_time`: Records accepted by the
+  host and the latest sequence/time observed.
+- `sequence_gaps`, `dropped`, and `unaccounted_gaps`: Total gaps observed by
+  the host, ring overwrites explicitly counted by firmware, and any remaining
+  transport/response-queue gaps not explained by those overwrites.
+- `next_seq` and `oldest_seq`: The firmware ring's current half-open sequence
+  bounds.
+
 ## timesync
 
 The following information is available in the

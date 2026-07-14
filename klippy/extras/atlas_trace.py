@@ -237,6 +237,7 @@ class AtlasTraceLink:
         self.dropped = params["dropped"]
 
     def get_status(self):
+        unaccounted_gaps = max(0, self.sequence_gaps - self.dropped)
         return {
             "available": self.available,
             "reason": self.reason,
@@ -247,6 +248,7 @@ class AtlasTraceLink:
             "next_seq": self.next_seq,
             "oldest_seq": self.oldest_seq,
             "dropped": self.dropped,
+            "unaccounted_gaps": unaccounted_gaps,
         }
 
 
@@ -324,10 +326,11 @@ class AtlasTrace:
             status = link.get_status()
             lines.append(
                 "%s: available=%s records=%d gaps=%d next=%d oldest=%d "
-                "dropped=%d" % (
+                "dropped=%d unaccounted=%d" % (
                     name, status["available"], status["records"],
                     status["sequence_gaps"], status["next_seq"],
-                    status["oldest_seq"], status["dropped"]))
+                    status["oldest_seq"], status["dropped"],
+                    status["unaccounted_gaps"]))
         gcmd.respond_info("\n".join(lines))
 
     def cmd_ATLAS_TRACE_LEVEL(self, gcmd):

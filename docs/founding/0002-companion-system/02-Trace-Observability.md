@@ -10,7 +10,9 @@ is [`atlas/timeline.py`](../../../atlas/timeline.py); the live viewer is
 [`atlas/view.py`](../../../atlas/view.py). The firmware side is software-
 authored and hardware-unvalidated (it mirrors `execlog.c`
 primitive-for-primitive), consistent with HELIX 0.9's status — it needs an
-on-target bring-up before "it works" is true.
+on-target bring-up before "it works" is true. The streamer drains at most one
+configured batch per wake; a periodic host status query paces any backlog so
+the MCU response queue cannot become a second, unaccounted drop point.
 
 Everything else in Atlas reads a timeline. Before there can be a decoder,
 a diagnosis engine, or a companion that answers "why did my print fail?",
