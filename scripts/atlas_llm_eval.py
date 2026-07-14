@@ -14,8 +14,8 @@ from atlas.eval.samples import SAMPLE_PATTERNS  # noqa: E402
 from atlas.model import DEPLOY, LlamaCppBackend  # noqa: E402
 
 
-def main(model_path, cli_path=None):
-    backend = LlamaCppBackend(model_path=model_path, accelerator="cpu",
+def main(model_path, cli_path=None, accelerator="cpu"):
+    backend = LlamaCppBackend(model_path=model_path, accelerator=accelerator,
                               profile=DEPLOY, params_b=4.0,
                               quant="Q4_K_M", n_ctx=DEPLOY.context,
                               cli_path=cli_path)
@@ -48,5 +48,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("model", help="local Qwen3-4B Q4_K_M GGUF")
     parser.add_argument("--cli", help="path to llama-completion")
+    parser.add_argument("--accelerator", choices=("cpu", "cuda", "rocm"),
+                        default="cpu",
+                        help="runtime selected by the supplied llama.cpp binary")
     args = parser.parse_args()
-    sys.exit(main(args.model, args.cli))
+    sys.exit(main(args.model, args.cli, args.accelerator))

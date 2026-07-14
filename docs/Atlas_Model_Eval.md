@@ -1,9 +1,8 @@
 # Atlas Pinned-Model Evaluation
 
-Status: **Workstation CPU preflight passed on 2026-07-13; CUDA and ROCm
-runtime builds pass, but GPU execution and Pi 5 + Hailo-10H validation remain
-pending.** This is evidence for the local model path, not a claim that the
-deploy hardware is validated.
+Status: **Workstation CPU preflight and CUDA/ROCm GPU smoke tests passed on
+2026-07-13; Pi 5 + Hailo-10H validation remains pending.** This is evidence
+for the local model path, not a claim that the deploy hardware is validated.
 
 ## Artifact and budget
 
@@ -26,20 +25,28 @@ Command:
 
 ```console
 $ python3 scripts/atlas_llm_eval.py /path/to/Qwen3-4B-Q4_K_M.gguf \
-    --cli /path/to/llama-completion
+    --cli /path/to/llama-completion --accelerator cuda
 ```
 
 | Metric | Result |
 | --- | ---: |
-| Structured config-edit correctness | 4 / 4 (100%) |
+| CUDA structured config-edit correctness | 4 / 4 (100%) |
+| ROCm structured config-edit correctness | 4 / 4 (100%) |
 | Deterministic diagnosis | 2 / 2 (100%) |
 | Deterministic safety classification | 3 / 3 (100%) |
-| Overall | 9 / 9 (100%) |
+| CUDA overall | 9 / 9 (100%) |
+| ROCm overall | 9 / 9 (100%) |
 
 The separate real-model smoke decoded and interpreted a timer fault, proposed
 `max_accel: 2000` through `propose_config_edit`, and sent the resulting diff
 through the deterministic apply gate. It was classified `CONSEQUENTIAL` and
 applied with the reversible path, as designed.
+
+On the host-visible CUDA and ROCm sessions, the same versioned nine-case
+harness passed `9 / 9` on both adapters. Each run includes the four
+real-model, grammar-constrained `propose_config_edit` cases; the two diagnosis
+and three safety cases are deterministic invariants. Both runs are labelled
+**authored on GPU; Hailo validation pending**.
 
 ## Always-on assistant integration
 
@@ -70,21 +77,25 @@ baseline, and made both available to deterministic RAG retrieval.
 
 ## Provenance and remaining validation
 
-This run is labelled **workstation CPU preflight; GPU/Hailo validation
-pending**. The compiler/toolchain half has now been proved independently:
+This run is labelled **workstation CPU preflight; Hailo validation pending**.
+The workstation compiler, runtime, and short real-model inference path were
+proved independently:
 
 - CUDA 12.0 built and linked `llama-completion` for the RTX 2080's explicit
   `sm_75` target, including CUDA runtime and cuBLAS/cuBLASLt.
 - ROCm 7.2.4 built and linked the same target for the AMD card's explicit
   `gfx1200` target, including HIP, hipBLAS/rocBLAS, and the HSA runtime.
+- A host-visible run found `/dev/nvidia0`, `/dev/kfd`, and the DRM render
+  nodes. The NVIDIA runtime identified the RTX 2080 Super (8 GB, `sm_75`);
+  ROCm identified the Radeon `gfx1200` (16 GB).
+- The pinned Qwen3-4B Q4_K_M model offloaded all 37 layers on each adapter.
+  A 1,024-token-context, 23-token decode measured 104.85 tok/s on CUDA and
+  73.14 tok/s on ROCm. These are smoke-test measurements, not a benchmark.
 
-Both binaries then honestly reported no capable device. This execution
-environment exposes neither `/dev/nvidia*` nor `/dev/dri`/`/dev/kfd`; CUDA
-reported `no CUDA-capable device is detected`, and ROCm reported
-`no ROCm-capable device is detected`. Thus the source and accelerator
-toolchains compile, but no GPU inference or quality number is claimed. The
-same labelled suite must still run in a session with GPU device passthrough
-and, last, on the Pi 5 + Hailo-10H target with memory and latency recorded.
-Live config mutation/reload/undo also remains a board-rig acceptance item; the
+The earlier no-device result came from the restricted tool execution context,
+which hides GPU character devices; it was not a driver or toolchain fault.
+The labelled suite is now recorded on both workstation adapters. It must run
+last on the Pi 5 + Hailo-10H target with memory and latency recorded. Live
+config mutation/reload/undo also remains a board-rig acceptance item; the
 workstation result proves drafting and the safety preview, not real-machine
 application.

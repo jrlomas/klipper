@@ -198,13 +198,15 @@ F072** it was designed to fit.
 - [x] **Accelerator runtime builds.** *Do:* compile the pinned llama.cpp
   runtime for both workstation adapters. *Pass:* CUDA 12.0 built/linked
   `llama-completion` for `sm_75` with cuBLAS; ROCm 7.2.4 built/linked it for
-  `gfx1200` with HIP/rocBLAS. Runtime discovery is separately blocked because
-  this environment exposes no `/dev/nvidia*`, `/dev/dri`, or `/dev/kfd`; this
-  box proves build authoring only and does not satisfy model quality below.
-- [ ] **Model quality — authored on GPU.** *Do:* run the eval harness with
+  `gfx1200` with HIP/rocBLAS. The pinned Qwen model offloaded all 37 layers
+  and generated on both adapters: 104.85 tok/s CUDA, 73.14 tok/s ROCm (short
+  smoke, 1,024-token context). The earlier no-device outcome was the
+  restricted execution context, not the host. This proves runtime authoring
+  and smoke execution only; it does not satisfy model quality below.
+- [x] **Model quality — authored on GPU.** *Do:* run the eval harness with
   a real **Qwen3-4B Q4_K_M** on the dev GPU (llama.cpp CUDA/ROCm).
-  *Expect:* diagnosis accuracy and config-edit correctness above the
-  agreed bar; **safety-tier refusal at 100%**. *Pass:* record the numbers.
+  *Pass:* CUDA and ROCm each recorded 9/9: all four real-model config edits,
+  two diagnoses, and three deterministic safety classifications (100%).
   *(authored on GPU, validated on Hailo)*
 - [x] **Budget honesty.** *Do:* run the harness under `--profile deploy`.
   *Expect:* it refuses anything past the Qwen3-4B / ~6 GB ceiling even
