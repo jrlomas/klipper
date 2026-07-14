@@ -558,8 +558,10 @@ The following information is available in the
   `converge_window`.
 - `mcus.<mcu_name>.last_err_ticks`: The last measured synchronization
   error for that micro-controller, in its own clock ticks.
-- `mcus.<mcu_name>.rate`: The raw clock-rate correction factor applied
-  by that micro-controller's discipline filter.
+- `mcus.<mcu_name>.rate`: The raw Q8.24 local-ticks-per-machine-tick rate
+  applied by that micro-controller's discipline filter. `TIMESYNC_STATUS`
+  reports its correction in ppm relative to the boards' nominal frequency
+  ratio.
 
 ## trajectory_queuing
 

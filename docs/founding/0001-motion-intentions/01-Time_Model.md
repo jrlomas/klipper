@@ -44,11 +44,13 @@ crystal ticks — but the contract changes:
 * Segment durations are 32-bit tick counts (bounded to 2²⁶ by
   [02-Intention_Protocol.md](02-Intention_Protocol.md)).
 * Each secondary maintains a discipline pair **(offset, rate)** mapping
-  machine time → local ticks, with rate as a fixed-point Q2.30 ratio
-  (crystal mismatch is ±100 ppm, so the ratio is within 1±0.0001 —
-  Q2.30 gives sub-ppb resolution). Conversion is one 32×32→64 multiply
-  plus shift **per segment at ingest** — never per step, and never on
-  the interrupt path.
+  machine time → local ticks, with rate as an unsigned fixed-point Q8.24
+  ratio. The integer range covers different nominal timer frequencies
+  (for example, a 64 MHz secondary against a 12 MHz primary) while the
+  fractional range resolves that 5.333× ratio to about 0.01 ppm; crystal
+  mismatch is then tracked around the nominal ratio. Conversion is one
+  32×32→64 multiply plus shift **per segment at ingest** — never per step,
+  and never on the interrupt path.
 
 Rationale for ingest-time conversion over host-side conversion
 (today's model): it makes segments *identical for every board* (one

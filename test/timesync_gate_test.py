@@ -39,7 +39,8 @@ def test_real_mcu_exposes_clocksync():
 
 
 class FakeMCU:
-    def __init__(self):
+    def __init__(self, frequency=1_000_000.):
+        self.frequency = frequency
         self.commands = {
             'sync_beacon_relay': FakeCommand(),
             'timesync_setup': FakeCommand(),
@@ -47,7 +48,7 @@ class FakeMCU:
                 'flags': timesync.TS_ENABLED | timesync.TS_PRIMED
                          | timesync.TS_CONVERGED,
                 'last_err': 2,
-                'rate': 1 << 30,
+                'rate': 1 << timesync.RATE_SHIFT,
             }),
         }
 
@@ -56,7 +57,7 @@ class FakeMCU:
 
     def get_constant_float(self, name):
         assert name == 'CLOCK_FREQ'
-        return 1_000_000.
+        return self.frequency
 
     def get_clocksync(self):
         return FakeClockSync()
@@ -75,7 +76,7 @@ class FakeMCU:
 
 def test_secondary_freshness():
     mcu = FakeMCU()
-    link = timesync.SecondaryLink(mcu)
+    link = timesync.SecondaryLink(mcu, 1_000_000.)
     link.setup(5., .000010)
     link.relay(7, 1000, 20.)
     link.query()
@@ -83,6 +84,15 @@ def test_secondary_freshness():
     assert not link.is_converged(25.001)
     assert mcu.commands['timesync_setup'].sent == [[5_000_000, 10]]
     assert mcu.commands['sync_beacon_relay'].sent == [[7, 1000, 20_000_000]]
+
+
+def test_mixed_frequency_rate_representation():
+    link = timesync.SecondaryLink(FakeMCU(64_000_000.), 12_000_000.)
+    encoded = round(link.nominal_rate * (1 << timesync.RATE_SHIFT))
+    decoded = encoded / (1 << timesync.RATE_SHIFT)
+    relative_error_ppm = (decoded / link.nominal_rate - 1.) * 1e6
+    assert encoded < 2**32
+    assert abs(relative_error_ppm) < .02
 
 
 class FakeStepperKinematics:
@@ -158,6 +168,8 @@ def main():
     print("PASS: the real MCU API exposes its per-link clock regression")
     test_secondary_freshness()
     print("PASS: host freewheel freshness mirrors the firmware gate")
+    test_mixed_frequency_rate_representation()
+    print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
     test_value_trajectory_fails_before_fitter_advance()

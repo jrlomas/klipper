@@ -28,6 +28,7 @@ PRIME_COUNT = 8             # startup priming burst (doc 01 startup step 2)
 PRIME_INTERVAL = 0.050
 FREEWHEEL_TIME = 5.0        # doc 01 freewheel budget on beacon loss
 CONVERGE_WINDOW = 0.000010  # +-10us inter-MCU sync error target
+RATE_SHIFT = 24             # firmware Q8.24 local/machine tick ratio
 
 # timesync_state flag bits (must match src/timesync.c)
 TS_ENABLED = 1
@@ -38,10 +39,11 @@ def _get_clocksync(mcu):
     return mcu.get_clocksync()
 
 class SecondaryLink:
-    def __init__(self, mcu):
+    def __init__(self, mcu, primary_freq):
         self.mcu = mcu
         self.name = mcu.get_name()
         self.mcu_freq = mcu.get_constant_float('CLOCK_FREQ')
+        self.nominal_rate = self.mcu_freq / primary_freq
         self.relay_cmd = mcu.lookup_command(
             'sync_beacon_relay seq=%c machine_clock=%u local_est=%u')
         self.setup_cmd = mcu.lookup_command(
@@ -123,7 +125,8 @@ class MachineTimeSync:
                 logging.info("timesync: mcu '%s' lacks sync_beacon_relay;"
                              " not disciplined", mcu.get_name())
                 continue
-            self.secondaries.append(SecondaryLink(mcu))
+            self.secondaries.append(SecondaryLink(
+                mcu, primary.get_constant_float('CLOCK_FREQ')))
         if not self.secondaries:
             logging.info("timesync: no secondary mcus to discipline")
             return
@@ -217,7 +220,8 @@ class MachineTimeSync:
             state = link.query()
             ppm = 0.
             if state['rate']:
-                ppm = (state['rate'] / (1 << 30) - 1.) * 1e6
+                applied_rate = state['rate'] / (1 << RATE_SHIFT)
+                ppm = (applied_rate / link.nominal_rate - 1.) * 1e6
             msgs.append(
                 "mcu '%s': %s err=%.1fus rate=%+.2fppm" % (
                     link.name,

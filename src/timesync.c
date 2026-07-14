@@ -9,10 +9,11 @@
 //                                         local_est=%u
 //
 // A secondary disciplines an (offset, rate) pair mapping machine time
-// to its local clock. The rate is a Q2.30 fixed-point ratio (local
-// ticks per machine tick): crystal mismatch is within +-100ppm, so
-// Q2.30 gives sub-ppb resolution while still covering differing
-// nominal frequencies. Conversion is one 32x32->64 multiply plus
+// to its local clock. The rate is a Q8.24 fixed-point ratio (local
+// ticks per machine tick). MCU timer frequencies are not necessarily
+// equal (for example, a 64MHz secondary against a 12MHz primary), so
+// the integer range must cover the nominal frequency ratio as well as
+// crystal mismatch. Conversion is one 32x32->64 multiply plus
 // shift per segment at ingest - never per step, never on the
 // interrupt path.
 //
@@ -34,17 +35,17 @@
 #include "execlog.h" // execlog_append
 #include "timesync.h" // timesync_ticks_to_local
 
-#define RATE_SHIFT 30
+#define RATE_SHIFT 24
 #define RATE_ONE (1U << RATE_SHIFT)
 #define RATE_HALF (1U << (RATE_SHIFT - 1))
-// Q2.30 in a uint32_t covers ratios [0, 4); keep a safety margin and
-// a sane lower bound so conversions can't collapse to zero.
-#define RATE_MIN (RATE_ONE / 64)
-#define RATE_MAX 0xF0000000
+// Q8.24 covers ratios [0, 256). Keep symmetric practical bounds around
+// one while retaining sub-ppm resolution throughout the supported range.
+#define RATE_MIN (RATE_ONE / 128)
+#define RATE_MAX (RATE_ONE * 128U)
 // Slew limit: at most 500ppm of rate bias per beacon interval
 #define MAX_SLEW ((int32_t)(RATE_ONE / 2000))
-// Largest per-interval rate correction considered meaningful (Q2.30)
-#define MAX_ADJ (1 << 28)
+// Largest per-interval rate correction considered meaningful (Q8.24)
+#define MAX_ADJ (RATE_ONE / 4)
 // Beacons blended before the filter leaves the priming phase
 // (mirrors clocksync.py's 8-sample connect priming)
 #define PRIME_TARGET 8
@@ -53,11 +54,11 @@
 
 struct timesync_state {
     // Machine-time -> local-clock mapping (read at trajq ingest):
-    //   local = local_ref + ((machine - machine_ref) * rate) >> 30
+    //   local = local_ref + ((machine - machine_ref) * rate) >> 24
     uint32_t machine_ref, local_ref;
-    uint32_t rate; // applied Q2.30 ratio (rate_base + slew bias)
+    uint32_t rate; // applied Q8.24 ratio (rate_base + slew bias)
     // Discipline filter state
-    uint32_t rate_base; // PI integrator: crystal ratio estimate, Q2.30
+    uint32_t rate_base; // PI integrator: clock ratio estimate, Q8.24
     uint32_t last_machine, last_local; // raw previous beacon sample
     uint32_t beacon_rx_local; // local clock at last beacon receipt
     uint32_t freewheel_ticks; // stale budget in local ticks (0=none)
@@ -136,7 +137,7 @@ DECL_COMMAND_FLAGS(command_sync_beacon_read, HF_IN_SHUTDOWN
  ****************************************************************/
 
 static uint32_t
-clamp_rate(uint32_t rate)
+clamp_rate(int64_t rate)
 {
     if (rate < RATE_MIN)
         return RATE_MIN;
@@ -157,7 +158,7 @@ timesync_set_mapping(struct timesync_state *ts, uint32_t machine_ref
     irq_enable();
 }
 
-// Full-interval rate correction (Q2.30) implied by an offset error
+// Full-interval rate correction (Q8.24) implied by an offset error
 // of 'err' local ticks accrued over 'dm' machine ticks.
 static int32_t
 timesync_err_to_adj(int32_t err, int32_t dm)
@@ -219,7 +220,8 @@ command_sync_beacon_relay(uint32_t *args)
             ts->rate_base = meas;
         else
             ts->rate_base = clamp_rate(
-                ts->rate_base + ((int32_t)(meas - ts->rate_base) / 2));
+                (int64_t)ts->rate_base
+                + ((int64_t)meas - ts->rate_base) / 2);
         timesync_set_mapping(ts, m, l, ts->rate_base);
         ts->prime_count++;
     } else {
@@ -233,7 +235,8 @@ command_sync_beacon_relay(uint32_t *args)
         // Integral: absorb 1/32 of the implied rate error per beacon
         // (gains validated against the +-10us budget with 5us-sigma
         // beacon stamping noise and 70ppm crystal mismatch)
-        ts->rate_base = clamp_rate(ts->rate_base + (adj >> 5));
+        ts->rate_base = clamp_rate(
+            (int64_t)ts->rate_base + (adj >> 5));
         // Proportional: slew out a quarter of the offset per interval
         int32_t slew = adj >> 2;
         if (slew > MAX_SLEW)
@@ -241,7 +244,7 @@ command_sync_beacon_relay(uint32_t *args)
         else if (slew < -MAX_SLEW)
             slew = -MAX_SLEW;
         timesync_set_mapping(ts, m, predicted
-                             , clamp_rate(ts->rate_base + slew));
+                             , clamp_rate((int64_t)ts->rate_base + slew));
         ts->last_err = err;
         // Convergence: bounded offset error on consecutive beacons.
         // A zero window (host never sent timesync_setup) accepts any
