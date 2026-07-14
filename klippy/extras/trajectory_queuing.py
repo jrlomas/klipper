@@ -410,10 +410,19 @@ class TrajectoryStepper:
             self._anchor(anchor_time)
         prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        n = self.ffi_lib.segfit_generate(self.segfit, gen_time)
+        # Once itersolve reports no activity, the relevant trapq moves may
+        # already have moved to history.  Sampling the remaining head
+        # sentinel would make the fitter interpret its zero coordinate as a
+        # real endpoint and compress an entire axis displacement into one
+        # sample (observed as a multi-MHz pulse burst after homing).  The
+        # prior active flush has already generated the path; at idle only
+        # seal its pending prefix and append the explicit hold below.
+        n = (self.ffi_lib.segfit_generate(self.segfit, gen_time)
+             if active_time else 0)
         if n < 0:
-            logging.warning("segfit overflow on %s", self.name)
-            n = 0
+            raise self.mcu.error(
+                "Trajectory for %s exceeds representable wire limits"
+                % (self.name,))
         self._send_segs(n)
         self._record_intention(prev_acc, prev_time)
         # Do not retain a valid candidate across host flush callbacks.  A
@@ -426,8 +435,9 @@ class TrajectoryStepper:
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
         n = self.ffi_lib.segfit_finalize(self.segfit)
         if n < 0:
-            logging.warning("segfit finalize overflow on %s", self.name)
-            n = 0
+            raise self.mcu.error(
+                "Trajectory for %s exceeds representable wire limits"
+                % (self.name,))
         if n > 0:
             self._send_segs(n)
         self._record_intention(prev_acc, prev_time)

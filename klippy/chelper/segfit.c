@@ -389,6 +389,13 @@ emit_segment(struct segfit *sf, int n)
     if (!check_dir_invariant(vw, aw, T))
         // Single-sample segment still reversing: force pure velocity
         aw = 0;
+    // Quantization clamps coefficients to the signed wire range.  A target
+    // outside that range must fail closed: emitting the clamped candidate
+    // would turn a position discontinuity into a maximum-rate pulse burst.
+    if ((vw == INT32_MIN || vw == INT32_MAX
+         || aw == INT32_MIN || aw == INT32_MAX)
+        && !check_fit(sf, n, vw, aw))
+        return -1;
 
     struct segfit_seg *seg = &sf->segs[sf->num_segs++];
     seg->duration = T;

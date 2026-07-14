@@ -279,6 +279,9 @@ def test_trajectory_end_always_queues_terminal_hold():
     stepper._send_segs = lambda n: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     stepper.flush(12.6, 12.6)
+    # An inactive trapq may contain only its zero-valued head sentinel.  It
+    # must not be sampled as a new endpoint after the real path is complete.
+    assert stepper.ffi_lib.generated_to == []
     assert stepper.hold_cmd.sent == [[4, 1000]]
     assert stepper.rebase_min_clock == 12_501_000
     assert not stepper.anchored

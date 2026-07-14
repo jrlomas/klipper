@@ -263,7 +263,9 @@ Prove the wire before you trust it to carry motion.
   `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
   with a narrow `--start` / `--end` machine-time window. The audit replays
   every half-step crossing from the exact persisted wire coefficients and
-  matches each MCU flight-recorder boundary.
+  matches each MCU flight-recorder boundary. This requires
+  `[failure_recovery]` with `execlog_stream_max` greater than zero; host
+  intentions without MCU execution records fail the audit.
   Pass: both coupled joints end in explicit holds; zero underruns, clock or
   accumulator discontinuities, unmatched execution endpoints, or trigger
   position differences.

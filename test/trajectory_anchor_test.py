@@ -145,6 +145,28 @@ def main():
     assert all(accel == 0 for window in ramped[1:]
                for _, _, accel in window), ramped
     print("PASS: acceleration residue enters pure-cruise fast path by 50ms")
+
+    # Once motion queue entries move to trapq history, sampling the remaining
+    # head sentinel would look like an instantaneous return to coordinate
+    # zero.  The host now skips inactive sampling; the fitter independently
+    # rejects this unrepresentable one-sample discontinuity so it can never
+    # become a saturated wire coefficient / pulse burst.
+    tail_tq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    tail_sk = ffi.gc(lib.cartesian_stepper_alloc(b'z'), lib.free)
+    lib.itersolve_set_trapq(tail_sk, tail_tq, .00125)
+    tail_end = 50.100
+    lib.trapq_append(tail_tq, 50., .050, 0., .050, 0., 0., 30.,
+                     0., 0., 1., 0., 10., 200.)
+    tail_sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(tail_sf, tail_sk, MCU_FREQ, SU_PER_MM,
+                     32768., SAMPLE_TIME)
+    lib.segfit_set_anchor(tail_sf, 50., round(30. * SU_PER_MM) << 32)
+    assert lib.itersolve_check_active(tail_sk, tail_end)
+    assert lib.segfit_generate(tail_sf, tail_end) >= 0
+    assert lib.segfit_finalize(tail_sf) >= 0
+    lib.trapq_finalize_moves(tail_tq, tail_end + 1., 0.)
+    assert lib.segfit_generate(tail_sf, tail_end + .010) < 0
+    print("PASS: inactive sentinel discontinuity fails closed")
     return 0
 
 

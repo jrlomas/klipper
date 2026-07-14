@@ -61,9 +61,27 @@ def test_underrun_is_a_failed_audit():
     print("PASS: an MCU underrun fails the motion audit")
 
 
+def test_intentions_without_execution_evidence_fail_closed():
+    records = [
+        intention("rebase", {
+            "start_clock": 1000, "end_clock": 1000, "position_su": 0,
+            "acc_q32": 0, "mcu_position": 0}),
+        intention("hold", {
+            "start_clock": 1000, "end_clock": 1010, "duration": 10,
+            "flags": 1, "velocity": 0, "accel": 0, "jerk": 0,
+            "snap": 0, "crackle": 0,
+            "start_position_su": 0, "end_position_su": 0,
+            "start_acc_q32": 0, "end_acc_q32": 0}),
+    ]
+    errors = audit.audit(records)[-1]
+    assert errors == ["no MCU execution records for recorded intentions"]
+    print("PASS: missing MCU evidence fails closed")
+
+
 def main():
     test_clean_path_replays_and_matches_boundaries()
     test_underrun_is_a_failed_audit()
+    test_intentions_without_execution_evidence_fail_closed()
     print("ALL PASS")
 
 

@@ -160,6 +160,8 @@ def audit(records):
         if intended_oids and fields["src_oid"] not in intended_oids:
             continue
         unique[(record.get("source"), fields["seq"])] = fields
+    if intentions and not unique:
+        errors.append("no MCU execution records for recorded intentions")
     matched = 0
     triggers = 0
     for fields in unique.values():
