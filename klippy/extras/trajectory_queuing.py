@@ -313,6 +313,7 @@ class TrajectoryStepper:
         self.rebase_min_clock = 0
         self.wire_clock = None
         self.wire_acc = None
+        self.activity_cursor = 0.
         self.su_per_mm = 1.
         # Rolling record of intentions SENT: the host twin the resume
         # reconciler (FD-0001 doc 08) diffs against what the board
@@ -607,8 +608,12 @@ class TrajectoryStepper:
         # Match the legacy itersolve/stepcompress path and generate through the
         # step-generation horizon.
         gen_time = step_gen_time
-        active_time = self.ffi_lib.itersolve_check_active(sk, gen_time)
-        if ((active_time or self.anchored)
+        activity_cursor = getattr(self, 'activity_cursor', 0.)
+        from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
+                     if self.anchored else activity_cursor)
+        has_activity = self.ffi_lib.segfit_check_activity(
+            self.segfit, from_time, gen_time)
+        if ((has_activity or self.anchored)
                 and not self.owner.is_mcu_synced(self.mcu)):
             # Do not advance segfit or the persisted intention twin while
             # the firmware's Class-0 gate will reject these same segments.
@@ -617,27 +622,31 @@ class TrajectoryStepper:
                 "Machine-time discipline for %s is not converged; refusing"
                 " trajectory Class-0 traffic" % (self.mcu.get_name(),))
         if not self.anchored:
-            if not active_time:
+            if not has_activity:
+                # Nothing through this generation horizon can move the
+                # joint.  Advancing the search cursor prevents a completed
+                # historical move from being selected after its trapq entry
+                # lingers for lookback diagnostics.
+                self.activity_cursor = max(activity_cursor, gen_time)
                 return
-            # Anchor exactly where activity begins.  A pre-roll can sample a
-            # previous held sentinel when a replacement trapq starts at a new
-            # position (notably the retract after a homing trigger), forcing
-            # the fitter to encode the position discontinuity as a one-sample
-            # velocity spike.  The firmware advances pure holds correctly, so
-            # no synthetic pre-roll is needed for boundary safety.
-            anchor_time = active_time
+            # Anchor at the complete kinematic activity boundary, not merely
+            # the nominal trapq move. Pressure advance and input shaping use
+            # pre-active scan windows whose pulses are real motion; skipping
+            # them would turn their initial displacement into a position
+            # rebase. segfit_check_activity() also extends the corresponding
+            # post-active tail below.
+            anchor_time = self.ffi_lib.segfit_get_activity_start(self.segfit)
             self._anchor(anchor_time)
+        activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
+                        if has_activity else from_time)
+        fit_end = min(gen_time, activity_end)
         prev_acc = self._chained_acc()
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        # Once itersolve reports no activity, the relevant trapq moves may
-        # already have moved to history.  Sampling the remaining head
-        # sentinel would make the fitter interpret its zero coordinate as a
-        # real endpoint and compress an entire axis displacement into one
-        # sample (observed as a multi-MHz pulse burst after homing).  The
-        # prior active flush has already generated the path; at idle only
-        # seal its pending prefix and append the explicit hold below.
-        n = (self.ffi_lib.segfit_generate(self.segfit, gen_time)
-             if active_time else 0)
+        # Never sample beyond the connected activity window. The tail
+        # sentinel is a held coordinate, not a new destination; fitting past
+        # it previously manufactured a one-sample return-to-zero burst.
+        n = (self.ffi_lib.segfit_generate(self.segfit, fit_end)
+             if has_activity and fit_end > prev_time else 0)
         if n < 0:
             raise self.mcu.error(
                 "Trajectory for %s exceeds representable wire limits"
@@ -660,7 +669,9 @@ class TrajectoryStepper:
         if n > 0:
             self._send_segs(n)
         self._record_intention(prev_acc, prev_time)
-        if not active_time:
+        window_done = (not has_activity
+                       or fit_end >= activity_end - 1.e-12)
+        if window_done:
             # Motion has ended.  Terminate every joint with an explicit
             # zero-velocity segment instead of relying on the final fitted
             # coefficient rounding to exactly zero.  Without this, one side
@@ -670,6 +681,8 @@ class TrajectoryStepper:
             # Drop the anchor (the next motion re-anchors with a fresh
             # rebase).
             self.anchored = False
+            self.activity_cursor = max(activity_cursor, activity_end,
+                                       fit_end)
 
     def _queue_terminal_hold(self):
         self.hold_cmd.send([self.oid, self.terminal_hold_ticks])

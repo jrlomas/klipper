@@ -20,7 +20,7 @@
 #include "compiler.h" // __visible
 #include "itersolve.h" // struct stepper_kinematics
 #include "list.h" // list_node
-#include "trapq.h" // struct move
+#include "trapq.h" // trapq_check_sentinels
 
 #define SEGFIT_MAX_DURATION ((double)(1 << 26))
 #define SEGFIT_MAX_SAMPLES 4096
@@ -55,6 +55,10 @@ struct segfit {
     // Sample buffer for the segment currently being grown
     double *tau, *y;          // ticks since segment start, su offset
     int num_samples;
+    // First connected kinematic activity window intersecting the caller's
+    // generation range.  It includes the stepper kinematics' pre/post scan
+    // windows (pressure advance, input shaping, etc.).
+    double activity_start, activity_end;
     // Incremental least-squares sums (fit constrained through 0,0)
     double s2, s3, s4, sy1, sy2;
     // Output
@@ -270,6 +274,66 @@ segfit_get_position(struct segfit *sf, double print_time)
 {
     struct move *cursor = NULL;
     return sample_position(sf, &cursor, print_time);
+}
+
+// Locate the first connected interval of source motion that intersects
+// [from_time, through_time].  Ordinary trapq activity is expanded by the
+// kinematics' scan windows: an extruder with pressure advance, for example,
+// begins moving before the nominal E trapq move and settles after it.  The
+// trajectory emitter must fit those intervals as real motion; rebasing at
+// the nominal move boundary would silently skip their pulses.
+int __visible
+segfit_check_activity(struct segfit *sf, double from_time, double through_time)
+{
+    struct stepper_kinematics *sk = sf->sk;
+    struct trapq *tq = sk->tq;
+    if (!tq || through_time < from_time)
+        return 0;
+    trapq_check_sentinels(tq);
+    struct move *m = list_first_entry(&tq->moves, struct move, node);
+    int found = 0;
+    for (;;) {
+        int active = ((sk->active_flags & AF_X && m->axes_r.x != 0.)
+                      || (sk->active_flags & AF_Y && m->axes_r.y != 0.)
+                      || (sk->active_flags & AF_Z && m->axes_r.z != 0.));
+        if (active) {
+            double start = m->print_time - sk->gen_steps_pre_active;
+            double end = m->print_time + m->move_t
+                         + sk->gen_steps_post_active;
+            if (end > from_time && start <= through_time) {
+                if (!found) {
+                    sf->activity_start = start;
+                    sf->activity_end = end;
+                    found = 1;
+                } else if (start <= sf->activity_end) {
+                    if (end > sf->activity_end)
+                        sf->activity_end = end;
+                } else {
+                    break;
+                }
+            } else if (found && start > sf->activity_end) {
+                break;
+            } else if (!found && start > through_time) {
+                break;
+            }
+        }
+        if (list_is_last(&m->node, &tq->moves))
+            break;
+        m = list_next_entry(m, node);
+    }
+    return found;
+}
+
+double __visible
+segfit_get_activity_start(struct segfit *sf)
+{
+    return sf->activity_start;
+}
+
+double __visible
+segfit_get_activity_end(struct segfit *sf)
+{
+    return sf->activity_end;
 }
 
 // ---- fitting ----

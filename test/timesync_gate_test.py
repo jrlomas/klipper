@@ -215,8 +215,11 @@ class FakeMCUStepper:
 
 
 class GuardFFI:
-    def itersolve_check_active(self, sk, flush_time):
-        return 1.
+    def segfit_get_gen_time(self, segfit):
+        return 0.
+
+    def segfit_check_activity(self, segfit, from_time, through_time):
+        return 1
 
     def segfit_get_anchor(self, segfit):
         raise AssertionError("fitter advanced before Class-0 preflight")
@@ -239,9 +242,15 @@ class AnchorFFI:
         self.generated_to = []
         self.finalized = 0
 
-    def itersolve_check_active(self, sk, flush_time):
-        self.checked_to.append(flush_time)
+    def segfit_check_activity(self, segfit, from_time, through_time):
+        self.checked_to.append(through_time)
+        return 1
+
+    def segfit_get_activity_start(self, segfit):
         return self.active_time
+
+    def segfit_get_activity_end(self, segfit):
+        return self.active_time + 10.
 
     def segfit_get_anchor(self, segfit):
         return 0
@@ -268,6 +277,10 @@ class EndedFFI(AnchorFFI):
 
     def segfit_get_gen_time(self, segfit):
         return self.end_time
+
+    def segfit_check_activity(self, segfit, from_time, through_time):
+        self.checked_to.append(through_time)
+        return 0
 
 
 class UnsyncedTimeSync:

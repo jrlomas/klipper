@@ -75,6 +75,7 @@ for TEST in \
     test/helix_flash_test.py \
     test/helix_motion_audit_test.py \
     test/helix_status_test.py \
+    test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
     test/intentproto_transport_test.py \
     test/paradigm_validator_test.py \
