@@ -291,6 +291,30 @@ quantize(double v, double beta, int32_t *vw, int32_t *aw)
     *aw = (int32_t)ad;
 }
 
+// Prefer the cheaper pure-velocity realization whenever it satisfies the
+// same quantized error budget.  This is exact for cruise spans and avoids
+// manufacturing tiny corrective accelerations solely from chained fixed-
+// point rounding.  Trajectory stepper MCUs can realize this common case with
+// one closed-form crossing solve instead of iterative quadratic roots.
+static void
+prefer_pure_velocity(struct segfit *sf, int n, double s2, double sy1,
+                     int32_t *vw, int32_t *aw)
+{
+    if (!*aw || s2 == 0.)
+        return;
+    int32_t pure_v, pure_a;
+    quantize(sy1 / s2, 0., &pure_v, &pure_a);
+    double endpoint = pure_v / 65536. * sf->tau[n - 1];
+    // Keep chained endpoint bias negligible as well as staying inside the
+    // general fit tolerance.  Without this tighter condition, independently
+    // acceptable errors from long value-trajectory chunks can accumulate.
+    if (fabs(endpoint - sf->y[n - 1]) <= 32.
+        && check_fit(sf, n, pure_v, 0)) {
+        *vw = pure_v;
+        *aw = 0;
+    }
+}
+
 // The velocity sign may not change inside a segment (protocol
 // invariant). Returns 1 if (vw, aw, T) complies.
 static int
@@ -330,6 +354,7 @@ emit_segment(struct segfit *sf, int n)
         beta = (sy2 * s2 - sy1 * s3) / det;
     }
     quantize(v, beta, &vw, &aw);
+    prefer_pure_velocity(sf, n, s2, sy1, &vw, &aw);
     while (!check_dir_invariant(vw, aw, T) && n > 1) {
         // Trim back to before the extremum and retry
         n--;
@@ -350,6 +375,7 @@ emit_segment(struct segfit *sf, int n)
             beta = (sy2 * s2 - sy1 * s3) / det;
         }
         quantize(v, beta, &vw, &aw);
+        prefer_pure_velocity(sf, n, s2, sy1, &vw, &aw);
     }
     if (!check_dir_invariant(vw, aw, T))
         // Single-sample segment still reversing: force pure velocity
@@ -418,6 +444,8 @@ segfit_generate(struct segfit *sf, double flush_time)
         int32_t vw, aw;
         fit_coeffs(sf, &v, &beta);
         quantize(v, beta, &vw, &aw);
+        prefer_pure_velocity(sf, sf->num_samples, sf->s2, sf->sy1,
+                             &vw, &aw);
         int ok = check_fit(sf, sf->num_samples, vw, aw);
         if ((!ok && sf->num_samples > 1)
             || tau >= SEGFIT_MAX_DURATION

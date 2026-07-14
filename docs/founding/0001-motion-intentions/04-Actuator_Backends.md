@@ -60,10 +60,14 @@ called from interrupt context and must be safe there.
 The reference backend; replaces the `queue_step` execution path for
 opted-in steppers.
 
-* **Step generation:** the incremental Newton step-time solver
-  specified in [02-Intention_Protocol.md](02-Intention_Protocol.md),
-  emitting edges via the existing fast GPIO layer with the existing
-  `step_pulse_ticks` / inverted-pin handling.
+* **Step generation:** a closed-form constant-velocity crossing for cruise
+  segments and the incremental Newton step-time solver specified in
+  [02-Intention_Protocol.md](02-Intention_Protocol.md) for genuinely curved
+  segments, emitting edges via the existing fast GPIO layer with the existing
+  `step_pulse_ticks` / inverted-pin handling. Keeping repeated 64-bit Newton
+  divisions out of the common timer-interrupt path is required on
+  division-poor MCUs so other precision timer clients (notably software TMC
+  UART) retain their sampling deadlines.
 * **Direction:** derived from the segment's velocity sign; the dir pin
   is set at segment load with the same step↔dir separation guarantees
   the current code enforces (`stepper_load_next()` in

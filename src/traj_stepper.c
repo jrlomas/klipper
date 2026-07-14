@@ -68,6 +68,33 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
     // Does this segment reach the target at all?
     if (dir > 0 ? s->q16_end < s->target16 : s->q16_end > s->target16)
         return 0;
+    // Cruise is overwhelmingly the common case.  Avoid running the generic
+    // Newton solver (and its repeated signed 64-bit divisions) in the timer
+    // IRQ for every pulse: q(t)=v*t has an exact closed-form crossing.  This
+    // also keeps other precision timer clients such as the TMC software UART
+    // inside their bit sampling window on division-poor MCUs (RP2040 M0+).
+    if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK)) {
+        int64_t target = s->target16;
+        uint32_t t;
+        if ((dir > 0 && target <= 0) || (dir < 0 && target >= 0)) {
+            t = s->t_prev + 1;
+        } else {
+            uint64_t magnitude = target < 0
+                ? -(uint64_t)target : (uint64_t)target;
+            uint32_t speed = tq->velocity < 0
+                ? -(uint32_t)tq->velocity : (uint32_t)tq->velocity;
+            uint64_t crossing = (magnitude + speed - 1) / speed;
+            if (crossing > tq->duration)
+                return 0;
+            t = (uint32_t)crossing;
+            if (t <= s->t_prev)
+                t = s->t_prev + 1;
+        }
+        if (t > tq->duration)
+            return 0;
+        *step_t = t;
+        return 1;
+    }
     uint32_t t = s->t_prev;
     uint32_t tmax = tq->duration;
     int i;
