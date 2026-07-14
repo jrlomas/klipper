@@ -15,6 +15,7 @@ import os
 import re
 import struct
 import threading
+import uuid
 
 import mcu
 
@@ -76,8 +77,9 @@ class TraceRenderer:
 
 
 class JsonlWriter:
-    def __init__(self, path):
+    def __init__(self, path, session_id=None):
         self.path = os.path.abspath(os.path.expanduser(path))
+        self.session_id = session_id
         self.fd = None
         self.errors = 0
         self.lock = threading.Lock()
@@ -105,6 +107,9 @@ class JsonlWriter:
 
     def write(self, record):
         try:
+            if self.session_id is not None:
+                record = dict(record)
+                record.setdefault("session_id", self.session_id)
             payload = (json.dumps(record, sort_keys=True,
                                   separators=(",", ":")) + "\n").encode()
             with self.lock:
@@ -280,7 +285,8 @@ class AtlasTrace:
         mcu_names = config.getlist("mcus", ("mcu",))
         if len(set(mcu_names)) != len(mcu_names):
             raise config.error("atlas_trace mcus contains a duplicate")
-        self.writer = JsonlWriter(self.output)
+        self.session_id = uuid.uuid4().hex
+        self.writer = JsonlWriter(self.output, self.session_id)
         self.links = {
             name: AtlasTraceLink(self, name) for name in mcu_names}
         self.timer = self.reactor.register_timer(self._query_event)

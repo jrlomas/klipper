@@ -80,13 +80,75 @@ def replay_pulses(fields, mpos):
     return pulses, mpos
 
 
-def load_records(path, start=None, end=None, actuator=None):
+def replay_pulse_stats(fields, mpos, previous_clock=None):
+    """Replay edges without retaining a tuple for every physical pulse."""
+    duration = fields["duration"]
+    start = fields["start_acc_q32"]
+    finish = fields["end_acc_q32"]
+    if finish == start:
+        return 0, mpos, None, previous_clock
+    direction = 1 if finish > start else -1
+    max_pulses = (abs(finish - start) >> 48) + 2
+    pulse_count = 0
+    min_interval = None
+    previous_t = 0
+    last_clock = previous_clock
+    while True:
+        boundary = ((2 * mpos + direction) << 47)
+        if direction > 0:
+            if finish < boundary:
+                break
+        elif finish > boundary:
+            break
+        if pulse_count >= max_pulses:
+            raise ValueError("pulse replay exceeds endpoint displacement")
+        low, high = previous_t, duration
+        while low < high:
+            middle = (low + high) // 2
+            pos = segment_pos(fields, middle)
+            crossed = pos >= boundary if direction > 0 else pos <= boundary
+            if crossed:
+                high = middle
+            else:
+                low = middle + 1
+        previous_t = low
+        mpos += direction
+        clock = fields["start_clock"] + low
+        if last_clock is not None and clock > last_clock:
+            interval = clock - last_clock
+            min_interval = (interval if min_interval is None
+                            else min(min_interval, interval))
+        last_clock = clock
+        pulse_count += 1
+    return pulse_count, mpos, min_interval, last_clock
+
+
+def load_records(path, start=None, end=None, actuator=None, session_id=None,
+                 after_line=0):
+    if session_id == "latest":
+        latest = None
+        with open(path, "r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    candidate = json.loads(line).get("session_id")
+                except (ValueError, TypeError):
+                    continue
+                if candidate:
+                    latest = candidate
+        session_id = latest
+        if session_id is None:
+            raise ValueError("telemetry has no session identifiers")
     records = []
     with open(path, "r", encoding="utf-8") as stream:
-        for line in stream:
+        for line_number, line in enumerate(stream, 1):
+            if line_number <= after_line:
+                continue
             try:
                 record = json.loads(line)
             except (ValueError, TypeError):
+                continue
+            if (session_id is not None
+                    and record.get("session_id") != session_id):
                 continue
             mtime = record.get("machine_time")
             if start is not None and (mtime is None or mtime < start):
@@ -109,13 +171,14 @@ def audit(records):
     expected_fields = {}
     rebases = {}
     segments_by_oid = {}
+    intention_ranges = {}
 
-    def checked_replay(fields, mpos, context):
+    def checked_replay_stats(fields, mpos, previous_clock, context):
         try:
-            return replay_pulses(fields, mpos)
+            return replay_pulse_stats(fields, mpos, previous_clock)
         except ValueError as exc:
             errors.append("%s: %s" % (context, exc))
-            return [], mpos
+            return 0, mpos, None, previous_clock
 
     by_actuator = {}
     for record in intentions:
@@ -125,9 +188,12 @@ def audit(records):
         stream.sort(key=lambda f: (f["start_clock"], f["event"] != "rebase"))
         mpos = None
         last_clock = last_acc = None
-        pulse_clocks = []
+        pulse_count = 0
+        min_interval = None
+        last_pulse_clock = None
         terminal_holds = 0
         oid = stream[0]["oid"]
+        range_start = None
         for fields in stream:
             event = fields["event"]
             if event == "rebase":
@@ -140,6 +206,7 @@ def audit(records):
                 stream_prev = "rebase"
                 rebases[(oid, fields["start_clock"] & 0xffffffff,
                          fields["position_su"])] = fields
+                range_start = fields["start_clock"]
                 continue
             if last_clock != fields["start_clock"]:
                 errors.append("%s: clock discontinuity %s != %s" % (
@@ -156,11 +223,16 @@ def audit(records):
             if mpos is None:
                 errors.append("%s: segment replay begins without a rebase"
                               % actuator)
-                pulses = []
+                count = 0
             else:
-                pulses, mpos = checked_replay(
-                    fields, mpos, "%s intention replay" % actuator)
-            pulse_clocks.extend(clock for clock, unused in pulses)
+                count, mpos, interval, last_pulse_clock = (
+                    checked_replay_stats(
+                        fields, mpos, last_pulse_clock,
+                        "%s intention replay" % actuator))
+                if interval is not None:
+                    min_interval = (interval if min_interval is None
+                                    else min(min_interval, interval))
+            pulse_count += count
             last_clock = fields["end_clock"]
             last_acc = fields["end_acc_q32"]
             stream_prev = event
@@ -170,16 +242,35 @@ def audit(records):
             expected_fields[(oid, last_clock & 0xffffffff,
                              wire_end)] = fields
             segments_by_oid.setdefault(oid, []).append(fields)
+            if event == "hold" and range_start is not None:
+                intention_ranges.setdefault(oid, []).append((
+                    range_start & 0xffffffff, last_clock - range_start))
+                range_start = None
         if stream and stream_prev != "hold":
             errors.append("%s: recorded path does not end in a hold" % actuator)
-        intervals = [b - a for a, b in zip(pulse_clocks, pulse_clocks[1:])]
         summaries.append(
             "%s oid=%d segments=%d holds=%d pulses=%d min_interval_ticks=%s"
             % (actuator, oid, sum(f["event"] == "segment" for f in stream),
-               terminal_holds, len(pulse_clocks),
-               min(intervals) if intervals else "n/a"))
+               terminal_holds, pulse_count,
+               min_interval if min_interval is not None else "n/a"))
 
     # A reliable dump can overlap the live stream; sequence is per MCU.
+    # Establish the current evidence window at the first matched rebase.  This
+    # disambiguates stale ring records whose 32-bit MCU clock happens to alias
+    # a later intention interval after wrap.
+    first_rebase_clock = min(
+        (fields["start_clock"] for fields in rebases.values()), default=None)
+    sequence_anchors = []
+    if first_rebase_clock is not None:
+        for record in executions:
+            fields = record["fields"]
+            key = (fields["src_oid"], fields["mcu_clock"],
+                   signed32(fields["position_su"]))
+            rebase = rebases.get(key)
+            if (fields["event"] == "rebase" and rebase is not None
+                    and rebase["start_clock"] == first_rebase_clock):
+                sequence_anchors.append(fields["seq"])
+    sequence_anchor = min(sequence_anchors) if sequence_anchors else None
     unique = {}
     intended_oids = set(segments_by_oid)
     for record in executions:
@@ -187,13 +278,28 @@ def audit(records):
         fields["position_su"] = signed32(fields["position_su"])
         if intended_oids and fields["src_oid"] not in intended_oids:
             continue
+        if (sequence_anchor is not None
+                and ((fields["seq"] - sequence_anchor) & 0xffffffff)
+                >= 0x80000000):
+            continue
+        ranges = intention_ranges.get(fields["src_oid"], ())
+        if ranges and not any(
+                ((fields["mcu_clock"] - start) & 0xffffffff) <= span
+                for start, span in ranges):
+            # Reliable dumps may repeat pre-window records still resident in
+            # the MCU ring.  Their wire clocks prove they are not evidence for
+            # (or against) the recorded intention intervals.
+            continue
         unique[(record.get("source"), fields["seq"])] = fields
     if intentions and not unique:
         errors.append("no MCU execution records for recorded intentions")
     matched = 0
     triggers = 0
-    executed_pulses = dict((oid, []) for oid in intended_oids)
+    executed_stats = dict((oid, {
+        "count": 0, "min_interval": None, "last_clock": None,
+    }) for oid in intended_oids)
     executed_mpos = {}
+    missing_rebase_reported = set()
     for fields in unique.values():
         event = fields["event"]
         key = (fields["src_oid"], fields["mcu_clock"],
@@ -212,14 +318,26 @@ def audit(records):
                     oid = fields["src_oid"]
                     mpos = executed_mpos.get(oid)
                     if mpos is None:
-                        errors.append("execution endpoint without rebase"
-                                      " oid=%d clock=%d" % (
-                                          oid, fields["mcu_clock"]))
+                        if oid not in missing_rebase_reported:
+                            errors.append(
+                                "execution endpoint without rebase"
+                                " oid=%d clock=%d" % (
+                                    oid, fields["mcu_clock"]))
+                            missing_rebase_reported.add(oid)
                     else:
-                        pulses, mpos = checked_replay(
-                            expected_fields[key], mpos,
-                            "oid=%d execution replay" % oid)
-                        executed_pulses[oid].extend(pulses)
+                        stats = executed_stats[oid]
+                        count, mpos, interval, last_clock = (
+                            checked_replay_stats(
+                                expected_fields[key], mpos,
+                                stats["last_clock"],
+                                "oid=%d execution replay" % oid))
+                        stats["count"] += count
+                        stats["last_clock"] = last_clock
+                        if interval is not None:
+                            current = stats["min_interval"]
+                            stats["min_interval"] = (
+                                interval if current is None
+                                else min(current, interval))
                         executed_mpos[oid] = mpos
             else:
                 errors.append("unmatched execution endpoint oid=%d clock=%d"
@@ -258,9 +376,18 @@ def audit(records):
                 else:
                     partial = dict(segment, duration=elapsed,
                                    end_acc_q32=segment_pos(segment, elapsed))
-                    pulses, mpos = checked_replay(
-                        partial, mpos, "oid=%d trigger replay" % oid)
-                    executed_pulses[oid].extend(pulses)
+                    stats = executed_stats[oid]
+                    count, mpos, interval, last_clock = (
+                        checked_replay_stats(
+                            partial, mpos, stats["last_clock"],
+                            "oid=%d trigger replay" % oid))
+                    stats["count"] += count
+                    stats["last_clock"] = last_clock
+                    if interval is not None:
+                        current = stats["min_interval"]
+                        stats["min_interval"] = (
+                            interval if current is None
+                            else min(current, interval))
                     executed_mpos[oid] = mpos
                     nearest = (fields["position_su"] + 32768) // 65536
                     if (mpos - nearest) & 0xffff:
@@ -269,13 +396,13 @@ def audit(records):
                                           oid, mpos, nearest))
     actuator_by_oid = dict((stream[0]["oid"], actuator)
                            for actuator, stream in by_actuator.items())
-    for oid, pulses in sorted(executed_pulses.items()):
-        clocks = [clock for clock, unused in pulses]
-        intervals = [b - a for a, b in zip(clocks, clocks[1:]) if b > a]
+    for oid, stats in sorted(executed_stats.items()):
         summaries.append(
             "%s oid=%d executed_pulses=%d min_executed_interval_ticks=%s"
-            % (actuator_by_oid.get(oid, "oid%d" % oid), oid, len(pulses),
-               min(intervals) if intervals else "n/a"))
+            % (actuator_by_oid.get(oid, "oid%d" % oid), oid,
+               stats["count"],
+               (stats["min_interval"]
+                if stats["min_interval"] is not None else "n/a")))
     return summaries, matched, triggers, len(unique), errors
 
 
@@ -286,9 +413,20 @@ def main():
     parser.add_argument("--start", type=float)
     parser.add_argument("--end", type=float)
     parser.add_argument("--actuator")
+    parser.add_argument(
+        "--session", help="telemetry session id, or 'latest'")
+    parser.add_argument(
+        "--after-line", type=int, default=0,
+        help="ignore records through this one-based input line")
     args = parser.parse_args()
-    result = audit(load_records(
-        args.path, args.start, args.end, args.actuator))
+    try:
+        records = load_records(
+            args.path, args.start, args.end, args.actuator,
+            args.session, args.after_line)
+    except ValueError as exc:
+        print("ERROR:", exc)
+        return 2
+    result = audit(records)
     summaries, matched, triggers, executed, errors = result
     for summary in summaries:
         print(summary)

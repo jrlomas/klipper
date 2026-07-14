@@ -4307,6 +4307,12 @@ uart_pin:
 #   A comma separated list of pins to set prior to accessing the
 #   tmc2208 UART. This may be useful for configuring an analog mux for
 #   UART communication. The default is to not configure any pins.
+#uart_baud:
+#   The software-UART baud rate. The default is 40000 on normal 32-bit
+#   micro-controller builds, 9000 when the MCU advertises the HELIX
+#   trajectory stepper backend (to leave timer-sampling margin during
+#   polynomial step solving), and 9000 on AVR. All drivers sharing a UART
+#   use one rate; an explicit value applies to the complete shared bus.
 #interpolate: True
 #   If true, enable step interpolation (the driver will internally
 #   step at a rate of 256 micro-steps). This interpolation does

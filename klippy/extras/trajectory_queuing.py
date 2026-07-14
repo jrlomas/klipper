@@ -299,7 +299,16 @@ class TrajectoryStepper:
 
     def commanded_pos_su(self):
         # Current commanded joint position in sub-units, from the host
-        # kinematics (the ground truth an idle re-anchor uses).
+        # wire twin.  Trajectory steppers intentionally bypass itersolve's
+        # step generator, so its commanded-position cache is stale after a
+        # normal move.  Convert the exact physical wire accumulator back
+        # through the stepper offset instead.
+        wire_acc = getattr(self, 'wire_acc', None)
+        if wire_acc is not None:
+            return self.mcu_stepper.mcu_to_commanded_position_su(
+                int(wire_acc) >> 32)
+        # Before the first wire anchor, kinematics is the only available
+        # source and is also the position the first anchor will use.
         sk = self.mcu_stepper.get_stepper_kinematics()
         pos_mm = self.ffi_lib.itersolve_get_commanded_pos(sk)
         return int(round(pos_mm * self.su_per_mm))

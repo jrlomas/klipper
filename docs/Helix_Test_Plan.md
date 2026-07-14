@@ -264,30 +264,49 @@ Prove the wire before you trust it to carry motion.
 **Toolhead off the machine / joint free to move.** One stepper set to
 `motion_protocol: trajectory`.
 
-- [ ] **4.1 — Anchor.** `TRAJECTORY_STATUS`.
-  Expect: joint listed, anchored, commanded position readable, sub-unit
-  resolution and higher-order support reported.
-  Pass: state == anchored, position sane.
+- [x] **4.1 — Anchor.** `TRAJECTORY_STATUS`.
+  Expect: joint listed, commanded position readable, sub-unit resolution and
+  higher-order support reported. During queued motion the joint is anchored;
+  after its explicit terminal hold the host deliberately drops the anchor, so
+  the clean idle state is `anchored=0 need_rebase=0`.
+  Pass: the 2026-07-14 V0 run reported all three trajectory joints, higher-order
+  support, and sane CoreXY wire-twin coordinates at commanded XYZ
+  `[60,60,30]`: A=120.0003 mm, B=0.0000 mm, Z=30.0000 mm. After the stress
+  return it reported A=120.0002 mm and B=0.0002 mm (sub-microstep residual).
 - [~] **4.2 — Single move.** Command a short move via normal G-code.
   Expect: the host emits segments; the MCU synthesizes steps and arrives.
   Pass: measured end position == commanded within one step. On 2026-07-14,
   the V0 completed independent X and Y homing and a complete `G28 Z` override
   (5 mm lift, two trigger approaches, retract, and move to Z=30). Klipper
   remained ready and reported Z=30; an external endpoint measurement remains.
-- [ ] **4.3 — Chained moves / no drift.** Run a long back-and-forth
+- [x] **4.3 — Chained moves / no drift.** Run a long back-and-forth
   (≥1000 segments) that returns to the origin.
   Pass: returns to origin exactly (fixed-point integration; matches 0.6
-  on hardware).
+  on hardware). On 2026-07-14, the Pico ran nine recorder-bounded X reversal
+  chains between X=50 and X=70 at 100 mm/s, plus a slow X=60 to X=40 physical
+  witness move, and returned to commanded X=60. The operator confirmed visible
+  left/right toolhead travel. Both CoreXY joints completed 1,071 fitted
+  segments and 579,200 replayed physical pulses; the final wire twin was
+  A=120.0002 mm, B=0.0002 mm at host XY=[60,60]. The printer remained ready.
+  The run also exposed software-TMC-UART sampling contention at 40 kbaud and
+  20 kbaud during acceleration-heavy trajectory solving. The trajectory-aware
+  9 kbaud default completed the full corpus with clean X/Y/Z GSTAT reads.
 - [ ] **4.4 — Underrun ramp.** Deliberately starve the segment queue
   (throttle the host) and confirm `motion_underrun_decel` ramps the joint
   to a controlled stop rather than a hard halt or overrun.
   Pass: decel observed; no lost steps on the resume.
-- [ ] **4.5 — Velocity/accel limits honored.** Compare commanded vs
+- [~] **4.5 — Velocity/accel limits honored.** Compare commanded vs
   measured motion profile.
   Pass: within limits; no audible/visible step loss.
-- [~] **4.6 — Deterministic wire/execution audit.** After the move, run
+  The 4.3 audit proved identical intended/executed pulse counts and a 637-tick
+  minimum interval at 100 mm/s, with visible motion and no observed step loss.
+  A scope/encoder comparison of the physical velocity and acceleration profile
+  remains.
+- [x] **4.6 — Deterministic wire/execution audit.** After the move, run
   `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
-  with a narrow `--start` / `--end` machine-time window. The audit replays
+  with `--session latest` and a narrow `--start` / `--end` machine-time
+  window. Older telemetry without session identifiers can be isolated with
+  `--after-line`. The audit replays
   every half-step crossing from the exact persisted wire coefficients and
   matches each MCU flight-recorder boundary. This requires
   `[failure_recovery]` with `execlog_stream_max` greater than zero; host
@@ -298,7 +317,14 @@ Prove the wire before you trust it to carry motion.
   126 planned segments, five holds, 73,995 executed pulses, 124 matched
   boundaries, two triggers, a 964-tick minimum interval, and zero errors. The
   long search crossed the signed phase boundary while its unwrapped host twin
-  continued below -2³¹ sub-units. A fresh coupled X/Y audit remains.
+  continued below -2³¹ sub-units. The 2026-07-14 coupled X/Y stress audit then
+  passed with 1,071 segments and 579,200 pulses per joint, 2,182 matched MCU
+  boundaries, identical intended/executed 637-tick minimum intervals, and zero
+  underruns or errors. `atlas_trace` now assigns each Klippy process a session
+  id; the auditor scopes by session, line, wire-clock interval, and wrap-safe
+  recorder sequence, and streams pulse statistics so this corpus is bounded in
+  memory. Recorder dumps were issued after every short batch to prevent ring
+  lapping.
 
 ---
 
@@ -413,11 +439,14 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   `motion_homing_volatile: True` blocks for re-homing, others do not.
   Pass: geometry after resume matches before the fault (measure a witness
   feature); volatile joints correctly demand re-homing.
-- [ ] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
+- [~] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
   Pass: retained MCU execution logs drain to the Klipper log even while the
   MCU is shut down, live `execution` records share Atlas machine time with
   exact host `intention` coefficients, and the records explain the
   interruption.
+  Live streaming, reliable repeated pulls, host/MCU reconciliation, and the
+  1,071-segment coupled audit passed on 2026-07-14. A deliberate shutdown and
+  post-shutdown pull remain before this item is complete.
 - [ ] **8.7 — Full replug cycle under print.** Combine 8.3–8.5 during an
   actual short print; reseat a toolhead cable.
   Pass: the part survives; no cold-bed detach; layers align across the
@@ -563,14 +592,16 @@ Type every new command once on a real machine and confirm it does what
 - [x] **13.1** `HELIX_STATUS` — reports MCUs' built features + loaded host
   subsystems. Pico and EBB36 reported their live feature sets, identical ABI
   hash, and fleet lockstep on 2026-07-13.
-- [ ] **13.2** `TRAJECTORY_STATUS` — per-actuator state, position,
-  resolution, higher-order support.
+- [x] **13.2** `TRAJECTORY_STATUS` — per-actuator state, exact wire-twin
+  position, resolution, higher-order support. Verified before and after the
+  1,071-segment-per-joint V0 stress run on 2026-07-14.
 - [ ] **13.3** `BEZIER_MOVE …` — cubic and quintic (idle, opt-in).
 - [ ] **13.4** `FAILURE_RECOVERY_STATUS` — holds + paused MCUs.
 - [ ] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake.
 - [ ] **13.6** `RESUME_MOTION` — reconcile + resume.
 - [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
-- [ ] **13.9** `EXECLOG_DUMP` — flight recorder drains.
+- [x] **13.9** `EXECLOG_DUMP` — reliable flight-recorder pulls completed after
+  every bounded motion batch and after the final run on 2026-07-14.
 - [x] **13.10** `TIMESYNC_STATUS` — per-secondary discipline state. The
   EBB36 reported `CONVERGED` against the Pico after cold connect and after
   `FIRMWARE_RESTART`.

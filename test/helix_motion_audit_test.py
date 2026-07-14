@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Regression tests for deterministic HELIX flight-recorder replay."""
 
+import json
 import pathlib
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -80,6 +82,40 @@ def test_intentions_without_execution_evidence_fail_closed():
     print("PASS: missing MCU evidence fails closed")
 
 
+def test_stale_ring_records_before_rebase_sequence_are_ignored():
+    velocity, duration = 65_536_000, 100
+    finish = audit.end_delta(duration, velocity, 0)
+    records = [
+        intention("rebase", {
+            "start_clock": 1000, "end_clock": 1000, "position_su": 0,
+            "acc_q32": 0, "mcu_position": 0}),
+        intention("segment", {
+            "start_clock": 1000, "end_clock": 1100,
+            "duration": duration, "flags": 0, "velocity": velocity,
+            "accel": 0, "jerk": 0, "snap": 0, "crackle": 0,
+            "start_position_su": 0, "end_position_su": finish >> 32,
+            "start_acc_q32": 0, "end_acc_q32": finish}),
+        intention("hold", {
+            "start_clock": 1100, "end_clock": 1110, "duration": 10,
+            "flags": 1, "velocity": 0, "accel": 0, "jerk": 0,
+            "snap": 0, "crackle": 0,
+            "start_position_su": finish >> 32,
+            "end_position_su": finish >> 32,
+            "start_acc_q32": finish, "end_acc_q32": finish}),
+        # This stale record even aliases the current wire-clock interval; its
+        # sequence proves that it predates the matched rebase.
+        execution(99, "segment_done", 1050, 123),
+        execution(100, "rebase", 1000, 0),
+        execution(101, "segment_done", 1100, finish >> 32),
+        execution(102, "segment_done", 1110, finish >> 32),
+        execution(103, "hold", 1110, finish >> 32),
+    ]
+    summaries, matched, unused_triggers, executed, errors = audit.audit(records)
+    assert summaries and not errors, errors
+    assert matched == 3 and executed == 4
+    print("PASS: stale recorder entries before the rebase are ignored")
+
+
 def test_unsigned_persisted_negative_position_is_normalized():
     velocity, duration = -65_536_000, 100
     finish = audit.end_delta(duration, velocity, 0)
@@ -126,6 +162,25 @@ def test_replay_rejects_impossible_position_seed():
     print("PASS: malformed replay seeds are bounded and rejected")
 
 
+def test_streaming_stats_match_materialized_replay():
+    fields = {
+        "duration": 100, "start_clock": 1000,
+        "start_acc_q32": 0,
+        "end_acc_q32": audit.end_delta(100, 65_536_000, 0),
+        "velocity": 65_536_000, "accel": 0,
+    }
+    pulses, expected_mpos = audit.replay_pulses(fields, 0)
+    count, mpos, min_interval, last_clock = audit.replay_pulse_stats(
+        fields, 0)
+    intervals = [b[0] - a[0] for a, b in zip(pulses, pulses[1:])
+                 if b[0] > a[0]]
+    assert count == len(pulses)
+    assert mpos == expected_mpos
+    assert min_interval == min(intervals)
+    assert last_clock == pulses[-1][0]
+    print("PASS: streaming pulse statistics preserve exact replay results")
+
+
 def test_audit_reports_impossible_seed_without_hanging():
     records = [
         intention("rebase", {
@@ -143,13 +198,32 @@ def test_audit_reports_impossible_seed_without_hanging():
     print("PASS: impossible flight data returns an audit error promptly")
 
 
+def test_record_loader_isolates_latest_session_and_line_floor():
+    records = [
+        {"session_id": "old", "kind": "trace", "machine_time": 5.},
+        {"session_id": "new", "kind": "trace", "machine_time": 5.},
+        {"session_id": "new", "kind": "trace", "machine_time": 6.},
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "telemetry.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        loaded = audit.load_records(path, session_id="latest")
+        assert [r["session_id"] for r in loaded] == ["new", "new"]
+        loaded = audit.load_records(path, session_id="new", after_line=2)
+        assert [r["machine_time"] for r in loaded] == [6.]
+    print("PASS: audit loader isolates restart sessions and line floors")
+
+
 def main():
     test_clean_path_replays_and_matches_boundaries()
     test_underrun_is_a_failed_audit()
     test_intentions_without_execution_evidence_fail_closed()
+    test_stale_ring_records_before_rebase_sequence_are_ignored()
     test_unsigned_persisted_negative_position_is_normalized()
     test_replay_rejects_impossible_position_seed()
+    test_streaming_stats_match_materialized_replay()
     test_audit_reports_impossible_seed_without_hanging()
+    test_record_loader_isolates_latest_session_and_line_floor()
     print("ALL PASS")
 
 

@@ -216,6 +216,7 @@ def test_trace_data_renders_and_writes_common_time():
         })
         record = json.loads(pathlib.Path(output).read_text())
         assert record["kind"] == "trace"
+        assert record["session_id"] == manager.session_id
         assert record["machine_time"] == 12.
         assert record["source"] == "mcu/ebb36/motion"
         assert record["summary"] == (
@@ -259,6 +260,7 @@ def test_execution_and_wire_intention_share_machine_time():
         records = [json.loads(line)
                    for line in pathlib.Path(output).read_text().splitlines()]
         assert [r["kind"] for r in records] == ["intention", "execution"]
+        assert all(r["session_id"] == manager.session_id for r in records)
         assert records[0]["machine_time"] == 12.
         assert records[0]["fields"]["velocity"] == 65536
         assert records[1]["machine_time"] == 12.05

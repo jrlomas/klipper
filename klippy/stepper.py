@@ -222,6 +222,12 @@ class MCU_stepper:
         # remains the nearest physical integer microstep counter.
         mcu_steps = (cmd_pos + self._mcu_position_offset) / self._step_dist
         return int(round(mcu_steps * 65536.))
+    def mcu_to_commanded_position_su(self, mcu_pos_su):
+        # Inverse of commanded_to_mcu_position_su().  Trajectory motion
+        # bypasses itersolve step generation, so its commanded-position
+        # cache may be stale even though the exact wire accumulator is not.
+        offset_su = self._mcu_position_offset / self._step_dist * 65536.
+        return int(round(mcu_pos_su - offset_su))
     def _query_traj_readback(self):
         # Read the trajectory stepper's live physical microstep counter.
         # The paired position field is its modulo low-word phase.
