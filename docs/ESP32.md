@@ -25,7 +25,8 @@ firmware" -> Architecture; FD-0001
   coprocessor shuttling sealed console datagrams through a lock-free
   shared-memory ring.  See
   [the modem architecture](#the-modem-architecture-idf-as-modem)
-  below, including its **runtime-unvalidated** status banner.
+  below.  Its boot and console path are hardware-validated; motion,
+  peripheral behavior, and timing remain unqualified.
 
 Both share the identical console stack:
 
@@ -63,8 +64,11 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   pair blocks (`fec_k=2`): either single loss is reconstructed and a
   later survivor is deferred until it can be released in order. The
   linux MCU exposes it with `-f 2`; ESP32 exposes
-  `CONFIG_KLIPPER_FEC_PAIR`. It remains off by default until measured
-  on the target WiFi link, so the default recovery path is frame ARQ.
+  `CONFIG_KLIPPER_FEC_PAIR`.  A Lolin32 component image completed identify
+  and stats traffic through a controlled proxy that dropped the first data
+  packet of a protected pair, proving recovery over the real WiFi/UDP path.
+  FEC remains off by default until link-profile measurements show that its
+  50% packet overhead is beneficial; the default recovery path is frame ARQ.
 
 ## Core pinning (FD-0001 doc 07) - component architecture
 
@@ -97,18 +101,20 @@ citizen of this chip.  This target is FOC-first.
 
 ## The modem architecture (IDF as modem)
 
-> **TOOLCHAIN VALIDATED; RUNTIME UNVALIDATED — NEEDS HARDWARE.**  The
+> **BOOT AND CONSOLE VALIDATED ON HARDWARE; MOTION/PERIPHERALS PENDING.** The
 > component, component-RMT, and modem images compile and link with
 > pinned ESP-IDF v5.3.2 and its `xtensa-esp-elf` 13.2.0 toolchain.
 > The modem map confirms the private vectors and selected motion-hot
 > objects are in IRAM.  The SPSC ring is also unit-tested on the
 > desktop under ThreadSanitizer/AddressSanitizer, and every register
 > write and boot step is source-verified against that IDF release.
-> None of this has executed on silicon, however.  APP-CPU bringup,
-> the polled timer, peripheral behavior, and timing still require a
-> serial console and scope.  Treat the `component` architecture as
-> the working build until the
-> [bring-up checklist](#devkit-bring-up-checklist) has been run.
+> On 2026-07-13 a dual-core Lolin32 booted the bare APP CPU, ran
+> `sched_main`, loaded the 112-command dictionary through the shared ring
+> using both static authentication and the rotating-key session, emitted
+> repeated MCU stats, and established a fresh session after a host-bridge
+> restart.  This exercises the polled timer enough to operate the console;
+> it does not measure dispatch jitter or qualify GPIO, motion, heaters,
+> ADC, SPI, I2C, LEDC, watchdog fault injection, or RMT/PCNT/FOC behavior.
 
 The stage-3 architecture of doc 12: IDF, FreeRTOS and the closed
 radio blobs are confined to core 0, which becomes an on-die network
@@ -275,19 +281,21 @@ Xtensa link map on 2026-07-13:
 | stepper.c | step event handlers | 1,124B |
 | trajq.c + traj_stepper.c | trajectory execute path | 2,886B |
 | esp32/gpio.c | `out_w1ts/w1tc` hot writes | 1,253B |
-| esp32/appcpu_boot.c | poll loop, bare timer | 904B |
+| esp32/appcpu_boot.c | poll loop, bare timer | 1,036B |
 | esp32/shmem_console.c | ring ops on dispatch path | 596B |
-| appcpu_vectors.S | vector table + entry | 1,060B |
+| appcpu_vectors.S | vector table + entry | 1,175B |
 
-The selected set occupies 8,849B.  The whole image uses 97,622B of
+The selected set occupies 9,096B.  The whole image uses 97,886B of
 the 128KiB IRAM region (`.iram0.vectors` + `.iram0.text`), leaving
-33,450B.  The same map confirms the selected OBJECT-library members
+33,186B.  The same map confirms the selected OBJECT-library members
 land at IRAM addresses, resolving the earlier ldgen placement
 question.  Task-level code (command parsing, config,
 sensors) deliberately stays in flash: IRAM is the scarce resource,
 and a miss there costs dispatch latency of the jitter class already
-accepted on this chip.  Hardware must still confirm that real runtime
-paths do not introduce an unlisted flash dependency.
+accepted on this chip.  The hardware console run exercised both IRAM and
+flash-resident task code after the APP cache/MMU setup; motion and peripheral
+qualification must still check timing and cache behavior under their actual
+loads.
 
 ### Building the modem architecture
 
@@ -319,15 +327,17 @@ dual-core silicon):
 2. **Modem build boots core 0**: flash the modem build; expect
    `klipper_modem: modem shuttling datagrams on udp port ...` then
    `klipper_appcpu: core 1 running bare klipper (after ~Xms)` on the
-   monitor.  If instead `core 1 did not start`, the logged
-   fault/cause/epc triple (from `esp32_core1_fault[]`) localizes it:
-   cause=0 means the core never reached the entry stub (bringup
-   sequence), 0x1nn means a spurious interrupt-level vector fired,
-   anything else is a real exception at EPC.
+   monitor.  This passed on the Lolin32 on 2026-07-13.  If startup instead
+   parks, `esp32_core1_fault[]` reports the exception cause, EPC, address,
+   vector offset, PS, window base/start, and exception-entry `a0`; `0x1nn`
+   causes are synthetic interrupt-vector markers and architectural exception
+   causes otherwise follow the Xtensa definitions.
 3. **Console end-to-end**: identify handshake + dictionary download
    through the ring path; confirm auth-failure rejection (wrong PSK)
    still drops silently; confirm responses only go to the
-   authenticated peer (send from a second source).
+   authenticated peer (send from a second source).  Static-HMAC and secure
+   session identify, repeated stats, and a fresh session after bridge restart
+   passed on the Lolin32; the adversarial second-source hardware check remains.
 4. **IRAM placement**: `idf.py size-components`, then check the map
    file against the workstation baseline above and confirm runtime
    behavior does not reveal an unlisted flash dependency.
@@ -651,10 +661,11 @@ authenticated datagram path.
 
 ## Status / what remains
 
-Working (verified on the desktop linux-mcu path, which shares all
-transport code): authenticated datagram console end-to-end, identify
-/ dictionary download, command dispatch, tx batching, auth-failure
-rejection, trust-network mode.
+Working in desktop linux-mcu verification and on the Lolin32 component and
+modem console paths: authenticated datagram transport, identify/dictionary
+download, command dispatch, tx batching, rotating-key sessions, session
+re-handshake, and periodic stats.  Desktop tests additionally cover explicit
+auth-failure rejection and trust-network mode.
 
 Xtensa-compiled and dictionary-verified (including `spicmds`, `i2ccmds`,
 `pwmcmds`, `buttons`, `tmcuart`, `neopixel` and the software SPI/I2C
@@ -675,13 +686,16 @@ variants with pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0:
 | --- | --- | ---: | ---: |
 | component | default | `0xc44b0` | 48% |
 | component-RMT | `sdkconfig.defaults.rmt` | `0xc4e00` | 48% |
-| modem | `sdkconfig.defaults.modem` | `0xbef00` | 49% |
+| modem | `sdkconfig.defaults.modem` | `0xc0140` | 49% |
 
 The first real builds exposed and fixed two issues that the stub path
 missed: disabled Kconfig booleans are absent from `sdkconfig.h`, and
 the private vector assembly needed the configured `EXCSAVE_1` special-
-register definition.  The dictionary flow executes in these builds,
-the APP-CPU boot sequence remains checked against ESP-IDF v5.3.2
+register definition.  The first modem hardware run additionally exposed a
+masked APP flash-cache bus, the need for the canonical initial window-stack
+save area, and ROM `setjmp`'s architectural syscall-0 window spill; all three
+are now handled and the dictionary flow executes on the bare core.
+The APP-CPU boot sequence remains checked against ESP-IDF v5.3.2
 sources, and the SPSC ring remains TSan/ASan-tested. Fresh generated
 configurations confirm `CONFIG_ESP_TASK_WDT_PANIC=y` in every variant.
 
@@ -697,16 +711,19 @@ idle, so they already keep the UDP/session path active; a separate semantic
 keepalive packet would duplicate that traffic. The socket stays bound across
 station reassociation, and the rebooting watchdog covers a wedged task.
 
-The images have **not run on hardware**. Remaining work, in rough order:
+The component and modem console images have run on hardware. Remaining work,
+in rough order:
 
-* On-hardware bring-up: the component arch first, then the modem arch's
-  [devkit checklist](#devkit-bring-up-checklist) (APP-CPU boot,
-  vector table, polled-dispatch jitter, and peripheral measurements).
+* Complete the modem [devkit checklist](#devkit-bring-up-checklist): scope
+  timer/step dispatch jitter, exercise the expanded fault record, and measure
+  the register-level peripheral paths. APP-CPU boot, private vectors,
+  flash-cache access, shared-ring console, and both authentication modes pass.
 * A level-1 bare-core timer ISR through `appcpu_vectors.S` (replacing
   polled dispatch) once hardware allows comparing the two; then
   reinstating `rmt_step.c` on the bare core.
-* Measure whether the optional `fec_k=2` path's 50% packet overhead helps
-  the target WiFi loss profile.
+* Measure whether the optional `fec_k=2` path's 50% packet overhead helps the
+  target WiFi loss profile. Controlled first-packet loss recovery already
+  passes on the Lolin32; this remaining item is a deployment tradeoff study.
 * On-silicon bring-up of the RMT step backend (see the
   [RMT step bring-up checklist](#rmt-step-bring-up-checklist)); PCNT
   step verification as a homing-position cross-check; FOC backend

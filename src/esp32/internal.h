@@ -74,6 +74,7 @@ void shmem_console_poll(void);
 
 // appcpu_boot.c (modem arch)
 int esp32_appcpu_start(void);
-extern uint32_t esp32_core1_fault[4]; // flag, exccause, epc, excvaddr
+// flag, exccause, epc, excvaddr, vector, PS, WINDOWBASE, WINDOWSTART, a0
+extern uint32_t esp32_core1_fault[9];
 
 #endif // internal.h

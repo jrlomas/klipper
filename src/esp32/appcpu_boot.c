@@ -19,7 +19,8 @@
 //    built unicore - Cache_Read_Disable(1), Cache_Flush(1), MMU
 //    invalid-access clear via DPORT_APP_CACHE_CTRL1_REG, mmu_init(1),
 //    then restore_app_mmu_from_pro_mmu() copying the 2048-entry
-//    PRO flash-MMU table (0x3ff10000) to the APP table (0x3ff12000).
+//    PRO flash-MMU table (0x3ff10000) to the APP table (0x3ff12000),
+//    followed by copying the PRO core's enabled cache-bus mask to APP.
 //  * components/hal/esp32/include/hal/cpu_utility_ll.h:51-66
 //    cpu_utility_ll_unstall_cpu(1): clear RTC_CNTL_SW_STALL_APPCPU_C0
 //    in RTC_CNTL_OPTIONS0_REG and RTC_CNTL_SW_STALL_APPCPU_C1 in
@@ -44,10 +45,10 @@
 // (through the appcpu_vectors.S table) is the flagged follow-up once
 // hardware bringup allows measuring both variants.
 //
-// RUNTIME UNPROVEN: this file compiles and links in the real ESP-IDF
-// v5.3.2 Xtensa modem image and every register write is source-verified
-// against IDF, but it has never executed on silicon.  See the bring-up
-// checklist in docs/ESP32.md.
+// RUNTIME STATUS: bare-core boot, flash execution, the polled console timer,
+// shared-ring traffic, and static/session authentication have run on a
+// dual-core Lolin32.  Motion timing and register-level peripherals remain
+// unqualified; see the bring-up checklist in docs/ESP32.md.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //
@@ -61,6 +62,7 @@
 #include "esp32/rom/cache.h" // Cache_Flush, mmu_init
 #include "esp32/rom/ets_sys.h" // ets_set_appcpu_boot_addr
 #include "esp_log.h" // ESP_LOGE (core-0 half only)
+#include "hal/cache_ll.h" // cache bus mask copied from PRO to APP
 #include "esp_private/periph_ctrl.h" // periph_module_enable
 #include "freertos/FreeRTOS.h" // vTaskDelay (core-0 half only)
 #include "freertos/task.h"
@@ -75,8 +77,9 @@
 static const char *TAG = "klipper_appcpu";
 
 // Fault record written by the appcpu_vectors.S park handlers:
-// { flag, exccause (or 0x100+level), epc1, excvaddr }
-uint32_t esp32_core1_fault[4];
+// { flag, exccause (or 0x100+level), epc1, excvaddr, vector offset,
+//   PS, WINDOWBASE, WINDOWSTART, exception-entry a0 }
+uint32_t esp32_core1_fault[9];
 
 // Entry point in appcpu_vectors.S (xtensa only; the host-gcc
 // harness link-checks this file with the stand-in below)
@@ -133,6 +136,10 @@ esp32_appcpu_start(void)
     for (int i = 0; i < 2048; i++)
         DPORT_REG_WRITE(DR_REG_FLASH_MMU_TABLE_APP + 4 * i
                         , DPORT_REG_READ(DR_REG_FLASH_MMU_TABLE_PRO + 4 * i));
+    // do_multicore_settings() also mirrors the enabled cache buses.  A
+    // unicore boot leaves APP's IROM/DROM buses masked; enabling its cache
+    // without this step makes the first flash fetch raise IllegalInstruction.
+    cache_ll_l1_enable_bus(1, cache_ll_l1_get_enabled_bus(0));
 
     // start_other_core(), cpu_start.c lines 279-294
     Cache_Flush(1);
@@ -170,10 +177,17 @@ esp32_appcpu_start(void)
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-    ESP_LOGE(TAG, "core 1 did not start (fault=%u cause=0x%x epc=0x%x)"
+    ESP_LOGE(TAG, "core 1 did not start (fault=%u cause=0x%x epc=0x%x "
+             "addr=0x%x vec=0x%x ps=0x%x wb=%u ws=0x%x a0=0x%x)"
              , (unsigned)esp32_core1_fault[0]
              , (unsigned)esp32_core1_fault[1]
-             , (unsigned)esp32_core1_fault[2]);
+             , (unsigned)esp32_core1_fault[2]
+             , (unsigned)esp32_core1_fault[3]
+             , (unsigned)esp32_core1_fault[4]
+             , (unsigned)esp32_core1_fault[5]
+             , (unsigned)esp32_core1_fault[6]
+             , (unsigned)esp32_core1_fault[7]
+             , (unsigned)esp32_core1_fault[8]);
     return -1;
 }
 

@@ -28,8 +28,10 @@ config KLIPPER_ARCH_MODEM
         bare-metal klipper sched_main() - no RTOS, no IDF calls,
         register-level peripherals, IRAM-resident hot path.  HMAC
         verification runs on the klipper core; the radio-blob core
-        never sees plaintext authority.  Runtime is NOT yet
-        hardware-validated - see docs/ESP32.md.
+        never sees plaintext authority.  Bare-core boot and the
+        static/session console paths are hardware-validated on a
+        dual-core Lolin32; motion and peripherals are not yet
+        qualified - see docs/ESP32.md.
 
 endchoice
 

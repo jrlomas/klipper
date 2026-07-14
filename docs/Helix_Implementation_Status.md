@@ -45,12 +45,14 @@ work. They do not convert any unchecked target or hardware item into a pass.
 * Static datagram FEC uses bounded pair blocks: tests drop either the first or
   second packet, reconstruct it from authenticated parity, and prove recovered
   frames reach the consumer in original order. Unsupported block sizes are
-  rejected instead of silently weakening that guarantee.
+  rejected instead of silently weakening that guarantee.  A real Lolin32
+  component image also loaded its dictionary and emitted stats through a UDP
+  proxy that deliberately dropped the first packet of a protected pair.
 * Pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0 build the ESP32 component,
   component-RMT, and unicore modem images. The modem link map confirms the
-  private vectors and selected motion-hot objects land in IRAM with 33,450B
-  remaining in the 128KiB region. These are compiler/linker results, not a
-  claim that any image has run on a board. The component task and bare modem
+  private vectors and selected motion-hot objects land in IRAM. These are
+  compiler/linker results; the separate board evidence below defines what has
+  actually run. The component task and bare modem
   core now have rebooting watchdog contracts, `reset` works in both
   architectures, WiFi reconnect no longer blocks the IDF event task, and the
   component UDP ring publishes slots with acquire/release ordering.
@@ -62,6 +64,15 @@ work. They do not convert any unchecked target or hardware item into a pass.
   also found and fixed session nonce initialization before the GPTimer was
   ready.  This is component-console evidence only, not motion or peripheral
   qualification.
+* The same Lolin32 has run the unicore modem architecture: core 0 brought up
+  WiFi while core 1 booted bare Klipper with its private vectors, APP flash
+  cache mapping, polled timer, and shared-memory console ring.  Static-HMAC
+  and rotating-key session bridges each loaded all 112 commands and delivered
+  repeated five-second MCU stats; a stopped/restarted host bridge established
+  a fresh authenticated session and repeated the result.  Bring-up found and
+  fixed the missing APP cache-bus enable, canonical window-stack bootstrap,
+  and syscall-0 window spill required by ROM `setjmp`.  This is boot/console
+  evidence, not motion, peripheral, ISR-jitter, or thermal qualification.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
   image. The path includes configurable pins and reset, bounded MDIO,
@@ -92,10 +103,11 @@ repository at this checkpoint. The following work requires boards,
 measurements, a product security decision, or belongs to an explicitly
 optional later architecture:
 
-* **ESP32:** the Lolin32 component console now has real board evidence, while
-  the modem image, timer/ISR jitter, FEC behavior, RMII, RMT/PCNT/FOC, and
-  actual motion/peripheral paths remain unvalidated.  The ESP32 guide lists
-  the required next measurements.
+* **ESP32:** the Lolin32 component and bare-core modem consoles now have real
+  board evidence, and controlled-loss pair FEC has recovered traffic on its
+  WiFi link. Timer/ISR jitter, FEC cost/benefit under natural loss, RMII,
+  RMT/PCNT/FOC, and actual motion/peripheral paths remain unvalidated. The
+  ESP32 guide lists the required next measurements.
 * **OAMS updater:** the canonical boot core and chunked `flash_sign` handler
   are vendored downstream, but the in-band update commands are deliberately
   unregistered because the product signing key and coexistence policy have

@@ -2,8 +2,9 @@
 
 Status: Partial in HELIX 0.9; ESP-IDF v5.3.2 Xtensa builds pass for the
 component, component-RMT, and modem variants with watchdog/reset contracts.
-The component UDP/session console has now run on a Lolin32 over a real LAN;
-the modem and listed motion/stepper follow-ups remain unvalidated.
+The component and bare-core modem UDP/session consoles have now run on a
+Lolin32 over a real LAN, including a fresh authenticated re-handshake; the
+listed motion, peripheral, and timing follow-ups remain unvalidated.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has
@@ -83,10 +84,13 @@ a private vector table and a polled scheduler, `shmem_console.c` /
 `modem.c` split the console over a lock-free shared-RAM ring — with
 HMAC verification kept on the Klipper core, so the blob core shuttles
 only sealed bytes it cannot forge — and the hot path is pinned to
-IRAM. Every register sequence is source-verified against ESP-IDF
-v5.3.2 and both architectures host-compile/link, but the modem
-architecture has **not yet run on silicon** — see the bring-up
-checklist in [docs/ESP32.md](../../ESP32.md).
+IRAM. Every register sequence is source-verified against ESP-IDF v5.3.2 and
+both architectures host-compile/link.  On 2026-07-13 the modem architecture
+booted bare core 1 on a Lolin32 and passed static-HMAC and rotating-key
+session identify/dictionary/stats traffic through the shared ring, including
+a fresh session after host restart.  This validates stage 3's boot and console
+plumbing, not its motion timing or register-level peripheral behavior; see the
+remaining bring-up checklist in [docs/ESP32.md](../../ESP32.md).
 
 Both stages have a rebooting liveness contract. Component mode subscribes
 the Klipper task to IDF's task watchdog and enables panic-on-timeout. Modem

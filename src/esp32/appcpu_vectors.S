@@ -8,13 +8,13 @@
 // canonical Xtensa sequences, reproduced verbatim from ESP-IDF
 // v5.3.2 components/xtensa/xtensa_vectors.S lines 2024-2233 (which
 // carries them from Cadence's Xtensa HAL, MIT-style licensed).  The
-// alloca (MOVSP) exception handler is the canonical _xt_alloca_exc
-// from the same file.  Everything else - interrupts (never enabled;
+// alloca (MOVSP) and syscall-0 window-spill handlers are the canonical
+// forms from the same file.  Everything else - interrupts (never enabled;
 // INTENABLE=0 and the core-1 interrupt matrix is cleared by
 // appcpu_boot.c before unstall), kernel/user exceptions, double
 // exceptions - parks the core in a fatal loop after recording
-// EXCCAUSE/EPC1/EXCVADDR into esp32_core1_fault[], which the modem
-// core reports over its log (modem.c).
+// the exception and register-window state into esp32_core1_fault[],
+// which the modem core reports over its log (modem.c).
 //
 // Vector offsets are the ESP32 LX6 core configuration constants
 // (XCHAL_*_VECOFS, ESP-IDF components/xtensa/esp32/include/xtensa/
@@ -30,9 +30,10 @@
 // INTLEVEL=0 - interrupts are architecturally enabled but none is
 // unmasked, matching the polled bare runtime.
 //
-// RUNTIME UNPROVEN: assembled and linked with ESP-IDF v5.3.2's
-// xtensa-esp-elf 13.2.0 toolchain, but never run on silicon.  See
-// the bring-up checklist in docs/ESP32.md.
+// RUNTIME STATUS: this private table, its canonical syscall window spill,
+// and the stack bootstrap have run through identify/stats traffic on a
+// dual-core Lolin32.  Motion timing and injected-fault qualification remain;
+// see the bring-up checklist in docs/ESP32.md.
 //
 // Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 //
@@ -43,6 +44,7 @@
 // EXCSAVE_1 is a configured Xtensa special-register number, not an assembler
 // register alias.  Pull in the target definitions used by ESP-IDF's vectors.
 #include "xtensa/config/specreg.h"
+#include "xtensa_context.h"
 
 /****************************************************************
  * Core-1 stack (private; DRAM)
@@ -173,37 +175,44 @@ _appcpu_WindowUnderflow12:
 
     .org    0x180                   /* XCHAL_INTLEVEL2_VECOFS */
 _appcpu_Level2Vector:
+    movi    a2, 0x180
     movi    a0, 0x102
     j       _appcpu_fatal_code
 
     .org    0x1C0                   /* XCHAL_INTLEVEL3_VECOFS */
 _appcpu_Level3Vector:
+    movi    a2, 0x1C0
     movi    a0, 0x103
     j       _appcpu_fatal_code
 
     .org    0x200                   /* XCHAL_INTLEVEL4_VECOFS */
 _appcpu_Level4Vector:
+    movi    a2, 0x200
     movi    a0, 0x104
     j       _appcpu_fatal_code
 
     .org    0x240                   /* XCHAL_INTLEVEL5_VECOFS */
 _appcpu_Level5Vector:
+    movi    a2, 0x240
     movi    a0, 0x105
     j       _appcpu_fatal_code
 
     .org    0x280                   /* XCHAL_DEBUG_VECOFS (level 6) */
 _appcpu_DebugVector:
+    movi    a2, 0x280
     movi    a0, 0x106
     j       _appcpu_fatal_code
 
     .org    0x2C0                   /* XCHAL_NMI_VECOFS (level 7) */
 _appcpu_NMIVector:
+    movi    a2, 0x2C0
     movi    a0, 0x107
     j       _appcpu_fatal_code
 
     .org    0x300                   /* XCHAL_KERNEL_VECOFS */
 _appcpu_KernelExceptionVector:
     wsr     a0, EXCSAVE_1
+    movi    a2, 0x300
     rsr     a0, EXCCAUSE
     j       _appcpu_fatal_cause
 
@@ -212,17 +221,21 @@ _appcpu_UserExceptionVector:
     wsr     a0, EXCSAVE_1
     rsr     a0, EXCCAUSE
     beqi    a0, 5, _appcpu_alloca_exc   /* EXCCAUSE_ALLOCA */
+    beqi    a0, 1, _appcpu_syscall_exc  /* EXCCAUSE_SYSCALL */
+    movi    a2, 0x340
     j       _appcpu_fatal_cause
 
     .org    0x3C0                   /* XCHAL_DOUBLEEXC_VECOFS */
 _appcpu_DoubleExceptionVector:
+    movi    a2, 0x3C0
     movi    a0, 0x1FF
     j       _appcpu_fatal_code
 
-/* Fatal park: record {flag, cause, epc1, excvaddr} into
+/* Fatal park: record {flag, cause, epc1, excvaddr, vector offset,
+   PS, WINDOWBASE, WINDOWSTART, EXCSAVE1} into
    esp32_core1_fault[] (appcpu_boot.c) for the modem core to report,
-   then spin forever.  a0 carries the cause; a1 is clobbered (the
-   core is dead anyway). */
+   then spin forever.  a0 carries the cause, a2 the vector offset;
+   a1 is clobbered (the core is dead anyway). */
     .align  4
     .literal_position
 _appcpu_fatal_code:                 /* a0 = 0x1nn synthetic code */
@@ -233,10 +246,52 @@ _appcpu_fatal_cause:                /* a0 = EXCCAUSE */
     s32i    a0, a1, 8               /* [2] epc1 (garbage for 0x1nn codes) */
     rsr     a0, EXCVADDR
     s32i    a0, a1, 12              /* [3] excvaddr */
+    s32i    a2, a1, 16              /* [4] vector offset */
+    rsr     a0, PS
+    s32i    a0, a1, 20              /* [5] PS */
+    rsr     a0, WINDOWBASE
+    s32i    a0, a1, 24              /* [6] WINDOWBASE */
+    rsr     a0, WINDOWSTART
+    s32i    a0, a1, 28              /* [7] WINDOWSTART */
+    rsr     a0, EXCSAVE_1
+    s32i    a0, a1, 32              /* [8] exception-entry a0 */
+    memw                               /* publish fields before flag */
     movi    a0, 1
     s32i    a0, a1, 0               /* [0] flag - written last */
     memw
 1:  j       1b
+
+/* Canonical windowed-ABI syscall handler from ESP-IDF's
+   xtensa_vectors.S.  ROM setjmp issues syscall 0 to spill every live
+   register window before saving its context; sched_main uses setjmp for
+   shutdown recovery, so a bare Klipper core must provide this architectural
+   service even though it has no operating-system syscalls. */
+    .align  4
+_appcpu_syscall_exc:
+    addi    sp, sp, -XT_STK_FRMSZ
+    s32i    a12, sp, XT_STK_A12
+    s32i    a13, sp, XT_STK_A13
+    call0   _xt_context_save
+
+    rsr     a2, EPC_1
+    addi    a3, a2, 3
+#if XCHAL_HAVE_LOOPS
+    rsr     a0, LEND
+    bne     a3, a0, 2f
+    rsr     a0, LCOUNT
+    beqz    a0, 2f
+    addi    a0, a0, -1
+    rsr     a3, LBEG
+    wsr     a0, LCOUNT
+#endif
+2:  wsr     a3, EPC_1
+
+    call0   _xt_context_restore
+    addi    sp, sp, XT_STK_FRMSZ
+    movi    a0, -1
+    movnez  a2, a0, a2
+    rsr     a0, EXCSAVE_1
+    rfe
 
 /****************************************************************
  * Entry from the APP-CPU boot ROM
@@ -244,10 +299,10 @@ _appcpu_fatal_cause:                /* a0 = EXCCAUSE */
 
 /* The ROM polls the boot-address register (set by core 0 via
    ets_set_appcpu_boot_addr) and jumps here with its own stack and
-   window state.  Reset the window bookkeeping (canonical crt
-   sequence), mask everything, install our vectors, switch to the
-   private stack and enter C.  PS = 0x40020: WOE (bit 18) | UM
-   (bit 5), INTLEVEL 0. */
+   window state.  Reset the window bookkeeping (canonical SET_STACK
+   sequence from ESP-IDF's xt_instr_macros.h), mask everything,
+   install our vectors, switch to the private stack and enter C.
+   PS = 0x40020: WOE (bit 18) | UM (bit 5), INTLEVEL 0. */
 
     .section .iram1.appcpu_entry, "ax"
     .align  4
@@ -255,15 +310,6 @@ _appcpu_fatal_cause:                /* a0 = EXCCAUSE */
     .global appcpu_entry
     .type   appcpu_entry, @function
 appcpu_entry:
-    /* Window state: WINDOWSTART=1, WINDOWBASE=0.  Registers rotate
-       at the windowbase write; use only a0 until the rsync and
-       reload everything afterwards. */
-    movi    a0, 1
-    wsr     a0, WINDOWSTART
-    movi    a0, 0
-    wsr     a0, WINDOWBASE
-    rsync
-
     /* No interrupts, ever (the runtime is polled) */
     movi    a0, 0
     wsr     a0, INTENABLE
@@ -272,18 +318,39 @@ appcpu_entry:
     movi    a0, esp32_appcpu_vectors
     wsr     a0, VECBASE
 
-    /* Windowed ABI on, user vector mode, INTLEVEL 0 */
-    movi    a0, 0x40020
+    /* User vector mode, INTLEVEL 0.  Keep WOE off while replacing
+       the stack and window bookkeeping. */
+    movi    a0, 0x20
     wsr     a0, PS
     rsync
 
-    /* Private stack; a0=0 terminates call/backtrace chains */
+    /* Canonical ESP-IDF SET_STACK bootstrap.  Overflow8/12 recover
+       the preceding frame's SP from the base save area, so merely
+       loading a1 with the stack top is not sufficient.  Reserve the
+       32-byte extra plus 16-byte base save areas and seed the prior
+       SP slot at sp-12 before enabling WOE. */
     movi    a1, esp32_appcpu_stack_top
-    movi    a0, 0
+    addi    a2, a1, -48
+    addi    a3, a2, -12
+    s32i    a1, a3, 0
+    mov     a1, a2
 
-    /* Enter the bare runtime (never returns) */
-    movi    a2, appcpu_main
-    callx4  a2
+    rsr     a2, WINDOWBASE
+    ssl     a2
+    movi    a2, 1
+    sll     a2, a2
+    wsr     a2, WINDOWSTART
+    rsync
+
+    movi    a2, 0x40020
+    wsr     a2, PS
+    rsync
+
+    /* Enter C through the windowed ABI's assembly-call convention;
+       a0=0 terminates call/backtrace chains. */
+    movi    a0, 0
+    movi    a3, appcpu_main
+    callx4  a3
 1:  j       1b
 
 #endif /* __XTENSA__ */

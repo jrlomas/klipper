@@ -50,10 +50,16 @@ modem_check_core1_fault(void)
     if (reported || !__atomic_load_n(&esp32_core1_fault[0], __ATOMIC_ACQUIRE))
         return;
     reported = 1;
-    ESP_LOGE(TAG, "core 1 FAULT parked: cause=0x%x epc=0x%x vaddr=0x%x"
+    ESP_LOGE(TAG, "core 1 FAULT parked: cause=0x%x epc=0x%x vaddr=0x%x "
+             "vec=0x%x ps=0x%x wb=%u ws=0x%x a0=0x%x"
              , (unsigned)esp32_core1_fault[1]
              , (unsigned)esp32_core1_fault[2]
-             , (unsigned)esp32_core1_fault[3]);
+             , (unsigned)esp32_core1_fault[3]
+             , (unsigned)esp32_core1_fault[4]
+             , (unsigned)esp32_core1_fault[5]
+             , (unsigned)esp32_core1_fault[6]
+             , (unsigned)esp32_core1_fault[7]
+             , (unsigned)esp32_core1_fault[8]);
 }
 
 static void
