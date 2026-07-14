@@ -227,7 +227,7 @@ config WANT_TRACE
     # subsystem's level is off; the ring is host-allocated, so the
     # firmware footprint is just code plus a small per-subsystem level
     # array — designed to fit the constrained F072.
-    bool
+    bool "Enable structured trace plane"
     depends on HAVE_GPIO
     default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_SYSCALL_API

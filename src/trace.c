@@ -9,8 +9,10 @@
 // machine-time timeline (the substrate Atlas Planes 2-4 read).
 //
 // Structurally this is the execution log's lighter sibling: an IRAM-safe
-// ring written from any context, streamed best-effort as Class-2
-// telemetry, bounded and near-zero-cost when a subsystem's level is off.
+// ring written from any context and streamed as best-effort stock-protocol
+// telemetry. The datagram carrier's Class-2 mapping is a separate transport
+// integration seam; do not imply it merely because this task is best-effort.
+// The ring is bounded and near-zero-cost when a subsystem's level is off.
 // Recovery never depends on it (that is execlog's job); trace is for
 // understanding what a healthy or misbehaving board is doing.
 //

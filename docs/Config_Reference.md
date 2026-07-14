@@ -254,6 +254,45 @@ One section per bridged micro-controller.
 #   /tmp/intentproto-<name>.
 ```
 
+### [atlas_trace]
+
+Collects the structured trace stream from one or more trace-enabled MCUs,
+renders each record through that MCU's data dictionary, maps its local clock
+onto Klipper's common print-time axis, and appends mode-private JSONL for the
+Atlas daemon. A rolling upgrade is supported: an MCU without `WANT_TRACE`
+remains usable and is reported as unavailable instead of blocking startup.
+
+This component uses the stock Klipper command transport. It does not, by
+itself, enable or validate the HELIX datagram carrier, FEC, or ESP32 modem.
+
+```
+[atlas_trace]
+#output: ~/printer_data/logs/atlas-telemetry.jsonl
+#   JSONL file consumed by `atlas serve --telemetry`. The default is shown.
+#mcus: mcu
+#   Comma-separated MCU names to collect. The default is the primary MCU.
+#ring_size: 64
+#   Records allocated on each MCU. Each record currently consumes 28 bytes
+#   from the MCU command-allocation pool. The default is 64.
+#stream_max: 4
+#   Maximum records each MCU streams per task wake. Zero disables live
+#   streaming while retaining records in the ring. The default is 4.
+#query_interval: 1.0
+#   Seconds between firmware drop-counter queries. The default is 1.0.
+#core_level: off
+#motion_level: off
+#comms_level: off
+#heater_level: off
+#trigger_level: off
+#   Per-subsystem thresholds: off, error, warning, info, or debug. A record is
+#   retained when its severity is at least as important as the threshold.
+#   Every subsystem defaults to off.
+```
+
+Runtime inspection and control are available through `ATLAS_TRACE_STATUS`,
+`ATLAS_TRACE_LEVEL MCU=<name> SUB=<subsystem> LEVEL=<level>`, and
+`ATLAS_TRACE_STREAM MCU=<name> MAX=<records>`.
+
 ### [trajectory_queuing]
 
 Owns the actuators that opt into the trajectory-intention motion path

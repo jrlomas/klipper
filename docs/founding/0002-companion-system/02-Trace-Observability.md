@@ -2,9 +2,10 @@
 
 Status: **Realized in the Atlas floor (Milestone A).** The firmware macro
 and IRAM-safe ring are in [`src/trace.c`](../../../src/trace.c) /
-[`src/trace.h`](../../../src/trace.h) (gated on `WANT_TRACE`, dictionary-
-registered through intentproto, F072-fit); the host collector is
-[`atlas/decode/trace.py`](../../../atlas/decode/trace.py); the merged store
+[`src/trace.h`](../../../src/trace.h) (gated on `WANT_TRACE`, registered in
+the stock Klipper data dictionary, F072-fit); the live and offline host
+collectors are [`klippy/extras/atlas_trace.py`](../../../klippy/extras/atlas_trace.py)
+and [`atlas/decode/trace.py`](../../../atlas/decode/trace.py); the merged store
 is [`atlas/timeline.py`](../../../atlas/timeline.py); the live viewer is
 [`atlas/view.py`](../../../atlas/view.py). The firmware side is software-
 authored and hardware-unvalidated (it mirrors `execlog.c`
@@ -55,10 +56,13 @@ a subsystem can be silent until you want it loud, so the channel is
 FD-0001's command registry already plays: the *symbols* live on the host,
 the *wire* carries indices.
 
-Reusing the intentproto registry (rather than forking it) is deliberate:
-the trace plane registers its events the same way commands are registered,
-and the host decoder reads the very same dictionary as its symbol table.
-One self-description mechanism, two uses.
+The application firmware follows HELIX's additive-envelope architecture: its
+dispatcher and live trace messages remain stock Klipper v1. Trace event names,
+subsystems, and format strings therefore use Klipper's existing
+`DECL_ENUMERATION` / `DECL_CONSTANT_STR` data dictionary. This mirrors the
+annotation model used by `intentproto`, but it does not route the trace stream
+through the datagram carrier. Datagram/FEC/modem validation remains a separate
+transport sign-off.
 
 ## Why machine time is the whole point
 
@@ -84,8 +88,10 @@ it; the health monitor and the LLM interpreter all read the same store.
   fault. *Built:* [`src/trace.c`](../../../src/trace.c),
   [`src/trace.h`](../../../src/trace.h), behind `WANT_TRACE`, F072-fit.
 - **Host trace collector** — decode trace records via the dictionary onto
-  the merged timeline. *Built:* [`atlas/decode/trace.py`](../../../atlas/decode/trace.py),
-  with the live trace/execution/link/timesync JSONL boundary in
+  the merged timeline. *Built:* the live Klippy bridge in
+  [`klippy/extras/atlas_trace.py`](../../../klippy/extras/atlas_trace.py), the
+  offline decoder in [`atlas/decode/trace.py`](../../../atlas/decode/trace.py),
+  and the trace/execution/link/timesync JSONL boundary in
   [`atlas/observe.py`](../../../atlas/observe.py).
 - **Merged-timeline store** — the machine-time-ordered stream across all
   MCUs. *Built:* [`atlas/timeline.py`](../../../atlas/timeline.py).

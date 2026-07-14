@@ -153,9 +153,16 @@ F072** it was designed to fit.
   host-simulator build passed on 2026-07-13. This does not claim F072 fit or
   real timing.
 
-- [ ] **Builds for the target.** *Do:* enable `WANT_TRACE`, build for the
+- [x] **Builds for the target.** *Do:* enable `WANT_TRACE`, build for the
   board. *Expect:* it compiles and links; measure the flash/RAM delta.
-  *Pass:* fits the F072 with room to spare (record bytes).
+  *Pass:* on 2026-07-13 the 8 KiB-bootloader F072 build occupied 60,461
+  bytes of its 122,880-byte application region (62,419 bytes free). Against
+  an otherwise identical trace-disabled build, trace added 1,497 bytes flash
+  and 8 bytes static RAM; its configurable ring adds 28 bytes per record at
+  runtime. The available EBB36 G0B1 USB and SKR Pico USB builds also linked:
+  trace added 1,464/16 and 1,436/16 bytes flash/static-RAM respectively.
+  Hardware testing exposed and fixed a missing Kconfig prompt that had made
+  the supposed trace-disabled build silently retain `WANT_TRACE`.
 - [ ] **Near-zero cost when off.** *Expect:* with all subsystem levels
   off, no measurable timing impact. *Pass:* step timing unchanged vs a
   build with `WANT_TRACE` off.

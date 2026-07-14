@@ -21,14 +21,14 @@ honesty; Atlas gives it a mind.
 
 | Module | Plane / task | Status |
 | --- | --- | --- |
-| `../src/trace.{c,h}` | **A1** structured trace plane (firmware) — `LOG*` macros, IRAM ring, Class-2 stream, dictionary-registered events, F072-fit | ✅ authored¹ |
+| `../src/trace.{c,h}` | **A1** structured trace plane (firmware) — `LOG*` macros, IRAM ring, stock-protocol stream, dictionary-registered events, F072-fit | ✅ authored¹ |
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
 | `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract and owns the optional local-model runtime | ✅ |
 | `assistant.py` / `ipc.py` | serialized, size-bounded assistant service over a mode-private Unix socket; grounded chat, interpretation, and expiring deterministic config previews | ✅ workstation |
 | `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health and assistant relay endpoints, stale detection, and websocket updates | ✅ |
 | `observe.py` | rotation-safe JSONL ingestion for trace, execution, link-stat, and timesync events on exact machine time | ✅ |
 | `history.py` / `monitor.py` | bounded SQLite incident history plus persistent per-machine drift baselines | ✅ |
-| `decode/trace.py` | **A2** host trace collector — decode trace records via the dictionary onto the merged timeline | ✅ |
+| `../klippy/extras/atlas_trace.py` / `decode/trace.py` | **A2** live MCU collector plus offline decoder — dictionary rendering onto the merged timeline | ✅ software; hardware pending¹ |
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
 | `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
@@ -75,7 +75,7 @@ the labelled suite against the pinned weights. The recorded workstation
 result is in [`docs/Atlas_Model_Eval.md`](../docs/Atlas_Model_Eval.md).
 The standard suite mocks the model so it runs without weights.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,view,daemon,assistant,moonraker,install,observe,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,moonraker,install,observe,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
 — the complete deterministic Atlas workstation suite, all green. Exact check
 counts are intentionally left to the test runner so this status line cannot
 go stale when coverage grows.

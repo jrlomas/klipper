@@ -1,0 +1,352 @@
+# Live Atlas structured-trace collector (FD-0002 Plane 1/2).
+#
+# Firmware emits compact trace_data records in each MCU's local clock domain.
+# Klippy owns the authoritative per-link clock regression, so this component
+# maps them onto the common print-time axis, renders the MCU dictionary, and
+# appends the resulting facts to the JSONL boundary consumed by Atlas.
+#
+# Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+
+import json
+import logging
+import os
+import re
+import struct
+import threading
+
+import mcu
+
+
+LEVELS = {
+    "error": 0,
+    "warning": 1,
+    "info": 2,
+    "debug": 3,
+    "off": 255,
+}
+DEFAULT_OUTPUT = "~/printer_data/logs/atlas-telemetry.jsonl"
+LEVEL_SEVERITY = {0: "error", 1: "warning", 2: "info", 3: "debug"}
+FORMAT_FIELD = re.compile(r"(\w+)=%([uix])")
+
+
+def _signed(value):
+    return value - (1 << 32) if value & 0x80000000 else value
+
+
+class TraceRenderer:
+    def __init__(self, enumerations, constants):
+        events = enumerations.get("trace_event", {})
+        subs = enumerations.get("trace_sub", {})
+        self.events = {value: name for name, value in events.items()}
+        self.subs = {value: name for name, value in subs.items()}
+        self.constants = constants
+
+    def render(self, event_id, sub_id, level, data):
+        values = struct.unpack(
+            "<%dI" % (len(data) // 4), data[:len(data) // 4 * 4])
+        name = self.events.get(event_id, "event%d" % event_id)
+        sub = self.subs.get(sub_id, "sub%d" % sub_id)
+        fmt = self.constants.get("trace_fmt_%s" % name, "")
+        fields = {"event": name, "event_id": event_id, "sub": sub,
+                  "mcu_clock": None}
+        parts = [name]
+        for index, (field, spec) in enumerate(FORMAT_FIELD.findall(fmt)):
+            value = values[index] if index < len(values) else 0
+            rendered = _signed(value) if spec == "i" else value
+            fields[field] = rendered
+            parts.append("%s=%s" % (
+                field, "0x%x" % value if spec == "x" else rendered))
+        if not fmt and values:
+            fields["values"] = list(values)
+            parts.append(str(list(values)))
+        return (" ".join(parts), fields,
+                LEVEL_SEVERITY.get(level, "info"))
+
+
+class JsonlWriter:
+    def __init__(self, path):
+        self.path = os.path.abspath(os.path.expanduser(path))
+        self.fd = None
+        self.errors = 0
+        self.lock = threading.Lock()
+        self._open()
+
+    def _open(self):
+        directory = os.path.dirname(self.path)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        self.fd = os.open(
+            self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(self.path, 0o600)
+
+    def _ensure_current(self):
+        try:
+            current = os.stat(self.path)
+            opened = os.fstat(self.fd)
+        except (FileNotFoundError, OSError):
+            current = opened = None
+        if (current is None or opened is None
+                or (current.st_dev, current.st_ino)
+                != (opened.st_dev, opened.st_ino)):
+            if self.fd is not None:
+                os.close(self.fd)
+            self._open()
+
+    def write(self, record):
+        try:
+            payload = (json.dumps(record, sort_keys=True,
+                                  separators=(",", ":")) + "\n").encode()
+            with self.lock:
+                self._ensure_current()
+                offset = 0
+                while offset < len(payload):
+                    offset += os.write(self.fd, payload[offset:])
+        except OSError:
+            self.errors += 1
+            logging.exception("atlas_trace: unable to append %s", self.path)
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+class AtlasTraceLink:
+    def __init__(self, manager, mcu_name):
+        self.manager = manager
+        self.mcu_name = mcu_name
+        self.mcu = mcu.get_printer_mcu(manager.printer, mcu_name)
+        self.oid = self.mcu.create_oid()
+        self.available = False
+        self.reason = "MCU has not been identified"
+        self.set_level_cmd = None
+        self.stream_cmd = None
+        self.query_cmd = None
+        self.renderer = None
+        self.records = 0
+        self.sequence_gaps = 0
+        self.last_seq = None
+        self.last_machine_time = None
+        self.next_seq = 0
+        self.oldest_seq = 0
+        self.dropped = 0
+        self.mcu.register_config_callback(self._build_config)
+
+    def _build_config(self):
+        config_cmd = self.mcu.try_lookup_command(
+            "config_trace oid=%c size=%hu")
+        if config_cmd is None:
+            self.reason = "firmware does not advertise WANT_TRACE"
+            logging.info("atlas_trace: mcu '%s' lacks trace commands; "
+                         "collector disabled for this link", self.mcu_name)
+            return
+        self.available = True
+        self.reason = ""
+        self.mcu.add_config_cmd(
+            "config_trace oid=%d size=%d"
+            % (self.oid, self.manager.ring_size))
+        cq = self.mcu.alloc_command_queue()
+        self.set_level_cmd = self.mcu.lookup_command(
+            "trace_set_level sub=%c level=%c", cq=cq)
+        self.stream_cmd = self.mcu.lookup_command(
+            "trace_stream oid=%c max_per_wake=%c", cq=cq)
+        self.query_cmd = self.mcu.lookup_command("trace_query oid=%c", cq=cq)
+        self.mcu.register_serial_response(
+            self._handle_data, "trace_data", self.oid)
+        self.mcu.register_serial_response(
+            self._handle_status, "trace_status", self.oid)
+        self.renderer = TraceRenderer(
+            self.mcu.get_enumerations(), self.mcu.get_constants())
+
+    def start(self):
+        if not self.available or self.mcu.is_fileoutput():
+            return
+        for sub_name, level in self.manager.levels.items():
+            sub_id = self._sub_id(sub_name)
+            if sub_id is not None:
+                self.set_level_cmd.send([sub_id, level])
+        self.stream_cmd.send([self.oid, self.manager.stream_max])
+        self.query()
+
+    def stop(self):
+        if self.available and not self.mcu.is_fileoutput():
+            self.stream_cmd.send([self.oid, 0])
+
+    def query(self):
+        if self.available and not self.mcu.is_fileoutput():
+            self.query_cmd.send([self.oid])
+
+    def set_level(self, sub_name, level):
+        sub_id = self._sub_id(sub_name)
+        if sub_id is None:
+            raise ValueError("unknown trace subsystem '%s'" % sub_name)
+        self.set_level_cmd.send([sub_id, level])
+
+    def set_stream_max(self, maximum):
+        self.stream_cmd.send([self.oid, maximum])
+
+    def _sub_id(self, sub_name):
+        enums = self.mcu.get_enumerations().get("trace_sub", {})
+        return enums.get(sub_name)
+
+    def _handle_data(self, params):
+        clock64 = self.mcu.clock32_to_clock64(params["clock"])
+        machine_time = self.mcu.clock_to_print_time(clock64)
+        summary, fields, severity = self.renderer.render(
+            params["event"], params["sub"], params["level"],
+            params.get("data", b""))
+        seq = params.get("seq")
+        if self.last_seq is not None and seq is not None:
+            delta = (seq - self.last_seq) & 0xffffffff
+            if delta > 1:
+                self.sequence_gaps += delta - 1
+        self.last_seq = seq
+        self.last_machine_time = machine_time
+        self.records += 1
+        fields.update({
+            "seq": seq,
+            "oid": self.oid,
+            "mcu_clock": params["clock"],
+            "time_basis": "klipper_print_time",
+        })
+        self.manager.writer.write({
+            "kind": "trace",
+            "machine_time": machine_time,
+            "source": "mcu/%s/%s" % (
+                self.mcu_name, fields.get("sub", "unknown")),
+            "severity": severity,
+            "summary": summary,
+            "fields": fields,
+        })
+
+    def _handle_status(self, params):
+        self.next_seq = params["next_seq"]
+        self.oldest_seq = params["oldest_seq"]
+        self.dropped = params["dropped"]
+
+    def get_status(self):
+        return {
+            "available": self.available,
+            "reason": self.reason,
+            "records": self.records,
+            "sequence_gaps": self.sequence_gaps,
+            "last_seq": self.last_seq,
+            "last_machine_time": self.last_machine_time,
+            "next_seq": self.next_seq,
+            "oldest_seq": self.oldest_seq,
+            "dropped": self.dropped,
+        }
+
+
+class AtlasTrace:
+    def __init__(self, config):
+        self.printer = config.get_printer()
+        self.reactor = self.printer.get_reactor()
+        self.output = config.get("output", DEFAULT_OUTPUT)
+        self.ring_size = config.getint(
+            "ring_size", 64, minval=8, maxval=4096)
+        self.stream_max = config.getint(
+            "stream_max", 4, minval=0, maxval=64)
+        self.query_interval = config.getfloat(
+            "query_interval", 1., above=0.)
+        self.levels = {
+            name: config.getchoice("%s_level" % name, LEVELS, "off")
+            for name in ("core", "motion", "comms", "heater", "trigger")
+        }
+        mcu_names = config.getlist("mcus", ("mcu",))
+        if len(set(mcu_names)) != len(mcu_names):
+            raise config.error("atlas_trace mcus contains a duplicate")
+        self.writer = JsonlWriter(self.output)
+        self.links = {
+            name: AtlasTraceLink(self, name) for name in mcu_names}
+        self.timer = self.reactor.register_timer(self._query_event)
+        self.printer.register_event_handler("klippy:ready", self._ready)
+        self.printer.register_event_handler(
+            "klippy:disconnect", self._disconnect)
+        self.printer.register_event_handler("klippy:shutdown", self._shutdown)
+        gcode = self.printer.lookup_object("gcode")
+        gcode.register_command(
+            "ATLAS_TRACE_STATUS", self.cmd_ATLAS_TRACE_STATUS,
+            desc="Report Atlas trace stream and drop counters")
+        gcode.register_command(
+            "ATLAS_TRACE_LEVEL", self.cmd_ATLAS_TRACE_LEVEL,
+            desc="Set one MCU trace subsystem level")
+        gcode.register_command(
+            "ATLAS_TRACE_STREAM", self.cmd_ATLAS_TRACE_STREAM,
+            desc="Set one MCU trace streaming budget")
+
+    def _ready(self):
+        for link in self.links.values():
+            link.start()
+        self.reactor.update_timer(self.timer, self.reactor.NOW)
+
+    def _disconnect(self):
+        self.reactor.update_timer(self.timer, self.reactor.NEVER)
+
+    def _shutdown(self):
+        self._disconnect()
+
+    def _query_event(self, eventtime):
+        for link in self.links.values():
+            link.query()
+        return eventtime + self.query_interval
+
+    def _get_link(self, gcmd):
+        name = gcmd.get("MCU", "mcu")
+        link = self.links.get(name)
+        if link is None:
+            raise gcmd.error("MCU '%s' is not configured for atlas_trace"
+                             % name)
+        if not link.available:
+            raise gcmd.error("MCU '%s': %s" % (name, link.reason))
+        return link
+
+    def cmd_ATLAS_TRACE_STATUS(self, gcmd):
+        for link in self.links.values():
+            link.query()
+        lines = []
+        for name, link in sorted(self.links.items()):
+            status = link.get_status()
+            lines.append(
+                "%s: available=%s records=%d gaps=%d next=%d oldest=%d "
+                "dropped=%d" % (
+                    name, status["available"], status["records"],
+                    status["sequence_gaps"], status["next_seq"],
+                    status["oldest_seq"], status["dropped"]))
+        gcmd.respond_info("\n".join(lines))
+
+    def cmd_ATLAS_TRACE_LEVEL(self, gcmd):
+        link = self._get_link(gcmd)
+        sub = gcmd.get("SUB").lower()
+        level_name = gcmd.get("LEVEL").lower()
+        if level_name not in LEVELS:
+            raise gcmd.error("LEVEL must be one of %s"
+                             % ", ".join(sorted(LEVELS)))
+        try:
+            link.set_level(sub, LEVELS[level_name])
+        except ValueError as exc:
+            raise gcmd.error(str(exc))
+        gcmd.respond_info("%s/%s trace level set to %s"
+                          % (link.mcu_name, sub, level_name))
+
+    def cmd_ATLAS_TRACE_STREAM(self, gcmd):
+        link = self._get_link(gcmd)
+        maximum = gcmd.get_int("MAX", minval=0, maxval=64)
+        link.set_stream_max(maximum)
+        gcmd.respond_info("%s trace stream max_per_wake=%d"
+                          % (link.mcu_name, maximum))
+
+    def get_status(self, eventtime):
+        return {
+            "output": self.writer.path,
+            "write_errors": self.writer.errors,
+            "ring_size": self.ring_size,
+            "stream_max": self.stream_max,
+            "mcus": {name: link.get_status()
+                     for name, link in self.links.items()},
+        }
+
+
+def load_config(config):
+    return AtlasTrace(config)
