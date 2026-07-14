@@ -205,6 +205,60 @@ anchor from a rebase for older captures. A bounded `--before-line` option
 prevents a complete path from being confused with older records that have
 rolled out of the MCU's finite flight-recorder ring.
 
+## Experiment 5: STM32H723 compute-headroom comparison
+
+An FK723M1-ZGT6 development board (STM32H723ZGT6) was flashed directly through
+the STM32 ROM DFU interface with the computation-only configuration in
+`test/helix-configs/stm32h723-fk723m1.config`. The board's 15 MHz HSE is not a
+selectable Klipper H7 reference, so this qualification deliberately uses the
+supported internal HSI path and Klipper's conservative 520 MHz H723 clock. It
+does not overclock the part and does not depend on an ST-Link.
+
+The board served its dictionary over USB and passed all five built-in tests:
+CRC wire vector, monotonic timer, timer-rate fingerprint, RAM pattern, and the
+trajectory kernel. The `traj_kernel` result remained the expected value 4.
+
+For capacity measurement, `run_traj_benchmark` creates one to eight independent
+solver states without allocating an oid or configuring GPIO. Each state runs
+an accelerating segment with a roughly 48-edge duration through the production
+quintic execution path.
+At the practical H7 rates used below velocity, acceleration, jerk, snap, and
+crackle are all non-zero. Two cold edges are warmed exactly as the live backend
+does; 32 recurring crossings are then timed. A result passes only when:
+
+- every reconstructed crossing stays within 1/8 physical step;
+- the combined solve time for all virtual axes remains below 75% of the
+  shortest following pulse interval; and
+- all states reach the expected next boundary monotonically.
+
+![H723 aggregate quintic solver capacity](img/helix-h723-capacity.svg)
+
+| Virtual axes | Per-axis rate | Aggregate crossings | Worst solve | Shortest interval | Reserve | Result |
+|---:|---:|---:|---:|---:|---:|---|
+| 1 | 640k/s | 640k/s | 550 ticks / 1.06 us | 767 ticks / 1.48 us | 28.3% | **Pass** |
+| 2 | 320k/s | 640k/s | 993 ticks / 1.91 us | 1,533 ticks / 2.95 us | 35.2% | **Pass** |
+| 4 | 160k/s | 640k/s | 1,881 ticks / 3.62 us | 3,067 ticks / 5.90 us | 38.7% | **Pass** |
+| 8 | 80k/s | 640k/s | 3,657 ticks / 7.03 us | 6,135 ticks / 11.80 us | 40.4% | **Pass** |
+| 1 | 1M/s | 1M/s | 544 ticks / 1.05 us | 519 ticks / 1.00 us | negative | Rejected |
+| 2 | 640k/s | 1.28M/s | 988 ticks / 1.90 us | 811 ticks / 1.56 us | negative | Rejected |
+| 4 | 320k/s | 1.28M/s | 1,876 ticks / 3.61 us | 1,621 ticks / 3.12 us | negative | Rejected |
+| 8 | 160k/s | 1.28M/s | 3,652 ticks / 7.02 us | 3,241 ticks / 6.23 us | negative | Rejected |
+
+The qualified statement is therefore **at least 640,000 aggregate recurring
+curved crossings/s with the 25% reserve intact**, not an interpolated maximum.
+The worst passing spatial error was only 0.0113 of the allowed 1/8-step error.
+The near-constant aggregate pass point is strong evidence that crossing solve
+cost, rather than an axis-specific queue artifact, dominates this synthetic
+load.
+
+This result supports an H7-first board design. It supplies roughly an order of
+magnitude more qualified aggregate curve-synthesis capacity than the present
+G0B1 toolhead requirement while retaining the simple MCU toolchain, interrupt
+model, and firmware architecture already in use. An FPGA can still be valuable
+for exceptionally high channel counts, deterministic waveform fabrics, or
+specialized encoders, but the evidence does not justify making one mandatory
+for the next HELIX controller.
+
 ## Why this is preferable to the firehose for this board
 
 The V1 firehose is cheaper per edge on the MCU. HELIX is better only if the
@@ -254,6 +308,19 @@ Live on-board gate after flashing a `WANT_SELF_TEST` build:
 ```text
 HELIX_SELF_TEST MCU=ebb36
 ```
+
+Computation-only rate sweep on a self-test firmware image:
+
+```shell
+~/klippy-env/bin/python scripts/helix_traj_benchmark.py \
+  --device /dev/serial/by-id/usb-Klipper_stm32h723xx_...-if00 \
+  --rates 20000,40000,80000,160000,320000,640000,1000000 \
+  --axes 1,2,4,8
+```
+
+`max_error_eighths` is expressed as a fraction of the allowed 1/8-step error;
+values below 1 satisfy the spatial gate. A non-zero script exit is expected
+when a sweep intentionally includes rejected capacity probes.
 
 ## Remaining qualification
 

@@ -9,6 +9,7 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include <string.h> // memset
 #include "autoconf.h" // CONFIG_*
 #include "basecmd.h" // oid_alloc
 #include "board/gpio.h" // gpio_out_write
@@ -790,6 +791,163 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
     }
     *max_elapsed_out = overall_max;
     return 1;
+#endif
+}
+
+// Status values returned by the computation-only throughput probe.  Keep
+// these stable: scripts/helix_traj_benchmark.py renders them by number.
+enum {
+    TB_PASS,
+    TB_BAD_ARGS,
+    TB_SETUP,
+    TB_SOLVER,
+    TB_SPATIAL,
+    TB_DEADLINE,
+};
+
+#define TRAJ_BENCH_MAX_AXES 8
+#define TRAJ_BENCH_PULSES 32
+
+static struct traj_stepper traj_bench_axes[TRAJ_BENCH_MAX_AXES];
+
+static uint_fast8_t
+traj_bench_advance(struct traj_stepper *s, uint32_t step_t)
+{
+    if (step_t <= s->t_prev || step_t > s->tq.duration)
+        return 0;
+    if (s->last_step_t)
+        s->step_interval = step_t - s->last_step_t;
+    s->last_step_t = step_t;
+    s->t_prev = step_t;
+    s->target16 += STEP_Q;
+    return 1;
+}
+
+uint_fast8_t
+traj_stepper_benchmark(uint32_t step_rate, uint_fast8_t axes,
+                       uint32_t *pulses_out, uint32_t *max_elapsed_out,
+                       uint32_t *min_interval_out, uint32_t *max_error_out)
+{
+    *pulses_out = *max_elapsed_out = *min_interval_out = *max_error_out = 0;
+#if !CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    return TB_SETUP;
+#else
+    // Leave enough ticks for a meaningful timer measurement and keep the
+    // bounded segment below TRAJ_MAX_DURATION.  The polynomial fast path
+    // also requires 120*velocity to fit int32.
+    if (!axes || axes > TRAJ_BENCH_MAX_AXES || step_rate < 1000
+        || step_rate > CONFIG_CLOCK_FREQ / 128)
+        return TB_BAD_ARGS;
+    uint32_t nominal_interval = CONFIG_CLOCK_FREQ / step_rate;
+    uint32_t duration = nominal_interval * 48;
+    if (!nominal_interval || duration >= TRAJ_MAX_DURATION)
+        return TB_BAD_ARGS;
+    uint64_t v64 = ((uint64_t)STEP_Q * step_rate
+                    + CONFIG_CLOCK_FREQ / 2) / CONFIG_CLOCK_FREQ;
+    if (!v64 || v64 > INT32_MAX / 120)
+        return TB_SETUP;
+    int32_t velocity = v64;
+
+    // Increase velocity by roughly 10 percent over the segment.  Successive
+    // derivatives are chosen so their endpoint contributions form a bounded
+    // series; at practical H7 rates all five polynomial coefficients are
+    // non-zero, while lower-rate quantization degrades safely to cubic or
+    // quadratic acceleration through the identical quintic execution path.
+    uint64_t a64 = ((v64 / 16) << 16) / duration;
+    if (!a64)
+        a64 = 1;
+    uint64_t j64 = (a64 << 16) / duration;
+    uint64_t s64 = (j64 << 16) / duration;
+    uint64_t c64 = (s64 << 16) / duration;
+    if (a64 > INT32_MAX / 60 || j64 > INT32_MAX / 20
+        || s64 > INT32_MAX / 5 || c64 > INT32_MAX)
+        return TB_SETUP;
+
+    uint_fast8_t axis;
+    for (axis = 0; axis < axes; axis++) {
+        struct traj_stepper *s = &traj_bench_axes[axis];
+        memset(s, 0, sizeof(*s));
+        s->tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+        s->tq.duration = duration;
+        s->tq.velocity = velocity;
+        s->tq.accel = a64;
+        s->tq.jerk = j64;
+        s->tq.snap = s64;
+        s->tq.crackle = c64;
+        s->dir = 1;
+        s->q16_end = trajq_end_delta_seg(&s->tq) >> 16;
+        s->target16 = STEP_Q / 2;
+        traj_poly_fast_setup(s);
+        if (!s->poly_fast_valid)
+            return TB_SETUP;
+
+        // Warm the two startup crossings just as the live backend does.  The
+        // fixed self-test above separately qualifies their cold deadline;
+        // this probe measures sustained recurring synthesis capacity.
+        uint_fast8_t warm;
+        for (warm = 0; warm < 2; warm++) {
+            uint32_t step_t;
+            if (traj_solve_step(s, &step_t) != 1
+                || !traj_bench_advance(s, step_t))
+                return TB_SOLVER;
+        }
+    }
+
+    uint32_t max_elapsed = 0, min_interval = UINT32_MAX;
+    uint32_t max_error = 0;
+    uint_fast8_t pulse;
+    for (pulse = 0; pulse < TRAJ_BENCH_PULSES; pulse++) {
+        uint32_t step_times[TRAJ_BENCH_MAX_AXES];
+        uint32_t before = timer_read_time();
+        for (axis = 0; axis < axes; axis++) {
+            if (traj_solve_step(&traj_bench_axes[axis],
+                                &step_times[axis]) != 1)
+                return TB_SOLVER;
+        }
+        uint32_t elapsed = timer_read_time() - before;
+        if (elapsed > max_elapsed)
+            max_elapsed = elapsed;
+
+        uint32_t round_interval = UINT32_MAX;
+        for (axis = 0; axis < axes; axis++) {
+            struct traj_stepper *s = &traj_bench_axes[axis];
+            uint32_t interval = step_times[axis] - s->t_prev;
+            if (!interval || !traj_bench_advance(s, step_times[axis]))
+                return TB_SOLVER;
+            if (interval < round_interval)
+                round_interval = interval;
+            int64_t error120 = trajq_pos120_at_seg_fast(
+                &s->tq, step_times[axis]) - (s->target16 - STEP_Q) * 120;
+            uint64_t magnitude120 = error120 < 0
+                ? -(uint64_t)error120 : (uint64_t)error120;
+            uint64_t error = magnitude120 / 120;
+            if (error > UINT32_MAX)
+                error = UINT32_MAX;
+            if (error > max_error)
+                max_error = error;
+            if (magnitude120 > STEP_Q * 15) {
+                *pulses_out = pulse;
+                *max_elapsed_out = max_elapsed;
+                *min_interval_out = round_interval;
+                *max_error_out = max_error;
+                return TB_SPATIAL;
+            }
+        }
+        if (round_interval < min_interval)
+            min_interval = round_interval;
+        if (elapsed >= round_interval - round_interval / 4) {
+            *pulses_out = pulse + 1;
+            *max_elapsed_out = max_elapsed;
+            *min_interval_out = min_interval;
+            *max_error_out = max_error;
+            return TB_DEADLINE;
+        }
+    }
+    *pulses_out = TRAJ_BENCH_PULSES;
+    *max_elapsed_out = max_elapsed;
+    *min_interval_out = min_interval;
+    *max_error_out = max_error;
+    return TB_PASS;
 #endif
 }
 #endif

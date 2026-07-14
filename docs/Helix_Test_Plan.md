@@ -197,6 +197,10 @@ Prove the wire before you trust it to carry motion.
   live `FIRMWARE_RESTART`: CRC wire, timer monotonic, timer rate, RAM pattern,
   and trajectory kernel. The final post-trigger-port run on 2026-07-14 recorded
   Pico timer rate 123 and RTT 0.21 ms; EBB36 timer rate 2052 and RTT 0.30 ms.
+  A computation-only FK723M1-ZGT6 / STM32H723ZGT6 image subsequently served
+  its dictionary over USB at 520 MHz and passed the same five tests (timer-rate
+  value 528, trajectory result 4). This qualifies the H723 CPU/USB/DFU port,
+  not any board-level motor or heater pins.
 - [x] **2.1c — Core-clock identity.** A port whose real CPU clock differs
   from Klipper's scheduler timebase advertises both values unambiguously.
   Pass: the live RP2040 dictionary reports `MCU_CORE_FREQ=200000000` and
@@ -403,6 +407,17 @@ Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
   focused 10 mm/s flight audit is the 3,529-pulse evidence in 4.6. This proves
   the hotend/driver/EBB path at realistic flow; it does not substitute for a
   sustained sliced print.
+- [x] **5.6 — H7 next-board compute headroom.** An STM32H723ZGT6 at Klipper's
+  conservative 520 MHz setting ran the production recurring quintic crossing
+  solver without GPIO. One axis at 640k crossings/s, two at 320k each, four at
+  160k each, and eight at 80k each all passed the 1/8-step spatial gate and
+  retained at least 25% deadline reserve: 640k qualified aggregate curved
+  crossings/s. Deliberate 1.0M to 1.28M aggregate probes were rejected rather
+  than weakening the reserve. This supports an H7-first controller design;
+  it does not qualify the FK723M1 board's external I/O. Reproduction command,
+  raw measurements, and graph are in
+  [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md)
+  under “STM32H723 compute-headroom comparison.”
 
 ---
 

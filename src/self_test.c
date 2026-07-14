@@ -26,6 +26,10 @@ uint_fast8_t traj_stepper_test_hold_boundary(void);
 uint_fast8_t traj_stepper_test_halfstep_phase(void);
 uint_fast8_t traj_stepper_test_cruise_recurrence(void);
 uint_fast8_t traj_stepper_test_quintic_deadline(uint32_t *max_elapsed);
+uint_fast8_t traj_stepper_benchmark(uint32_t step_rate, uint_fast8_t axes,
+                                    uint32_t *pulses, uint32_t *max_elapsed,
+                                    uint32_t *min_interval,
+                                    uint32_t *max_error);
 #endif
 
 enum {
@@ -173,3 +177,26 @@ command_run_self_test(uint32_t *args)
     sendf("self_test_result id=%c status=%c value=%u", id, status, value);
 }
 DECL_COMMAND(command_run_self_test, "run_self_test id=%c");
+
+#if CONFIG_WANT_TRAJECTORY
+// Computation-only trajectory throughput probe.  This exercises the real
+// crossing solver from task context but never allocates an oid, configures a
+// pin, queues motion, or changes live trajectory state.  Multiple axes are
+// independent virtual solver states executed back-to-back, approximating the
+// worst case in which several step deadlines coincide.
+void
+command_run_traj_benchmark(uint32_t *args)
+{
+    uint32_t step_rate = args[0];
+    uint_fast8_t axes = args[1];
+    uint32_t pulses = 0, max_elapsed = 0, min_interval = 0, max_error = 0;
+    uint_fast8_t status = traj_stepper_benchmark(
+        step_rate, axes, &pulses, &max_elapsed, &min_interval, &max_error);
+    sendf("traj_benchmark_result rate=%u axes=%c status=%c pulses=%u"
+          " max_elapsed=%u min_interval=%u max_error=%u",
+          step_rate, axes, status, pulses, max_elapsed, min_interval,
+          max_error);
+}
+DECL_COMMAND(command_run_traj_benchmark,
+             "run_traj_benchmark rate=%u axes=%c");
+#endif

@@ -91,6 +91,22 @@ class TestSelfTestLive(unittest.TestCase):
             _, status, value = proto.wait_response('self_test_result', 5.0)
             self.assertEqual(status, 0)
             self.assertEqual(value, 4)  # all four golden vectors matched
+
+            # The throughput probe is deliberately separate from the fixed
+            # pass/fail self-test.  Verify its wire contract and that it runs
+            # the recurring quintic solver without touching configured I/O.
+            proto.send('run_traj_benchmark', 20000, 1)
+            result = proto.wait_response('traj_benchmark_result', 5.0)
+            rate, axes, status, pulses, elapsed, interval, error = result
+            self.assertEqual((rate, axes, status, pulses),
+                             (20000, 1, 0, 32))
+            self.assertGreater(elapsed, 0)
+            self.assertGreater(interval, elapsed)
+            self.assertLessEqual(error, (1 << 32) // 8)
+
+            proto.send('run_traj_benchmark', 20000, 9)
+            result = proto.wait_response('traj_benchmark_result', 5.0)
+            self.assertEqual(result[:4], [20000, 9, 1, 0])
         finally:
             link.close()
 
