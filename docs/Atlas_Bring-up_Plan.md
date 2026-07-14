@@ -256,17 +256,23 @@ F072** it was designed to fit.
   USB/serial protocol; it did **not** exercise the HELIX datagram carrier,
   `intentproto`, FEC, or the ESP32 modem path. It establishes the known-good
   V0 control baseline, not the later V2.4 CAN or HELIX transport sign-off.
-- [ ] **Blackbox on a real fault.** *Do:* provoke a real fault; run
+- [x] **Blackbox on a real fault.** *Do:* provoke a real fault; run
   `atlas diagnose`. *Expect:* a coherent incident narrative + a captured
   case (or a matched pattern). *Pass:* the narrative reflects what
-  happened.
+  happened. On 2026-07-13 Atlas decoded the live V0 log's earlier
+  `sync_beacon` command-format fault, retained the Klipper shutdown and host
+  exception chain, and captured unmatched case `cd698ad0fbdeda99` for the
+  knowledge base.
 - [ ] **NL config edit end-to-end.** *Do:* ask for a cosmetic then a
   safety-affecting change. *Expect:* cosmetic auto-applies; the
   safety-affecting one *requires confirmation*. *Pass:* the gate behaves,
   and undo restores the prior config.
-- [ ] **Redaction on a real bundle.** *Do:* assemble a bundle from a real
+- [x] **Redaction on a real bundle.** *Do:* assemble a bundle from a real
   machine. *Expect:* no hostname/key/serial/path survives. *Pass:* manual
-  review finds nothing that shouldn't be shared.
+  review finds nothing that shouldn't be shared. A GitHub-issue bundle from
+  the live V0 `klippy.log` contained the diagnosis and bounded timeline but no
+  hostname, key, USB serial, or filesystem path; provenance content hash
+  `eec2daf8a044b94d` recorded the reviewed rendering.
 
 ## Phase 5 — Deploy target (Pi 5 + Hailo-10H)
 

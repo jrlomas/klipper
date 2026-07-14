@@ -106,6 +106,11 @@ work. They do not convert any unchecked target or hardware item into a pass.
   exactly 192 sequence gaps, and paced draining left zero unaccounted gaps or
   write errors. This validates the trace carrier and accounting, not the
   motion-path `step_underrun` call-site or trace-off step-timing cost.
+* The deterministic Atlas decoder diagnosed a genuine earlier host/MCU
+  `sync_beacon` format fault from the live V0 log and captured the unmatched
+  case for the knowledge base. Its real-machine GitHub-issue bundle passed
+  manual review under the numeric-only policy with no hostname, key, USB
+  serial, or filesystem path exposed.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
   and OpenAMS panels pass 47 unit tests across 7 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.
