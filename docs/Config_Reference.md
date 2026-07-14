@@ -313,6 +313,14 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 
 ```
 [trajectory_queuing]
+#g1_segment_order: quintic
+#   Polynomial wire format used for normal G0/G1 motion on trajectory
+#   steppers. The default, quintic, keeps Klippy's coordinated Cartesian
+#   lookahead and toolhead position authoritative, then sends synchronized
+#   per-joint quintic intentions for the MCU to realize as step pulses.
+#   Set quadratic only as an explicit compatibility mode for older
+#   trajectory firmware without higher-order support. Neither mode uses the
+#   legacy queue_step pulse firehose on opted-in steppers.
 #enable_bezier_move: False
 #   Enables the BEZIER_MOVE command, an advanced commissioning tool that
 #   drives a single trajectory joint along a cubic/quintic Bezier curve,

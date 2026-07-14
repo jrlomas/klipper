@@ -56,6 +56,19 @@ struct traj_stepper {
 enum { TSF_INVERT_STEP = 1 << 0, TSF_DIR_HIGH = 1 << 1,
        TSF_INVERT_DIR = 1 << 2 };
 
+static inline uint8_t
+traj_stepper_is_pure_cruise(struct trajq *tq)
+{
+    if (tq->accel)
+        return 0;
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    if ((tq->seg_flags & TSEG_POLY_MASK)
+        && (tq->jerk || tq->snap || tq->crackle))
+        return 0;
+#endif
+    return 1;
+}
+
 static void
 traj_cruise_set_target(struct traj_stepper *s)
 {
@@ -131,7 +144,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
     // following pulse needs only additions.  This keeps precision timer
     // clients such as the TMC software UART inside their bit sampling window
     // on division-poor MCUs (RP2040 M0+).
-    if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK)) {
+    if (traj_stepper_is_pure_cruise(tq)) {
         int64_t target = s->target16;
         uint32_t t;
         if ((dir > 0 && target <= 0) || (dir < 0 && target >= 0)) {
@@ -293,7 +306,7 @@ traj_stepper_load(struct traj_stepper *s)
     // matching 65536-microstep phase and subtract as unsigned arithmetic so
     // crossing +/-2^31 sub-units remains a small, well-defined delta.
     s->target16 = traj_stepper_calc_target16(tq->acc, s->mpos, dir);
-    if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK))
+    if (traj_stepper_is_pure_cruise(tq))
         traj_cruise_setup(s);
     else
         s->cruise_valid = s->cruise_speed = 0;

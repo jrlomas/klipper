@@ -49,7 +49,8 @@ OpenAMS peripheral).
 
 ### Host (`klippy/`)
 * `extras/trajectory_queuing.py` — owns trajectory actuators, runs the
-  fitter each flush window, emits segments, keeps the host intention
+  fitter each flush window, emits normal G0/G1 motion as coordinated
+  per-joint quintics, and keeps the host intention
   twin. `chelper/segfit.c` — the C segment fitter (host side of the
   drift-free integration; **must** stay bit-identical to `trajq.c`).
 * `extras/trajectory_pwm.py` — configures sampled PWM/DAC actuators and

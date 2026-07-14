@@ -130,7 +130,8 @@ Field definitions:
   `queue_traj_segment_cubic` / `queue_traj_segment_quintic` commands
   (which set these bits), while the base `queue_traj_segment` continues
   to reject any non-zero order bits. The extruder under pressure
-  advance is the most likely customer (see the fitter discussion in
+  advance is one customer, and the production G0/G1 trajectory path uses the
+  quintic command by default (see the fitter discussion in
   [05-Host_Architecture.md](05-Host_Architecture.md)).
 * `underrun_decel` — emergency deceleration magnitude in `accel` wire
   units.
@@ -146,12 +147,13 @@ coefficient rounding to exactly zero.
 
 ### Message size and bandwidth
 
-Worst-case VLQ sizes: oid(1) + flags(1) + duration(≤4) + velocity(≤5)
-+ accel(≤5) ≈ **10–16 bytes per segment**, so 3–5 segments fit in one
+The quadratic command is oid(1) + flags(1) + duration(≤4) + velocity(≤5)
++ accel(≤5), approximately **10–16 bytes per segment**. A worst-case quintic
+adds three signed fields (up to 15 more bytes). Quadratic segments fit 3–5 per
 64-byte frame (`MESSAGE_MAX` in
-[src/command.h](../../../src/command.h)). Compare `queue_step` at ~9
-bytes — but a segment typically replaces *tens to hundreds* of
-`queue_step` commands plus their `set_next_step_dir` traffic, since one
+[src/command.h](../../../src/command.h)). Compare `queue_step` at about 9
+bytes: either polynomial segment typically replaces *tens to hundreds* of
+those commands plus their `set_next_step_dir` traffic, since one
 constant-acceleration span of any length is one segment. Analytic
 estimates of segment rates under input shaping are in
 [05-Host_Architecture.md](05-Host_Architecture.md); measured

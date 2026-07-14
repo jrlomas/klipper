@@ -58,10 +58,13 @@ For each migrated joint, per flush interval:
 1. **Sample** the joint position q(t) over the flush window via the
    existing `calc_position_cb` chain — kinematics, input shaper and
    pressure advance included for free.
-2. **Fit greedily**: extend a candidate quadratic segment while the
+2. **Fit greedily**: extend a candidate polynomial segment while the
    maximum deviation between the (coefficient-quantized) segment and
    the sampled trajectory stays below tolerance; emit and restart when
-   it would exceed it. Continuity is C0 by chaining (each segment
+   it would exceed it. Normal G0/G1 motion defaults to quintic; quadratic is
+   retained as an explicit compatibility setting for older trajectory
+   firmware and remains the value/PWM fitter's format. Continuity is C0 by
+   chaining (each segment
    starts at the previous quantized endpoint); velocity continuity is
    implicit wherever the underlying trajectory is smooth. When a quantized
    pure-velocity fit also meets the error budget, prefer it over a quadratic
@@ -73,6 +76,17 @@ For each migrated joint, per flush interval:
    invariant), at trapq move boundaries (natural fit boundaries), and
    at the duration caps of
    [02-Intention_Protocol.md](02-Intention_Protocol.md).
+
+This does not create a second Cartesian planner. G-code, lookahead, trapq,
+kinematics, input shaping, and the toolhead's commanded position remain the
+ordinary Klippy path and source of truth. Only the final per-joint realization
+changes: migrated steppers receive synchronized
+`queue_traj_segment_quintic` intentions and compute their own step edges on
+the MCU instead of receiving `queue_step`. Consequently a normal G1 updates
+the toolhead position exactly as stock Klipper does. `BEZIER_MOVE` is a
+separate single-joint commissioning primitive; because a raw joint curve is
+not generally invertible to a Cartesian pose (notably on CoreXY), that command
+intentionally cannot update the toolhead position automatically.
 
 The flush callback fits through Klipper's **step-generation horizon**
 (`step_gen_time`), not the earlier queue-commit horizon (`flush_time`).  This
@@ -287,7 +301,7 @@ this step; each migrates behind its own flag as it is validated.
 
 ## Host CPU expectation
 
-Sampling plus quadratic fitting is expected to cost the same order as
+Sampling plus polynomial fitting is expected to cost the same order as
 today's itersolve secant search plus stepcompress bisection (both are
 a few arithmetic operations per sample point at comparable sample
 densities), while everything downstream (per-step queue management,
@@ -298,8 +312,9 @@ benchmark harness ([docs/Benchmarks.md](../../Benchmarks.md)).
 ## Open questions
 
 * Fitter sampling density: fixed rate vs adaptive (curvature-driven).
-* Whether the fitter should fit jerk-limited cubics later (protocol
-  reserves nothing for it today; flags byte could version segment
-  order — deliberately out of scope for v1).
+* Whether a future planner should make jerk bounds part of lookahead itself.
+  The current quintic emitter faithfully approximates Klippy's planned
+  trajectory with bounded quantized error; it does not retroactively turn the
+  trapq time law into a separately constrained jerk-limited planner.
 * Exact placement of the emitter in the flush pipeline relative to
   extra-axis (non-kinematic) consumers.

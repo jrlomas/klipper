@@ -54,6 +54,39 @@ def test_trajectory_anchor_uses_physical_step_space():
     assert pos_su == want
 
 
+def test_trajectory_stepper_never_configures_queue_step():
+    class TrajectoryBackend:
+        def __init__(self):
+            self.built = []
+        def build_config(self, *args):
+            self.built.append(args)
+    class ConfigMCU:
+        def __init__(self):
+            self.lookups = []
+        def seconds_to_clock(self, seconds):
+            return round(seconds * 1_000_000)
+        def lookup_query_command(self, request, response, **kwargs):
+            self.lookups.append((request, response, kwargs))
+            return object()
+
+    backend = TrajectoryBackend()
+    mcu = ConfigMCU()
+    stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
+    stepper._step_pulse_duration = .000002
+    stepper._traj = backend
+    stepper._mcu = mcu
+    stepper._step_pin = 'gpio1'
+    stepper._dir_pin = 'gpio2'
+    stepper._invert_step = False
+    stepper._invert_dir = True
+    stepper._oid = 4
+    stepper._build_config()
+    assert backend.built == [('gpio1', 'gpio2', 0, 1, 2)]
+    assert len(mcu.lookups) == 1
+    assert mcu.lookups[0][0].startswith('traj_get_position')
+    assert all('queue_step' not in str(item) for item in mcu.lookups)
+
+
 def test_signed_trajectory_readback_preserves_negative_corexy_position():
     stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
     stepper._oid = 4
@@ -362,6 +395,33 @@ def test_wire_record_preserves_exact_segment_coefficients():
     assert segment['absolute_end_position_su'] == (1 << 31) + 100
 
 
+def test_g1_quintic_segments_use_higher_order_wire_command():
+    class SegmentFFI:
+        def segfit_get_segs(self, segfit):
+            return [types.SimpleNamespace(
+                duration=12000, velocity=101, accel=202, jerk=303,
+                snap=404, crackle=505,
+                flags=trajectory_queuing.TSEG_POLY_QUINTIC)]
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.ffi_lib = SegmentFFI()
+    stepper.segfit = object()
+    stepper.mcu = FakeMCU()
+    stepper.name = 'stepper_x'
+    stepper.oid = 7
+    stepper.queue_cmd = FakeCommand()
+    stepper.quintic_cmd = FakeCommand()
+    stepper.hold_cmd = FakeCommand()
+    stepper.wire_clock = None
+    stepper.wire_acc = None
+    stepper._send_segs(1)
+    assert stepper.quintic_cmd.sent == [
+        [7, 0, 12000, 101, 202, 303, 404, 505]]
+    assert stepper.queue_cmd.sent == []
+    assert stepper.hold_cmd.sent == []
+
+
 def test_rebase_waits_for_previous_horizon():
     class PhysicalStepper:
         def commanded_to_mcu_position_su(self, pos):
@@ -474,6 +534,8 @@ def main():
     test_trajectory_anchor_uses_physical_step_space()
     print("PASS: trajectory anchors preserve the physical MCU position"
           " offset")
+    test_trajectory_stepper_never_configures_queue_step()
+    print("PASS: trajectory steppers never configure the queue_step path")
     test_signed_trajectory_readback_preserves_negative_corexy_position()
     print("PASS: negative CoreXY trajectory readback remains signed")
     test_wide_trajectory_readback_unwraps_from_physical_counter()
@@ -497,6 +559,8 @@ def main():
     test_wire_record_preserves_exact_segment_coefficients()
     print("PASS: flight recording preserves exact wire coefficients and"
           " chained endpoints")
+    test_g1_quintic_segments_use_higher_order_wire_command()
+    print("PASS: normal G1 quintics bypass the quadratic wire command")
     test_rebase_waits_for_previous_horizon()
     print("PASS: a new rebase waits for the previous physical horizon")
     test_active_path_is_held_before_rebase_boundary()

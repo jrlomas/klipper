@@ -45,6 +45,7 @@ BEZIER_MAX_SEGMENTS = 1024
 # Segment polynomial-order flag bits (mirror TSEG_POLY_* in src/trajq.h).
 TSEG_POLY_CUBIC = 1 << 6
 TSEG_POLY_QUINTIC = 2 << 6
+TSEG_POLY_MASK = 3 << 6
 
 # ---- Higher-order (cubic / quintic) Bezier segments (FD-0001 doc 02) ----
 #
@@ -300,6 +301,7 @@ class TrajectoryStepper:
             'motion_tolerance', DEFAULT_TOLERANCE_SU, above=0.)
         self.sample_time = config.getfloat(
             'motion_sample_time', DEFAULT_SAMPLE_TIME, above=0.)
+        self.g1_segment_order = tq_owner.g1_segment_order
         ffi_main, self.ffi_lib = chelper.get_ffi()
         self.segfit = ffi_main.gc(self.ffi_lib.segfit_alloc(),
                                   self.ffi_lib.segfit_free)
@@ -401,6 +403,12 @@ class TrajectoryStepper:
             cq=cmd_queue)
 
     def connect(self):
+        if self.g1_segment_order == TSEG_POLY_QUINTIC >> 6 \
+                and self.quintic_cmd is None:
+            raise self.mcu.error(
+                "Firmware for %s lacks quintic support required by"
+                " [trajectory_queuing] g1_segment_order: quintic"
+                % (self.name,))
         sk = self.mcu_stepper.get_stepper_kinematics()
         freq = self.mcu.seconds_to_clock(1.)
         self.ffi_lib.segfit_setup(self.segfit, sk, freq, self.su_per_mm,
@@ -409,6 +417,7 @@ class TrajectoryStepper:
         # solver.  Let the motion fitter use its normal tolerance budget to
         # discard sub-step ramp/chaining residue and select that realization.
         self.ffi_lib.segfit_set_cruise_fastpath(self.segfit, 1)
+        self.ffi_lib.segfit_set_order(self.segfit, self.g1_segment_order)
 
     def note_rebase_needed(self, stopped=False):
         if self.anchored and not stopped:
@@ -453,6 +462,8 @@ class TrajectoryStepper:
             'commanded_pos_su': self.commanded_pos_su(),
             'last_intention_pos_su': (li[2] if li else None),
             'higher_order': self.cubic_cmd is not None,
+            'g1_segment_order': ('quintic' if self.g1_segment_order == 2
+                                 else 'quadratic'),
             'homing_volatile': bool(self.homing_volatile),
         }
 
@@ -755,14 +766,33 @@ class TrajectoryStepper:
             s = segs[i]
             if not s.duration:
                 continue
-            if not s.velocity and not s.accel:
+            if (not s.velocity and not s.accel and not s.jerk
+                    and not s.snap and not s.crackle):
                 self.hold_cmd.send([self.oid, s.duration])
                 self._wire_segment(1, s.duration, 0, 0)
-            else:
+                continue
+            order = s.flags & TSEG_POLY_MASK
+            if order == TSEG_POLY_QUINTIC:
+                if self.quintic_cmd is None:
+                    raise self.mcu.error(
+                        "Firmware for %s lacks quintic trajectory support"
+                        % (self.name,))
+                base_flags = s.flags & ~TSEG_POLY_MASK
+                self.quintic_cmd.send(
+                    [self.oid, base_flags, s.duration, s.velocity, s.accel,
+                     s.jerk, s.snap, s.crackle])
+                self._wire_segment(
+                    s.flags, s.duration, s.velocity, s.accel,
+                    s.jerk, s.snap, s.crackle)
+            elif not order:
                 self.queue_cmd.send([self.oid, s.flags, s.duration,
                                      s.velocity, s.accel])
                 self._wire_segment(s.flags, s.duration,
                                    s.velocity, s.accel)
+            else:
+                raise self.mcu.error(
+                    "Unsupported fitted polynomial order 0x%x for %s"
+                    % (order, self.name))
 
     def _wire_rebase(self, clock, pos_su, mcu_pos):
         self.wire_clock = int(clock)
@@ -846,6 +876,12 @@ class TrajectoryQueuing:
         self.steppers = []
         self.timesync = None
         self.atlas_trace = None
+        # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
+        # but trajectory steppers receive per-joint quintic intentions and
+        # synthesize their own pulses on the MCU.  Quadratic remains an
+        # explicit compatibility mode for firmware without higher order.
+        self.g1_segment_order = config.getchoice(
+            'g1_segment_order', {'quadratic': 0, 'quintic': 2}, 'quintic')
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
         # Advanced single-joint Bezier move is opt-in and hazardous (it
@@ -878,9 +914,10 @@ class TrajectoryQueuing:
             d = ts.describe()
             lines.append(
                 "%s: anchored=%d need_rebase=%d higher_order=%d"
-                " pos=%d su (%.4f mm) su/mm=%.1f%s"
+                " g1_order=%s pos=%d su (%.4f mm) su/mm=%.1f%s"
                 % (d['name'], d['anchored'], d['need_rebase'],
-                   d['higher_order'], d['commanded_pos_su'],
+                   d['higher_order'], d['g1_segment_order'],
+                   d['commanded_pos_su'],
                    d['commanded_pos_su'] / d['su_per_mm'], d['su_per_mm'],
                    " [homing volatile]" if d['homing_volatile'] else ""))
         gcmd.respond_info("\n".join(lines))

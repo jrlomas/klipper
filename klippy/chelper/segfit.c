@@ -1,4 +1,4 @@
-// Greedy quadratic segment fitter for trajectory intentions.
+// Greedy polynomial segment fitter for trajectory intentions.
 //
 // Samples a joint's position trajectory q(t) through the existing
 // kinematics callback chain (kinematics, input shaper, and pressure
@@ -25,11 +25,15 @@
 #define SEGFIT_MAX_DURATION ((double)(1 << 26))
 #define SEGFIT_MAX_SAMPLES 4096
 #define SEGFIT_MAX_SEGS 256
+#define TSEG_POLY_QUINTIC (2 << 6)
 
 struct segfit_seg {
     uint32_t duration;
     int32_t velocity;
     int32_t accel;
+    int32_t jerk;
+    int32_t snap;
+    int32_t crackle;
     uint8_t flags;
 };
 
@@ -41,6 +45,7 @@ struct segfit {
     double tolerance;         // max deviation, in sub-units
     uint32_t sample_ticks;    // sampling quantum
     uint8_t cruise_fastpath;  // motion may spend tolerance to reach accel=0
+    uint8_t polynomial_order; // 0=quadratic, 2=quintic
     // Chained anchor: exact Q32.32 sub-unit position and the print
     // time / tick count it corresponds to.
     double anchor_print_time;
@@ -118,6 +123,12 @@ void __visible
 segfit_set_cruise_fastpath(struct segfit *sf, uint8_t enable)
 {
     sf->cruise_fastpath = !!enable;
+}
+
+void __visible
+segfit_set_order(struct segfit *sf, uint8_t order)
+{
+    sf->polynomial_order = order == 2 ? 2 : 0;
 }
 
 int64_t __visible
@@ -312,6 +323,263 @@ quantize(double v, double beta, int32_t *vw, int32_t *aw)
     *aw = (int32_t)ad;
 }
 
+// Fit q(x) = b1*x + ... + b5*x^5 over normalized x=t/T.  Normalizing
+// avoids the catastrophic conditioning of tick powers (T may be millions).
+// The chained anchor constrains q(0)=0; use the highest degree supported by
+// the available samples, then degree-elevate implicitly with zero high terms.
+static int
+fit_power_quintic(struct segfit *sf, int n, double b[5])
+{
+    memset(b, 0, sizeof(double) * 5);
+    if (!n)
+        return 1;
+    double T = sf->tau[n - 1];
+    if (T <= 0.)
+        return 0;
+    int degree = n < 5 ? n : 5;
+    double a[5][6];
+    memset(a, 0, sizeof(a));
+    int i, r, c;
+    for (i = 0; i < n; i++) {
+        double x = sf->tau[i] / T, p[5];
+        p[0] = x;
+        for (r = 1; r < degree; r++)
+            p[r] = p[r - 1] * x;
+        for (r = 0; r < degree; r++) {
+            a[r][degree] += p[r] * sf->y[i];
+            for (c = 0; c < degree; c++)
+                a[r][c] += p[r] * p[c];
+        }
+    }
+    // Partial-pivot Gaussian elimination of the small normal system.
+    for (c = 0; c < degree; c++) {
+        int pivot = c;
+        for (r = c + 1; r < degree; r++)
+            if (fabs(a[r][c]) > fabs(a[pivot][c]))
+                pivot = r;
+        if (fabs(a[pivot][c]) < 1.e-18)
+            return 0;
+        if (pivot != c)
+            for (i = c; i <= degree; i++) {
+                double tmp = a[c][i];
+                a[c][i] = a[pivot][i];
+                a[pivot][i] = tmp;
+            }
+        double divisor = a[c][c];
+        for (i = c; i <= degree; i++)
+            a[c][i] /= divisor;
+        for (r = 0; r < degree; r++) {
+            if (r == c)
+                continue;
+            double factor = a[r][c];
+            for (i = c; i <= degree; i++)
+                a[r][i] -= factor * a[c][i];
+        }
+    }
+    for (i = 0; i < degree; i++)
+        b[i] = a[i][degree];
+    return 1;
+}
+
+static int32_t
+quantize_i32(double value)
+{
+    value = round(value);
+    if (value > 2147483647.)
+        return INT32_MAX;
+    if (value < -2147483648.)
+        return INT32_MIN;
+    return (int32_t)value;
+}
+
+static int
+quantize_quintic(struct segfit *sf, int n, int32_t coeffs[5])
+{
+    double b[5];
+    if (!fit_power_quintic(sf, n, b))
+        return 0;
+    double T = sf->tau[n - 1], Tpow = 1.;
+    static const double factorial[5] = { 1., 2., 6., 24., 120. };
+    int i;
+    for (i = 0; i < 5; i++) {
+        Tpow *= T;
+        double derivative = factorial[i] * b[i] / Tpow;
+        coeffs[i] = quantize_i32(
+            derivative * ldexp(1., 16 * (i + 1)));
+    }
+    return 1;
+}
+
+// Evaluate the quantized quintic in normalized time.  This is used only for
+// fitting error checks; exact chained endpoints use segfit_end_delta_ho().
+static double
+quintic_position(const int32_t coeffs[5], double T, double t)
+{
+    double x = t / T, Tpow = 1., b[5];
+    static const double factorial[5] = { 1., 2., 6., 24., 120. };
+    int i;
+    for (i = 0; i < 5; i++) {
+        Tpow *= T;
+        b[i] = coeffs[i] / ldexp(1., 16 * (i + 1))
+            * Tpow / factorial[i];
+    }
+    return x * (b[0] + x * (b[1] + x * (b[2]
+        + x * (b[3] + x * b[4]))));
+}
+
+static int
+check_fit_quintic(struct segfit *sf, int n, const int32_t coeffs[5])
+{
+    double T = sf->tau[n - 1];
+    int i;
+    for (i = 0; i < n; i++) {
+        double err = quintic_position(coeffs, T, sf->tau[i]) - sf->y[i];
+        if (err > sf->tolerance || err < -sf->tolerance)
+            return 0;
+    }
+    return 1;
+}
+
+// Sufficient whole-span monotonicity check.  Convert the quantized velocity
+// quartic from power basis to degree-4 Bernstein control values; because all
+// Bernstein basis functions are non-negative, control values with one sign
+// prove that velocity cannot reverse between samples.
+static int
+check_dir_quintic(const int32_t coeffs[5], uint32_t T, double endpoint)
+{
+    double Td = T, T2 = Td * Td, T3 = T2 * Td;
+    double T4 = T3 * Td, T5 = T4 * Td;
+    double a0 = coeffs[0] / ldexp(1., 16) * Td;
+    double a1 = coeffs[1] / ldexp(1., 32) * T2;
+    double a2 = .5 * coeffs[2] / ldexp(1., 48) * T3;
+    double a3 = (1. / 6.) * coeffs[3] / ldexp(1., 64) * T4;
+    double a4 = (1. / 24.) * coeffs[4] / ldexp(1., 80) * T5;
+    double d[5] = {
+        a0,
+        a0 + .25 * a1,
+        a0 + .5 * a1 + a2 / 6.,
+        a0 + .75 * a1 + .5 * a2 + .25 * a3,
+        a0 + a1 + a2 + a3 + a4,
+    };
+    double eps = 1.e-7;
+    int i;
+    if (endpoint >= 0.) {
+        for (i = 0; i < 5; i++)
+            if (d[i] < -eps)
+                return 0;
+    } else {
+        for (i = 0; i < 5; i++)
+            if (d[i] > eps)
+                return 0;
+    }
+    // Match traj_stepper_load()'s initial direction selection exactly.
+    int32_t vend = coeffs[0]
+        + (int32_t)(((int64_t)coeffs[1] * T) >> 16);
+    vend += (int32_t)poly_term(coeffs[2], T, 2, 2, 2);
+    vend += (int32_t)poly_term(coeffs[3], T, 3, 3, 6);
+    vend += (int32_t)poly_term(coeffs[4], T, 4, 4, 24);
+    int dir = coeffs[0] ? (coeffs[0] > 0 ? 1 : -1)
+        : (coeffs[1] ? (coeffs[1] > 0 ? 1 : -1)
+           : (vend >= 0 ? 1 : -1));
+    return endpoint == 0. || (endpoint > 0. ? dir > 0 : dir < 0);
+}
+
+static int
+smul_shr_checked(int64_t value, uint32_t ticks, unsigned shift,
+                 int64_t *result)
+{
+    int neg = value < 0;
+    uint64_t uv = neg ? -(uint64_t)value : (uint64_t)value;
+    uint64_t lo = (uv & 0xffffffff) * ticks;
+    uint64_t hi = (uv >> 32) * ticks;
+    hi += lo >> 32;
+    lo &= 0xffffffff;
+    if (hi >> (31 + shift))
+        return 0;
+    uint64_t r = shift ? ((hi << (32 - shift)) | (lo >> shift))
+        : ((hi << 32) | lo);
+    *result = neg ? -(int64_t)r : (int64_t)r;
+    return 1;
+}
+
+static int
+poly_term_checked(int64_t coeff, uint32_t ticks, int nmul, int nsh,
+                  uint32_t fact, int64_t *result)
+{
+    int64_t value = coeff;
+    int i;
+    for (i = 0; i < nmul; i++)
+        if (!smul_shr_checked(value, ticks, i < nsh ? 16 : 0, &value))
+            return 0;
+    if (fact > 1)
+        value /= fact;
+    *result = value;
+    return 1;
+}
+
+static int
+quintic_wire_safe(uint32_t T, const int32_t coeffs[5])
+{
+    int64_t dv = (int64_t)coeffs[0] * T;
+    if (dv >= (1LL << 47) || dv <= -(1LL << 47))
+        return 0;
+    long double aterm = fabsl((long double)coeffs[1]) * T * T / 2.;
+    if (aterm >= 9223372036854775808.L)
+        return 0;
+    int64_t jterm, sterm, cterm;
+    if (!poly_term_checked(coeffs[2], T, 3, 1, 6, &jterm)
+        || !poly_term_checked(coeffs[3], T, 4, 2, 24, &sterm)
+        || !poly_term_checked(coeffs[4], T, 5, 3, 120, &cterm))
+        return 0;
+    // The MCU adds each term into one signed Q32.32 accumulator.  Verify
+    // that the complete mathematical sum is representable too; individual
+    // term guards alone do not prove that their sum cannot overflow.
+    long double total = (long double)coeffs[0] * T * 65536.;
+    total += (long double)coeffs[1] * T * T / 2.;
+    total += jterm;
+    total += sterm;
+    total += cterm;
+    if (total >= 9223372036854775807.L
+        || total <= -9223372036854775808.L)
+        return 0;
+    return 1;
+}
+
+static int
+fit_quintic_candidate(struct segfit *sf, int n, int32_t coeffs[5])
+{
+    if (!quantize_quintic(sf, n, coeffs))
+        return 0;
+
+    // A pure-velocity polynomial is both exact and substantially cheaper to
+    // execute.  Keep it encoded as quintic for the selected G1 wire contract,
+    // but discard numerical high-order residue when the same quantized error
+    // budget proves that the straight candidate is sufficient.
+    double s2 = 0., sy1 = 0.;
+    int i;
+    for (i = 0; i < n; i++) {
+        s2 += sf->tau[i] * sf->tau[i];
+        sy1 += sf->tau[i] * sf->y[i];
+    }
+    if (s2) {
+        int32_t pure[5] = { quantize_i32(sy1 / s2 * 65536.), 0, 0, 0, 0 };
+        double endpoint = pure[0] / 65536. * sf->tau[n - 1];
+        if ((sf->cruise_fastpath
+             || fabs(endpoint - sf->y[n - 1]) <= 32.)
+            && check_fit_quintic(sf, n, pure))
+            memcpy(coeffs, pure, sizeof(pure));
+    }
+
+    for (i = 0; i < 5; i++)
+        if ((coeffs[i] == INT32_MIN || coeffs[i] == INT32_MAX)
+            && !check_fit_quintic(sf, n, coeffs))
+            return 0;
+    uint32_t T = (uint32_t)sf->tau[n - 1];
+    return check_fit_quintic(sf, n, coeffs)
+        && quintic_wire_safe(T, coeffs)
+        && check_dir_quintic(coeffs, T, sf->y[n - 1]);
+}
+
 // Prefer the cheaper pure-velocity realization whenever it satisfies the
 // same quantized error budget.  This is exact for cruise spans and avoids
 // manufacturing tiny corrective accelerations solely from chained fixed-
@@ -359,6 +627,7 @@ emit_segment(struct segfit *sf, int n)
     uint32_t T = (uint32_t)sf->tau[n - 1];
     double v, beta;
     int32_t vw, aw;
+    int32_t ho[5] = { 0, 0, 0, 0, 0 };
     // Refit over just the emitted span
     double s2 = 0., s3 = 0., s4 = 0., sy1 = 0., sy2 = 0.;
     int i;
@@ -368,30 +637,19 @@ emit_segment(struct segfit *sf, int n)
         s2 += t2; s3 += t2 * t; s4 += t2 * t2;
         sy1 += t * q; sy2 += t2 * q;
     }
-    double det = s2 * s4 - s3 * s3;
-    if (n == 1 || fabs(det) < 1e-30) {
-        v = n ? sy1 / s2 : 0.;
-        beta = 0.;
-    } else {
-        v = (sy1 * s4 - sy2 * s3) / det;
-        beta = (sy2 * s2 - sy1 * s3) / det;
-    }
-    quantize(v, beta, &vw, &aw);
-    prefer_pure_velocity(sf, n, s2, sy1, &vw, &aw);
-    while (!check_dir_invariant(vw, aw, T) && n > 1) {
-        // Trim back to before the extremum and retry
-        n--;
-        T = (uint32_t)sf->tau[n - 1];
-        s2 = s3 = s4 = sy1 = sy2 = 0.;
-        for (i = 0; i < n; i++) {
-            double t = sf->tau[i], q = sf->y[i];
-            double t2 = t * t;
-            s2 += t2; s3 += t2 * t; s4 += t2 * t2;
-            sy1 += t * q; sy2 += t2 * q;
+    if (sf->polynomial_order == 2) {
+        while (!fit_quintic_candidate(sf, n, ho) && n > 1) {
+            n--;
+            T = (uint32_t)sf->tau[n - 1];
         }
-        det = s2 * s4 - s3 * s3;
+        if (!fit_quintic_candidate(sf, n, ho))
+            return -1;
+        vw = ho[0];
+        aw = ho[1];
+    } else {
+        double det = s2 * s4 - s3 * s3;
         if (n == 1 || fabs(det) < 1e-30) {
-            v = sy1 / s2;
+            v = n ? sy1 / s2 : 0.;
             beta = 0.;
         } else {
             v = (sy1 * s4 - sy2 * s3) / det;
@@ -399,26 +657,53 @@ emit_segment(struct segfit *sf, int n)
         }
         quantize(v, beta, &vw, &aw);
         prefer_pure_velocity(sf, n, s2, sy1, &vw, &aw);
+        while (!check_dir_invariant(vw, aw, T) && n > 1) {
+        // Trim back to before the extremum and retry
+            n--;
+            T = (uint32_t)sf->tau[n - 1];
+            s2 = s3 = s4 = sy1 = sy2 = 0.;
+            for (i = 0; i < n; i++) {
+                double t = sf->tau[i], q = sf->y[i];
+                double t2 = t * t;
+                s2 += t2; s3 += t2 * t; s4 += t2 * t2;
+                sy1 += t * q; sy2 += t2 * q;
+            }
+            det = s2 * s4 - s3 * s3;
+            if (n == 1 || fabs(det) < 1e-30) {
+                v = sy1 / s2;
+                beta = 0.;
+            } else {
+                v = (sy1 * s4 - sy2 * s3) / det;
+                beta = (sy2 * s2 - sy1 * s3) / det;
+            }
+            quantize(v, beta, &vw, &aw);
+            prefer_pure_velocity(sf, n, s2, sy1, &vw, &aw);
+        }
+        if (!check_dir_invariant(vw, aw, T))
+            // Single-sample segment still reversing: force pure velocity
+            aw = 0;
+        // Quantization clamps coefficients to the signed wire range.  A
+        // target outside that range must fail closed: emitting the clamped
+        // candidate would turn a discontinuity into a maximum-rate burst.
+        if ((vw == INT32_MIN || vw == INT32_MAX
+             || aw == INT32_MIN || aw == INT32_MAX)
+            && !check_fit(sf, n, vw, aw))
+            return -1;
     }
-    if (!check_dir_invariant(vw, aw, T))
-        // Single-sample segment still reversing: force pure velocity
-        aw = 0;
-    // Quantization clamps coefficients to the signed wire range.  A target
-    // outside that range must fail closed: emitting the clamped candidate
-    // would turn a position discontinuity into a maximum-rate pulse burst.
-    if ((vw == INT32_MIN || vw == INT32_MAX
-         || aw == INT32_MIN || aw == INT32_MAX)
-        && !check_fit(sf, n, vw, aw))
-        return -1;
 
     struct segfit_seg *seg = &sf->segs[sf->num_segs++];
     seg->duration = T;
     seg->velocity = vw;
     seg->accel = aw;
-    seg->flags = 0;
+    seg->jerk = ho[2];
+    seg->snap = ho[3];
+    seg->crackle = ho[4];
+    seg->flags = sf->polynomial_order == 2 ? TSEG_POLY_QUINTIC : 0;
 
     // Advance the exact chained anchor with the integer convention
-    int64_t delta = traj_end_delta(T, vw, aw);
+    int64_t delta = sf->polynomial_order == 2
+        ? segfit_end_delta_ho(T, vw, aw, ho[2], ho[3], ho[4])
+        : traj_end_delta(T, vw, aw);
     sf->acc = (int64_t)((uint64_t)sf->acc + (uint64_t)delta);
     sf->anchor_su += delta / 4294967296.;
     sf->gen_ticks += T;
@@ -483,15 +768,22 @@ segfit_generate(struct segfit *sf, double flush_time)
         // Check the grown span still fits within tolerance
         double v, beta;
         int32_t vw, aw;
-        fit_coeffs(sf, &v, &beta);
-        quantize(v, beta, &vw, &aw);
-        prefer_pure_velocity(sf, sf->num_samples, sf->s2, sf->sy1,
-                             &vw, &aw);
-        int ok = check_fit(sf, sf->num_samples, vw, aw);
+        int ok;
+        if (sf->polynomial_order == 2) {
+            int32_t ho[5];
+            ok = fit_quintic_candidate(sf, sf->num_samples, ho);
+        } else {
+            fit_coeffs(sf, &v, &beta);
+            quantize(v, beta, &vw, &aw);
+            prefer_pure_velocity(sf, sf->num_samples, sf->s2, sf->sy1,
+                                 &vw, &aw);
+            ok = check_fit(sf, sf->num_samples, vw, aw);
+        }
         if ((!ok && sf->num_samples > 1)
             || tau >= SEGFIT_MAX_DURATION
             || sf->num_samples >= SEGFIT_MAX_SAMPLES) {
-            int emit_n = ok ? sf->num_samples : sf->num_samples - 1;
+            int emit_n = ok || sf->num_samples == 1
+                ? sf->num_samples : sf->num_samples - 1;
             if (emit_segment(sf, emit_n))
                 return -1;
             anchor_su = sf->anchor_su;

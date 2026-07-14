@@ -242,6 +242,9 @@ defs_segfit = """
         uint32_t duration;
         int32_t velocity;
         int32_t accel;
+        int32_t jerk;
+        int32_t snap;
+        int32_t crackle;
         uint8_t flags;
     };
     struct segfit *segfit_alloc(void);
@@ -254,6 +257,7 @@ defs_segfit = """
     void segfit_set_anchor_position(struct segfit *sf, double position_su);
     void segfit_set_position_offset(struct segfit *sf, double offset_su);
     void segfit_set_cruise_fastpath(struct segfit *sf, uint8_t enable);
+    void segfit_set_order(struct segfit *sf, uint8_t order);
     int64_t segfit_get_anchor(struct segfit *sf);
     double segfit_get_gen_time(struct segfit *sf);
     double segfit_get_position(struct segfit *sf, double print_time);

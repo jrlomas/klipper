@@ -107,7 +107,7 @@ tools needed to prove equivalence *offline*:
 ```
 old:  G-code → itersolve → stepcompress → queue_step → (simulated
       stepper event) → step times
-new:  G-code → segment fitter → queue_traj_segment → (linux-MCU
+new:  G-code → segment fitter → queue_traj_segment_quintic → (linux-MCU
       segment executor) → step times
 ```
 

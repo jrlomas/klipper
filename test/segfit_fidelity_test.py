@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct path-fidelity checks for the HELIX quadratic segment fitter.
+"""Direct path-fidelity checks for the HELIX polynomial segment fitter.
 
 Feed representative Cartesian trapq paths through the production segfit C
 implementation and evaluate the quantized wire polynomials against the same
@@ -65,24 +65,27 @@ def collect_segments(lib, sf, end_time):
         count = lib.segfit_generate(sf, end_time)
         assert count >= 0
         data = lib.segfit_get_segs(sf)
-        emitted.extend((data[i].duration, data[i].velocity, data[i].accel)
-                       for i in range(count))
+        emitted.extend((data[i].duration, data[i].velocity, data[i].accel,
+                        data[i].jerk, data[i].snap, data[i].crackle,
+                        data[i].flags) for i in range(count))
         if lib.segfit_get_gen_time(sf) <= before:
             break
     count = lib.segfit_finalize(sf)
     assert count >= 0
     data = lib.segfit_get_segs(sf)
-    emitted.extend((data[i].duration, data[i].velocity, data[i].accel)
-                   for i in range(count))
+    emitted.extend((data[i].duration, data[i].velocity, data[i].accel,
+                    data[i].jerk, data[i].snap, data[i].crackle,
+                    data[i].flags) for i in range(count))
     return emitted
 
 
-def fit_axis(ffi, lib, trapq, axis, start_time, end_time):
+def fit_axis(ffi, lib, trapq, axis, start_time, end_time, order):
     sk = ffi.gc(lib.cartesian_stepper_alloc(axis), lib.free)
     lib.itersolve_set_trapq(sk, trapq, STEP_DIST)
     sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
     lib.segfit_setup(sf, sk, MCU_FREQ, SU_PER_MM, TOLERANCE_SU,
                      SAMPLE_TIME)
+    lib.segfit_set_order(sf, order)
     start_su = round(lib.segfit_get_position(sf, start_time) * SU_PER_MM)
     lib.segfit_set_anchor(sf, start_time, start_su << 32)
     lib.segfit_set_anchor_position(sf, start_su)
@@ -96,20 +99,24 @@ def fit_axis(ffi, lib, trapq, axis, start_time, end_time):
     elapsed = 0
     worst = 0.
     samples = 0
-    for duration, velocity, accel in segments:
+    for duration, velocity, accel, jerk, snap, crackle, flags in segments:
+        assert flags & (3 << 6) == (2 << 6 if order == 2 else 0), flags
         offsets = range(SAMPLE_TICKS, duration + 1, SAMPLE_TICKS)
         offsets = list(offsets)
         if not offsets or offsets[-1] != duration:
             offsets.append(duration)
         for ticks in offsets:
             got = (acc / Q32 + velocity / 65536. * ticks
-                   + .5 * accel / Q32 * ticks * ticks)
+                   + .5 * accel / Q32 * ticks ** 2
+                   + jerk / 2. ** 48 * ticks ** 3 / 6.
+                   + snap / 2. ** 64 * ticks ** 4 / 24.
+                   + crackle / 2. ** 80 * ticks ** 5 / 120.)
             when = start_time + (elapsed + ticks) / MCU_FREQ
             want = lib.segfit_get_position(sf, when) * SU_PER_MM
             worst = max(worst, abs(got - want))
             samples += 1
         acc += int(lib.segfit_end_delta_ho(
-            duration, velocity, accel, 0, 0, 0))
+            duration, velocity, accel, jerk, snap, crackle))
         elapsed += duration
 
     assert worst <= TOLERANCE_SU + 1., (axis, worst, TOLERANCE_SU)
@@ -124,7 +131,7 @@ def fit_axis(ffi, lib, trapq, axis, start_time, end_time):
     return len(segments), samples, worst, endpoint_error
 
 
-def check_path(name, build_path, axes):
+def check_path(name, build_path, axes, order=0):
     import chelper
     ffi, lib = chelper.get_ffi()
     trapq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
@@ -136,11 +143,12 @@ def check_path(name, build_path, axes):
         end_time, spans = built, {}
     results = [fit_axis(ffi, lib, trapq, axis,
                         spans.get(axis, (start_time, end_time))[0],
-                        spans.get(axis, (start_time, end_time))[1])
+                        spans.get(axis, (start_time, end_time))[1], order)
                for axis in axes]
-    print("PASS: %s: %d axes, %d wire segments, %d samples, "
+    print("PASS: %s (%s): %d axes, %d wire segments, %d samples, "
           "worst %.2f su (tol %.2f), endpoint %.2f su"
-          % (name, len(axes), sum(r[0] for r in results),
+          % (name, "quintic" if order == 2 else "quadratic", len(axes),
+             sum(r[0] for r in results),
              sum(r[1] for r in results), max(r[2] for r in results),
              TOLERANCE_SU, max(r[3] for r in results)))
 
@@ -167,9 +175,11 @@ def corner(lib, trapq, start_time):
 
 
 def main():
-    check_path("straight trapezoid", straight, (b'x',))
-    check_path("48-chord quarter arc", arc, (b'x', b'y'))
-    check_path("finite-junction-speed corner", corner, (b'x', b'y'))
+    for order in (0, 2):
+        check_path("straight trapezoid", straight, (b'x',), order)
+        check_path("48-chord quarter arc", arc, (b'x', b'y'), order)
+        check_path("finite-junction-speed corner", corner,
+                   (b'x', b'y'), order)
     print("segfit_fidelity_test: all paths within motion_tolerance")
     return 0
 

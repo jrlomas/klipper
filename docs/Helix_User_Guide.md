@@ -124,6 +124,11 @@ what's turned on?"
 
 ## Advanced / commissioning commands
 
+Normal `G0`/`G1` commands are the production quintic motion path: Klippy still
+owns Cartesian lookahead and the displayed toolhead position, while each
+trajectory MCU receives joint polynomials and synthesizes its pulses locally.
+No coordinate repair is required after an ordinary move.
+
 * `BEZIER_MOVE` — drive a single trajectory joint along a cubic/quintic
   Bézier curve. Like `FORCE_MOVE`, it bypasses the kinematic planner and
   is **disabled by default**; enable it with

@@ -61,3 +61,18 @@ helix_test_target16(int64_t acc, int32_t mpos, int32_t dir)
 {
     return traj_stepper_calc_target16(acc, mpos, dir);
 }
+
+int
+helix_test_is_pure_cruise(uint8_t flags, int32_t accel, int32_t jerk,
+                          int32_t snap, int32_t crackle)
+{
+    struct trajq tq = { };
+    tq.seg_flags = flags;
+    tq.accel = accel;
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    tq.jerk = jerk;
+    tq.snap = snap;
+    tq.crackle = crackle;
+#endif
+    return traj_stepper_is_pure_cruise(&tq);
+}

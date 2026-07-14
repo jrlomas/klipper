@@ -48,6 +48,10 @@ def build_mcu_solver():
     solver.helix_test_target16.argtypes = [
         ctypes.c_int64, ctypes.c_int32, ctypes.c_int32]
     solver.helix_test_target16.restype = ctypes.c_int64
+    solver.helix_test_is_pure_cruise.argtypes = [
+        ctypes.c_uint8, ctypes.c_int32, ctypes.c_int32,
+        ctypes.c_int32, ctypes.c_int32]
+    solver.helix_test_is_pure_cruise.restype = ctypes.c_int
     return solver
 
 
@@ -181,6 +185,16 @@ def check_phase_boundaries(solver):
     print("PASS: MCU half-step thresholds remain local across phase wrap")
 
 
+def check_quintic_cruise_fastpath(solver):
+    quintic = 2 << 6
+    assert solver.helix_test_is_pure_cruise(quintic, 0, 0, 0, 0)
+    assert not solver.helix_test_is_pure_cruise(quintic, 1, 0, 0, 0)
+    assert not solver.helix_test_is_pure_cruise(quintic, 0, 1, 0, 0)
+    assert not solver.helix_test_is_pure_cruise(quintic, 0, 0, 1, 0)
+    assert not solver.helix_test_is_pure_cruise(quintic, 0, 0, 0, 1)
+    print("PASS: degenerate quintic cruises use the division-light solver")
+
+
 def compare_case(solver, name, start_z, distance, speed, accel,
                  trigger_after=None):
     legacy, end_time = legacy_pulses(start_z, distance, speed, accel)
@@ -209,6 +223,7 @@ def compare_case(solver, name, start_z, distance, speed, accel,
 def main():
     solver = build_mcu_solver()
     check_phase_boundaries(solver)
+    check_quintic_cruise_fastpath(solver)
     compare_case(solver, 'homing profile', 0., 5., 20., 300.)
     compare_case(solver, 'trigger prefix', 0., 5., 20., 300., .035)
     compare_case(solver, 'reverse retract', .180, -3., 10., 300.)
