@@ -1,5 +1,6 @@
 # Atlas one-touch provisioning: grant only the configured Atlas account's
 # group access to the bootloaders supported by the audited flash runner.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614e", GROUP="@ATLAS_FLASH_GROUP@", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"
 SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", GROUP="@ATLAS_FLASH_GROUP@", MODE="0660"
 SUBSYSTEM=="usb", ATTR{idVendor}=="2e8a", ATTR{idProduct}=="0003", GROUP="@ATLAS_FLASH_GROUP@", MODE="0660"
 SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6177", GROUP="@ATLAS_FLASH_GROUP@", MODE="0660"

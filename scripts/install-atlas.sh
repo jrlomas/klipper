@@ -85,7 +85,9 @@ MOONRAKER_CONF="${ATLAS_DATA}/config/moonraker.conf"
 ASVC_FILE="${ATLAS_DATA}/moonraker.asvc"
 COMPONENT_FILE="${MOONRAKER_DIR}/moonraker/components/atlas.py"
 UNIT_FILE="${SYSTEMD_DIR}/atlas.service"
-UDEV_FILE="${UDEV_DIR}/99-atlas-flash.rules"
+# Sort after generic Klipper tty rules so the Atlas account can issue the
+# 1200-baud bootloader request as well as open the enumerated bootloader.
+UDEV_FILE="${UDEV_DIR}/99-z-atlas-flash.rules"
 
 install -d -m 0700 "$(stage_path "${STATE_DIR}")"
 install -d -m 0755 "$(stage_path "${ATLAS_DATA}/config")"
@@ -159,6 +161,7 @@ if [ -z "${DESTDIR}" ]; then
     chown -R "${ATLAS_USER}:${ATLAS_USER}" "${STATE_DIR}"
     chown "${ATLAS_USER}:${ATLAS_USER}" "${ENV_FILE}"
     udevadm control --reload-rules
+    udevadm trigger --subsystem-match=tty --action=change
     systemctl daemon-reload
     if [ "${NO_START}" -eq 0 ]; then
         systemctl enable --now atlas.service
