@@ -43,6 +43,13 @@ The companion then does the mechanical work:
   ([`atlas/provision/plan.py`](../../../atlas/provision/plan.py)), over the
   first-class in-band bootloader FD-0001 already ships.
 
+Detection is deliberately confidence-bounded. A running Klipper USB device
+uses the shared `1d50:614e` identity: its product string proves the MCU family,
+not the physical PCB. Atlas therefore returns the matching catalog family,
+carries the stable `/dev/serial/by-id/` path forward, and requires confirmation
+of the exact board. A bootloader-specific signature can narrow the set, but an
+ambiguous signature never becomes an automatic guess.
+
 The catalog is **data in this repo** ([`atlas/provision/boards/`](../../../atlas/provision/boards/),
 a 53-board catalog across the major vendors), reviewed like code and
 versioned like everything else in the shared brain

@@ -99,6 +99,40 @@ def test_usb_match_ambiguous_dfu():
     print("PASS: shared DFU id detected as ambiguous, does not auto-resolve")
 
 
+def test_running_klipper_usb_matches_mcu_without_guessing_board():
+    pico = {
+        "id": "pico", "name": "Pico board", "mcu": "rp2040",
+        "flash_method": "rp2040-usb", "usb_ids": ["2e8a:0003"],
+    }
+    other = {
+        "id": "other-pico", "name": "Other RP2040", "mcu": "rp2040",
+        "flash_method": "rp2040-usb", "usb_ids": ["2e8a:0003"],
+    }
+    catalog = load_boards([pico, other, EBB])
+    scan = {
+        "lsusb": ("Bus 001 Device 007: ID 1d50:614e OpenMoko rp2040\n"
+                  "Bus 001 Device 008: ID 1d50:614e OpenMoko stm32g0b1xx"),
+        "serial_devices": [
+            {"vid": "1d50", "pid": "614e", "product": "rp2040",
+             "path": "/dev/serial/by-id/pico"},
+            {"vid": "1d50", "pid": "614e", "product": "stm32g0b1xx",
+             "path": "/dev/serial/by-id/ebb"},
+        ],
+    }
+    matches = detect_boards(scan, catalog)
+    assert len(matches) == 2       # no duplicate generic lsusb results
+    by_path = {m.identifier: m for m in matches}
+    pm = by_path["/dev/serial/by-id/pico"]
+    assert pm.interface == "klipper-usb" and pm.ambiguous
+    assert pm.resolved is None
+    assert {b.id for b in pm.candidates} == {"pico", "other-pico"}
+    em = by_path["/dev/serial/by-id/ebb"]
+    assert em.ambiguous and em.resolved is None
+    assert [b.id for b in em.candidates] == ["btt-ebb36-g0b1"]
+    print("PASS: running Klipper USB peers match MCU families but never "
+          "auto-resolve a physical board")
+
+
 def test_can_detection():
     catalog = load_boards([OCTOPUS, EBB])
     scan = {"canbus_uuids": ["1122334455aa"]}
@@ -183,6 +217,7 @@ def main():
     test_duplicate_board_ids()
     test_parse_lsusb()
     test_usb_match_ambiguous_dfu()
+    test_running_klipper_usb_matches_mcu_without_guessing_board()
     test_can_detection()
     test_custom_hatch_always_present()
     test_plan_dfu_address_from_kconfig()
