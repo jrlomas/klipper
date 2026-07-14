@@ -40,6 +40,7 @@ struct segfit {
     double position_offset_su;// commanded joint space -> physical MCU space
     double tolerance;         // max deviation, in sub-units
     uint32_t sample_ticks;    // sampling quantum
+    uint8_t cruise_fastpath;  // motion may spend tolerance to reach accel=0
     // Chained anchor: exact Q32.32 sub-unit position and the print
     // time / tick count it corresponds to.
     double anchor_print_time;
@@ -103,6 +104,12 @@ void __visible
 segfit_set_position_offset(struct segfit *sf, double offset_su)
 {
     sf->position_offset_su = offset_su;
+}
+
+void __visible
+segfit_set_cruise_fastpath(struct segfit *sf, uint8_t enable)
+{
+    sf->cruise_fastpath = !!enable;
 }
 
 int64_t __visible
@@ -305,10 +312,12 @@ prefer_pure_velocity(struct segfit *sf, int n, double s2, double sy1,
     int32_t pure_v, pure_a;
     quantize(sy1 / s2, 0., &pure_v, &pure_a);
     double endpoint = pure_v / 65536. * sf->tau[n - 1];
-    // Keep chained endpoint bias negligible as well as staying inside the
-    // general fit tolerance.  Without this tighter condition, independently
-    // acceptable errors from long value-trajectory chunks can accumulate.
-    if (fabs(endpoint - sf->y[n - 1]) <= 32.
+    // Motion fitting may spend its configured path-error budget to eliminate
+    // tiny acceleration coefficients after a ramp.  Value/PWM fitting keeps
+    // a tighter endpoint condition so independently acceptable chunks do not
+    // accumulate visible final-value drift.
+    if ((sf->cruise_fastpath
+         || fabs(endpoint - sf->y[n - 1]) <= 32.)
         && check_fit(sf, n, pure_v, 0)) {
         *vw = pure_v;
         *aw = 0;

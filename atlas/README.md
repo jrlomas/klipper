@@ -156,6 +156,8 @@ $ python3 test/atlas_observe_test.py
 $ python3 test/atlas_assistant_test.py
 ```
 
-These are part of the deterministic floor and run on any CPU with only
-the standard library (PyYAML is needed only to load on-disk YAML
-patterns; the schema/matcher core is plain-dict).
+Most deterministic-floor tests run with only the standard library. PyYAML
+loads on-disk YAML patterns, and PyNaCl provides the fail-closed Ed25519
+verification required for signed provisioning and knowledge-base updates;
+install both with `python3 -m pip install -r atlas/requirements.txt` in the
+interpreter or virtualenv that runs Atlas.

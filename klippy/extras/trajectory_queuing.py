@@ -257,6 +257,10 @@ class TrajectoryStepper:
         freq = self.mcu.seconds_to_clock(1.)
         self.ffi_lib.segfit_setup(self.segfit, sk, freq, self.su_per_mm,
                                   self.tolerance_su, self.sample_time)
+        # A zero-acceleration cruise has an exact, division-light MCU step
+        # solver.  Let the motion fitter use its normal tolerance budget to
+        # discard sub-step ramp/chaining residue and select that realization.
+        self.ffi_lib.segfit_set_cruise_fastpath(self.segfit, 1)
 
     def note_rebase_needed(self, stopped=False):
         self.anchored = False

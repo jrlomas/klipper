@@ -1,6 +1,5 @@
-# Atlas daemon dependencies (separate from Klipper's own requirements —
-# Atlas is a standalone companion, and its deterministic floor must run
-# with only the standard library).  PyYAML is needed only to load the
-# on-disk YAML failure-pattern catalog; the schema/matcher core works on
-# plain dicts with no third-party dependency.
+# Atlas daemon dependencies (separate from Klipper's own requirements).
+# PyYAML loads the on-disk failure-pattern catalog; PyNaCl supplies the
+# fail-closed Ed25519 verifier used by signed firmware and KB activation.
 PyYAML>=6.0
+PyNaCl>=1.5.0

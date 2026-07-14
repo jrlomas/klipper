@@ -105,6 +105,7 @@ def main():
     stream_su_per_mm = 65536. / .00625
     lib.segfit_setup(stream_sf, stream_sk, MCU_FREQ, stream_su_per_mm,
                      32768., SAMPLE_TIME)
+    lib.segfit_set_cruise_fastpath(stream_sf, 1)
     lib.segfit_set_anchor(stream_sf, 30., 0)
     streamed = []
     for index in range(1, 101):
@@ -119,6 +120,31 @@ def main():
                for velocity in velocities), velocities
     assert all(accel == 0 for _, _, accel in streamed), streamed
     print("PASS: incremental homing flush seals every <=51ms prefix")
+
+    # A real homing move starts with an acceleration ramp.  The exact chained
+    # endpoint of that ramp is generally a fraction of a sub-unit away from
+    # the following ideal cruise line.  That residue must not manufacture
+    # tiny acceleration coefficients for several 50ms windows: on an RP2040
+    # they select the iterative quadratic step solver during the same window
+    # in which the sensorless-homing TMC software UART is active.
+    ramp_tq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    lib.trapq_append(ramp_tq, 40., .005, 4.995, 0., 0., 0., 0.,
+                     1., 0., 0., 0., 20., 4000.)
+    ramp_sk = ffi.gc(lib.corexy_stepper_alloc(b'+'), lib.free)
+    lib.itersolve_set_trapq(ramp_sk, ramp_tq, .00625)
+    ramp_sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(ramp_sf, ramp_sk, MCU_FREQ, stream_su_per_mm,
+                     32768., SAMPLE_TIME)
+    lib.segfit_set_cruise_fastpath(ramp_sf, 1)
+    lib.segfit_set_anchor(ramp_sf, 40., 0)
+    ramped = []
+    for index in range(1, 7):
+        ramped.append(collect_segments(
+            lib, ramp_sf, 40. + index * .050))
+    assert any(accel != 0 for _, _, accel in ramped[0]), ramped
+    assert all(accel == 0 for window in ramped[1:]
+               for _, _, accel in window), ramped
+    print("PASS: acceleration residue enters pure-cruise fast path by 50ms")
     return 0
 
 
