@@ -147,3 +147,10 @@ standalone test in `test/`. Design changes of any weight get a founding-document
 in `docs/founding/` before the code, so the *why* is recorded alongside the
 *what* — the same discipline that produced the
 [FD-0001 canon](founding/0001-motion-intentions/00-Vision.md).
+
+Notice the through-line in that paragraph: **new behavior goes in new
+files, not on top of upstream's.** Before writing any change, read
+[How to change Helix without fighting upstream](CONTRIBUTING.md#how-to-change-helix-without-fighting-upstream) —
+the decision rule for *where* a change should live so it stays merge-clean
+— and [Upstream_Tracking.md](Upstream_Tracking.md), the enforced contract
+behind it.

@@ -1,8 +1,12 @@
 # API server
 
-This document describes Klipper's Application Programmer Interface
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes Helix's Application Programmer Interface
 (API). This interface enables external applications to query and
-control the Klipper host software.
+control the Helix host software.
 
 ## Enabling the API socket
 
@@ -14,10 +18,10 @@ started with the `-a` parameter. For example:
 
 This causes the host software to create a Unix Domain Socket. A client
 can then open a connection on that socket and send commands to
-Klipper.
+Helix.
 
 See the [Moonraker](https://github.com/Arksine/moonraker) project for
-a popular tool that can forward HTTP requests to Klipper's API Server
+a popular tool that can forward HTTP requests to Helix's API Server
 Unix Domain Socket.
 
 ## Request format
@@ -28,16 +32,16 @@ terminated by an ASCII 0x03 character:
 <json_object_1><0x03><json_object_2><0x03>...
 ```
 
-Klipper contains a `scripts/whconsole.py` tool that can perform the
+Helix contains a `scripts/whconsole.py` tool that can perform the
 above message framing. For example:
 ```
 ~/klipper/scripts/whconsole.py /tmp/klippy_uds
 ```
 
 This tool can read a series of JSON commands from stdin, send them to
-Klipper, and report the results. The tool expects each JSON command to
+Helix, and report the results. The tool expects each JSON command to
 be on a single line, and it will automatically append the 0x03
-terminator when transmitting a request. (The Klipper API server does
+terminator when transmitting a request. (The Helix API server does
 not have a newline requirement.)
 
 ## API Protocol
@@ -63,17 +67,17 @@ term "dictionary" to describe a "JSON object" - a mapping of key/value
 pairs contained within `{}`.)
 
 The request dictionary must contain a "method" parameter that is the
-string name of an available Klipper "endpoint".
+string name of an available Helix "endpoint".
 
 The request dictionary may contain a "params" parameter which must be
 of a dictionary type. The "params" provide additional parameter
-information to the Klipper "endpoint" handling the request. Its
+information to the Helix "endpoint" handling the request. Its
 content is specific to the "endpoint".
 
 The request dictionary may contain an "id" parameter which may be of
-any JSON type. If "id" is present then Klipper will respond to the
+any JSON type. If "id" is present then Helix will respond to the
 request with a response message containing that "id". If "id" is
-omitted (or set to a JSON "null" value) then Klipper will not provide
+omitted (or set to a JSON "null" value) then Helix will not provide
 any response to the request. A response message is a JSON dictionary
 containing "id" and "result". The "result" is always a dictionary -
 its contents are specific to the "endpoint" handling the request.
@@ -87,7 +91,7 @@ might result in an error response such as:
 `{"id": 123, "error": {"message": "Must home axis
 first: 200.000 0.000 0.000 [0.000]", "error": "WebRequestError"}}`
 
-Klipper will always start processing requests in the order that they
+Helix will always start processing requests in the order that they
 are received. However, some request may not complete immediately,
 which could cause the associated response to be sent out of order with
 respect to responses from other requests. A JSON request will never
@@ -95,7 +99,7 @@ pause the processing of future JSON requests.
 
 ## Subscriptions
 
-Some Klipper "endpoint" requests allow one to "subscribe" to future
+Some Helix "endpoint" requests allow one to "subscribe" to future
 asynchronous update messages.
 
 For example:
@@ -107,7 +111,7 @@ may initially respond with:
 
 `{"id": 123, "result": {}}`
 
-and cause Klipper to send future messages similar to:
+and cause Helix to send future messages similar to:
 
 `{"params": {"response": "ok B:22.8 /0.0 T0:22.4 /0.0"}, "key": 345}`
 
@@ -115,14 +119,14 @@ A subscription request accepts a "response_template" dictionary in the
 "params" field of the request. That "response_template" dictionary is
 used as a template for future asynchronous messages - it may contain
 arbitrary key/value pairs. When sending these future asynchronous
-messages, Klipper will add a "params" field containing a dictionary
+messages, Helix will add a "params" field containing a dictionary
 with "endpoint" specific contents to the response template and then
 send that template. If a "response_template" field is not provided
 then it defaults to an empty dictionary (`{}`).
 
 ## Available "endpoints"
 
-By convention, Klipper "endpoints" are of the form
+By convention, Helix "endpoints" are of the form
 `<module_name>/<some_name>`. When making a request to an "endpoint",
 the full name must be set in the "method" parameter of the request
 dictionary (eg, `{"method"="gcode/restart"}`).
@@ -130,19 +134,19 @@ dictionary (eg, `{"method"="gcode/restart"}`).
 ### info
 
 The "info" endpoint is used to obtain system and version information
-from Klipper. It is also used to provide the client's version
-information to Klipper. For example:
+from Helix. It is also used to provide the client's version
+information to Helix. For example:
 `{"id": 123, "method": "info", "params": { "client_info": { "version":
 "v1"}}}`
 
 If present, the "client_info" parameter must be a dictionary, but that
 dictionary may have arbitrary contents. Clients are encouraged to
 provide the name of the client and its software version when first
-connecting to the Klipper API server.
+connecting to the Helix API server.
 
 ### emergency_stop
 
-The "emergency_stop" endpoint is used to instruct Klipper to
+The "emergency_stop" endpoint is used to instruct Helix to
 transition to a "shutdown" state. It behaves similarly to the G-Code
 `M112` command. For example:
 `{"id": 123, "method": "emergency_stop"}`
@@ -150,7 +154,7 @@ transition to a "shutdown" state. It behaves similarly to the G-Code
 ### register_remote_method
 
 This endpoint allows clients to register methods that can be called
-from klipper.  It will return an empty object upon success.
+from Helix.  It will return an empty object upon success.
 
 For example:
 `{"id": 123, "method": "register_remote_method",
@@ -159,7 +163,7 @@ For example:
 will return:
 `{"id": 123, "result": {}}`
 
-The remote method `paneldue_beep` may now be called from Klipper. Note
+The remote method `paneldue_beep` may now be called from Helix. Note
 that if the method takes parameters they should be provided as keyword
 arguments. Below is an example of how it may called from a gcode_macro:
 ```
@@ -168,7 +172,7 @@ gcode:
   {action_call_remote_method("paneldue_beep", frequency=300, duration=1.0)}
 ```
 
-When the PANELDUE_BEEP gcode macro is executed, Klipper would send something
+When the PANELDUE_BEEP gcode macro is executed, Helix would send something
 like the following over the socket:
 `{"action": "run_paneldue_beep",
 "params": {"frequency": 300, "duration": 1.0}}`
@@ -271,7 +275,7 @@ after any pending G-Code commands complete.
 ### gcode/subscribe_output
 
 This endpoint is used to subscribe to G-Code terminal messages that
-are generated by Klipper. For example:
+are generated by Helix. For example:
 `{"id": 123, "method": "gcode/subscribe_output", "params":
 {"response_template":{}}}`
 might later produce asynchronous messages such as:
@@ -280,14 +284,14 @@ might later produce asynchronous messages such as:
 This endpoint is intended to support human interaction via a "terminal
 window" interface. Parsing content from the G-Code terminal output is
 discouraged. Use the "objects/subscribe" endpoint to obtain updates on
-Klipper's state.
+Helix's state.
 
 ### motion_report/dump_stepper
 
-This endpoint is used to subscribe to Klipper's internal stepper
+This endpoint is used to subscribe to Helix's internal stepper
 queue_step command stream for a stepper. Obtaining these low-level
 motion updates may be useful for diagnostic and debugging
-purposes. Using this endpoint may increase Klipper's system load.
+purposes. Using this endpoint may increase Helix's system load.
 
 A request may look like:
 `{"id": 123, "method":"motion_report/dump_stepper",
@@ -306,10 +310,10 @@ the fields found in later "data" responses.
 
 ### motion_report/dump_trapq
 
-This endpoint is used to subscribe to Klipper's internal "trapezoid
+This endpoint is used to subscribe to Helix's internal "trapezoid
 motion queue". Obtaining these low-level motion updates may be useful
 for diagnostic and debugging purposes. Using this endpoint may
-increase Klipper's system load.
+increase Helix's system load.
 
 A request may look like:
 `{"id": 123, "method": "motion_report/dump_trapq", "params":
@@ -327,9 +331,10 @@ the fields found in later "data" responses.
 
 ### adxl345/dump_adxl345
 
-This endpoint is used to subscribe to ADXL345 accelerometer data.
+This endpoint is used to subscribe to data from an ADXL345 (a common
+MEMS accelerometer chip).
 Obtaining these low-level motion updates may be useful for diagnostic
-and debugging purposes. Using this endpoint may increase Klipper's
+and debugging purposes. Using this endpoint may increase Helix's
 system load.
 
 A request may look like:
@@ -350,7 +355,7 @@ the fields found in later "data" responses.
 This endpoint is used to subscribe to
 [angle sensor data](Config_Reference.md#angle). Obtaining these
 low-level motion updates may be useful for diagnostic and debugging
-purposes. Using this endpoint may increase Klipper's system load.
+purposes. Using this endpoint may increase Helix's system load.
 
 A request may look like:
 `{"id": 123, "method":"angle/dump_angle",
@@ -367,7 +372,7 @@ the fields found in later "data" responses.
 ### load_cell/dump_force
 
 This endpoint is used to subscribe to force data produced by a load_cell.
-Using this endpoint may increase Klipper's system load.
+Using this endpoint may increase Helix's system load.
 
 A request may look like:
 `{"id": 123, "method":"load_cell/dump_force",
@@ -383,7 +388,7 @@ the fields found in later "data" responses.
 ### load_cell_probe/dump_taps
 
 This endpoint is used to subscribe to details of probing "tap" events.
-Using this endpoint may increase Klipper's system load.
+Using this endpoint may increase Helix's system load.
 
 A request may look like:
 `{"id": 123, "method":"load_cell/dump_force",

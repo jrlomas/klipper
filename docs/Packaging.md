@@ -1,12 +1,16 @@
-# Packaging Klipper
+# Packaging Helix
 
-Klipper is somewhat of a packaging anomaly among python programs, as it doesn't
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+Helix is somewhat of a packaging anomaly among python programs, as it doesn't
 use setuptools to build and install. Some notes regarding how best to package it
 are as follows:
 
 ## C modules
 
-Klipper uses a C module to handle some kinematics calculations more quickly.
+Helix uses a C module to handle some kinematics calculations more quickly.
 This module needs to be compiled at packaging time to avoid introducing a
 runtime dependency on a compiler. To compile the C module, run `python2
 klippy/chelper/__init__.py`.
@@ -19,7 +23,7 @@ klippy`.
 
 ## Versioning
 
-If you are building a package of Klipper from git, it is usual practice not to
+If you are building a package of Helix from git, it is usual practice not to
 ship a .git directory, so the versioning must be handled without git.  To do
 this, use the script shipped in `scripts/make_version.py` which should be run as
 follows: `python2 scripts/make_version.py YOURDISTRONAME > klippy/.version`.

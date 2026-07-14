@@ -1,11 +1,16 @@
 # Bootloaders
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on the bootloaders found on supported micro-controllers, which
+> Helix carries forward unchanged. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document provides information on common bootloaders found on
-micro-controllers that Klipper supports.
+micro-controllers that Helix supports.
 
 The bootloader is 3rd-party software that runs on the micro-controller
 when it is first powered on. It is typically used to flash a new
-application (eg, Klipper) to the micro-controller without requiring
+application (eg, Helix) to the micro-controller without requiring
 specialized hardware. Unfortunately, there is no industry wide
 standard for flashing a micro-controller, nor is there a standard
 bootloader that works across all micro-controllers. Worse, it is
@@ -221,7 +226,7 @@ To flash a program with OpenOCD use the following chip config:
 ```
 source [find target/at91samdXX.cfg]
 ```
-Obtain a program; for instance, klipper can be built for this chip.
+Obtain a program; for instance, Helix can be built for this chip.
 Flash with OpenOCD commands similar to:
 ```
 at91samd chip-erase
@@ -414,11 +419,11 @@ If the bootloader is running you can flash with something like:
 ```
 ~/klipper/lib/hidflash/hid-flash ~/klipper/out/klipper.bin
 ```
-alternatively, you can use `make flash` to flash klipper directly:
+alternatively, you can use `make flash` to flash Helix directly:
 ```
 make flash FLASH_DEVICE=1209:BEBA
 ```
-OR if klipper has been previously flashed:
+OR if Helix has been previously flashed:
 ```
 make flash FLASH_DEVICE=/dev/ttyACM0
 ```
@@ -438,8 +443,8 @@ It is possible to flash the bootloader via 3.3V serial using stm32flash as noted
 in the stm32duino section above, substituting the file name for the desired
 MSC bootloader binary (ie: MSCboot-Bluepill.bin for the blue pill).
 
-For STM32F072 boards it is also possible to flash the bootloader over USB (via DFU)
-with something like:
+For STM32F072 boards it is also possible to flash the bootloader over USB (via
+Device Firmware Upgrade, DFU) with something like:
 
 ```
  dfu-util -d 0483:df11 -a 0 -R -D  MSCboot-STM32F072.bin -s0x08000000:leave
@@ -452,11 +457,13 @@ The bootloader can be activated by pressing the reset button of the board twice.
 As soon as the bootloader is activated, the board appears as a USB flash drive
 onto which the klipper.bin file can be copied.
 
+
 ### STM32F103/STM32F0x2 with CanBoot bootloader
 
 The [CanBoot](https://github.com/Arksine/CanBoot) bootloader provides an option
-for uploading Klipper firmware over the CANBUS.  The bootloader itself is
-derived from Klipper's source code.  Currently CanBoot supports the STM32F103,
+for uploading Helix firmware over the Controller Area Network (CAN) bus.  The
+bootloader itself is derived from Klipper's source code.  Currently CanBoot
+supports the STM32F103,
 STM32F042, and STM32F072 models.
 
 It is recommended to use a ST-Link Programmer to flash CanBoot, however it
@@ -471,7 +478,7 @@ is present and enter the bootloader.  If this doesn't occur it is possible to
 enter the bootloader by pressing the reset button twice in succession.
 
 The `flashtool.py` utility supplied in the `lib/katapult` folder may be used to
-upload Klipper firmware.  The device UUID is necessary to flash.  If you do not
+upload Helix firmware.  The device UUID is necessary to flash.  If you do not
 have a UUID it is possible to query nodes currently running the bootloader:
 ```
 python3 flash_can.py -q
@@ -488,7 +495,7 @@ Where `aabbccddeeff` is replaced by your UUID.  Note that the `-i` and `-f`
 options may be omitted, they default to `can0` and `~/klipper/out/klipper.bin`
 respectively.
 
-When building Klipper for use with CanBoot, select the 8 KiB Bootloader option.
+When building Helix for use with CanBoot, select the 8 KiB Bootloader option.
 
 ## STM32F4 micro-controllers (SKR Pro 1.1)
 
@@ -636,7 +643,7 @@ command.)
 
 ### OpenOCD and gdb
 
-It is possible to use OpenOCD with gdb to debug Klipper. The following
+It is possible to use OpenOCD with gdb to debug Helix. The following
 commands assume one is running gdb on a desktop class machine.
 
 Add the following to the OpenOCD config file:

@@ -1,11 +1,15 @@
 # Benchmarks
 
-This document describes Klipper benchmarks.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes Helix benchmarks.
 
 ## Micro-controller Benchmarks
 
-This section describes the mechanism used to generate the Klipper
-micro-controller step rate benchmarks.
+This section describes the mechanism used to generate the Helix
+micro-controller unit (MCU) step rate benchmarks.
 
 The primary goal of the benchmarks is to provide a consistent
 mechanism for measuring the impact of coding changes within the
@@ -15,7 +19,7 @@ platforms.
 
 The step rate benchmark is designed to find the maximum stepping rate
 that the hardware and software can reach. This benchmark stepping rate
-is not achievable in day-to-day use as Klipper needs to perform other
+is not achievable in day-to-day use as Helix needs to perform other
 tasks (eg, mcu/host communication, temperature reading, endstop
 checking) in any real-world usage.
 
@@ -80,7 +84,8 @@ example, with three active steppers:
 ECHO Test result is: {"%.0fK" % (3. * freq / ticks / 1000.)}
 ```
 
-The benchmarks are run with parameters suitable for TMC Drivers. For
+The benchmarks are run with parameters suitable for Trinamic (TMC)
+stepper drivers. For
 micro-controllers that support `STEPPER_BOTH_EDGE=1` (as reported in
 the `MCU config` line when console.py first starts) use
 `step_pulse_duration=0` and `invert_step=-1` to enable optimized

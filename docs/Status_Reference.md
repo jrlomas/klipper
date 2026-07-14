@@ -1,14 +1,18 @@
 # Status reference
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document is a reference of printer status information available
-in Klipper [macros](Command_Templates.md),
+in Helix [macros](Command_Templates.md),
 [display fields](Config_Reference.md#display), and via the
 [API Server](API_Server.md).
 
 The fields in this document are subject to change - if using an
 attribute be sure to review the
 [Config Changes document](Config_Changes.md) when upgrading the
-Klipper software.
+Helix software.
 
 ## angle
 
@@ -68,7 +72,7 @@ The following information is available in the `configfile` object
   (or default value) during the last software start or restart. (Any
   settings changed at run-time will not be reflected here.)
 - `config.<section>.<option>`: Returns the given raw config file
-  setting as read by Klipper during the last software start or
+  setting as read by Helix during the last software start or
   restart. (Any settings changed at run-time will not be reflected
   here.) All values are returned as strings.
 - `save_config_pending`: Returns true if there are updates that a
@@ -263,8 +267,8 @@ The following information is available for heater objects such as
   for the given heater.
 - `target`: The current target temperature (in Celsius as a float) for
   the given heater.
-- `power`: The last setting of the PWM pin (a value between 0.0 and
-  1.0) associated with the heater.
+- `power`: The last setting of the pulse-width modulation (PWM) pin (a
+  value between 0.0 and 1.0) associated with the heater.
 - `can_extrude`: If extruder can extrude (defined by `min_extrude_temp`),
   available only for [extruder](Config_Reference.md#extruder)
 
@@ -356,7 +360,7 @@ understands it).
 The following information is available in
 [mcu](Config_Reference.md#mcu) and
 [mcu some_name](Config_Reference.md#mcu-my_extra_mcu) objects:
-- `mcu_version`: The Klipper code version reported by the
+- `mcu_version`: The Helix code version reported by the
   micro-controller.
 - `mcu_build_versions`: Information on the build tools used to
   generate the micro-controller code (as reported by the
@@ -543,7 +547,7 @@ The following information is available in
 objects:
 - `temperature`: The last read temperature from the sensor.
 - `measured_min_temp`, `measured_max_temp`: The lowest and highest
-  temperature seen by the sensor since the Klipper host software was
+  temperature seen by the sensor since the Helix host software was
   last restarted.
 
 ## atlas_trace
@@ -682,10 +686,10 @@ The following information is available in the
 
 The following information is available in the `webhooks` object (this
 object is always available):
-- `state`: Returns a string indicating the current Klipper
+- `state`: Returns a string indicating the current Helix
   state. Possible values are: "ready", "startup", "shutdown", "error".
 - `state_message`: A human readable string giving additional context
-  on the current Klipper state.
+  on the current Helix state.
 
 ## z_thermal_adjust
 
@@ -714,7 +718,7 @@ fields may be accessed by component name
 (eg,`{printer.toolhead.position.x}`), where the component name may be
 "x", "y", or "z".
 
-For developers using the Klipper API Server these fields are
+For developers using the Helix API Server these fields are
 transmitted as a list - for example: `{"toolhead": {"position": [1.0,
 2.0, 3.0, 7.3, 19.2]}}` . The first three components of the list
 correspond with the x, y, and z axes.

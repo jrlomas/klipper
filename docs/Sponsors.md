@@ -1,5 +1,9 @@
 # Sponsors
 
+> **This is Helix** — an evolution of Klipper. Helix is built on the
+> upstream Klipper project. This page recognizes the sponsors who support
+> **Klipper**, the shared free-software foundation Helix depends on.
+
 Klipper is Free Software. We depend on the generous support from
 sponsors. Please consider sponsoring Klipper or supporting our
 sponsors.

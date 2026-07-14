@@ -1,6 +1,10 @@
 # Debugging
 
-This document describes some of the Klipper debugging tools.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes some of the Helix debugging tools.
 
 ## Running the regression tests
 
@@ -26,9 +30,10 @@ tar xfz klipper-dict-20??????.tar.gz
 ## Manually sending commands to the micro-controller
 
 Normally, the host klippy.py process would be used to translate gcode
-commands to Klipper micro-controller commands. However, it's also
-possible to manually send these MCU commands (functions marked with
-the DECL_COMMAND() macro in the Klipper source code). To do so, run:
+commands to Helix micro-controller unit (MCU) commands. However, it's
+also possible to manually send these MCU commands (functions marked
+with the DECL_COMMAND() macro in the Helix source code). To do so,
+run:
 
 ```
 ~/klippy-env/bin/python ./klippy/console.py /tmp/pseudoserial
@@ -58,7 +63,7 @@ make menuconfig
 make
 ```
 
-Once the above is done it is possible to run Klipper in batch mode
+Once the above is done it is possible to run Helix in batch mode
 (see [installation](Installation.md) for the steps necessary to build
 the python virtual environment and a printer.cfg file):
 
@@ -84,8 +89,8 @@ micro-controller.
 
 ## Motion analysis and data logging
 
-Klipper supports logging its internal motion history, which can be
-later analyzed. To use this feature, Klipper must be started with the
+Helix supports logging its internal motion history, which can be
+later analyzed. To use this feature, Helix must be started with the
 [API Server](API_Server.md) enabled.
 
 Data logging is enabled with the `data_logger.py` tool. For example:
@@ -93,7 +98,7 @@ Data logging is enabled with the `data_logger.py` tool. For example:
 ~/klipper/scripts/motan/data_logger.py /tmp/klippy_uds mylog -s '*'
 ```
 
-This command will connect to the Klipper API Server, subscribe to
+This command will connect to the Helix API Server, subscribe to
 status and motion information, and log the results. Two files are
 generated - a compressed data file and an index file (eg,
 `mylog.json.gz` and `mylog.index.gz`). After starting the logging, it
@@ -230,7 +235,7 @@ make cfgclean python debian
 sudo dpkg -i build/debian/python3-simulavr*.deb
 ```
 
-To compile Klipper for use in simulavr, run:
+To compile Helix for use in simulavr, run:
 
 ```
 cd /path/to/klipper
@@ -239,7 +244,7 @@ make menuconfig
 
 and compile the micro-controller software for an AVR atmega644p and
 select SIMULAVR software emulation support. Then one can compile
-Klipper (run `make`) and then start the simulation with:
+Helix (run `make`) and then start the simulation with:
 
 ```
 PYTHONPATH=/path/to/simulavr/build/pysimulavr/ ./scripts/avrsim.py out/klipper.elf
@@ -252,7 +257,7 @@ not need to set `PYTHONPATH`, and can simply run the simulator as
 
 Then, with simulavr running in another window, one can run the
 following to read gcode from a file (eg, "test.gcode"), process it
-with Klippy, and send it to Klipper running in simulavr (see
+with Klippy, and send it to Helix running in simulavr (see
 [installation](Installation.md) for the steps necessary to build the
 python virtual environment):
 

@@ -1,13 +1,19 @@
 # Measuring Resonances
 
-Klipper has built-in support for the ADXL345, MPU-9250, LIS2DW and LIS3DH compatible
-accelerometers which can be used to measure resonance frequencies of the printer
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on measuring printer resonances with an accelerometer that Helix
+> builds on. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
+Helix has built-in support for the ADXL345, MPU-9250, LIS2DW and LIS3DH compatible
+accelerometers (small MEMS chips that sense acceleration) which can be used to
+measure resonance frequencies of the printer
 for different axes, and auto-tune [input shapers](Resonance_Compensation.md) to
 compensate for resonances. Note that using accelerometers requires some
 soldering and crimping. The ADXL345 can be connected to the SPI interface
-of a Raspberry Pi or MCU board (it needs to be reasonably fast). The MPU family can
+of a Raspberry Pi or micro-controller unit (MCU) board (it needs to be
+reasonably fast). The MPU family can
 be connected to the I2C interface of a Raspberry Pi directly, or to an I2C
-interface of an MCU board that supports 400kbit/s *fast mode* in Klipper. The
+interface of an MCU board that supports 400kbit/s *fast mode* in Helix. The
 LIS2DW and LIS3DH can be connected to either SPI or I2C with the same considerations
 as above.
 
@@ -22,7 +28,7 @@ For MPU-9250/MPU-9255/MPU-6515/MPU-6050/MPU-6500/ICM20948s and LIS2DW/LIS3DH the
 are also a variety of board designs and clones with different I2C pull-up resistors
 which will need supplementing.
 
-## MCUs with Klipper I2C *fast-mode* Support
+## MCUs with Helix I2C *fast-mode* Support
 
 | MCU Family | MCU(s) Tested | MCU(s) with Support |
 |:--:|:--|:--|
@@ -96,7 +102,7 @@ Fritzing wiring diagrams for some of the ADXL345 boards:
 
 You may connect the ADXL345 to your Raspberry Pi Pico and then connect the
 Pico to your Raspberry Pi via USB. This makes it easy to reuse the
-accelerometer on other Klipper devices, as you can connect via USB instead
+accelerometer on other Helix devices, as you can connect via USB instead
 of GPIO. The Pico does not have much processing power, so make sure it is
 only running the accelerometer and not performing any other duties.
 
@@ -213,7 +219,7 @@ sudo apt update
 sudo apt install python3-numpy python3-matplotlib libatlas-base-dev libopenblas-dev
 ```
 
-Next, in order to install NumPy in the Klipper environment, run the command:
+Next, in order to install NumPy in the Helix environment, run the command:
 ```
 ~/klippy-env/bin/pip install -v "numpy<1.26"
 ```
@@ -222,7 +228,7 @@ of time, up to 10-20 minutes. Be patient and wait for the completion of
 the installation. On some occasions, if the board has too little RAM
 the installation may fail and you will need to enable swap. Also note
 the forced version, due to newer versions of NumPY having requirements
-that may not be satisfied in some klipper python environments.
+that may not be satisfied in some Helix python environments.
 
 Once installed please check that no errors show from the command:
 ```
@@ -234,7 +240,7 @@ The correct output should simply be a new line.
 
 First, check and follow the instructions in the
 [RPi Microcontroller document](RPi_microcontroller.md) to setup the
-"linux mcu" on the Raspberry Pi. This will configure a second Klipper
+"linux mcu" on the Raspberry Pi. This will configure a second Helix
 instance that runs on your Pi.
 
 Make sure the Linux SPI driver is enabled by running `sudo
@@ -314,7 +320,7 @@ you'll also want to modify your `printer.cfg` file to include this:
 [include adxl.cfg] # Comment this out when you disconnect the accelerometer
 ```
 
-Restart Klipper via the `RESTART` command.
+Restart Helix via the `RESTART` command.
 
 #### Configure LIS2DW series over SPI
 
@@ -399,7 +405,7 @@ probe_points:
 ```
 If you are using the ICM20948, replace instances of "mpu9250" with "icm20948".
 
-Restart Klipper via the `RESTART` command.
+Restart Helix via the `RESTART` command.
 
 ## Measuring the resonances
 
@@ -510,7 +516,7 @@ charts: peaks in the power spectral density on the charts correspond to
 the resonance frequencies of the printer.
 
 Note that alternatively you can run the input shaper auto-calibration
-from Klipper [directly](#input-shaper-auto-calibration), which can be
+from Helix [directly](#input-shaper-auto-calibration), which can be
 convenient, for example, for the input shaper
 [re-calibration](#input-shaper-re-calibration).
 
@@ -651,7 +657,7 @@ probe_points: ...
 max_smoothing: 0.25  # an example
 ```
 Then, if you [rerun](#input-shaper-re-calibration) the input shaper auto-tuning
-using `SHAPER_CALIBRATE` Klipper command in the future, it will use the stored
+using `SHAPER_CALIBRATE` Helix command in the future, it will use the stored
 `max_smoothing` value as a reference.
 
 ### Selecting max_accel
@@ -729,7 +735,7 @@ to their original values if necessary. And if you use custom test parameters
 for Z axis, `TEST_RESONANCES` and `SHAPER_CALIBRATE` will provide the minimum
 required limits if necessary for your specific case.
 
-After all changes to `printer.cfg` have been made, restart Klipper and run
+After all changes to `printer.cfg` have been made, restart Helix and run
 either
 ```
 TEST_RESONANCES AXIS=Z
@@ -838,7 +844,7 @@ to generate `/tmp/resonances.png` comparing the resonances.
 
 Besides manually choosing the appropriate parameters for the input shaper
 feature, it is also possible to run the auto-tuning for the input shaper
-directly from Klipper. Run the following command via Octoprint terminal:
+directly from Helix. Run the following command via Octoprint terminal:
 ```
 SHAPER_CALIBRATE
 ```
@@ -864,7 +870,7 @@ To avoid too much smoothing with '3hump_ei', suggested max_accel <= 2500 mm/sec^
 Recommended shaper_type_y = mzv, shaper_freq_y = 36.8 Hz
 ```
 If you agree with the suggested parameters, you can execute `SAVE_CONFIG`
-now to save them and restart the Klipper. Note that this will not update
+now to save them and restart Helix. Note that this will not update
 `max_accel` value in `[printer]` section. You should update it manually
 following the considerations in [Selecting max_accel](#selecting-max_accel)
 section.

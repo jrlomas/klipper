@@ -1,5 +1,9 @@
 # BL-Touch
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on, covering how to wire, test, and calibrate
+> a BL-Touch probe. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
 ## Connecting BL-Touch
 
 A **warning** before you start: Avoid touching the BL-Touch pin with
@@ -8,7 +12,7 @@ if you do touch it, be very gentle, in order to not bend or push
 anything.
 
 Hook up the BL-Touch "servo" connector to a `control_pin` according to
-the BL-Touch documentation or your MCU documentation. Using the
+the BL-Touch documentation or your micro-controller unit (MCU) documentation. Using the
 original wiring, the yellow wire from the triple is the `control_pin`
 and the white wire from the pair is the `sensor_pin`. You need to
 configure these pins according to your wiring. Most BL-Touch devices
@@ -106,7 +110,7 @@ commands to achieve this.
 
 ## BL-Touch "clones"
 
-Many BL-Touch "clone" devices work correctly with Klipper using the
+Many BL-Touch "clone" devices work correctly with Helix using the
 default configuration. However, some "clone" devices may not support
 the `QUERY_PROBE` command and some "clone" devices may require
 configuration of `pin_up_reports_not_triggered` or
@@ -124,23 +128,23 @@ possible to perform probing and homing with these devices. On these
 devices the `QUERY_PROBE` command during the
 [initial tests](#initial-tests) will not succeed, however the
 subsequent `G28` (or `PROBE`) test does succeed. It may be possible to
-use these "clone" devices with Klipper if one does not utilize the
+use these "clone" devices with Helix if one does not utilize the
 `QUERY_PROBE` command and one does not enable the
 `probe_with_touch_mode` feature.
 
-Some "clone" devices are unable to perform Klipper's internal sensor
+Some "clone" devices are unable to perform Helix's internal sensor
 verification test. On these devices, attempts to home or probe can
-result in Klipper reporting a "BLTouch failed to verify sensor state"
+result in Helix reporting a "BLTouch failed to verify sensor state"
 error. If this occurs, then manually run the steps to confirm the
 sensor pin is working as described in the
 [initial tests section](#initial-tests). If the `QUERY_PROBE` commands
 in that test always produce the expected results and "BLTouch failed
 to verify sensor state" errors still occur, then it may be necessary
-to set `pin_up_touch_mode_reports_triggered` to False in the Klipper
+to set `pin_up_touch_mode_reports_triggered` to False in the Helix
 config file.
 
 A rare number of old "clone" devices are unable to report when they
-have successfully raised their probe. On these devices Klipper will
+have successfully raised their probe. On these devices Helix will
 report a "BLTouch failed to raise probe" error after every home or
 probe attempt. One can test for these devices - move the head far from
 the bed, run `BLTOUCH_DEBUG COMMAND=pin_down`, verify the pin has
@@ -149,7 +153,7 @@ open", run `BLTOUCH_DEBUG COMMAND=pin_up`, verify the pin has moved
 up, and run `QUERY_PROBE`. If the pin remains up, the device does not
 enter an error state, and the first query reports "probe: open" while
 the second query reports "probe: TRIGGERED" then it indicates that
-`pin_up_reports_not_triggered` should be set to False in the Klipper
+`pin_up_reports_not_triggered` should be set to False in the Helix
 config file.
 
 ## BL-Touch v3
@@ -168,7 +172,7 @@ workaround is to set `probe_with_touch_mode: True` in the config file.
 The BL-Touch v3.1 may incorrectly enter an error state after a
 successful probe attempt. The symptoms are an occasional flashing
 light on the BL-Touch v3.1 that lasts for a couple of seconds after it
-successfully contacts the bed. Klipper should clear this error
+successfully contacts the bed. Helix should clear this error
 automatically and it is generally harmless. However, one may set
 `probe_with_touch_mode` in the config file to avoid this issue.
 
@@ -181,15 +185,15 @@ this value (use the `PROBE_ACCURACY` command to test).
 
 ## Multi-probing without stowing
 
-By default, Klipper will deploy the probe at the start of each probe
+By default, Helix will deploy the probe at the start of each probe
 attempt and then stow the probe afterwards. This repetitive deploying
 and stowing of the probe may increase the total time of calibration
-sequences that involve many probe measurements. Klipper supports
+sequences that involve many probe measurements. Helix supports
 leaving the probe deployed between consecutive probes, which can
 reduce the total time of probing. This mode is enabled by configuring
 `stow_on_each_sample` to False in the config file.
 
-Important! Setting `stow_on_each_sample` to False can lead to Klipper
+Important! Setting `stow_on_each_sample` to False can lead to Helix
 making horizontal toolhead movements while the probe is deployed. Be
 sure to verify all probing operations have sufficient Z clearance
 prior to setting this value to False. If there is insufficient

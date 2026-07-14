@@ -1,6 +1,10 @@
 # Load Cells
 
-This document describes Klipper's support for load cells. Basic load cell
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on load cell support that Helix builds on. New to Helix? Start
+> with the **[Helix overview](HELIX.md)**.
+
+This document describes Helix's support for load cells. Basic load cell
 functionality can be used to read force data and to weigh things like filament.
 A calibrated force sensor is an important part of a load cell based probe.
 
@@ -161,7 +165,8 @@ from the load cell. `trigger_force` is measured from that tare value. There is
 always some overshoot of this value when the probe collides with the bed,
 so be conservative. e.g. a setting of 100g could result in 350g of peak force
 before the toolhead stops. This overshoot will increase with faster probing
-`speed`, a low ADC sample rate or [multi MCU homing](Multi_MCU_Homing.md).
+`speed`, a low analog-to-digital converter (ADC) sample rate or
+[multi MCU homing](Multi_MCU_Homing.md).
 
 #### `reference_tare_counts`
 This is the baseline tare value that is set by `LOAD_CELL_CALIBRATE`.
@@ -179,7 +184,7 @@ The first risk this protects against is picking too large of a value for
 a probe event and continue the homing move. If this happens the
 `force_safety_limit` acts as a backup protection.
 
-The second problem is probing repeatedly in one place. Klipper does not retract
+The second problem is probing repeatedly in one place. Helix does not retract
 the probe when doing a single `PROBE` command. This can result
 in force applied to the toolhead at the end of a probing cycle. Because
 external forces can vary greatly between probing locations,
@@ -200,7 +205,8 @@ at ambient temperature vs operating temperature. In this case you may need
 to increase the `force_safety_limit` to allow for thermal changes.
 
 #### Load Cell Endstop Watchdog Task
-When homing the load_cell_endstop starts a task on the MCU to trac
+When homing the load_cell_endstop starts a task on the micro-controller unit
+(MCU) to trac
 measurements arriving from the sensor. If the sensor fails to send
 measurements for 2 sample periods the watchdog will shut down the printer
 with an error `!! LoadCell Endstop timed out waiting on ADC data`.
@@ -245,12 +251,12 @@ the filament to ooze while homing and probing. 140C is a good starting
 point. This temperature is also low enough not to scar PEI build surfaces.
 
 Fouling of the nozzle and the print bed due to oozing filament is the #1 source
-of probing error with the load cell probe. Klipper does not yet have a universal
+of probing error with the load cell probe. Helix does not yet have a universal
 way to detect poor quality taps due to filament ooze. The existing code may
 decide that a tap is valid when it is of poor quality. Classifying these poor
 quality taps is an area of active research.
 
-Klipper also lacks support for re-locating a probe point if the
+Helix also lacks support for re-locating a probe point if the
 location has become fouled by filament ooze. Modules like `quad_gantry_level`
 will repeatedly probe the same coordinates even if a probe previously failed
 there.
@@ -322,7 +328,7 @@ max_z_adjustment: 0.1
 
 ## Continuous Tare Filters for Toolhead Load Cells
 
-Klipper implements a configurable IIR filter on the MCU to provide continuous
+Helix implements a configurable IIR filter on the MCU to provide continuous
 tareing of the load cell while probing. Continuous taring means the 0 value
 moves with drift caused by external factors like bowden tubes and thermal
 changes. This is aimed at toolhead sensors and moving beds that experience lots
@@ -399,7 +405,7 @@ Ideally a sensor would meet these criteria:
   each channel switch making them unsuitable for probing applications.
 
 Implementing support for a new sensor chip is not particularly difficult with
-Klipper's `bulk_sensor` and `load_cell_endstop` infrastructure.
+Helix's `bulk_sensor` and `load_cell_endstop` infrastructure.
 
 ### 5V Power Filtering
 
@@ -428,12 +434,12 @@ supply chain. However, this is a sensor with some drawbacks:
 * The HX71x sensors use bit-bang communication which has a high overhead on the
   MCU. Using a sensor that communicates via SPI would save resources on the tool
   board's CPU.
-* The HX71x lacks a way to communicate reset events to the MCU. Klipper detects
+* The HX71x lacks a way to communicate reset events to the MCU. Helix detects
   resets with a timing heuristic but this is not ideal. Resets indicate a
   problem with wiring or grounding.
 * For probing applications the HX717 version is strongly preferred because
   of its higher sample rate (320 vs 80). Probing speed on the HX711 should be
   limited to less than 2mm/s.
-* The sample rate on the HX71x cannot be set from klipper's config. If you have
+* The sample rate on the HX71x cannot be set from Helix's config. If you have
   the 10SPS version of the sensor (which is widely distributed) it needs to
   be physically re-wired to run at 80SPS.

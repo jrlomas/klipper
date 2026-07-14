@@ -1,6 +1,11 @@
-# OctoPrint for Klipper
+# OctoPrint for Helix
 
-Klipper has a few options for its front ends, Octoprint was the first
+> **This is Helix** — an evolution of Klipper. This is inherited Klipper
+> documentation covering OctoPrint as a front end for Helix, our
+> source-compatible firmware. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+Helix has a few options for its front ends, Octoprint was the first
 and original front end for Klipper. This document will give
 a brief overview of installing with this option.
 
@@ -31,8 +36,8 @@ git clone https://github.com/Klipper3d/klipper
 ./klipper/scripts/install-octopi.sh
 ```
 
-The above will download Klipper, install the needed system dependencies,
-setup Klipper to run at system startup, and start the Klipper host
+The above will download Helix, install the needed system dependencies,
+setup Helix to run at system startup, and start the Helix host
 software. It will require an internet connection and it may take a few
 minutes to complete.
 
@@ -44,7 +49,7 @@ at https://github.com/dw-0/kiauh
 
 ## Configuring OctoPrint to use Klipper
 
-The OctoPrint web server needs to be configured to communicate with the Klipper
+The OctoPrint web server needs to be configured to communicate with the Helix
 host software. Using a web browser, login to the OctoPrint web page and then
 configure the following items:
 
@@ -73,7 +78,7 @@ try reloading the page.)
 Once connected, navigate to the "Terminal" tab and type "status" (without the quotes)
 into the command entry box and click "Send". The terminal window will likely report
 there is an error opening the config file - that means OctoPrint is successfully
-communicating with Klipper.
+communicating with Helix.
 
 Please proceed to [Installation.md](Installation.md) and the
 _Building and flashing the micro-controller_ section

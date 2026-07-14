@@ -1,17 +1,23 @@
 # SDCard updates
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on updating micro-controller firmware from an SD Card, which
+> Helix carries forward unchanged. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 Many of today's popular controller boards ship with a bootloader capable of
 updating firmware via SD Card.  While this is convenient in many
 circumstances, these bootloaders typically provide no other way to update
 firmware.  This can be a nuisance if your board is mounted in a location
 that is difficult to access or if you need to update firmware often.
-After Klipper has been initially flashed to a controller it is possible to
+After Helix has been initially flashed to a controller it is possible to
 transfer new firmware to the SD Card and initiate the flashing procedure
 via ssh.
 
 ## Typical Upgrade Procedure
 
-The procedure for updating MCU firmware using the SD Card is similar to that
+The procedure for updating micro-controller unit (MCU) firmware using the SD
+Card is similar to that
 of other methods.  Instead of using `make flash` it is necessary to run a
 helper script, `flash-sdcard.sh`.  Updating a BigTreeTech SKR 1.3 might look
 like the following:
@@ -70,7 +76,7 @@ rate it is possible to upgrade by specifying the `-b` option:
 ./scripts/flash-sdcard.sh -b 115200 /dev/ttyAMA0 btt-skr-v1.3
 ```
 
-If you wish to flash a build of Klipper located somewhere other than
+If you wish to flash a build of Helix located somewhere other than
 the default location it can be done by specifying the `-f` option:
 ```
 ./scripts/flash-sdcard.sh -f ~/downloads/klipper.bin /dev/ttyAMA0 btt-skr-v1.3

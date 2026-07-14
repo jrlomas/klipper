@@ -1,5 +1,10 @@
 # Axis Twist Compensation
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on, covering how to correct for a twisted X
+> or Y rail that skews probe results. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document describes the `[axis_twist_compensation]` module.
 
 Some printers may have a small twist in their X rail which can skew the results

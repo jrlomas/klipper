@@ -1,5 +1,10 @@
 # Hall filament width sensor
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on the Hall-effect filament width sensor host module, which
+> Helix carries forward unchanged. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document describes Filament Width Sensor host module. Hardware used for
 developing this host module is based on two Hall linear sensors (ss49e for
 example). Sensors in the body are located on opposite sides. Principle of operation:

@@ -1,11 +1,15 @@
 # Configuration checks
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document provides a list of steps to help confirm the pin
-settings in the Klipper printer.cfg file.  It is a good idea to run
+settings in the Helix printer.cfg file.  It is a good idea to run
 through these steps after following the steps in the
 [installation document](Installation.md).
 
-During this guide, it may be necessary to make changes to the Klipper
+During this guide, it may be necessary to make changes to the Helix
 config file. Be sure to issue a RESTART command after every change to
 the config file to ensure that the change takes effect (type "restart"
 in the Octoprint terminal tab and then click "Send"). It's also a good
@@ -24,7 +28,7 @@ printer. If the temperatures are not accurate, review the
 ## Verify M112
 
 Navigate to the command console and issue an M112
-command in the terminal box. This command requests Klipper to go into a
+command in the terminal box. This command requests Helix to go into a
 "shutdown" state. It will cause an error to show,
 which can be cleared with a FIRMWARE_RESTART command in the
 command console. Octoprint will also require a reconnect. Then navigate
@@ -124,7 +128,7 @@ troubleshooting tips in the previous section to confirm the
 
 ## Calibrate PID settings
 
-Klipper supports
+Helix supports
 [PID control](https://en.wikipedia.org/wiki/PID_controller) for the
 extruder and bed heaters. In order to use this control mechanism, it is
 necessary to calibrate the PID settings on each printer (PID settings
@@ -148,9 +152,9 @@ command is: `PID_CALIBRATE HEATER=heater_bed TARGET=60`
 ## Next steps
 
 This guide is intended to help with basic verification of pin settings
-in the Klipper configuration file. Be sure to read the
+in the Helix configuration file. Be sure to read the
 [bed leveling](Bed_Level.md) guide. Also see the [Slicers](Slicers.md)
-document for information on configuring a slicer with Klipper.
+document for information on configuring a slicer with Helix.
 
 After one has verified that basic printing works, it is a good idea to
 consider calibrating [pressure advance](Pressure_Advance.md).

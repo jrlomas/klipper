@@ -1,5 +1,9 @@
 # Pressure advance
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on tuning pressure advance that Helix builds on. New to Helix?
+> Start with the **[Helix overview](HELIX.md)**.
+
 This document provides information on tuning the "pressure advance"
 configuration variable for a particular nozzle and filament. The
 pressure advance feature can be helpful in reducing ooze. For more
@@ -42,7 +46,7 @@ Then print the object. When fully printed the test print looks like:
 
 ![tuning_tower](img/tuning_tower.jpg)
 
-The above TUNING_TOWER command instructs Klipper to alter the
+The above TUNING_TOWER command instructs Helix to alter the
 pressure_advance setting on each layer of the print. Higher layers in
 the print will have a larger pressure advance value set. Layers below
 the ideal pressure_advance setting will have blobbing at the corners,
@@ -128,7 +132,7 @@ cornering speeds to their normal values.
   enough torque to push the required filament. If this occurs, either
   use a lower acceleration value or disable pressure advance.
 
-* Once pressure advance is tuned in Klipper, it may still be useful to
+* Once pressure advance is tuned in Helix, it may still be useful to
   configure a small retract value in the slicer (eg, 0.75mm) and to
   utilize the slicer's "wipe on retract option" if available. These
   slicer settings may help counteract ooze caused by filament cohesion

@@ -32,8 +32,8 @@ socket). The HMAC-authenticated intentproto datagram
 as it does over WiFi.
 
 The one honest difference is the loss model. Over WiFi the dominant
-impairment is whole-datagram loss, which is why the erasure-FEC layer
-exists. A switched full-duplex Ethernet link has a clean loss model
+impairment is whole-datagram loss, which is why the erasure-FEC (forward
+error correction) layer exists. A switched full-duplex Ethernet link has a clean loss model
 (no radio jitter, per-port bandwidth, deterministic sub-millisecond
 latency), so **the erasure-FEC layer can typically be negotiated off on
 Ethernet** (`fec_k = 0`, the default) while everything else - datagram

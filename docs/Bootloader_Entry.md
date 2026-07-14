@@ -1,6 +1,10 @@
 # Bootloader Entry
 
-Klipper can be instructed to reboot into a [Bootloader](Bootloaders.md) in one
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on rebooting a board into its bootloader, which Helix carries
+> forward unchanged. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
+Helix can be instructed to reboot into a [Bootloader](Bootloaders.md) in one
 of the following ways:
 
 ## Requesting the bootloader
@@ -42,8 +46,8 @@ releasing `Ctrl`
 
 ### Physical serial
 
-If a physical serial port is being used on the MCU (even if a USB serial adapter
-is being used to connect to it), sending the string
+If a physical serial port is being used on the micro-controller unit (MCU) (even
+if a USB serial adapter is being used to connect to it), sending the string
 `<SPACE><FS><SPACE>Request Serial Bootloader!!<SPACE>~` requests the bootloader.
 
 `<SPACE>` is an ASCII literal space, 0x20.
@@ -74,7 +78,7 @@ port, such as `115200`.
 
 ### CANBUS
 
-If CANBUS is in use, a special
+If the Controller Area Network (CAN) bus is in use, a special
 [admin message](CANBUS_protocol.md#admin-messages) will request the bootloader.
 This message will be respected even if the device already has a nodeid, and will
 also be processed if the mcu is shutdown.
@@ -99,17 +103,17 @@ for information on finding the CAN UUID of your devices.
 
 ## Entering the bootloader
 
-When klipper receives one of the above bootloader requests:
+When Helix receives one of the above bootloader requests:
 
-If Katapult (formerly known as CANBoot) is available, klipper will request that
+If Katapult (formerly known as CANBoot) is available, Helix will request that
 Katapult stay active on the next boot, then reset the MCU (therefore entering
 Katapult).
 
-If Katapult is not available, klipper will then try to enter a
-platform-specific bootloader, such as STM32's DFU
+If Katapult is not available, Helix will then try to enter a
+platform-specific bootloader, such as STM32's DFU (Device Firmware Upgrade)
 mode([see note](#stm32-dfu-warning)).
 
-In short, Klipper will reboot to Katapult if installed, then a hardware specific
+In short, Helix will reboot to Katapult if installed, then a hardware specific
 bootloader if available.
 
 For details about the specific bootloaders on various platforms see

@@ -1,10 +1,14 @@
 # Bed leveling
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on, covering how to level and calibrate your
+> print bed. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
 Bed leveling (sometimes also referred to as "bed tramming") is
 critical to getting high quality prints. If a bed is not properly
 "leveled" it can lead to poor bed adhesion, "warping", and subtle
 problems throughout the print. This document serves as a guide to
-performing bed leveling in Klipper.
+performing bed leveling in Helix.
 
 It's important to understand the goal of bed leveling. If the printer
 is commanded to a position `X0 Y0 Z10` during a print, then the goal
@@ -106,7 +110,7 @@ it is easily accounted for later in the calibration process.
 
 **Use an automated tool to determine precise Z heights!**
 
-Klipper has several helper scripts available (eg, MANUAL_PROBE,
+Helix has several helper scripts available (eg, MANUAL_PROBE,
 Z_ENDSTOP_CALIBRATE, PROBE_CALIBRATE, DELTA_CALIBRATE). See the
 documents
 [described above](#choose-the-appropriate-calibration-mechanism) to

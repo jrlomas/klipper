@@ -1,5 +1,9 @@
 # Skew correction
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on software skew correction that Helix builds on. New to Helix?
+> Start with the **[Helix overview](HELIX.md)**.
+
 Software based skew correction can help resolve dimensional inaccuracies
 resulting from a printer assembly that is not perfectly square.  Note
 that if your printer is significantly skewed it is strongly recommended to

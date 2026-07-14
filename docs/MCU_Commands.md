@@ -1,9 +1,13 @@
 # MCU commands
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document provides information on the low-level micro-controller
-commands that are sent from the Klipper "host" software and processed
-by the Klipper micro-controller software. This document is not an
-authoritative reference for these commands, nor is it an exclusive
+unit (MCU) commands that are sent from the Helix "host" software and
+processed by the Helix micro-controller software. This document is not
+an authoritative reference for these commands, nor is it an exclusive
 list of all available commands.
 
 This document may be useful for developers interested in understanding
@@ -52,7 +56,7 @@ Most commands in the micro-controller require an initial setup before
 they can be successfully invoked. This section provides an overview of
 the configuration process. This section and the following sections are
 likely only of interest to developers interested in the internal
-details of Klipper.
+details of Helix.
 
 When the host first connects to the micro-controller it always starts
 by obtaining a data dictionary (see [protocol](Protocol.md) for more
@@ -178,7 +182,7 @@ This section lists some commonly used config commands.
 ## Common commands
 
 This section lists some commonly used run-time commands. It is likely
-only of interest to developers looking to gain insight into Klipper.
+only of interest to developers looking to gain insight into Helix.
 
 * `set_digital_out_pwm_cycle oid=%c cycle_ticks=%u` : This command
   configures a digital output pin (as created by config_digital_out)

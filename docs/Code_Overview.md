@@ -1,12 +1,16 @@
 # Code overview
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document describes the overall code layout and major code flow of
-Klipper.
+Helix.
 
 ## Directory Layout
 
 The **src/** directory contains the C source for the micro-controller
-code. The **src/atsam/**, **src/atsamd/**, **src/avr/**,
+unit (MCU) code. The **src/atsam/**, **src/atsamd/**, **src/avr/**,
 **src/linux/**, **src/lpc176x/**, **src/pru/**, and **src/stm32/**
 directories contain architecture specific micro-controller code. The
 **src/simulator/** contains code stubs that allow the micro-controller
@@ -108,7 +112,7 @@ printer object calls, which frequently translate the actions to
 commands to be executed on the micro-controller (as declared via the
 DECL_COMMAND macro in the micro-controller code).
 
-There are several threads in the Klipper host code:
+There are several threads in the Helix host code:
 * There is a Python "main thread" that handles incoming G-Code
   commands and is the starting point for most actions. This thread
   runs the [reactor](https://en.wikipedia.org/wiki/Reactor_pattern)
@@ -199,7 +203,7 @@ provides further information on the mechanics of moves.
   PrinterMotionQueuing._advance_move_time() ->
   steppersyncmgr_gen_steps() -> se_start_gen_steps()`.
 
-* Klipper uses an
+* Helix uses an
   [iterative solver](https://en.wikipedia.org/wiki/Root-finding_algorithm)
   to generate the step times for each stepper. The step times are
   generated from the background thread (klippy/chelper/steppersync.c):
@@ -260,7 +264,7 @@ The Klippy host code has a dynamic module loading capability. If a
 config section named "[my_module]" is found in the printer config file
 then the software will automatically attempt to load the python module
 klippy/extras/my_module.py . This module system is the preferred
-method for adding new functionality to Klipper.
+method for adding new functionality to Helix.
 
 The easiest way to add a new module is to use an existing module as a
 reference - see **klippy/extras/servo.py** as an example.
@@ -361,7 +365,7 @@ The following may also be useful:
 
 ## Adding new kinematics
 
-This section provides some tips on adding support to Klipper for
+This section provides some tips on adding support to Helix for
 additional types of printer kinematics. This type of activity requires
 excellent understanding of the math formulas for the target
 kinematics. It also requires software development skills - though one
@@ -400,7 +404,7 @@ Useful steps:
 
 ## Porting to a new micro-controller
 
-This section provides some tips on porting Klipper's micro-controller
+This section provides some tips on porting Helix's micro-controller
 code to a new architecture. This type of activity requires good
 knowledge of embedded development and hands-on access to the target
 micro-controller.
@@ -446,7 +450,7 @@ Useful steps:
    [c812a40a](https://github.com/Klipper3d/klipper/commit/c812a40a3782415e454b04bf7bd2158a6f0ec8b5),
    and
    [c381d03a](https://github.com/Klipper3d/klipper/commit/c381d03aad5c3ee761169b7c7bced519cc14da29).
-8. Create a sample Klipper config file in the config/ directory. Test
+8. Create a sample Helix config file in the config/ directory. Test
    the micro-controller with the main klippy.py program.
 9. Consider adding build test cases in the test/ directory.
 
@@ -466,16 +470,16 @@ Additional coding tips:
 
 ## Coordinate Systems
 
-Internally, Klipper primarily tracks the position of the toolhead in
+Internally, Helix primarily tracks the position of the toolhead in
 cartesian coordinates that are relative to the coordinate system
-specified in the config file. That is, most of the Klipper code will
+specified in the config file. That is, most of the Helix code will
 never experience a change in coordinate systems. If the user makes a
 request to change the origin (eg, a `G92` command) then that effect is
 obtained by translating future commands to the primary coordinate
 system.
 
 However, in some cases it is useful to obtain the toolhead position in
-some other coordinate system and Klipper has several tools to
+some other coordinate system and Helix has several tools to
 facilitate that. This can be seen by running the GET_POSITION
 command. For example:
 
@@ -550,14 +554,14 @@ command can alter this value.
 
 ## Time
 
-Fundamental to the operation of Klipper is the handling of clocks,
-times, and timestamps. Klipper executes actions on the printer by
+Fundamental to the operation of Helix is the handling of clocks,
+times, and timestamps. Helix executes actions on the printer by
 scheduling events to occur in the near future. For example, to turn on
 a fan, the code might schedule a change to a GPIO pin in a 100ms. It
 is rare for the code to attempt to take an instantaneous action. Thus,
-the handling of time within Klipper is critical to correct operation.
+the handling of time within Helix is critical to correct operation.
 
-There are three types of times tracked internally in the Klipper host
+There are three types of times tracked internally in the Helix host
 software:
 * System time. The system time uses the system's monotonic clock - it
   is a floating point number stored as seconds and it is (generally)

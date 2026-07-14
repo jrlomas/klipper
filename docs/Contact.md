@@ -1,6 +1,18 @@
 # Contact
 
-This document provides contact information for Klipper.
+> **This is Helix** — an evolution of Klipper. This page is inherited
+> Klipper documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document provides contact information for Helix.
+
+Helix has its own project home for firmware-specific questions,
+development, and bug reports. The community links below, however, point
+to the shared **upstream Klipper community** (Discord, Discourse forum,
+and GitHub). Because Helix is source-compatible with Klipper, that
+community remains an excellent resource for general 3D-printer firmware
+questions — please use the Helix project channels for anything specific
+to Helix itself.
 
 ## Discourse Forum
 

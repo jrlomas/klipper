@@ -14,13 +14,13 @@ The port offers two selectable architectures (Kconfig, "Klipper
 firmware" -> Architecture; FD-0001
 [doc 12](founding/0001-motion-intentions/12-ESP32_Architecture.md)):
 
-* **component** (stage 1, default): klipper compiled as an IDF
+* **component** (stage 1, default): Helix compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
   present on both cores.  Its authenticated session console has run on
   a classic dual-core Lolin32; motion and peripheral qualification remain
   pending.
 * **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
-  klipper** — no RTOS, no IDF calls, register-level peripherals,
+  Helix** — no RTOS, no IDF calls, register-level peripherals,
   IRAM-resident hot path — and core 0 is reduced to a network
   coprocessor shuttling sealed console datagrams through a lock-free
   shared-memory ring.  See
@@ -47,7 +47,8 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   and feeds the contained klipper frames to the normal frame
   dispatcher; outgoing frames are batched for ~2ms and sealed into
   one datagram (matching the bridge's host-side batching).
-* Authentication (truncated HMAC-SHA256 with a pre-shared key) is
+* Authentication (a truncated HMAC-SHA256 — hash-based message
+  authentication code — with a pre-shared key, PSK) is
   mandatory; running without it requires the explicit
   "trust network" confession on both ends.  Responses are only ever
   sent to the source address of the last *authenticated* datagram.
@@ -60,7 +61,7 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   identical glue serves ESP32 WiFi, ESP32 Ethernet (RMII - replace
   the WiFi bringup with `esp_eth`, the binding is unchanged), and the
   linux mcu.
-* Datagram-level erasure FEC (XOR parity) is implemented as bounded
+* Datagram-level erasure FEC (forward error correction; XOR parity) is implemented as bounded
   pair blocks (`fec_k=2`): either single loss is reconstructed and a
   later survivor is deferred until it can be released in order. The
   linux MCU exposes it with `-f 2`; ESP32 exposes
@@ -77,13 +78,13 @@ The ESP32 is dual core; the component architecture splits it:
 * **Core 0**: WiFi and lwIP tasks (pinned via `sdkconfig.defaults`),
   `app_main` (NVS init, PSK load, WiFi bringup), the UDP receive
   task, and the deferred ADC conversion task.
-* **Core 1**: the klipper scheduler task
-  (`xTaskCreatePinnedToCore(..., 1)`) and the klipper hardware timer
+* **Core 1**: the Helix scheduler task
+  (`xTaskCreatePinnedToCore(..., 1)`) and the Helix hardware timer
   interrupt - the GPTimer callback is registered from the core-1
   task, which allocates its interrupt on core 1.  Motion dispatch
   never contends with the radio stack's interrupts.
 
-The klipper timer is a GPTimer at 20MHz (`CONFIG_CLOCK_FREQ`
+The Helix timer is a GPTimer at 20MHz (`CONFIG_CLOCK_FREQ`
 20000000 in the hand-written `src/esp32/autoconf.h`): the highest
 integer division of the 80MHz APB clock that keeps a long 32-bit
 wrap period (~214s), giving 50ns scheduling granularity.
@@ -95,7 +96,8 @@ occasional microsecond-level jitter remains (e.g. during flash
 writes, when interrupts are briefly deferred).  The classic stepper
 backend compiles and runs on this port but should be treated as
 **experimental**; the RMT/PCNT pulse peripherals are the likely
-escape hatch for production step generation, and the FOC backend
+escape hatch for production step generation, and the field-oriented
+control (FOC) backend
 (own timer, tolerant of µs-level ISR jitter) is a better first
 citizen of this chip.  This target is FOC-first.
 
@@ -119,7 +121,7 @@ citizen of this chip.  This target is FOC-first.
 The stage-3 architecture of doc 12: IDF, FreeRTOS and the closed
 radio blobs are confined to core 0, which becomes an on-die network
 coprocessor - no different in kind from the closed firmware inside a
-W5500.  Core 1 runs klipper the way an STM32 does: bare metal,
+W5500.  Core 1 runs Helix the way an STM32 does: bare metal,
 register-level drivers against the vendored `lib/esp32` headers, its
 own stack and vector table, scheduler in a tight loop.
 
@@ -141,7 +143,7 @@ never learns core 1 exists.
 
 ### Security property
 
-HMAC verification runs on the **klipper core**, not the radio core:
+HMAC verification runs on the **Helix core**, not the radio core:
 the modem moves sealed datagrams it cannot forge or unwrap, and it
 only ever transmits to a peer address that arrived attached to a
 datagram core 1 authenticated (the address blob travels with each rx
@@ -216,7 +218,7 @@ layer ARQ / host retransmit).
 
 The component architecture's separate UDP receive ring follows the same
 rule explicitly: the producer release-stores a completed slot index, the
-Klipper consumer acquire-loads it, and the consumer release-stores the freed
+Helix consumer acquire-loads it, and the consumer release-stores the freed
 slot. No `volatile` field is treated as a cross-core memory barrier.
 
 Wakeups are polled, not signalled: core 1 checks the rx ring in its
@@ -227,9 +229,9 @@ both irrelevant to motion.
 
 ### The polled bare runtime
 
-Core 1 enables no interrupts at all (like the klipper linux mcu,
+Core 1 enables no interrupts at all (like the Helix linux mcu,
 which dispatches timers from `irq_poll()` in the sched loop and
-serves production printers that way).  The klipper timer is TIMG0
+serves production printers that way).  The Helix timer is TIMG0
 timer 0 at register level, 80MHz APB / 4 = 20MHz (same
 `CONFIG_CLOCK_FREQ` as the component arch); `irq_poll()`/`irq_wait()`
 run `timer_dispatch_many()` when the next deadline is due and
@@ -386,7 +388,7 @@ Details and constraints:
   MISO/MOSI/CLK = GPIO12/13/14, `spi3` is GPIO19/23/18, routed
   through the GPIO matrix; modes 0-3; the divider realizes
   80MHz/(2*pre) without exceeding the requested rate, capped at
-  20MHz for matrix-routed MISO timing.  CS is a plain klipper gpio.
+  20MHz for matrix-routed MISO timing.  CS is a plain Helix gpio.
 * **I2C** (`src/esp32/i2c.c`): bus `i2c0` on SCL=GPIO22, SDA=GPIO21
   (open drain, internal pullups - external pullups still
   recommended).  The address byte travels in its own hardware
@@ -397,7 +399,7 @@ Details and constraints:
   not reliably recoverable in place).
 * **Hard PWM** (`src/esp32/hard_pwm.c`): 8 LEDC high-speed channels
   (one per pin), 4 shared timers (channels with equal cycle_time
-  share).  `cycle_time` (20MHz klipper ticks) maps to an LEDC
+  share).  `cycle_time` (20MHz Helix ticks) maps to an LEDC
   frequency of `20MHz/cycle_ticks` with duty resolution chosen as
   the largest realizable `res <= 15` bits (`~log2(80MHz*cycle/20MHz)`);
   higher PWM frequency costs resolution (20kHz -> 12 bits, 1MHz -> 6
@@ -541,7 +543,7 @@ step/dir pin):
 
 ## Building
 
-The ESP32 target builds with ESP-IDF (v5.3.x) rather than klipper's
+The ESP32 target builds with ESP-IDF (v5.3.x) rather than Helix's
 Kconfig/Makefile flow:
 
 ```
@@ -577,8 +579,8 @@ Apache-2.0 soc headers in `lib/esp32/` (see `lib/esp32/README`), not
 against the installed IDF's copies - the same pattern as
 `lib/stm32*`'s CMSIS.
 
-The IDF build replicates klipper's `compile_time_request` flow in
-CMake (`src/esp32/main/CMakeLists.txt`): the klipper sources are
+The IDF build replicates Helix's `compile_time_request` flow in
+CMake (`src/esp32/main/CMakeLists.txt`): the Helix sources are
 compiled as a CMake object library, their `.compile_time_request`
 sections are extracted with objcopy and fed to
 `scripts/buildcommands.py` (`src/esp32/gen_compile_time_request.py`),
@@ -699,14 +701,14 @@ The APP-CPU boot sequence remains checked against ESP-IDF v5.3.2
 sources, and the SPSC ring remains TSan/ASan-tested. Fresh generated
 configurations confirm `CONFIG_ESP_TASK_WDT_PANIC=y` in every variant.
 
-The component Klipper task subscribes to ESP-IDF's task watchdog; a missed
-feed panics and reboots. The modem Klipper core owns Timer Group 1's MWDT
+The component Helix task subscribes to ESP-IDF's task watchdog; a missed
+feed panics and reboots. The modem Helix core owns Timer Group 1's MWDT
 directly with a 500ms system-reset stage. Its `reset` command release-publishes
 a request to core 0 for `esp_restart()`, while the MWDT remains the bounded
 fallback if core 0 is wedged. Component mode calls `esp_restart()` directly.
 
 WiFi disconnect handling requests reconnect without blocking IDF's event
-task. Ordinary Klipper clock queries continue at about 1Hz while motion is
+task. Ordinary Helix clock queries continue at about 1Hz while motion is
 idle, so they already keep the UDP/session path active; a separate semantic
 keepalive packet would duplicate that traffic. The socket stays bound across
 station reassociation, and the rebooting watchdog covers a wedged task.

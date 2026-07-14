@@ -1,10 +1,15 @@
 # CANBUS
 
-This document describes Klipper's CAN bus support.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on Controller Area Network (CAN) bus support, which Helix
+> carries forward unchanged. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes Helix's Controller Area Network (CAN) bus support.
 
 ## Device Hardware
 
-Klipper currently supports CAN on stm32, SAME5x, and rp2040 chips. In
+Helix currently supports CAN on stm32, SAME5x, and rp2040 chips. In
 addition, the micro-controller chip must be on a board that has a CAN
 transceiver.
 
@@ -20,7 +25,7 @@ USB to CAN adapters available from different manufacturers. When
 choosing one, we recommend verifying that the firmware can be updated
 on it. (Unfortunately, we've found some USB adapters run defective
 firmware and are locked down, so verify before purchasing.) Look for
-adapters that can run Klipper directly (in its "USB to CAN bridge
+adapters that can run Helix directly (in its "USB to CAN bridge
 mode") or that run the
 [candlelight firmware](https://github.com/candle-usb/candleLight_fw).
 
@@ -71,12 +76,12 @@ Each device will have a unique identifier. In the above example,
 `11aa22bb33cc` is the micro-controller's "canbus_uuid".
 
 Note that the `canbus_query.py` tool will only report uninitialized
-devices - if Klipper (or a similar tool) configures the device then it
+devices - if Helix (or a similar tool) configures the device then it
 will no longer appear in the list.
 
 ## Configuring Klipper
 
-Update the Klipper [mcu configuration](Config_Reference.md#mcu) to use
+Update the Helix [mcu configuration](Config_Reference.md#mcu) to use
 the CAN bus to communicate with the device - for example:
 ```
 [mcu my_can_mcu]
@@ -86,14 +91,14 @@ canbus_uuid: 11aa22bb33cc
 ## USB to CAN bus bridge mode
 
 Some micro-controllers support selecting "USB to CAN bus bridge" mode
-during Klipper's "make menuconfig". This mode may allow one to use a
-micro-controller as both a "USB to CAN bus adapter" and as a Klipper
+during Helix's "make menuconfig". This mode may allow one to use a
+micro-controller as both a "USB to CAN bus adapter" and as a Helix
 node.
 
-When Klipper uses this mode the micro-controller appears as a "USB CAN
-bus adapter" under Linux. The "Klipper bridge mcu" itself will appear
+When Helix uses this mode the micro-controller appears as a "USB CAN
+bus adapter" under Linux. The "Helix bridge mcu" itself will appear
 as if it was on this CAN bus - it can be identified via
-`canbus_query.py` and it must be configured like other CAN bus Klipper
+`canbus_query.py` and it must be configured like other CAN bus Helix
 nodes.
 
 Some important notes when using this mode:
@@ -136,7 +141,7 @@ iface can0 can static
 
 * A USB to CAN bridge board will not appear as a USB serial device, it
   will not show up when running `ls /dev/serial/by-id`, and it can not
-  be configured in Klipper's printer.cfg file with a `serial:`
+  be configured in Helix's printer.cfg file with a `serial:`
   parameter. The bridge board appears as a "USB CAN adapter" and it is
   configured in the printer.cfg as a [CAN node](#configuring-klipper).
 

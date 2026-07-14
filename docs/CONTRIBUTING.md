@@ -1,14 +1,19 @@
-# Contributing to Klipper
+# Contributing to Helix
 
-Thank you for contributing to Klipper! This document describes the
-process for contributing changes to Klipper.
+> **This is Helix** — an evolution of Klipper. Contributions described here
+> go to the Helix project, but the process still references the upstream
+> **Klipper** repository, reviewers, and community that Helix builds on.
+> New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
+Thank you for contributing to Helix! This document describes the
+process for contributing changes to Helix.
 
 Please see the [contact page](Contact.md) for information on reporting
 an issue or for details on contacting the developers.
 
 ## Overview of Contribution Process
 
-Contributions to Klipper generally follow a high-level process:
+Contributions to Helix generally follow a high-level process:
 
 1. A submitter starts by creating a
    [GitHub Pull Request](https://github.com/Klipper3d/klipper/pulls)
@@ -27,11 +32,105 @@ topic on [Klipper Discourse](Contact.md). An ongoing discussion on the
 forum can improve visibility of development work and may attract
 others interested in testing new work.
 
+## Our philosophy: pragmatic, and you maintain what you add
+
+Helix is **pragmatic, not dogmatic**. We would rather welcome a useful
+feature and shape it than reject it to preserve architectural purity —
+hardware realities and real user needs take priority over philosophical
+coding cleanliness. That openness is deliberate, and so is its
+counterweight.
+
+**New features are quarantined before they are promoted.** A contribution
+normally lands as opt-in and experimental first, so the community can test
+it on real machines. It becomes part of the mainline evolution only after
+it has proven itself in the field — not because it is clever, but because
+it works for people who did not write it.
+
+**You maintain what you contribute.** If you want a feature included, you
+own it. Issues filed against that feature are assigned to you, and the
+feature is promoted to — and kept in — the mainline only while you remain
+willing to fix and maintain its bugs. A contributor who is unwilling to
+maintain their feature will not have it promoted, and a feature whose
+maintainer disappears may be retired. This is how Helix balances being
+feature-rich and community-driven against staying maintainable over the
+long term.
+
+The goal is an ecosystem that evolves according to the community's needs,
+not the interests of any single author. If that is the bargain you want,
+welcome aboard.
+
+## How to change Helix without fighting upstream
+
+Helix is a **permanent, friendly fork** of Klipper: it keeps absorbing
+every upstream Klipper bug fix, board, and sensor, release after release.
+That only works if our changes stay *out of the way* of the files upstream
+owns. So the single most important habit a Helix contributor can build is
+choosing **where** a change lives — because the wrong location turns every
+future upstream merge into hand-to-hand combat, and can break your feature
+silently besides.
+
+Here is the mental model. When you want to change how Helix behaves, reach
+for the **leftmost** option on this ladder that can do the job:
+
+1. **Add, don't edit (aim for this almost every time).** Put new behavior
+   in a *new file* that upstream has no counterpart for. On the host that
+   means a new `klippy/extras/` module — Klipper's built-in plugin system,
+   auto-loaded by config section, requiring zero edits to base files. In
+   the firmware it means a new `src/` file whose commands register
+   themselves with an ordinary `DECL_COMMAND` (or Helix's
+   `KLIPPER_METHOD`) macro. New files **can never cause a merge conflict**,
+   because there is nothing upstream to conflict with. This is how the vast
+   majority of Helix already exists (`lib/intentproto/`, the trajectory and
+   trigger and heater-hold sources, the Helix `extras/` modules). Push it
+   as far as it will go.
+
+2. **Add a small, stable seam (when you must reach into a base file).**
+   Sometimes new behavior genuinely needs a base file to *call* it. When
+   that happens, make the smallest possible edit to the base file — turn a
+   hardcoded value into a lookup, or add a single event/dispatch point —
+   and put the real logic in your own additive file. A one- to three-line
+   seam almost never collides with an upstream change (upstream rarely
+   touches that exact line), and it stays meaningful even as the code
+   around it evolves. This is the sweet spot people miss.
+
+3. **Fork a base file loudly, and write it down (last resort).** If there
+   is truly no clean seam and you must change core behavior in a file
+   upstream also maintains, do it — but **accept that a future merge will
+   conflict there, and record the divergence** in
+   [Upstream_Tracking.md](Upstream_Tracking.md) so the next person merging
+   knows that line is intentional. A tracked, visible fork is far safer
+   than a hidden one.
+
+**The one technique to avoid: silently overriding base methods at load
+time.** It is tempting to leave Klipper's files pristine and instead
+monkey-patch — swap out a class method from a separate "overlay" file — so
+that nothing shows up as edited. Resist this for anything but harmless
+add-ons (logging, tracing, a throwaway bridge). It does not remove the
+work of reconciling with upstream; it removes the *warning* that you need
+to. A merge conflict is a signal: *"upstream changed the exact thing you
+changed — come look."* An override binds to a private method's name and
+shape, so when upstream refactors it, you get no conflict at all — your
+code silently binds to the old behavior, no-ops, or breaks at runtime. For
+motion and safety code, that trade is a bad one. Prefer a visible seam you
+own over an invisible patch that rots without telling you.
+
+**Why this is enforced, not just encouraged.** A handful of files
+(`src/command.c`, `klippy/msgproto.py`, and a few others) are the shared
+Klipper wire protocol and are held **byte-identical to upstream** — our
+Continuous Integration (CI, the automated checks that run on every change)
+fails if they drift. The full contract, the exact list of "must stay
+stock" files, the short manifest of files where Helix *is* allowed to
+diverge, and the step-by-step upstream merge process all live in
+[Upstream_Tracking.md](Upstream_Tracking.md). Read it before you touch
+anything under `src/` or `klippy/`. For the architecture behind these
+seams — self-registering commands and the additive protocol library — see
+the [Helix Developer Guide](Helix_Developer_Guide.md).
+
 ## What to expect in a review
 
-Contributions to Klipper are reviewed before merging. The primary goal
+Contributions to Helix are reviewed before merging. The primary goal
 of the review process is to check for defects and to check that the
-submission follows guidelines specified in the Klipper documentation.
+submission follows guidelines specified in the Helix documentation.
 
 It is understood that there are many ways to accomplish a task; it is
 not the intent of the review to discuss the "best" implementation.
@@ -148,14 +247,14 @@ Common things a reviewer will look for:
    real name. It indicates the submitter agrees with the
    [developer certificate of origin](developer-certificate-of-origin).
 
-4. Does the submission follow guidelines specified in the Klipper
+4. Does the submission follow guidelines specified in the Helix
    documentation?
 
    In particular, code should follow the guidelines in
    [Code_Overview.md](Code_Overview.md) and config files should follow
    the guidelines in [Example_Configs.md](Example_Configs.md).
 
-5. Is the Klipper documentation updated to reflect new changes?
+5. Is the Helix documentation updated to reflect new changes?
 
    At a minimum, the reference documentation must be updated with
    corresponding changes to the code:
@@ -197,7 +296,7 @@ Common things a reviewer will look for:
    general, gratuitous whitespace changes are not accepted unless they
    are from the established "owner" of the code being modified.
 
-Klipper does not implement a strict "coding style guide", but
+Helix does not implement a strict "coding style guide", but
 modifications to existing code should follow the high-level code flow,
 code indentation style, and format of that existing code. Submissions
 of new modules and systems have more flexibility in coding style, but

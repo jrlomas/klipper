@@ -1,8 +1,13 @@
 # Eddy Current Inductive probe
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on, covering how to configure and calibrate
+> eddy current inductive probes. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document describes the support for
 [eddy current](https://en.wikipedia.org/wiki/Eddy_current) inductive
-probes in Klipper.
+probes in Helix.
 
 These probes detect the bed by measuring the
 [resonant frequency](https://en.wikipedia.org/wiki/Resonance) of a
@@ -507,7 +512,7 @@ Possible homing errors and actionables:
 
 - Sensor error
   - Check logs for detailed error
-- Eddy I2C STATUS/DATA error.
+- Eddy Inter-Integrated Circuit (I2C) STATUS/DATA error.
   - Check loose wiring.
   - Try software I2C/decrease I2C rate
 - Invalid read data

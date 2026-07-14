@@ -1,7 +1,11 @@
 # Using PWM tools
 
-This document describes how to setup a PWM-controlled laser or spindle
-using `pwm_tool` and some macros.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on driving PWM lasers and spindles that Helix builds on. New to
+> Helix? Start with the **[Helix overview](HELIX.md)**.
+
+This document describes how to setup a pulse-width modulation (PWM)-controlled
+laser or spindle using `pwm_tool` and some macros.
 
 ## How does it work?
 
@@ -16,8 +20,8 @@ _spindle speed CCW_ (`M4 S[0-255]`) and _spindle stop_ (`M5`).
 
 **Warning:** When driving a laser, keep all security precautions
 that you can think of! Diode lasers are usually inverted.
-This means, that when the MCU restarts, the laser will be
-_fully on_ for the time it takes the MCU to start up again.
+This means, that when the micro-controller unit (MCU) restarts, the laser
+will be _fully on_ for the time it takes the MCU to start up again.
 For good measure, it is recommended to _always_ wear appropriate
 laser-goggles of the right wavelength if the laser is powered;
 and to disconnect the laser when it is not needed.

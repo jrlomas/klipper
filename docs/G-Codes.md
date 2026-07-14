@@ -1,11 +1,15 @@
 # G-Codes
 
-This document describes the commands that Klipper supports. These are
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes the commands that Helix supports. These are
 commands that one may enter into the OctoPrint terminal tab.
 
 ## G-Code commands
 
-Klipper supports the following standard G-Code commands:
+Helix supports the following standard G-Code commands:
 - Move (G0 or G1): `G1 [X<pos>] [Y<pos>] [Z<pos>] [E<pos>] [F<speed>]`
 - Dwell: `G4 P<milliseconds>`
 - Move to origin: `G28 [X] [Y] [Z]`
@@ -38,13 +42,13 @@ Klipper supports the following standard G-Code commands:
 For further details on the above commands see the
 [RepRap G-Code documentation](http://reprap.org/wiki/G-code).
 
-Klipper's goal is to support the G-Code commands produced by common
+Helix's goal is to support the G-Code commands produced by common
 3rd party software (eg, OctoPrint, Printrun, Slic3r, Cura, etc.) in
 their standard configurations. It is not a goal to support every
-possible G-Code command. Instead, Klipper prefers human readable
+possible G-Code command. Instead, Helix prefers human readable
 ["extended G-Code commands"](#additional-commands). Similarly, the
 G-Code terminal output is only intended to be human readable - see the
-[API Server document](API_Server.md) if controlling Klipper from
+[API Server document](API_Server.md) if controlling Helix from
 external software.
 
 If one requires a less common G-Code command then it may be possible
@@ -55,7 +59,7 @@ example, one might use this to implement: `G12`, `G29`, `G30`, `G31`,
 
 ## Additional Commands
 
-Klipper uses "extended" G-Code commands for general configuration and
+Helix uses "extended" G-Code commands for general configuration and
 status. These extended commands all follow a similar format - they
 start with a command name and may be followed by one or more
 parameters. For example: `SET_SERVO SERVO=myservo ANGLE=5.3`. In this
@@ -63,7 +67,7 @@ document, the commands and parameters are shown in uppercase, however
 they are not case sensitive. (So, "SET_SERVO" and "set_servo" both run
 the same command.)
 
-This section is organized by Klipper module name, which generally
+This section is organized by Helix module name, which generally
 follows the section names specified in the
 [printer configuration file](Config_Reference.md). Note that some
 modules are automatically loaded.
@@ -380,7 +384,7 @@ most the provided speed (in mm/s); otherwise the homing speeds of the
 corresponding carriages will be used as a reference. Note that the carriages
 restore their positions only over their own axes, which may be necessary to
 correctly restore COPY and MIRROR mode of the dual carriage. In addition, this
-command updates the Klipper toolhead position for each axis that has some dual
+command updates the Helix toolhead position for each axis that has some dual
 carriages: it is set to match the actual position of the activated primary
 carriage of an axis or, if an axis does not have a saved primary carriage,
 to the axis position when `SAVE_DUAL_CARRIAGE_STATE` command was called.
@@ -425,7 +429,7 @@ cleared. Additionally including `NAME` will only reset the named object. This
 Provides a summary of an object in the file.
 
 With no parameters provided, this will list the defined objects known to
-Klipper. Returns a list of strings, unless the `JSON` parameter is given,
+Helix. Returns a list of strings, unless the `JSON` parameter is given,
 when it will return object details in json format.
 
 When the `NAME` parameter is included, this defines an object to be excluded.
@@ -478,7 +482,7 @@ stepper's "rotation distance" (as defined in an
 [extruder_stepper](Config_Reference.md#extruder_stepper) config section).
 If the rotation distance is a negative number then the stepper motion
 will be inverted (relative to the stepper direction specified in the
-config file). Changed settings are not retained on Klipper reset. Use
+config file). Changed settings are not retained on Helix reset. Use
 with caution as small changes can result in excessive pressure between
 extruder and hotend. Do proper calibration with filament before use.
 If 'DISTANCE' value is not provided then this command will return the
@@ -522,7 +526,7 @@ the hold is released on every configured heater.
 #### EXECLOG_DUMP
 `EXECLOG_DUMP`: Drains the retained micro-controller execution logs
 (the "flight recorder") of every configured board and writes the
-records to the Klipper log file.
+records to the Helix log file.
 
 #### RECONNECT_MCU
 `RECONNECT_MCU MCU=<name>`: Attempts to re-handshake with a micro-
@@ -707,7 +711,7 @@ software (see
 clears any error state from the micro-controller.
 
 #### STATUS
-`STATUS`: Report the Klipper host software status.
+`STATUS`: Report the Helix host software status.
 
 #### HELP
 `HELP`: Report the list of available extended G-Code commands.
@@ -1222,11 +1226,11 @@ The print_stats module is automatically loaded.
 
 #### SET_PRINT_STATS_INFO
 `SET_PRINT_STATS_INFO [TOTAL_LAYER=<total_layer_count>] [CURRENT_LAYER=
-<current_layer>]`: Pass slicer info like layer act and total to Klipper.
+<current_layer>]`: Pass slicer info like layer act and total to Helix.
 Add `SET_PRINT_STATS_INFO [TOTAL_LAYER=<total_layer_count>]` to your
 slicer start gcode section and `SET_PRINT_STATS_INFO [CURRENT_LAYER=
 <current_layer>]` at the layer change gcode section to pass layer
-information from your slicer to Klipper.
+information from your slicer to Helix.
 
 ### [probe]
 
@@ -1831,7 +1835,7 @@ three possible combinations of options:
 
 ### [virtual_sdcard]
 
-Klipper supports the following standard G-Code commands if the
+Helix supports the following standard G-Code commands if the
 [virtual_sdcard config section](Config_Reference.md#virtual_sdcard) is
 enabled:
 - List SD card: `M20`

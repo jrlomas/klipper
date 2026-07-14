@@ -1,19 +1,24 @@
 # CANBUS protocol
 
-This document describes the protocol Klipper uses to communicate over
-[CAN bus](https://en.wikipedia.org/wiki/CAN_bus). See
-[CANBUS.md](CANBUS.md) for information on configuring Klipper with CAN
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
+This document describes the protocol Helix uses to communicate over a
+Controller Area Network (CAN) bus (see
+[CAN bus](https://en.wikipedia.org/wiki/CAN_bus)). See
+[CANBUS.md](CANBUS.md) for information on configuring Helix with CAN
 bus.
 
 ## Micro-controller id assignment
 
-Klipper uses only CAN 2.0A standard size CAN bus packets, which are
+Helix uses only CAN 2.0A standard size CAN bus packets, which are
 limited to 8 data bytes and an 11-bit CAN bus identifier. In order to
 support efficient communication, each micro-controller is assigned at
 run-time a unique 1-byte CAN bus nodeid (`canbus_nodeid`) for general
-Klipper command and response traffic. Klipper command messages going
+Helix command and response traffic. Helix command messages going
 from host to micro-controller use the CAN bus id of `canbus_nodeid *
-2 + 256`, while Klipper response messages from micro-controller to
+2 + 256`, while Helix response messages from micro-controller to
 host use `canbus_nodeid * 2 + 256 + 1`.
 
 Each micro-controller has a factory assigned unique chip identifier

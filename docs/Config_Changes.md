@@ -1,8 +1,13 @@
 # Configuration Changes
 
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation that Helix builds on. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
+
 This document covers recent software changes to the config file that
 are not backwards compatible. It is a good idea to review this
-document when upgrading the Klipper software.
+document when upgrading the Helix software. The dated entries below are
+a historical record and retain their original "Klipper" wording.
 
 All dates in this document are approximate.
 

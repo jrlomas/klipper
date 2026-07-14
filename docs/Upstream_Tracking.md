@@ -121,6 +121,10 @@ application:
 
 ## See also
 
+- [Contributing — How to change Helix without fighting upstream](CONTRIBUTING.md#how-to-change-helix-without-fighting-upstream)
+  — the contributor-facing decision rule (add a new file → add a small
+  seam → loud tracked fork) that keeps changes inside the boundaries this
+  document enforces.
 - [Protocol v2](Protocol_v2.md) — the envelope's wire format, and which
   parts are live vs. sanctioned-but-deferred.
 - [FD-0001 doc 10 — The Protocol Library](founding/0001-motion-intentions/10-Protocol_Library.md)

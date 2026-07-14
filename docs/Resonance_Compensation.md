@@ -1,6 +1,10 @@
 # Resonance Compensation
 
-Klipper supports Input Shaping - a technique that can be used to reduce ringing
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on resonance compensation and input shaping that Helix builds on.
+> New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
+Helix supports Input Shaping - a technique that can be used to reduce ringing
 (also known as echoing, ghosting or rippling) in prints. Ringing is a surface
 printing defect when, typically, elements like edges repeat themselves on a
 printed surface as a subtle 'echo':
@@ -136,7 +140,7 @@ For the example above, we get shaper_freq_x/y = 49.4.
 
 ### Choosing input shaper
 
-Klipper supports several input shapers. They differ in their sensitivity to
+Helix supports several input shapers. They differ in their sensitivity to
 errors determining the resonance frequency and how much smoothing they cause
 in the printed parts. Also, some of the shapers like 2HUMP_EI and 3HUMP_EI
 should usually not be used with shaper_freq = resonance frequency - they are
@@ -311,7 +315,7 @@ new `shaper_freq_x` and `shaper_freq_y` values.
 If you use Pressure Advance, it may need to be re-tuned. Follow the
 [instructions](Pressure_Advance.md#tuning-pressure-advance) to find
 the new value, if it differs from the previous one. Make sure to
-restart Klipper before tuning Pressure Advance.
+restart Helix before tuning Pressure Advance.
 
 ### Unreliable measurements of ringing frequencies
 
@@ -475,7 +479,7 @@ operation, and may somewhat extend lifespan of Z axis parts.
 ### Input shapers
 
 This section contains a brief overview of some technical aspects of the
-supported input shapers. Input shapers used in Klipper are rather standard,
+supported input shapers. Input shapers used in Helix are rather standard,
 with the exception of MZV, and one can find more in-depth overview in
 the articles describing the corresponding shapers.
 
@@ -485,8 +489,8 @@ of oscillations `Td`. However, it is possible to construct a generalized form
 of ZV input shaper with `n >= 3` pulses and an arbitrary total duration
 `t >= 0.5 * Td` (with the maximum of `t` depending on `n` value), see for
 instance SNA-ZV and MIS-ZV input shapers, which can be seen as special cases
-of a more generalized implementation of MZV input shaper in Klipper.
-The default MZV parameters in Klipper are `n=3`, `t=0.75` (of `Td`), and this
+of a more generalized implementation of MZV input shaper in Helix.
+The default MZV parameters in Helix are `n=3`, `t=0.75` (of `Td`), and this
 shaper was designed to serve as an intermediate shaper between ZV and ZVD,
 offering better vibrations suppression than ZV when the determined (measured)
 shaper parameters deviate from the ones actually required by the printer,
@@ -518,7 +522,7 @@ A note on vibration reduction: the values in the table above are approximate.
 If the damping ratio of the printer is known for each axis, the shaper can be
 configured more precisely and it will then reduce the resonances in a bit wider
 range of frequencies. However, the damping ratio is usually unknown and is hard
-to estimate without a special equipment, so Klipper uses 0.1 value by default,
+to estimate without a special equipment, so Helix uses 0.1 value by default,
 which is a good all-round value. The frequency ranges in the table cover a
 number of different possible damping ratios around that value (approx. from 0.075
 to 0.15).

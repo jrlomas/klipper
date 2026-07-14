@@ -1,7 +1,11 @@
 # Beaglebone
 
-This document describes the process of running Klipper on a Beaglebone
-PRU.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on running the firmware on a Beaglebone, which Helix carries
+> forward unchanged. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
+This document describes the process of running Helix on a Beaglebone
+Programmable Real-time Unit (PRU).
 
 ## Building an OS image
 
@@ -14,7 +18,7 @@ the instructions from the above link.
 Then ssh into the Beaglebone machine (`ssh debian@beaglebone` --
 password is `temppwd`).
 
-Before start installing Klipper you need to free-up additional space.
+Before start installing Helix you need to free-up additional space.
 there are 3 options to do that:
 1. remove some BeagleBone "Demo" resources
 2. if you did boot from SD-Card, and it's bigger than 4Gb - you can expand
@@ -34,7 +38,7 @@ sudo resize2fs /dev/mmcblk0p1
 ```
 
 
-Install Klipper by running the following
+Install Helix by running the following
 commands:
 
 ```
@@ -42,19 +46,19 @@ git clone https://github.com/Klipper3d/klipper.git
 ./klipper/scripts/install-beaglebone.sh
 ```
 
-After installing Klipper you need to decide what kind of deployment do you need,
+After installing Helix you need to decide what kind of deployment do you need,
 but take a note that BeagleBone is 3.3v based hardware and in most cases you can't
 directly connect pins to 5v or 12v based hardware without conversion boards.
 
-As Klipper have multimodule architecture on BeagleBone you can achieve many different use cases,
+As Helix has a multi-module architecture on BeagleBone you can achieve many different use cases,
 but general ones are following:
 
-Use case 1: Use BeagleBone only as a host system to run Klipper and additional software
+Use case 1: Use BeagleBone only as a host system to run Helix and additional software
 like OctoPrint/Fluidd + Moonraker/...  and this configuration will be driving
 external micro-controllers via serial/usb/canbus connections.
 
 Use case 2: Use BeagleBone with extension board (cape) like CRAMPS board.
-in this configuration BeagleBone will host Klipper + additional software, and
+in this configuration BeagleBone will host Helix + additional software, and
 it will drive extension board with BeagleBone PRU cores (2 additional cores 200Mh, 32Bit).
 
 Use case 3: It's same as "Use case 1" but additionally you want to drive
@@ -132,7 +136,7 @@ pkg:[bb-wl18xx-firmware]:[1.20230414.0-0~bullseye+20230414]
 
 ```
 
-To compile the Klipper micro-controller code, start by configuring it for the "Beaglebone PRU",
+To compile the Helix micro-controller code, start by configuring it for the "Beaglebone PRU",
 for "BeagleBone Black" additionally disable options "Support GPIO Bit-banging devices" and disable "Support LCD devices"
 inside the "Optional features" because they will not fit in 8Kb PRU firmware memory,
 then exit and save config:
@@ -194,7 +198,7 @@ previous commands, and it's responsible for it.
 
 
 Take a note for "Use case 2" about following: when you will define printer configuration you should always
-use temperature sensors from "mcu host" because ADCs not present in default "mcu" (PRU cores).
+use temperature sensors from "mcu host" because analog-to-digital converters (ADCs) are not present in default "mcu" (PRU cores).
 Sample configuration of "sensor_pin" for extruder and heated bed are available in "generic-cramps.cfg"
 You can use any other GPIO directly from "mcu host" by referencing them this way "host:gpiochip1/gpio17"
 but that should be avoided because it will be creating additional load on main CPU and most probably
@@ -203,7 +207,7 @@ you can't use them for stepper control.
 
 ## Remaining configuration
 
-Complete the installation by configuring Klipper
+Complete the installation by configuring Helix
 following the instructions in
 the main [Installation](Installation.md#configuring-octoprint-to-use-klipper) document.
 
@@ -214,7 +218,7 @@ OctoPrint well. Print stalls have been known to occur on complex
 prints (the printer may move faster than OctoPrint can send movement
 commands). If this occurs, consider using the "virtual_sdcard" feature
 (see [Config Reference](Config_Reference.md#virtual_sdcard) for
-details) to print directly from Klipper
+details) to print directly from Helix
 and disable any DEBUG or VERBOSE logging options if you did enable them.
 
 

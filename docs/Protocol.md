@@ -1,10 +1,17 @@
 # Protocol
 
+> **This is Helix** — an evolution of Klipper. This page documents the legacy
+> Klipper v1 ("firehose") messaging protocol, which Helix keeps byte-for-byte
+> for compatibility. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+
 The Klipper messaging protocol is used for low-level communication
-between the Klipper host software and the Klipper micro-controller
-software. At a high level the protocol can be thought of as a series
-of command and response strings that are compressed, transmitted, and
-then processed at the receiving side. An example series of commands in
+between the Helix host software and the Helix micro-controller
+software. It is the classic version 1 ("v1") command protocol — the
+pre-computed "firehose" of steps and commands streamed from host to
+micro-controller unit (MCU) — and Helix keeps it byte-for-byte for
+compatibility. At a high level the protocol can be thought of as a
+series of command and response strings that are compressed,
+transmitted, and then processed at the receiving side. An example series of commands in
 uncompressed human-readable format might look like:
 
 ```

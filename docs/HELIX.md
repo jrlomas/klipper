@@ -200,6 +200,38 @@ command layer:
 → [doc 10](founding/0001-motion-intentions/10-Protocol_Library.md),
 [doc 13](founding/0001-motion-intentions/13-Syscall_API.md)
 
+## How HELIX grows — pragmatic, not dogmatic
+
+HELIX is built by people who would rather ship a useful feature than win
+an argument about architectural purity. When a hardware reality or a
+genuinely useful capability collides with a clean abstraction, the
+capability usually wins — the abstraction bends to fit the world, not the
+other way around. That bias is not an accident; it is the whole reason
+HELIX exists. Klipper's puppet model was *pure*, and that purity was
+exactly what stood in the way.
+
+But pragmatism without discipline is just entropy, so new work enters
+through a **quarantine**. A feature ships opt-in and experimental first;
+real users run it on real machines; and it earns promotion into the
+mainline only once it has proven itself in the field. Nothing is blessed
+because it is clever — it is blessed because it *works, for people who
+aren't its author*.
+
+And every feature carries an owner. If you want your feature in HELIX,
+**you maintain it**: its bugs are assigned to you, and it stays in the
+mainline only while you are willing to fix them. A feature whose author
+walks away is a feature the project stops shipping. This is the
+deliberate counterweight to a feature-hungry fork — the community drives
+what HELIX becomes, not the preferences of any single author (its founder
+included), and the price of that openness is that contributors own the
+consequences of what they add. *(The mechanics live in
+[Contributing](CONTRIBUTING.md).)*
+
+**What it buys you.** A firmware that says *yes* to new ideas far more
+often than its ancestor did, without drowning in unmaintained
+half-features — because the same door that lets a feature in also holds
+its author accountable for keeping it alive.
+
 ## What HELIX is not
 
 HELIX is **not a drop-in Klipper release** and does not pretend to be.

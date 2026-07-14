@@ -1,11 +1,15 @@
 # TMC drivers
 
-This document provides information on using Trinamic stepper motor
-drivers in SPI/UART mode on Klipper.
+> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
+> documentation on configuring Trinamic stepper drivers that Helix builds on.
+> New to Helix? Start with the **[Helix overview](HELIX.md)**.
 
-Klipper can also use Trinamic drivers in their "standalone mode".
-However, when the drivers are in this mode, no special Klipper
-configuration is needed and the advanced Klipper features discussed in
+This document provides information on using Trinamic (TMC) stepper motor
+drivers in SPI/UART mode on Helix.
+
+Helix can also use Trinamic drivers in their "standalone mode".
+However, when the drivers are in this mode, no special Helix
+configuration is needed and the advanced Helix features discussed in
 this document are not available.
 
 In addition to this document, be sure to review the
@@ -16,7 +20,7 @@ In addition to this document, be sure to review the
 A higher driver current increases positional accuracy and torque.
 However, a higher current also increases the heat produced by the
 stepper motor and the stepper motor driver. If the stepper motor
-driver gets too hot it will disable itself and Klipper will report an
+driver gets too hot it will disable itself and Helix will report an
 error. If the stepper motor gets too hot, it loses torque and
 positional accuracy. (If it gets very hot it may also melt plastic
 parts attached to it or near it.)
@@ -60,7 +64,7 @@ prefer to not specify a `hold_current`.
 
 ## Setting "spreadCycle" vs "stealthChop" Mode
 
-By default, Klipper places the TMC drivers in "spreadCycle" mode. If
+By default, Helix places the TMC drivers in "spreadCycle" mode. If
 the driver supports "stealthChop" then it can be enabled by adding
 `stealthchop_threshold: 999999` to the TMC config section.
 
@@ -84,7 +88,7 @@ often produce poor and confusing results if the mode changes while the
 motor is at a non-zero velocity.
 
 Note that the `stealthchop_threshold` config option does not impact
-sensorless homing as Klipper automatically switches the TMC driver to
+sensorless homing as Helix automatically switches the TMC driver to
 an appropriate mode during sensorless homing operations.
 
 ## TMC interpolate setting introduces small position deviation
@@ -92,7 +96,7 @@ an appropriate mode during sensorless homing operations.
 The TMC driver `interpolate` setting may reduce the audible noise of
 printer movement at the cost of introducing a small systemic
 positional error. This systemic positional error results from the
-driver's delay in executing "steps" that Klipper sends it. During
+driver's delay in executing "steps" that Helix sends it. During
 constant velocity moves, this delay results in a positional error of
 nearly half a configured microstep (more precisely, the error is half
 a microstep distance minus a 512th of a full step distance). For
@@ -119,9 +123,9 @@ interpolation in its default state.
 Sensorless homing allows to home an axis without the need for a
 physical limit switch. Instead, the carriage on the axis is moved into
 the mechanical limit making the stepper motor lose steps. The stepper
-driver senses the lost steps and indicates this to the controlling MCU
-(Klipper) by toggling a pin. This information can be used by Klipper
-as end stop for the axis.
+driver senses the lost steps and indicates this to the controlling
+micro-controller unit (MCU) running Helix by toggling a pin. This
+information can be used by Helix as end stop for the axis.
 
 This guide covers the setup of sensorless homing for the X axis of
 your (cartesian) printer. However, it works the same with all other
@@ -305,7 +309,7 @@ stall.
 
 During these tuning tests, if a `G28 X0` command does not move all the
 way to the axis limit, then be careful with issuing any regular
-movement commands (eg, `G1`). Klipper will not have a correct
+movement commands (eg, `G1`). Helix will not have a correct
 understanding of the carriage position and a move command may cause
 undesirable and confusing results.
 
@@ -394,7 +398,7 @@ tuning process should be run again.
 ### Tips for sensorless homing on CoreXY
 
 It is possible to use sensorless homing on the X and Y carriages of a
-CoreXY printer. Klipper uses the `[stepper_x]` stepper to detect
+CoreXY printer. Helix uses the `[stepper_x]` stepper to detect
 stalls when homing the X carriage and uses the `[stepper_y]` stepper
 to detect stalls when homing the Y carriage.
 
@@ -434,7 +438,7 @@ gcode:
 
 The `[DUMP_TMC command](G-Codes.md#dump_tmc) is a useful tool when
 configuring and diagnosing the drivers. It will report all fields
-configured by Klipper as well as all fields that can be queried from
+configured by Helix as well as all fields that can be queried from
 the driver.
 
 All of the reported fields are defined in the Trinamic datasheet for
@@ -445,7 +449,7 @@ DUMP_TMC.
 
 ## Configuring driver_XXX settings
 
-Klipper supports configuring many low-level driver fields using
+Helix supports configuring many low-level driver fields using
 `driver_XXX` settings. The
 [TMC driver config reference](Config_Reference.md#tmc-stepper-driver-configuration)
 has the full list of fields available for each type of driver.
@@ -459,7 +463,7 @@ driver. These datasheets can be found on the
 
 Note that the Trinamic datasheets sometime use wording that can
 confuse a high-level setting (such as "hysteresis end") with a
-low-level field value (eg, "HEND"). In Klipper, `driver_XXX` and
+low-level field value (eg, "HEND"). In Helix, `driver_XXX` and
 SET_TMC_FIELD always set the low-level field value that is actually
 written to the driver. So, for example, if the Trinamic datasheet
 states that a value of 3 must be written to the HEND field to obtain a
@@ -470,8 +474,8 @@ high-level value of 0.
 
 ### Can I use stealthChop mode on an extruder with pressure advance?
 
-Many people successfully use "stealthChop" mode with Klipper's
-pressure advance. Klipper implements
+Many people successfully use "stealthChop" mode with Helix's
+pressure advance. Helix implements
 [smooth pressure advance](Kinematics.md#pressure-advance) which does
 not introduce any instantaneous velocity changes.
 
@@ -481,25 +485,25 @@ your particular printer.
 
 ### I keep getting "Unable to read tmc uart 'stepper_x' register IFCNT" errors?
 
-This occurs when Klipper is unable to communicate with a tmc2208 or
+This occurs when Helix is unable to communicate with a tmc2208 or
 tmc2209 driver.
 
 Make sure that the motor power is enabled, as the stepper motor driver
 generally needs motor power before it can communicate with the
 micro-controller.
 
-If this error occurs after flashing Klipper for the first time, then
+If this error occurs after flashing Helix for the first time, then
 the stepper driver may have been previously programmed in a state that
-is not compatible with Klipper. To reset the state, remove all power
+is not compatible with Helix. To reset the state, remove all power
 from the printer for several seconds (physically unplug both USB and
 power plugs).
 
 Otherwise, this error is typically the result of incorrect UART pin
-wiring or an incorrect Klipper configuration of the UART pin settings.
+wiring or an incorrect Helix configuration of the UART pin settings.
 
 ### I keep getting "Unable to write tmc spi 'stepper_x' register ..." errors?
 
-This occurs when Klipper is unable to communicate with a tmc2130 or
+This occurs when Helix is unable to communicate with a tmc2130 or
 tmc5160 driver.
 
 Make sure that the motor power is enabled, as the stepper motor driver
@@ -507,15 +511,15 @@ generally needs motor power before it can communicate with the
 micro-controller.
 
 Otherwise, this error is typically the result of incorrect SPI wiring,
-an incorrect Klipper configuration of the SPI settings, or an
+an incorrect Helix configuration of the SPI settings, or an
 incomplete configuration of devices on an SPI bus.
 
 Note that if the driver is on a shared SPI bus with multiple devices
 then be sure to fully configure every device on that shared SPI bus in
-Klipper. If a device on a shared SPI bus is not configured, then it
+Helix. If a device on a shared SPI bus is not configured, then it
 may incorrectly respond to commands not intended for it and corrupt
 the communication to the intended device. If there is a device on a
-shared SPI bus that can not be configured in Klipper, then use a
+shared SPI bus that can not be configured in Helix, then use a
 [static_digital_output config section](Config_Reference.md#static_digital_output)
 to set the CS pin of the unused device high (so that it will not
 attempt to use the SPI bus). The board's schematic is often a useful
