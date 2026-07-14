@@ -716,7 +716,26 @@ Now put it together on the **full printer**.
   disconnected window before cleanup and rejects any non-finite anchor with
   an actuator-specific diagnostic. A multi-window regression plus the
   pressure-advance, fitting, execution-audit, and V1 pulse-equivalence suites
-  pass; a real-print retry remains required to check this item.
+  pass.
+
+  The supervised retry on `e6ce720b` proved that the non-finite-anchor crash
+  was gone, but it was stopped after two real `stepper_z` trajectory
+  underruns and matching TMC phase changes. The print began at 100% before
+  being reduced to 25%; speed changed the audible roughness but was not the
+  cause of these underruns. Both occurred after finite Z motion while the
+  start macro was blocked in its 110 C / 260 C heater waits. Ordinary
+  zero-scan-window axes were still using `itersolve_check_active()`, whose
+  legacy `last_flush_time` cursor is advanced only by the step-pulse path that
+  trajectory steppers intentionally bypass. A completed Z move consequently
+  appeared active forever, received no explicit terminal hold, and exhausted
+  its finite MCU queue during the synchronous wait. Normal zero-window motion
+  now uses the fitter's explicit connected activity endpoint and queues its
+  hold in the same flush; only homing/probing drip mode retains incremental
+  legacy activity probing. Regressions cover an ordinary Z-like move followed
+  by a long synchronous wait and preserve drip streaming. The trajectory,
+  pressure-advance, fitting, motion-audit, and V1 pulse-equivalence suites all
+  pass. Restart Klippy to load this correction before the next supervised
+  real-print retry; item 14.2 remains open until that retry completes cleanly.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

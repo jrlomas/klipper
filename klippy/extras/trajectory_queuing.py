@@ -658,16 +658,37 @@ class TrajectoryStepper:
         gen_time = step_gen_time
         scan_pre = self.ffi_lib.itersolve_get_gen_steps_pre_active(sk)
         scan_post = self.ffi_lib.itersolve_get_gen_steps_post_active(sk)
-        if not scan_pre and not scan_post:
+        # Homing/probing drip mode deliberately streams only a short prefix
+        # of a move and may stop before its nominal trapq endpoint.  Keep the
+        # qualified legacy activity probe for that special case: queuing a
+        # terminal hold at the nominal endpoint would put it behind a trigger
+        # that can halt the executor earlier.
+        #
+        # Outside drip mode, always use the explicit activity-window scan --
+        # even when the kinematics has no pre/post-active margin.  A
+        # trajectory stepper bypasses itersolve_generate_steps(), so the
+        # legacy itersolve last_flush_time cursor never advances.  Using only
+        # itersolve_check_active() would therefore keep a completed ordinary
+        # move "active" forever and omit its terminal hold.  A following
+        # synchronous command (notably M190/M109) can then let the finite MCU
+        # queue drain into the emergency underrun ramp.
+        if not scan_pre and not scan_post and self._in_drip_mode():
             return self._flush_standard_activity(sk, gen_time)
         return self._flush_scan_activity(sk, gen_time)
 
+    def _in_drip_mode(self):
+        printer = getattr(self.owner, 'printer', None)
+        if printer is None:
+            return False
+        motion_queuing = printer.lookup_object('motion_queuing', None)
+        if motion_queuing is None:
+            return False
+        return motion_queuing.check_drip_timing() is not None
+
     def _flush_standard_activity(self, sk, gen_time):
-        # Preserve the qualified homing/ordinary-axis behavior when the
-        # kinematics declares no scan window. In particular, homing drip mode
-        # can replace an interrupted trapq while future rebase barriers are
-        # already queued; ending at the nominal trapq boundary early would
-        # inject another hold into that ordered stream.
+        # Homing drip mode can replace an interrupted trapq while future
+        # rebase barriers are already queued; ending at the nominal trapq
+        # boundary early would inject another hold into that ordered stream.
         active_time = self.ffi_lib.itersolve_check_active(sk, gen_time)
         if ((active_time or self.anchored)
                 and not self.owner.is_mcu_synced(self.mcu)):

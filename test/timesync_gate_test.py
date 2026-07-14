@@ -251,6 +251,22 @@ class SyncedOwner:
         return True
 
 
+class DripMotionQueuing:
+    def check_drip_timing(self):
+        return 12.0
+
+
+class DripPrinter:
+    def lookup_object(self, name, default=None):
+        if name == 'motion_queuing':
+            return DripMotionQueuing()
+        return default
+
+
+class DripOwner(SyncedOwner):
+    printer = DripPrinter()
+
+
 class AnchorFFI:
     def __init__(self, active_time):
         self.active_time = active_time
@@ -410,6 +426,65 @@ def test_trajectory_anchor_starts_at_activity():
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
     assert ffi_lib.finalized == 1
+
+
+def test_ordinary_axis_move_ends_with_hold_before_synchronous_wait():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = DisconnectedWindowsFFI([(10., 10.2)])
+    # This is an ordinary axis: no pressure-advance/input-shaper scan margin.
+    ffi_lib.itersolve_get_gen_steps_pre_active = lambda sk: 0.
+    ffi_lib.itersolve_get_gen_steps_post_active = lambda sk: 0.
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+    anchors = []
+    holds = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        ffi_lib.gen_time = print_time
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = lambda: holds.append(True)
+    stepper._send_segs = lambda count: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    # Model one Z move followed by a long M190/M109 wait. The lookahead
+    # horizon extends well beyond the move, so its hold must be sent now;
+    # there may be no later motion-queue callback during the heater wait.
+    stepper.flush(11., 12.)
+    assert anchors == [10.]
+    assert ffi_lib.generated_to == [10.2]
+    assert holds == [True]
+    assert not stepper.anchored
+
+
+def test_zero_scan_window_keeps_homing_drip_streaming_behavior():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = DripOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = AnchorFFI(12.5)
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.intentions = []
+    anchors = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper.flush(13., 13.4)
+    assert anchors == [12.5]
+    assert ffi_lib.generated_to == [13.4]
+    assert ffi_lib.checked_to == [13.4]
 
 
 def test_trajectory_anchor_includes_kinematic_scan_preroll():
@@ -726,6 +801,11 @@ def main():
     test_trajectory_anchor_starts_at_activity()
     print("PASS: trajectory anchor starts at activity and fits to the"
           " step-generation horizon")
+    test_ordinary_axis_move_ends_with_hold_before_synchronous_wait()
+    print("PASS: ordinary-axis motion ends with a hold before a"
+          " synchronous wait")
+    test_zero_scan_window_keeps_homing_drip_streaming_behavior()
+    print("PASS: homing drip retains incremental streaming behavior")
     test_trajectory_anchor_includes_kinematic_scan_preroll()
     print("PASS: trajectory anchors include pressure-advance and shaping"
           " scan preroll")
