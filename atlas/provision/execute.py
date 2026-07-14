@@ -59,6 +59,13 @@ class ProvisionExecutor:
         cwd = os.path.abspath(os.path.expanduser(plan.klipper_dir))
         os.makedirs(cwd, exist_ok=True)
         config_path = os.path.join(cwd, plan.config_out)
+        build_root = os.path.join(cwd, "out")
+        try:
+            if os.path.commonpath([image, build_root]) == build_root:
+                raise ProvisionBlocked(
+                    "signed image must be outside the build output directory")
+        except ValueError:
+            pass
         with open(config_path, "w") as handle:
             for key, value in plan.kconfig.items():
                 if value in ("n", False, None):
@@ -67,7 +74,8 @@ class ProvisionExecutor:
                     handle.write("%s=%s\n" % (
                         key, "y" if value in ("y", True) else value))
         kconfig_arg = "KCONFIG_CONFIG=%s" % config_path
-        commands = [["make", kconfig_arg, "olddefconfig"],
+        commands = [["make", kconfig_arg, "clean"],
+                    ["make", kconfig_arg, "olddefconfig"],
                     ["make", kconfig_arg]]
         completed = []
         started = self.clock()

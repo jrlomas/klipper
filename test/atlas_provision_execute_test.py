@@ -68,7 +68,8 @@ def test_executor_uses_argv_signed_gate_and_private_audit():
         commands = []
         def run(argv, cwd):
             commands.append((argv, cwd))
-            if argv[0] == "make" and "olddefconfig" not in argv:
+            if (argv[0] == "make" and "olddefconfig" not in argv
+                    and "clean" not in argv):
                 output = pathlib.Path(cwd) / "out" / "klipper.bin"
                 output.parent.mkdir(exist_ok=True)
                 output.write_bytes(image.read_bytes())
@@ -87,8 +88,9 @@ def test_executor_uses_argv_signed_gate_and_private_audit():
         assert all(isinstance(arg, list) for arg, _ in commands)
         assert commands[-1][0][0] == "dfu-util"
         assert commands[-1][0][-1] == str(image.resolve())
+        assert commands[0][0][-1] == "clean"
         assert all(any(arg.startswith("KCONFIG_CONFIG=") for arg in cmd)
-                   for cmd, _ in commands[:2])
+                   for cmd, _ in commands[:3])
         audit = pathlib.Path(tmp) / "audit.json"
         assert (audit.stat().st_mode & 0o777) == 0o600
         assert json.loads(audit.read_text())[0]["status"] == "complete"
@@ -123,7 +125,8 @@ def test_fleet_remediation_reuses_signed_executor():
         image = pathlib.Path(tmp) / "signed.bin"
         image.write_bytes(b"x")
         def run(argv, cwd):
-            if argv[0] == "make" and "olddefconfig" not in argv:
+            if (argv[0] == "make" and "olddefconfig" not in argv
+                    and "clean" not in argv):
                 output = pathlib.Path(cwd) / "out" / "klipper.bin"
                 output.parent.mkdir(exist_ok=True)
                 output.write_bytes(image.read_bytes())
@@ -149,7 +152,8 @@ def test_mismatched_build_never_reaches_flash():
         commands = []
         def run(argv, cwd):
             commands.append(argv)
-            if argv[0] == "make" and "olddefconfig" not in argv:
+            if (argv[0] == "make" and "olddefconfig" not in argv
+                    and "clean" not in argv):
                 output = pathlib.Path(cwd) / "out" / "klipper.bin"
                 output.parent.mkdir(exist_ok=True)
                 output.write_bytes(b"different build")
@@ -164,6 +168,27 @@ def test_mismatched_build_never_reaches_flash():
             raise AssertionError("mismatched build reached the flash command")
         assert not any(command[0] == "dfu-util" for command in commands)
         print("PASS: byte mismatch between build and signed image blocks flash")
+
+
+def test_signed_release_inside_build_tree_is_blocked_before_clean():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = DetectedBoard("dfu", "0483:df11", [BOARD])
+        plan = build_plan(BOARD, target, klipper_dir=tmp)
+        image = pathlib.Path(tmp) / "out" / "release.bin"
+        image.parent.mkdir()
+        image.write_bytes(b"signed")
+        commands = []
+        executor = ProvisionExecutor(pathlib.Path(tmp) / "audit.json",
+                                     runner=lambda argv, cwd: commands.append(argv),
+                                     verifier=lambda path: True)
+        try:
+            executor.execute(plan, image, confirmed=True)
+        except ProvisionBlocked as exc:
+            assert "outside the build output" in str(exc)
+        else:
+            raise AssertionError("release inside build tree reached clean")
+        assert commands == []
+        print("PASS: clean cannot delete or replace the verified release")
 
 
 def test_rp2040_flash_command_names_verified_image_directly():
@@ -195,6 +220,7 @@ def main():
     test_hard_blockers_cannot_be_confirmed_away()
     test_fleet_remediation_reuses_signed_executor()
     test_mismatched_build_never_reaches_flash()
+    test_signed_release_inside_build_tree_is_blocked_before_clean()
     test_rp2040_flash_command_names_verified_image_directly()
     test_katapult_usb_flash_command_names_image_and_offset()
     print("ALL PASS")
