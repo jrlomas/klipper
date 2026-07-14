@@ -453,7 +453,9 @@ def test_wire_record_preserves_exact_segment_coefficients():
     rebase, segment = stepper.owner.records
     assert rebase == {
         'event': 'rebase', 'start_clock': 1_000_000,
-        'end_clock': 1_000_000, 'position_su': 100,
+        'end_clock': 1_000_000,
+        'execution_start_clock': 1_000_000,
+        'execution_end_clock': 1_000_000, 'position_su': 100,
         'absolute_position_su': 100,
         'acc_q32': 100 << 32, 'mcu_position': 2}
     assert segment['start_clock'] == 1_000_000
@@ -519,6 +521,8 @@ def test_g1_quintic_segments_use_higher_order_wire_command():
     assert record['duration'] == 2250
     assert record['execution_duration'] == 12000
     assert record['end_clock'] == 1_002_250
+    assert record['execution_start_clock'] == 5_333_333
+    assert record['execution_end_clock'] == 5_345_333
 
 
 def test_rebase_waits_for_previous_horizon():

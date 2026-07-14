@@ -106,6 +106,23 @@ pass.
   0.27 ms. Both MCU
   reset implementations re-enumerated, reconfigured, and returned Klipper to
   ready without manual intervention.
+* The STM32G0B1 crossing solver now has an explicit practical EBB36 envelope.
+  The on-silicon gate covers zero-velocity startup and time-compresses a
+  captured quintic through approximately 20,000 extruder steps/s while
+  enforcing a 1/8-step spatial bound and 25% timer reserve. A 40,000-step/s
+  probe exceeded that reserve and remains unclaimed. Independent V1/HELIX
+  comparisons match full edge counts and directions for homing, reverse,
+  phase-wrap, short, and 19.2k-step/s profiles. Both freshly flashed boards
+  passed all five self-tests (`traj_kernel=PASS`): EBB36 RTT 0.26 ms and Pico
+  RTT 0.18 ms. The rationale, graphs, negative result, and reproduction steps
+  are in [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md).
+* Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
+  +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
+  X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and
+  3,529 executed pulses with identical 8,762-tick minimum intervals and zero
+  errors. Mixed-clock telemetry now retains both 12 MHz machine-time and
+  64 MHz EBB execution-time fields; the audit can anchor legacy captures from
+  the execution rebase. Heaters were returned to target zero after the test.
 * The 64 MHz EBB36 disciplined to the 12 MHz Pico's machine time for ten
   minutes without losing lock, including 32-bit local-clock wraps. Final
   error was 36 EBB ticks (0.56 us). It reconverged after restart; the

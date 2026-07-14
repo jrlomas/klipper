@@ -41,9 +41,29 @@ def segment_pos(fields, ticks):
         fields.get("crackle", 0))
 
 
+def execution_duration(fields):
+    if "execution_duration" in fields:
+        return fields["execution_duration"]
+    return fields["duration"]
+
+
+def execution_start_clock(fields):
+    if "execution_start_clock" in fields:
+        return fields["execution_start_clock"]
+    return fields.get("_audit_execution_start_clock", fields["start_clock"])
+
+
+def execution_end_clock(fields):
+    if "execution_end_clock" in fields:
+        return fields["execution_end_clock"]
+    if "_audit_execution_end_clock" in fields:
+        return fields["_audit_execution_end_clock"]
+    return execution_start_clock(fields) + execution_duration(fields)
+
+
 def replay_pulses(fields, mpos):
     """Return expected (absolute clock, physical mpos) GPIO step edges."""
-    duration = fields["duration"]
+    duration = execution_duration(fields)
     start = fields["start_acc_q32"]
     finish = fields["end_acc_q32"]
     if finish == start:
@@ -76,13 +96,13 @@ def replay_pulses(fields, mpos):
                 low = middle + 1
         previous_t = low
         mpos += direction
-        pulses.append((fields["start_clock"] + low, mpos))
+        pulses.append((execution_start_clock(fields) + low, mpos))
     return pulses, mpos
 
 
 def replay_pulse_stats(fields, mpos, previous_clock=None):
     """Replay edges without retaining a tuple for every physical pulse."""
-    duration = fields["duration"]
+    duration = execution_duration(fields)
     start = fields["start_acc_q32"]
     finish = fields["end_acc_q32"]
     if finish == start:
@@ -113,7 +133,7 @@ def replay_pulse_stats(fields, mpos, previous_clock=None):
                 low = middle + 1
         previous_t = low
         mpos += direction
-        clock = fields["start_clock"] + low
+        clock = execution_start_clock(fields) + low
         if last_clock is not None and clock > last_clock:
             interval = clock - last_clock
             min_interval = (interval if min_interval is None
@@ -124,7 +144,7 @@ def replay_pulse_stats(fields, mpos, previous_clock=None):
 
 
 def load_records(path, start=None, end=None, actuator=None, session_id=None,
-                 after_line=0):
+                 after_line=0, before_line=None):
     if session_id == "latest":
         latest = None
         with open(path, "r", encoding="utf-8") as stream:
@@ -143,6 +163,8 @@ def load_records(path, start=None, end=None, actuator=None, session_id=None,
         for line_number, line in enumerate(stream, 1):
             if line_number <= after_line:
                 continue
+            if before_line is not None and line_number >= before_line:
+                break
             try:
                 record = json.loads(line)
             except (ValueError, TypeError):
@@ -172,6 +194,52 @@ def audit(records):
     rebases = {}
     segments_by_oid = {}
     intention_ranges = {}
+
+    # Records written before execution-clock metadata was added still contain
+    # everything needed for an exact mixed-clock audit: a rebase execution
+    # anchors the local MCU clock, and each following intention carries its
+    # local execution duration.  Infer private audit fields without changing
+    # the persisted evidence.  New records use their explicit fields.
+    execution_rebases = {}
+    for record in executions:
+        fields = record["fields"]
+        if fields.get("event") != "rebase":
+            continue
+        key = (fields["src_oid"], signed32(fields["position_su"]))
+        execution_rebases.setdefault(key, []).append(fields["mcu_clock"])
+    rebase_cursor = dict((key, 0) for key in execution_rebases)
+
+    legacy_streams = {}
+    for record in intentions:
+        fields = record["fields"]
+        legacy_streams.setdefault(fields["actuator"], []).append(fields)
+    for stream in legacy_streams.values():
+        stream.sort(key=lambda f: (f["start_clock"],
+                                   f["event"] != "rebase"))
+        local_clock = None
+        for fields in stream:
+            if "execution_start_clock" in fields:
+                local_clock = execution_end_clock(fields)
+                continue
+            if fields["event"] == "rebase":
+                key = (fields["oid"], signed32(fields["position_su"]))
+                clocks = execution_rebases.get(key, ())
+                index = rebase_cursor.get(key, 0)
+                if index < len(clocks):
+                    local_clock = clocks[index]
+                    rebase_cursor[key] = index + 1
+                else:
+                    # Same-clock telemetry and intention-only failure tests do
+                    # not need a flight-log anchor.
+                    local_clock = fields["start_clock"]
+                fields["_audit_execution_start_clock"] = local_clock
+                fields["_audit_execution_end_clock"] = local_clock
+                continue
+            if local_clock is None:
+                local_clock = fields["start_clock"]
+            fields["_audit_execution_start_clock"] = local_clock
+            local_clock += execution_duration(fields)
+            fields["_audit_execution_end_clock"] = local_clock
 
     def checked_replay_stats(fields, mpos, previous_clock, context):
         try:
@@ -204,9 +272,9 @@ def audit(records):
                 last_clock = fields["end_clock"]
                 last_acc = fields["acc_q32"]
                 stream_prev = "rebase"
-                rebases[(oid, fields["start_clock"] & 0xffffffff,
+                rebases[(oid, execution_start_clock(fields) & 0xffffffff,
                          fields["position_su"])] = fields
-                range_start = fields["start_clock"]
+                range_start = execution_start_clock(fields)
                 continue
             if last_clock != fields["start_clock"]:
                 errors.append("%s: clock discontinuity %s != %s" % (
@@ -214,7 +282,7 @@ def audit(records):
             if last_acc != fields["start_acc_q32"]:
                 errors.append("%s: accumulator discontinuity" % actuator)
             want_end = fields["start_acc_q32"] + end_delta(
-                fields["duration"], fields.get("velocity", 0),
+                execution_duration(fields), fields.get("velocity", 0),
                 fields.get("accel", 0), fields.get("jerk", 0),
                 fields.get("snap", 0), fields.get("crackle", 0))
             if want_end != fields["end_acc_q32"]:
@@ -238,13 +306,14 @@ def audit(records):
             stream_prev = event
             terminal_holds += event == "hold"
             wire_end = signed32(last_acc >> 32)
-            expected_ends.add((oid, last_clock & 0xffffffff, wire_end))
-            expected_fields[(oid, last_clock & 0xffffffff,
+            execution_end = execution_end_clock(fields)
+            expected_ends.add((oid, execution_end & 0xffffffff, wire_end))
+            expected_fields[(oid, execution_end & 0xffffffff,
                              wire_end)] = fields
             segments_by_oid.setdefault(oid, []).append(fields)
             if event == "hold" and range_start is not None:
                 intention_ranges.setdefault(oid, []).append((
-                    range_start & 0xffffffff, last_clock - range_start))
+                    range_start & 0xffffffff, execution_end - range_start))
                 range_start = None
         if stream and stream_prev != "hold":
             errors.append("%s: recorded path does not end in a hold" % actuator)
@@ -259,7 +328,8 @@ def audit(records):
     # disambiguates stale ring records whose 32-bit MCU clock happens to alias
     # a later intention interval after wrap.
     first_rebase_clock = min(
-        (fields["start_clock"] for fields in rebases.values()), default=None)
+        (execution_start_clock(fields) for fields in rebases.values()),
+        default=None)
     sequence_anchors = []
     if first_rebase_clock is not None:
         for record in executions:
@@ -268,7 +338,8 @@ def audit(records):
                    signed32(fields["position_su"]))
             rebase = rebases.get(key)
             if (fields["event"] == "rebase" and rebase is not None
-                    and rebase["start_clock"] == first_rebase_clock):
+                    and execution_start_clock(rebase)
+                    == first_rebase_clock):
                 sequence_anchors.append(fields["seq"])
     sequence_anchor = min(sequence_anchors) if sequence_anchors else None
     unique = {}
@@ -351,9 +422,9 @@ def audit(records):
             containing = []
             for segment in candidates:
                 elapsed = ((fields["mcu_clock"]
-                            - (segment["start_clock"] & 0xffffffff))
+                            - (execution_start_clock(segment) & 0xffffffff))
                            & 0xffffffff)
-                if elapsed <= segment["duration"]:
+                if elapsed <= execution_duration(segment):
                     containing.append((segment, elapsed))
             if not containing:
                 errors.append("trigger outside recorded intention oid=%d"
@@ -375,6 +446,10 @@ def audit(records):
                                                   fields["mcu_clock"]))
                 else:
                     partial = dict(segment, duration=elapsed,
+                                   execution_duration=elapsed,
+                                   execution_end_clock=(
+                                       execution_start_clock(segment)
+                                       + elapsed),
                                    end_acc_q32=segment_pos(segment, elapsed))
                     stats = executed_stats[oid]
                     count, mpos, interval, last_clock = (
@@ -418,11 +493,14 @@ def main():
     parser.add_argument(
         "--after-line", type=int, default=0,
         help="ignore records through this one-based input line")
+    parser.add_argument(
+        "--before-line", type=int,
+        help="ignore this one-based input line and everything after it")
     args = parser.parse_args()
     try:
         records = load_records(
             args.path, args.start, args.end, args.actuator,
-            args.session, args.after_line)
+            args.session, args.after_line, args.before_line)
     except ValueError as exc:
         print("ERROR:", exc)
         return 2

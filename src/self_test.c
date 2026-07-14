@@ -25,6 +25,7 @@
 uint_fast8_t traj_stepper_test_hold_boundary(void);
 uint_fast8_t traj_stepper_test_halfstep_phase(void);
 uint_fast8_t traj_stepper_test_cruise_recurrence(void);
+uint_fast8_t traj_stepper_test_quintic_deadline(uint32_t *max_elapsed);
 #endif
 
 enum {
@@ -142,6 +143,11 @@ test_traj_kernel(uint32_t *value)
     }
     if (!traj_stepper_test_cruise_recurrence()) {
         *value = 0x80000002;
+        return ST_FAIL;
+    }
+    uint32_t solver_elapsed;
+    if (!traj_stepper_test_quintic_deadline(&solver_elapsed)) {
+        *value = 0x81000000 | (solver_elapsed & 0x00ffffff);
         return ST_FAIL;
     }
     *value = ARRAY_SIZE(traj_golden);

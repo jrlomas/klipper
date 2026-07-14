@@ -78,6 +78,9 @@ actuator model that isn't nailed to stepper motors. HELIX carries
 segments all the way up to **cubic and quintic Bézier** curves for jerk-
 and snap-limited motion, chained so exactly that thousands of them in a
 row accumulate zero positional drift.
+The practical cost of moving the crossing solver onto a 64 MHz
+STM32G0B1—and the V1 edge-parity, deadline, and hot-extrusion evidence—is
+recorded in the [EBB36 motion qualification](STM32G0B1_Helix_Qualification.md).
 → [doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md)
 
 ## A machine that agrees on the time

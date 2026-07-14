@@ -145,6 +145,103 @@ smul_shr(int64_t a, uint32_t t, unsigned sh)
     return neg ? -(int64_t)r : (int64_t)r;
 }
 
+// Deadline-path specialization.  Physical fitted segments overwhelmingly
+// keep each Horner intermediate in int32; in that range a single signed
+// 32x32->64 multiply is sufficient.  Preserve the generic guarded 96-bit
+// path for extreme-but-valid intermediates.
+static inline int64_t
+smul_shr_deadline(int64_t a, uint32_t t, unsigned sh)
+{
+    if (a > INT32_MAX || a < INT32_MIN)
+        return smul_shr(a, t, sh);
+    uint32_t magnitude32 = a < 0
+        ? -(uint32_t)(int32_t)a : (uint32_t)a;
+    uint32_t a0 = magnitude32 & 0xffff, a1 = magnitude32 >> 16;
+    uint32_t t0 = t & 0xffff, t1 = t >> 16;
+    uint32_t p0 = a0 * t0;
+    uint32_t p1 = a0 * t1;
+    uint32_t p2 = a1 * t0;
+    uint32_t middle = (p0 >> 16) + (p1 & 0xffff) + (p2 & 0xffff);
+    uint32_t product_lo = (p0 & 0xffff) | (middle << 16);
+    uint32_t product_hi = a1 * t1 + (p1 >> 16) + (p2 >> 16)
+        + (middle >> 16);
+    uint64_t magnitude = ((uint64_t)product_hi << 32) | product_lo;
+    if (!sh)
+        return a < 0 ? -(int64_t)magnitude : (int64_t)magnitude;
+    magnitude >>= sh;
+    return a < 0 ? -(int64_t)magnitude : (int64_t)magnitude;
+}
+
+static inline int64_t
+scale_i32_deadline(int32_t value, uint32_t factor)
+{
+    uint32_t magnitude = value < 0
+        ? -(uint32_t)value : (uint32_t)value;
+    if (magnitude <= UINT32_MAX / factor) {
+        uint32_t product = magnitude * factor;
+        return value < 0 ? -(int64_t)product : (int64_t)product;
+    }
+    return (int64_t)value * factor;
+}
+
+// Exact constant divisions used by the deadline-oriented Horner evaluators.
+// A general signed 64-bit divide is particularly costly on Cortex-M0/M0+.
+// Decomposing at 2^32 (whose remainder is 16 for both 24 and 120) reduces the
+// work to one or two unsigned 32-bit divides and a very small correction loop.
+// Keep quotient and remainder in one result so ARM EABI targets make a single
+// __aeabi_uidivmod call.  noinline prevents LTO from splitting it back into
+// separate quotient and remainder operations.
+static uint64_t noinline
+udivmod32_pair(uint32_t value, uint32_t divisor)
+{
+    return ((uint64_t)(value % divisor) << 32) | (value / divisor);
+}
+
+static int64_t
+sdiv64_120(int64_t value)
+{
+    int negative = value < 0;
+    uint64_t magnitude = negative ? -(uint64_t)value : (uint64_t)value;
+    uint32_t hi = magnitude >> 32;
+    uint32_t lo = magnitude;
+    uint64_t hi_qr = udivmod32_pair(hi, 120);
+    uint64_t lo_qr = udivmod32_pair(lo, 120);
+    uint32_t qhi = hi_qr;
+    uint32_t rhi = hi_qr >> 32;
+    uint32_t qlo = lo_qr;
+    uint32_t rlo = lo_qr >> 32;
+    qlo += rhi * 35791394U; // floor(2^32 / 120)
+    uint32_t correction = rhi * 16U + rlo;
+    while (correction >= 120) {
+        qlo++;
+        correction -= 120;
+    }
+    uint64_t quotient = ((uint64_t)qhi << 32) | qlo;
+    return negative ? -(int64_t)quotient : (int64_t)quotient;
+}
+
+static int32_t
+sdiv64_24_to_s32(int64_t value)
+{
+    int negative = value < 0;
+    uint64_t magnitude = negative ? -(uint64_t)value : (uint64_t)value;
+    if (magnitude > (uint64_t)INT32_MAX * 24U)
+        shutdown("traj segment overflow");
+    uint32_t hi = magnitude >> 32; // at most 11 after the range check
+    uint32_t lo = magnitude;
+    uint32_t quotient = hi * 178956970U; // floor(2^32 / 24)
+    uint64_t lo_qr = udivmod32_pair(lo, 24);
+    uint32_t lo_q = lo_qr;
+    uint32_t lo_r = lo_qr >> 32;
+    quotient += lo_q;
+    uint32_t correction = hi * 16U + lo_r;
+    while (correction >= 24) {
+        quotient++;
+        correction -= 24;
+    }
+    return negative ? -(int32_t)quotient : (int32_t)quotient;
+}
+
 // coeff * t^nmul, with a >>16 after the first nsh multiplies, then a
 // truncate-toward-zero divide by fact. Shifts are applied early so the
 // running magnitude tracks the (small) true term value.
@@ -200,6 +297,76 @@ trajq_pos_at_seg(struct trajq *tq, uint32_t t)
     }
 #endif
     return p;
+}
+
+// Interrupt-deadline versions of the higher-order evaluators. Combining the
+// Taylor terms over one denominator permits Horner evaluation with four
+// multiply-shifts instead of independently constructing t^2 through t^5.
+// The result may differ from the exact term-by-term evaluator by a tiny
+// fraction of one microstep because truncation occurs after the combined
+// numerator; it is used only to find pulse crossing clocks. Exact segment
+// chaining and endpoint authority remain with trajq_end_delta_seg().
+int64_t
+trajq_pos120_at_seg_fast(struct trajq *tq, uint32_t t)
+{
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    uint8_t order = tq->seg_flags & TSEG_POLY_MASK;
+    if (order) {
+        // 120*q(t)/t = 120*v + x*(60*a + x*(20*j
+        //                   + x*(5*s + x*c)))), x=t/2^16.
+        int64_t h = order == TSEG_POLY_QUINTIC ? tq->crackle : 0;
+        h = (order == TSEG_POLY_QUINTIC
+             ? scale_i32_deadline(tq->snap, 5) : 0)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->jerk, 20)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->accel, 60)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->velocity, 120)
+            + smul_shr_deadline(h, t, 16);
+        return smul_shr_deadline(h, t, 0);
+    }
+#endif
+    return trajq_pos_at(tq->velocity, tq->accel, t) * 120;
+}
+
+int64_t
+trajq_velocity24_at_seg_fast(struct trajq *tq, uint32_t t)
+{
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    uint8_t order = tq->seg_flags & TSEG_POLY_MASK;
+    if (order) {
+        // 24*q'(t) = 24*v + x*(24*a + x*(12*j
+        //                    + x*(4*s + x*c))), x=t/2^16.
+        int64_t h = order == TSEG_POLY_QUINTIC ? tq->crackle : 0;
+        h = (order == TSEG_POLY_QUINTIC
+             ? scale_i32_deadline(tq->snap, 4) : 0)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->jerk, 12)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->accel, 24)
+            + smul_shr_deadline(h, t, 16);
+        h = scale_i32_deadline(tq->velocity, 24)
+            + smul_shr_deadline(h, t, 16);
+        if ((h < 0 ? -(uint64_t)h : (uint64_t)h)
+            > (uint64_t)INT32_MAX * 24U)
+            shutdown("traj segment overflow");
+        return h;
+    }
+#endif
+    return (int64_t)trajq_velocity_at(tq->velocity, tq->accel, t) * 24;
+}
+
+int64_t
+trajq_pos_at_seg_fast(struct trajq *tq, uint32_t t)
+{
+    return sdiv64_120(trajq_pos120_at_seg_fast(tq, t));
+}
+
+int32_t
+trajq_velocity_at_seg_fast(struct trajq *tq, uint32_t t)
+{
+    return sdiv64_24_to_s32(trajq_velocity24_at_seg_fast(tq, t));
 }
 
 // Exact Q32.32 end-of-segment delta including j/s/c terms.

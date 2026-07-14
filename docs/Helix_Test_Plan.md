@@ -318,7 +318,8 @@ Prove the wire before you trust it to carry motion.
   `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
   with `--session latest` and a narrow `--start` / `--end` machine-time
   window. Older telemetry without session identifiers can be isolated with
-  `--after-line`. The audit replays
+  `--after-line`; `--before-line` closes a line-bounded evidence window. The
+  audit replays
   every half-step crossing from the exact persisted wire coefficients and
   matches each MCU flight-recorder boundary. This requires
   `[failure_recovery]` with `execlog_stream_max` greater than zero; host
@@ -343,6 +344,12 @@ Prove the wire before you trust it to carry motion.
   boundaries, and reported zero errors. The Z40→Z30 return independently
   replayed eight segments / 8,000 pulses, matched ten boundaries, and also
   reported zero errors. All three post-move TMC `GSTAT` reads were zero.
+  The hot EBB36 +5 mm / 10 mm/s extrusion window (telemetry lines
+  77268–77297) passed after mixed-clock audit metadata was corrected: eight
+  quintic segments, one hold, 3,529 intended and 3,529 executed pulses,
+  identical 8,762-local-tick minimum intervals, eight matched boundaries,
+  and zero errors. New records persist both machine and local execution
+  clocks; the auditor infers the local rebase anchor for legacy captures.
 
 ---
 
@@ -376,6 +383,26 @@ Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
   The host/MCU integer mirror is bit-exact over a 4,000-segment mixed chain,
   and the hardware quintic audit passed a 32-segment chain. A >=1,000-segment
   hardware return-to-origin run remains.
+- [x] **5.4 — EBB36 quintic compute envelope.** Prove that onboard crossing
+  computation covers the practical extruder role rather than merely fitting
+  curves on the host. The STM32G0B1 live self-test qualifies a captured
+  quintic at 1x through 16x while holding every crossing within 1/8 step and
+  reserving 25% of the following pulse interval. The 16x case is about
+  20,000 steps/s (28.3 mm/s filament at the active 705.5 steps/mm gearing)
+  and passes. A 32x / about 40,000-step/s probe took 1,304 ticks (20.4 us) at
+  its failing crossing and was rejected against the 18.75 us reserve budget;
+  it is not claimed. V1-versus-HELIX regressions match the complete edge count
+  and direction stream for homing, reverse, phase-wrap, short, and 19.2k
+  step/s quintic profiles. See
+  [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md).
+- [x] **5.5 — Hot EBB36 extrusion integration.** At X=60, Y=60, Z=100 with
+  ABS at 260 C and the bed off, completed +10 mm at 2 mm/s, +5 mm at
+  10 mm/s, and a bounded -2/+2 mm retract/unretract at 5 mm/s. Reported and
+  live E positions ended at E=15, the printer remained ready, heaters were
+  returned to target zero, and no underrun/fault records were present. The
+  focused 10 mm/s flight audit is the 3,529-pulse evidence in 4.6. This proves
+  the hotend/driver/EBB path at realistic flow; it does not substitute for a
+  sustained sliced print.
 
 ---
 

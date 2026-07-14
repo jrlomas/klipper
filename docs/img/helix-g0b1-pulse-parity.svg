@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="430" viewBox="0 0 920 430" role="img" aria-labelledby="title desc">
+  <title id="title">Klipper V1 and Helix quintic pulse-count parity</title>
+  <desc id="desc">Five paired horizontal bars show identical physical pulse counts for Klipper V1 and Helix.</desc>
+  <rect width="920" height="430" fill="#10151d" rx="12"/>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, sans-serif; fill: #e8edf2; }
+    .muted { fill: #9eabb8; font-size: 12px; }
+    .label { font-size: 14px; }
+    .value { font-size: 12px; font-weight: 700; }
+    .grid { stroke: #34404d; stroke-width: 1; }
+  </style>
+  <text x="26" y="34" font-size="20" font-weight="700">Physical edge-count parity: V1 firehose vs Helix quintic</text>
+  <rect x="675" y="19" width="16" height="10" fill="#4a8fe7"/><text x="697" y="29" class="muted">V1</text>
+  <rect x="748" y="19" width="16" height="10" fill="#38c98b"/><text x="770" y="29" class="muted">Helix</text>
+  <line x1="160" y1="58" x2="160" y2="385" class="grid"/>
+  <line x1="335" y1="58" x2="335" y2="385" class="grid"/>
+  <line x1="510" y1="58" x2="510" y2="385" class="grid"/>
+  <line x1="685" y1="58" x2="685" y2="385" class="grid"/>
+  <line x1="860" y1="58" x2="860" y2="385" class="grid"/>
+  <text x="160" y="405" text-anchor="middle" class="muted">0</text>
+  <text x="335" y="405" text-anchor="middle" class="muted">1,000</text>
+  <text x="510" y="405" text-anchor="middle" class="muted">2,000</text>
+  <text x="685" y="405" text-anchor="middle" class="muted">3,000</text>
+  <text x="860" y="405" text-anchor="middle" class="muted">4,000 pulses</text>
+
+  <text x="145" y="89" text-anchor="end" class="label">Homing profile</text>
+  <rect x="160" y="69" width="700" height="13" fill="#4a8fe7" rx="3"/>
+  <rect x="160" y="86" width="700" height="13" fill="#38c98b" rx="3"/>
+  <text x="850" y="96" text-anchor="end" class="value">4,000 / 4,000</text>
+
+  <text x="145" y="154" text-anchor="end" class="label">Reverse retract</text>
+  <rect x="160" y="134" width="420" height="13" fill="#4a8fe7" rx="3"/>
+  <rect x="160" y="151" width="420" height="13" fill="#38c98b" rx="3"/>
+  <text x="586" y="161" class="value">2,400 / 2,400</text>
+
+  <text x="145" y="219" text-anchor="end" class="label">Phase wrap</text>
+  <rect x="160" y="199" width="560" height="13" fill="#4a8fe7" rx="3"/>
+  <rect x="160" y="216" width="560" height="13" fill="#38c98b" rx="3"/>
+  <text x="726" y="226" class="value">3,200 / 3,200</text>
+
+  <text x="145" y="284" text-anchor="end" class="label">Short move</text>
+  <rect x="160" y="264" width="42" height="13" fill="#4a8fe7" rx="3"/>
+  <rect x="160" y="281" width="42" height="13" fill="#38c98b" rx="3"/>
+  <text x="208" y="291" class="value">240 / 240</text>
+
+  <text x="145" y="349" text-anchor="end" class="label">19.2k step/s</text>
+  <rect x="160" y="329" width="700" height="13" fill="#4a8fe7" rx="3"/>
+  <rect x="160" y="346" width="700" height="13" fill="#38c98b" rx="3"/>
+  <text x="850" y="356" text-anchor="end" class="value">4,000 / 4,000</text>
+</svg>

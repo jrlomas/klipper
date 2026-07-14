@@ -148,6 +148,14 @@ int64_t trajq_pos_at(int32_t velocity, int32_t accel, uint32_t t);
 // support is compiled out these reduce exactly to the quadratic form.
 int64_t trajq_pos_at_seg(struct trajq *tq, uint32_t t);
 int32_t trajq_velocity_at_seg(struct trajq *tq, uint32_t t);
+// Deadline-oriented crossing evaluators. Exact chained endpoints continue to
+// use trajq_end_delta_seg().
+int64_t trajq_pos_at_seg_fast(struct trajq *tq, uint32_t t);
+int32_t trajq_velocity_at_seg_fast(struct trajq *tq, uint32_t t);
+// Raw Horner numerators used by the quintic Newton solver.  They represent
+// 120*position and 24*velocity, avoiding constant division in the timer IRQ.
+int64_t trajq_pos120_at_seg_fast(struct trajq *tq, uint32_t t);
+int64_t trajq_velocity24_at_seg_fast(struct trajq *tq, uint32_t t);
 int64_t trajq_end_delta_seg(struct trajq *tq);
 void trajq_note_underrun_wake(void);
 int trajq_check_event_wake(void);

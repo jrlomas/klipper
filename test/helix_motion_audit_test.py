@@ -58,6 +58,60 @@ def test_clean_path_replays_and_matches_boundaries():
     print("PASS: exact wire coefficients replay to matching MCU boundaries")
 
 
+def mixed_clock_records(explicit_clocks):
+    velocity, exec_duration = 65_536_000, 100
+    finish = audit.end_delta(exec_duration, velocity, 0)
+    rebase = {
+        "start_clock": 1000, "end_clock": 1000, "position_su": 0,
+        "acc_q32": 0, "mcu_position": 0}
+    segment = {
+        "start_clock": 1000, "end_clock": 1020, "duration": 20,
+        "execution_duration": exec_duration,
+        "flags": 0, "velocity": velocity, "accel": 0, "jerk": 0,
+        "snap": 0, "crackle": 0, "start_position_su": 0,
+        "end_position_su": finish >> 32, "start_acc_q32": 0,
+        "end_acc_q32": finish}
+    hold = {
+        "start_clock": 1020, "end_clock": 1022, "duration": 2,
+        "execution_duration": 10,
+        "flags": 1, "velocity": 0, "accel": 0, "jerk": 0,
+        "snap": 0, "crackle": 0, "start_position_su": finish >> 32,
+        "end_position_su": finish >> 32, "start_acc_q32": finish,
+        "end_acc_q32": finish}
+    if explicit_clocks:
+        rebase.update(execution_start_clock=5000,
+                      execution_end_clock=5000)
+        segment.update(execution_start_clock=5000,
+                       execution_end_clock=5100)
+        hold.update(execution_start_clock=5100,
+                    execution_end_clock=5110)
+    return [
+        intention("rebase", rebase),
+        intention("segment", segment),
+        intention("hold", hold),
+        execution(20, "rebase", 5000, 0),
+        execution(21, "segment_done", 5100, finish >> 32),
+        execution(22, "segment_done", 5110, finish >> 32),
+        execution(23, "hold", 5110, finish >> 32),
+    ]
+
+
+def test_explicit_mixed_clock_metadata_replays_in_execution_domain():
+    summaries, matched, unused_triggers, executed, errors = audit.audit(
+        mixed_clock_records(True))
+    assert summaries and not errors, errors
+    assert matched == 3 and executed == 4
+    print("PASS: explicit mixed-clock metadata audits in the MCU domain")
+
+
+def test_legacy_mixed_clock_metadata_is_anchored_by_execution_rebase():
+    summaries, matched, unused_triggers, executed, errors = audit.audit(
+        mixed_clock_records(False))
+    assert summaries and not errors, errors
+    assert matched == 3 and executed == 4
+    print("PASS: legacy mixed-clock telemetry infers its MCU clock anchor")
+
+
 def test_underrun_is_a_failed_audit():
     records = [execution(1, "underrun", 1234, 12)]
     errors = audit.audit(records)[-1]
@@ -211,11 +265,15 @@ def test_record_loader_isolates_latest_session_and_line_floor():
         assert [r["session_id"] for r in loaded] == ["new", "new"]
         loaded = audit.load_records(path, session_id="new", after_line=2)
         assert [r["machine_time"] for r in loaded] == [6.]
+        loaded = audit.load_records(path, before_line=3)
+        assert [r["session_id"] for r in loaded] == ["old", "new"]
     print("PASS: audit loader isolates restart sessions and line floors")
 
 
 def main():
     test_clean_path_replays_and_matches_boundaries()
+    test_explicit_mixed_clock_metadata_replays_in_execution_domain()
+    test_legacy_mixed_clock_metadata_is_anchored_by_execution_rebase()
     test_underrun_is_a_failed_audit()
     test_intentions_without_execution_evidence_fail_closed()
     test_stale_ring_records_before_rebase_sequence_are_ignored()

@@ -26,7 +26,9 @@ built on Klipper 0.13.0.
 > capability is opt-in and classic Klipper remains beside it. **Do not run
 > 0.9 on hardware you are not prepared to supervise closely.** See the
 > [implementation status audit](Helix_Implementation_Status.md) for the
-> verified boundary.
+> verified boundary. The practical MCU-compute versus V1 firehose trade is
+> quantified for the 64 MHz EBB36 in the
+> [STM32G0B1 motion qualification](STM32G0B1_Helix_Qualification.md).
 >
 > **Road to 1.0.** Expand the current V0 hardware checkpoint across the board
 > and transport matrix, provision the applicable product signing keys, and

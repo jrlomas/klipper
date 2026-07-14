@@ -395,6 +395,14 @@ class TrajectoryStepper:
         print_time = machine_mcu.clock_to_print_time(machine_clock)
         return self.mcu.print_time_to_clock(print_time)
 
+    def _execution_clock_for_record(self, machine_clock):
+        # Test/minimal owners without an MCU use one clock domain.  Live
+        # secondary-MCU records retain both domains so the flight recorder
+        # can be reconciled against the exact local execution timestamps.
+        if getattr(self, 'mcu', None) is None:
+            return int(machine_clock)
+        return int(self._local_clock_for_machine_clock(machine_clock))
+
     # Called from MCU_stepper._build_config
     def build_config(self, step_pin, dir_pin, invert_step, invert_dir,
                      step_pulse_ticks):
@@ -903,11 +911,14 @@ class TrajectoryStepper:
 
     def _wire_rebase(self, clock, pos_su, mcu_pos):
         self.wire_clock = int(clock)
+        self.execution_clock = self._execution_clock_for_record(clock)
         self.wire_acc = int(pos_su) << 32
         wire_pos_su = _signed_i32(pos_su)
         self._record_wire({
             'event': 'rebase', 'start_clock': self.wire_clock,
             'end_clock': self.wire_clock,
+            'execution_start_clock': self.execution_clock,
+            'execution_end_clock': self.execution_clock,
             'position_su': int(wire_pos_su),
             'absolute_position_su': int(pos_su),
             'acc_q32': int(self.wire_acc),
@@ -920,6 +931,10 @@ class TrajectoryStepper:
                 or getattr(self, 'wire_acc', None) is None):
             return
         start_clock = self.wire_clock
+        if getattr(self, 'execution_clock', None) is None:
+            self.execution_clock = self._execution_clock_for_record(
+                start_clock)
+        execution_start_clock = self.execution_clock
         start_acc = self.wire_acc
         start_abs_pos = self.wire_acc >> 32
         if exec_duration is None:
@@ -927,11 +942,14 @@ class TrajectoryStepper:
         self.wire_acc += py_end_delta_ho(
             exec_duration, velocity, accel, jerk, snap, crackle)
         self.wire_clock += int(duration)
+        self.execution_clock += int(exec_duration)
         self._record_wire({
             'event': 'hold' if flags & 1 else 'segment',
             'start_clock': start_clock, 'end_clock': self.wire_clock,
             'duration': int(duration),
             'execution_duration': int(exec_duration), 'flags': int(flags),
+            'execution_start_clock': int(execution_start_clock),
+            'execution_end_clock': int(self.execution_clock),
             'velocity': int(velocity), 'accel': int(accel),
             'jerk': int(jerk), 'snap': int(snap), 'crackle': int(crackle),
             'start_position_su': _signed_i32(start_abs_pos),
