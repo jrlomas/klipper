@@ -108,6 +108,11 @@ for every participating actuator.  This is a zero-displacement terminal state,
 not a dwell visible to kinematics.  It prevents a tiny fixed-point residual in
 one fitted CoreXY stream from looking like live velocity when its queue drains;
 a genuinely moving empty queue still takes the configured underrun ramp.
+A kinematic position change may replace the trapq before an idle flush occurs
+(notably a Z safety lift immediately followed by Z homing). In that case the
+next anchor first appends the same explicit hold to the old wire horizon, then
+orders its rebase barrier after that hold. A confirmed trigger or underrun is
+already a physical stop and therefore does not append a stale pre-rebase hold.
 
 Before any rebase or segment mutates the fitter's chained anchor, the owner
 checks the target MCU through `timesync.is_mcu_synced()`. That state is

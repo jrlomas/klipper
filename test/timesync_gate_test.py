@@ -298,7 +298,10 @@ def test_trajectory_end_always_queues_terminal_hold():
     stepper.intentions = []
     stepper.hold_cmd = FakeCommand()
     stepper.terminal_hold_ticks = 1000
+    stepper.wire_clock = 12_500_000
+    stepper.wire_acc = 0
     stepper.rebase_min_clock = 0
+    stepper._record_wire = lambda fields: None
     stepper._send_segs = lambda n: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     stepper.flush(12.6, 12.6)
@@ -360,6 +363,7 @@ def test_rebase_waits_for_previous_horizon():
     stepper.oid = 4
     stepper.su_per_mm = 100.
     stepper.intentions = []
+    stepper.rebase_requires_hold = False
     stepper.rebase_min_clock = 9_000_000
     stepper._anchor(10.)
     assert stepper.rebase_cmd.sent == [[4, 10_000_000, 777, 12]]
@@ -367,6 +371,59 @@ def test_rebase_waits_for_previous_horizon():
         'minclock': 9_000_000, 'reqclock': 10_000_000}]
     assert stepper.rebase_min_clock == 0
     assert stepper.ffi_lib.offset == 652.
+
+
+def test_active_path_is_held_before_rebase_boundary():
+    class PhysicalStepper:
+        def commanded_to_mcu_position_su(self, pos):
+            return 777
+        def get_mcu_position(self, pos):
+            return 12
+    class RebaseFFI:
+        def segfit_get_position(self, segfit, print_time):
+            return 1.25
+        def segfit_set_position_offset(self, segfit, offset):
+            self.offset = offset
+        def segfit_set_anchor(self, segfit, print_time, acc):
+            self.anchor = (print_time, acc)
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = PhysicalStepper()
+    stepper.ffi_lib = RebaseFFI()
+    stepper.segfit = object()
+    stepper.hold_cmd = FakeCommand()
+    stepper.rebase_cmd = FakeCommand()
+    stepper.oid = 4
+    stepper.name = 'stepper_z'
+    stepper.su_per_mm = 100.
+    stepper.terminal_hold_ticks = 1000
+    stepper.wire_clock = 9_000_000
+    stepper.wire_acc = 500 << 32
+    stepper.intentions = []
+    stepper.rebase_requires_hold = True
+    stepper.rebase_min_clock = 0
+    stepper._record_wire = lambda fields: None
+    stepper._anchor(10.)
+    assert stepper.hold_cmd.sent == [[4, 1000]]
+    assert stepper.rebase_cmd.sent == [[4, 10_000_000, 777, 12]]
+    assert stepper.rebase_cmd.send_options == [{
+        'minclock': 9_001_000, 'reqclock': 10_000_000}]
+    assert not stepper.rebase_requires_hold
+
+
+def test_confirmed_stop_does_not_queue_a_pre_rebase_hold():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.anchored = True
+    stepper.need_rebase = False
+    stepper.rebase_requires_hold = False
+    stepper.rebase_min_clock = 1234
+    stepper.note_rebase_needed(stopped=True)
+    assert stepper.need_rebase and not stepper.anchored
+    assert not stepper.rebase_requires_hold
+    assert stepper.rebase_min_clock == 0
 
 
 def test_value_trajectory_fails_before_fitter_advance():
@@ -413,6 +470,10 @@ def main():
           " chained endpoints")
     test_rebase_waits_for_previous_horizon()
     print("PASS: a new rebase waits for the previous physical horizon")
+    test_active_path_is_held_before_rebase_boundary()
+    print("PASS: an active path gets an explicit hold before rebase")
+    test_confirmed_stop_does_not_queue_a_pre_rebase_hold()
+    print("PASS: a confirmed trigger stop rebases without a stale hold")
     test_value_trajectory_fails_before_fitter_advance()
     print("PASS: value fitting fails before unsynchronized send")
 

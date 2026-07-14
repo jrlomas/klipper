@@ -175,6 +175,7 @@ class TrajectoryStepper:
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
+        self.rebase_requires_hold = False
         self.rebase_min_clock = 0
         self.wire_clock = None
         self.wire_acc = None
@@ -276,11 +277,18 @@ class TrajectoryStepper:
         self.ffi_lib.segfit_set_cruise_fastpath(self.segfit, 1)
 
     def note_rebase_needed(self, stopped=False):
+        if self.anchored and not stopped:
+            # A kinematic position change can replace a trapq while the
+            # previous path is still queued (for example, a Z safety lift
+            # immediately followed by Z homing).  Preserve that fact so the
+            # next anchor seals the old path before its rebase barrier.
+            self.rebase_requires_hold = True
         self.anchored = False
         self.need_rebase = True
         if stopped:
             # A trsync/query or underrun event proves the backend is idle, so
             # no previous planned horizon needs to delay the next rebase.
+            self.rebase_requires_hold = False
             self.rebase_min_clock = 0
 
     def commanded_pos_su(self):
@@ -353,6 +361,9 @@ class TrajectoryStepper:
         # Anchor to the queued path at this time.  Trajectory steppers bypass
         # itersolve_generate_steps(), so that legacy solver's commanded_pos
         # can be stale after a homing halt or kinematic position change.
+        if self.rebase_requires_hold:
+            self._queue_terminal_hold()
+            self.rebase_requires_hold = False
         pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
         # segfit samples commanded joint space. Convert it through the
         # stepper position offset so the wire anchor stays in physical MCU
@@ -370,6 +381,11 @@ class TrajectoryStepper:
         position_offset_su = pos_su - pos_mm * self.su_per_mm
         acc = pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)
+        if self.rebase_min_clock and clock < self.rebase_min_clock:
+            raise self.mcu.error(
+                "Trajectory boundary for %s overlaps the previous hold:"
+                " rebase clock %d < horizon %d" % (
+                    self.name, clock, self.rebase_min_clock))
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos],
                              minclock=self.rebase_min_clock,
                              reqclock=clock)
@@ -455,15 +471,20 @@ class TrajectoryStepper:
             # coefficient rounding to exactly zero.  Without this, one side
             # of a CoreXY pair can enter the MCU's emergency underrun ramp at
             # the end of an otherwise successful homing retract.
-            self.hold_cmd.send([self.oid, self.terminal_hold_ticks])
-            self._wire_segment(1, self.terminal_hold_ticks, 0, 0)
+            self._queue_terminal_hold()
             # Drop the anchor (the next motion re-anchors with a fresh
-            # rebase).  Include the terminal hold in the physical horizon.
-            end_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
-                        + TERMINAL_HOLD_TIME)
-            self.rebase_min_clock = int(self.mcu.print_time_to_clock(
-                end_time))
+            # rebase).
             self.anchored = False
+
+    def _queue_terminal_hold(self):
+        self.hold_cmd.send([self.oid, self.terminal_hold_ticks])
+        self._wire_segment(1, self.terminal_hold_ticks, 0, 0)
+        # wire_clock is the exact machine-clock horizon after the hold.  A
+        # following rebase must remain ordered after it even if both paths
+        # are generated during the same host flush cycle.
+        wire_clock = getattr(self, 'wire_clock', None)
+        if wire_clock is not None:
+            self.rebase_min_clock = max(self.rebase_min_clock, wire_clock)
 
     def _record_intention(self, prev_acc, prev_time):
         # Append (start_clock, end_clock, end_pos_subunits) for the span
