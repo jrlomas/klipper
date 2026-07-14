@@ -176,6 +176,12 @@ trigger_source_notify(struct trigger_source *tsrc, uint32_t clock)
             }
         }
     }
+    // Mask the peripheral as part of the successful IRQ transaction.  The
+    // host will disarm the source too, but that command arrives later and a
+    // bouncing switch must not keep re-entering an already-fired source in
+    // the meantime.
+    if (tsrc->hw_arm)
+        tsrc->hw_arm(tsrc, 0);
     tsrc->flags &= ~TSRC_ARMED;
     tsrc->flags |= TSRC_TRIGGERED;
     tsrc->trigger_clock = clock;
