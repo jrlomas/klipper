@@ -2,7 +2,7 @@
 //
 // Samples a joint's position trajectory q(t) through the existing
 // kinematics callback chain (kinematics, input shaper, and pressure
-// advance included for free) and fits chained quadratic segments
+// advance included for free) and fits chained polynomial segments
 // within a configured deviation tolerance. Coefficient quantization
 // is part of the fit: the *quantized* polynomial is evaluated
 // against the sampled trajectory, so wire rounding can never push

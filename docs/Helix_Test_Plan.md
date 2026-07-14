@@ -273,7 +273,7 @@ Prove the wire before you trust it to carry motion.
   support, and sane CoreXY wire-twin coordinates at commanded XYZ
   `[60,60,30]`: A=120.0003 mm, B=0.0000 mm, Z=30.0000 mm. After the stress
   return it reported A=120.0002 mm and B=0.0002 mm (sub-microstep residual).
-- [~] **4.2 — Single move.** Command a short move via normal G-code.
+- [x] **4.2 — Single move.** Command a short move via normal G-code.
   Expect: the host emits segments; the MCU synthesizes steps and arrives.
   Pass: measured end position == commanded within one step. On 2026-07-14,
   the V0 completed independent X and Y homing and a complete `G28 Z` override
@@ -281,7 +281,16 @@ Prove the wire before you trust it to carry motion.
   remained ready and reported Z=30. The operator then confirmed a commanded
   10 mm move from Z40 to Z30 at 10 mm/s physically raised the V0 bed toward
   the toolhead, matching the expected kinematic direction. An independent
-  endpoint measurement remains.
+  endpoint measurement remains. The production path now defaults normal
+  G0/G1 motion to quintic intentions while keeping Klippy's Cartesian planner
+  authoritative. On `d2a9d7a5`, both boards passed their live self-tests and
+  `G28` completed without a TMC UART or underrun error. A coordinated
+  `G1 X60 Y60 Z40 F600` then moved CoreXY and Z together; the toolhead object
+  updated automatically from `[110,110,30]` to `[60,60,40]`, proving normal
+  motion no longer has the stale-position limitation of raw `BEZIER_MOVE`.
+  The exact wire twins ended at A=119.9993 mm, B=0, Z=40.0001 mm. A normal
+  `G1 Z30 F600` returned the displayed toolhead to Z=30 without coordinate
+  repair.
 - [x] **4.3 — Chained moves / no drift.** Run a long back-and-forth
   (≥1000 segments) that returns to the origin.
   Pass: returns to origin exactly (fixed-point integration; matches 0.6
@@ -328,6 +337,12 @@ Prove the wire before you trust it to carry motion.
   recorder sequence, and streams pulse statistics so this corpus is bounded in
   memory. Recorder dumps were issued after every short batch to prevent ring
   lapping.
+  The first production-G1 quintic audit used telemetry lines 62528–62820:
+  every moving segment carried polynomial-order flags 128. It replayed 31 X
+  segments / 16,000 pulses and 31 Z segments / 8,000 pulses, matched 67 MCU
+  boundaries, and reported zero errors. The Z40→Z30 return independently
+  replayed eight segments / 8,000 pulses, matched ten boundaries, and also
+  reported zero errors. All three post-move TMC `GSTAT` reads were zero.
 
 ---
 

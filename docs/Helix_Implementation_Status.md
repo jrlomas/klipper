@@ -99,12 +99,11 @@ pass.
   the former while Klipper continues to schedule against the latter. The signed
   provisioning executor verified Ed25519 signatures, rebuilt from archived
   Kconfig, required exact artifact equality, flashed both normal bootloader
-  paths, and recorded the successful jobs. The Pico now runs `e1ec0b9e`; the
-  EBB36 remains on `fdad253f`. Both advertise ABI `27141a58f61f9fbc`, and
-  `HELIX_STATUS` reports fleet lockstep.
+  paths, and recorded the successful jobs. Both boards now run `d2a9d7a5`,
+  advertise ABI `27141a58f61f9fbc`, and `HELIX_STATUS` reports fleet lockstep.
 * All five live self-tests passed on both V0 boards after a standard
-  `FIRMWARE_RESTART`; after the final RP2040 trigger flash Pico RTT was 0.21 ms
-  and EBB36 RTT 0.30 ms. Both MCU
+  `FIRMWARE_RESTART`; on `d2a9d7a5` Pico RTT was 0.24 ms and EBB36 RTT was
+  0.27 ms. Both MCU
   reset implementations re-enumerated, reconfigured, and returned Klipper to
   ready without manual intervention.
 * The 64 MHz EBB36 disciplined to the 12 MHz Pico's machine time for ten
@@ -129,6 +128,18 @@ pass.
   stops, found five explicit holds, and reported zero errors. The recorded
   unwrapped path crossed -2³¹ sub-units while the compact wire phase wrapped
   exactly as designed.
+* Normal G0/G1 is now the production quintic path for trajectory steppers.
+  Klippy retains Cartesian lookahead, kinematics, and the authoritative
+  toolhead position; the fitter sends synchronized per-joint quintic
+  intentions and the boards synthesize their own pulses. Quadratic is an
+  explicit compatibility setting, and migrated steppers never configure
+  `queue_step`. On the live V0, a fresh full `G28` completed on `d2a9d7a5`
+  without TMC UART or underrun errors. A coordinated X/Y/Z move from
+  `[110,110,30]` to `[60,60,40]` updated the toolhead object automatically,
+  then a normal G1 returned Z to 30 without `SET_KINEMATIC_POSITION`. The two
+  narrow deterministic audits replayed 32,000 physical pulses, matched 77 MCU
+  boundaries, and reported zero errors; all emitted motion records used
+  quintic order flags and all three post-move TMC `GSTAT` reads were zero.
 * RP2040 homing now uses IO_BANK0 edge interrupts instead of periodic endstop
   polling. Fresh X, Y, and Z homes completed on `e1ec0b9e`; each flight-recorder
   window contained a distinct hardware-source record before its actuator stop
