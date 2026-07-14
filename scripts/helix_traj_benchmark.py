@@ -41,6 +41,10 @@ def main():
     parser.add_argument("--axes", type=comma_ints,
                         default=comma_ints("1,2,4,8"),
                         help="comma-separated virtual axis counts (1-8)")
+    parser.add_argument("--captured-scales", type=comma_ints,
+                        help="probe the captured EBB quintic at power-of-two"
+                             " time-compression scales instead of the"
+                             " synthetic rate sweep")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -53,6 +57,28 @@ def main():
         clock = int(config.get("CLOCK_FREQ", 0))
         print("firmware=%s clock=%d" %
               (dictionary.get("version", "?"), clock))
+        if args.captured_scales:
+            print("scale status pulses max_ticks min_interval reserve_pct"
+                  " max_error_eighths")
+            for scale in args.captured_scales:
+                proto.send("run_captured_quintic_probe", scale)
+                values = proto.wait_response(
+                    "captured_quintic_probe_result", 10.0)
+                (got_scale, status, pulses, elapsed, interval,
+                 error) = values
+                if got_scale != scale:
+                    raise FlashError(
+                        "captured probe response does not match request")
+                reserve = (100.0 * (interval - elapsed) / interval
+                           if interval else 0.0)
+                error_eighths = 8.0 * error / (1 << 32)
+                label = STATUS.get(status, "UNKNOWN_%d" % status)
+                print("%d %s %d %d %d %.2f %.6f" %
+                      (scale, label, pulses, elapsed, interval,
+                       reserve, error_eighths))
+                failed |= status != 0
+            return 1 if failed else 0
+
         print("rate axes status pulses max_ticks min_interval reserve_pct"
               " max_error_eighths")
         for rate in args.rates:

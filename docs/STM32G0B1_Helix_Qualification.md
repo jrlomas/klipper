@@ -51,8 +51,8 @@ real board. At the V0's approximately 705.5 steps/mm gearing, that is 28.3 mm/s
 of 1.75 mm filament, or a kinematic 68.2 mm3/s. That is a solver capacity
 conversion, not a claim that the installed hotend can melt 68.2 mm3/s. A 32x,
 approximately 40,000-step/s probe was rejected because its 1,304-tick
-(20.4 us) solve exceeded the 18.75 us reserve budget. The interval between
-20k and 40k remains unqualified.
+(20.4 us) solve exceeded the 18.75 us solve deadline needed to preserve a
+6.25 us / 25% reserve. The interval between 20k and 40k remains unqualified.
 
 ![STM32G0B1 practical extrusion qualification](img/helix-g0b1-rate-envelope.svg)
 
@@ -144,11 +144,14 @@ simulation. It contains two gates:
 | 4x | 5k steps/s | <= 1/8 step | solve < 75% of interval | Pass |
 | 8x | 10k steps/s | <= 1/8 step | solve < 75% of interval | Pass |
 | 16x | about 20k steps/s | <= 1/8 step | solve < 75% of interval | **Pass** |
-| 32x probe | about 40k steps/s | crossing remained bounded | 20.4 us > 18.75 us reserve budget | **Rejected** |
+| 32x probe | about 40k steps/s | crossing remained bounded | 20.4 us > 18.75 us solve deadline | **Rejected** |
 
-The committed pass gate remains 16x. The 32x result is retained here because
-negative evidence defines the safe engineering boundary. It must not be
-silently converted into a pass by weakening the reserve.
+The committed automatic pass gate remains 16x. The computation-only
+`run_captured_quintic_probe` diagnostic makes both 16x and 32x directly
+reproducible on the target; 32x is deliberately reported as `DEADLINE`, not
+folded into the automatic self-test failure. Negative evidence defines the
+safe engineering boundary and must not be silently converted into a pass by
+weakening the reserve.
 
 After the final firmware was flashed, both connected boards passed all five
 live self-tests:
@@ -259,6 +262,23 @@ for exceptionally high channel counts, deterministic waveform fabrics, or
 specialized encoders, but the evidence does not justify making one mandatory
 for the next HELIX controller.
 
+### Admission-control implication
+
+Firmware should cap configured trajectory objects for memory safety, but a
+fixed “maximum axes” number is not the right compute-safety rule. Solver demand
+scales primarily with the aggregate physical crossing rate and polynomial
+path: eight 80k-step/s axes and one 640k-step/s axis consumed approximately the
+same H723 budget in this experiment.
+
+A production fleet profile should therefore advertise a qualified aggregate
+curved-crossing budget. At configuration time the host can conservatively sum
+each actuator's worst-case `max_velocity / step_distance`, apply a cost factor
+for its enabled polynomial backend, and reject a group whose simultaneous
+demand exceeds the board's budget after reserve. A separate hard oid count can
+remain as a RAM/queue bound. Runtime missed-deadline and queue telemetry remain
+the final fail-safe; static admission is intended to prevent reaching them,
+not replace them.
+
 ## Why this is preferable to the firehose for this board
 
 The V1 firehose is cheaper per edge on the MCU. HELIX is better only if the
@@ -321,6 +341,18 @@ Computation-only rate sweep on a self-test firmware image:
 `max_error_eighths` is expressed as a fraction of the allowed 1/8-step error;
 values below 1 satisfy the spatial gate. A non-zero script exit is expected
 when a sweep intentionally includes rejected capacity probes.
+
+Reproduce the captured EBB curve's committed 16x pass and 32x rejection:
+
+```shell
+~/klippy-env/bin/python scripts/helix_traj_benchmark.py \
+  --device /dev/serial/by-id/usb-Klipper_stm32g0b1xx_...-if00 \
+  --captured-scales 16,32
+```
+
+The diagnostic reports the measured maximum solve ticks, shortest crossing
+interval, spatial error, and reserve for each scale. Its exit status is
+non-zero when the requested set intentionally includes the rejected 32x case.
 
 ## Remaining qualification
 

@@ -25,11 +25,16 @@
 uint_fast8_t traj_stepper_test_hold_boundary(void);
 uint_fast8_t traj_stepper_test_halfstep_phase(void);
 uint_fast8_t traj_stepper_test_cruise_recurrence(void);
+uint_fast8_t traj_stepper_test_slow_reciprocal(void);
+uint_fast8_t traj_stepper_test_prestart_stop(void);
 uint_fast8_t traj_stepper_test_quintic_deadline(uint32_t *max_elapsed);
 uint_fast8_t traj_stepper_benchmark(uint32_t step_rate, uint_fast8_t axes,
                                     uint32_t *pulses, uint32_t *max_elapsed,
                                     uint32_t *min_interval,
                                     uint32_t *max_error);
+uint_fast8_t traj_stepper_probe_captured_quintic(
+    uint_fast8_t scale, uint32_t *pulses, uint32_t *max_elapsed,
+    uint32_t *min_interval, uint32_t *max_error);
 #endif
 
 enum {
@@ -149,6 +154,14 @@ test_traj_kernel(uint32_t *value)
         *value = 0x80000002;
         return ST_FAIL;
     }
+    if (!traj_stepper_test_slow_reciprocal()) {
+        *value = 0x80000003;
+        return ST_FAIL;
+    }
+    if (!traj_stepper_test_prestart_stop()) {
+        *value = 0x80000004;
+        return ST_FAIL;
+    }
     uint32_t solver_elapsed;
     if (!traj_stepper_test_quintic_deadline(&solver_elapsed)) {
         *value = 0x81000000 | (solver_elapsed & 0x00ffffff);
@@ -199,4 +212,18 @@ command_run_traj_benchmark(uint32_t *args)
 }
 DECL_COMMAND(command_run_traj_benchmark,
              "run_traj_benchmark rate=%u axes=%c");
+
+void
+command_run_captured_quintic_probe(uint32_t *args)
+{
+    uint_fast8_t scale = args[0];
+    uint32_t pulses = 0, max_elapsed = 0, min_interval = 0, max_error = 0;
+    uint_fast8_t status = traj_stepper_probe_captured_quintic(
+        scale, &pulses, &max_elapsed, &min_interval, &max_error);
+    sendf("captured_quintic_probe_result scale=%c status=%c pulses=%u"
+          " max_elapsed=%u min_interval=%u max_error=%u",
+          scale, status, pulses, max_elapsed, min_interval, max_error);
+}
+DECL_COMMAND(command_run_captured_quintic_probe,
+             "run_captured_quintic_probe scale=%c");
 #endif

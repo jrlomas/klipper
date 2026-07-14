@@ -27,8 +27,10 @@ DEFAULT_MAX_EVENTS = 2000
 DEFAULT_HEARTBEAT = 5.0
 
 
-def _event_dict(event) -> dict:
+def _event_dict(timeline, event) -> dict:
     """The public event shape consumed by the Mainsail Atlas adapter."""
+    wall_time = (event.mtime if event.time_basis == "wall"
+                 else timeline.wall_time_of(event.mtime))
     return {
         "seq": event.seq,
         "kind": event.kind,
@@ -36,6 +38,7 @@ def _event_dict(event) -> dict:
         "severity": event.severity,
         "summary": event.summary,
         "mtime": event.mtime,
+        "wall_time": wall_time,
         "time_basis": event.time_basis,
         "t_exact": event.t_exact,
         "fields": dict(event.fields),
@@ -70,7 +73,8 @@ def build_status(timeline, diagnosis, service: dict, incidents=None,
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
         "timeline": {
-            "events": [_event_dict(event) for event in timeline.ordered()],
+            "events": [_event_dict(timeline, event)
+                       for event in timeline.ordered()],
             "notes": list(timeline.notes),
             "versions": dict(timeline.versions),
         },
@@ -130,7 +134,8 @@ class AtlasDaemon:
             max_events=max_events)
         self.telemetry = [StructuredTail(path, self.follower.timeline)
                           for path in (telemetry_paths or [])]
-        self.history = (IncidentStore(history_path, wall_clock=wall_clock or time.time)
+        self.history = (IncidentStore(
+            history_path, wall_clock=wall_clock or time.time)
                         if history_path else None)
         self.monitor = BaselineMonitor(baseline_path) if baseline_path else None
         self.memory_store = memory_store

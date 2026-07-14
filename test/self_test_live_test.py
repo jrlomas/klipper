@@ -107,6 +107,18 @@ class TestSelfTestLive(unittest.TestCase):
             proto.send('run_traj_benchmark', 20000, 9)
             result = proto.wait_response('traj_benchmark_result', 5.0)
             self.assertEqual(result[:4], [20000, 9, 1, 0])
+
+            proto.send('run_captured_quintic_probe', 16)
+            result = proto.wait_response(
+                'captured_quintic_probe_result', 5.0)
+            self.assertEqual(result[:3], [16, 0, 38])
+            self.assertGreater(result[3], 0)
+            self.assertGreater(result[4], result[3])
+
+            proto.send('run_captured_quintic_probe', 3)
+            result = proto.wait_response(
+                'captured_quintic_probe_result', 5.0)
+            self.assertEqual(result[:3], [3, 1, 0])
         finally:
             link.close()
 

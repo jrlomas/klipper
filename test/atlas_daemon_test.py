@@ -36,6 +36,7 @@ def test_status_contract():
     state = build_status(timeline, diagnosis, {"state": "running"})
     assert state["schema_version"] == 1
     assert state["timeline"]["events"][0]["kind"] == "session_start"
+    assert state["timeline"]["events"][0]["wall_time"] == 100.0
     assert "raw" not in state["timeline"]["events"][0]
     assert state["diagnosis"]["matched"] is True
     assert state["diagnosis"]["matches"][0]["pattern_id"] == "timer-too-close"

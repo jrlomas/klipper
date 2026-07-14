@@ -30,9 +30,11 @@
 // the past is a protocol error (host must rebase after any gap).
 #define PAST_GUARD_TICKS (1 << 26)
 // Reciprocal of normalized velocity used by the per-pulse Newton correction.
-// With |v| normalized to [2^16,2^17), 2^39/|v| fits in 23 bits and the
+// Values below RECIP_MIN_SPEED use the bounded exact divider: their Q39
+// reciprocal would not fit uint32_t. Above that floor it fits, and the
 // reciprocal Newton product remains within uint64_t.
 #define RECIP_Q 39
+#define RECIP_MIN_SPEED 128
 
 enum { WK_STEP, WK_UNSTEP, WK_POLL };
 
@@ -150,9 +152,16 @@ traj_signed_shr(int64_t value, uint8_t shift)
     return value < 0 ? -(int64_t)magnitude : (int64_t)magnitude;
 }
 
+static int64_t traj_divide_residual(int64_t numerator, int32_t denominator,
+                                    uint32_t limit);
+
 static void
 traj_recip_init(struct traj_stepper *s, uint32_t speed)
 {
+    if (speed < RECIP_MIN_SPEED) {
+        s->recip_speed = s->recip_q39 = 0;
+        return;
+    }
     s->recip_speed = speed;
     s->recip_q39 = ((uint64_t)1 << RECIP_Q) / speed;
 }
@@ -166,6 +175,8 @@ traj_recip_correction(struct traj_stepper *s, int64_t residual,
 {
     uint32_t speed = velocity < 0
         ? -(uint32_t)velocity : (uint32_t)velocity;
+    if (speed < RECIP_MIN_SPEED)
+        return traj_divide_residual(residual, velocity, limit);
     uint32_t r = s->recip_q39;
     if (!r || !s->recip_speed
         || speed > s->recip_speed * 2U
@@ -540,7 +551,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
             v120 = traj_signed_shr(v120, scale_shift);
             err = traj_signed_shr(err, scale_shift);
             v = (int32_t)v120;
-            use_recip = 1;
+            use_recip = speed120 >= RECIP_MIN_SPEED;
         } else
 #endif
         {
@@ -639,6 +650,22 @@ traj_stepper_test_cruise_recurrence(void)
 }
 
 uint_fast8_t
+traj_stepper_test_slow_reciprocal(void)
+{
+    // A Q39 reciprocal for speed 127 exceeds uint32_t. Slow crossings must
+    // take the exact bounded divider instead of silently truncating it.
+    struct traj_stepper s = { };
+    int64_t residual = STEP_Q * 3 / 4;
+    int64_t got = traj_recip_correction(&s, residual, 127, 100000000);
+    int64_t want = traj_divide_residual(residual, 127, 100000000);
+    return got == want && !s.recip_speed && !s.recip_q39;
+}
+
+uint_fast8_t traj_stepper_probe_captured_quintic(
+    uint_fast8_t scale, uint32_t *pulses_out, uint32_t *max_elapsed_out,
+    uint32_t *min_interval_out, uint32_t *max_error_out);
+
+uint_fast8_t
 traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
 {
 #if !CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
@@ -697,97 +724,21 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
     // steps/s.  This is a performance qualification, so do not lower the
     // maximum scale merely to make a slower implementation pass.
     uint32_t overall_max = cold_max;
-    uint8_t scale, rate_stage = 0;
+    uint_fast8_t scale, rate_stage = 0;
     for (scale = 1; scale <= 16; scale <<= 1) {
+        uint32_t pulses, max_elapsed, min_interval, max_error;
+        uint_fast8_t status = traj_stepper_probe_captured_quintic(
+            scale, &pulses, &max_elapsed, &min_interval, &max_error);
         rate_stage++;
-        uint32_t scale2 = (uint32_t)scale * scale;
-        uint32_t scale3 = scale2 * scale;
-        uint32_t scale4 = scale3 * scale;
-        uint32_t scale5 = scale4 * scale;
-        struct traj_stepper s = { };
-        s.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
-        s.tq.duration = 1856000 / scale;
-        s.tq.velocity = 77024 * scale;
-        s.tq.accel = -2721 * scale2;
-        s.tq.jerk = 1426 * scale3;
-        s.tq.snap = -245 * scale4;
-        s.tq.crackle = 17 * scale5;
-        s.dir = 1;
-        s.q16_end = trajq_end_delta_seg(&s.tq) >> 16;
-        traj_poly_fast_setup(&s);
-        // Segment begins at 404429 sub-units with physical position 6.
-        int64_t acc = (int64_t)404429 << 32;
-        s.target16 = traj_stepper_calc_target16(acc, 6, s.dir);
-        // Model a continuous segment boundary: the prior segment supplies a
-        // full-step interval, while this segment's first crossing is only the
-        // remaining fraction of a microstep away.
-        s.step_interval = 56912 / scale;
-        uint64_t first_magnitude = s.target16 < 0
-            ? -(uint64_t)s.target16 : (uint64_t)s.target16;
-        s.first_step_guess = (first_magnitude * s.step_interval) >> 32;
-        if (!s.first_step_guess)
-            s.first_step_guess = 1;
-        int64_t initial_v120 = trajq_velocity24_at_seg_fast(&s.tq, 0) * 5;
-        uint64_t initial_speed = initial_v120 < 0
-            ? -(uint64_t)initial_v120 : (uint64_t)initial_v120;
-        while (initial_speed > 131071) {
-            initial_speed >>= 1;
-            initial_v120 = traj_signed_shr(initial_v120, 1);
-        }
-        traj_recip_init(&s, initial_v120 < 0
-                        ? -(uint32_t)initial_v120 : (uint32_t)initial_v120);
-        uint32_t count = 0, max_elapsed = 0;
-        for (;;) {
-            uint32_t step_t;
-            uint32_t before = timer_read_time();
-            int result = traj_solve_step(&s, &step_t);
-            uint32_t elapsed = timer_read_time() - before;
-            if (elapsed > max_elapsed)
-                max_elapsed = elapsed;
-            if (!result)
-                break;
-            if (result != 1 || step_t <= s.t_prev
-                || step_t > s.tq.duration) {
-                *max_elapsed_out = 0x40000000 | count;
-                return 0;
-            }
-            uint32_t interval = step_t - s.t_prev;
-            int64_t spatial_error = trajq_pos120_at_seg_fast(
-                &s.tq, step_t) - s.target16 * 120;
-            uint64_t error_magnitude = spatial_error < 0
-                ? -(uint64_t)spatial_error : (uint64_t)spatial_error;
-            if (error_magnitude > STEP_Q * 15) { // 120 / 8
-                *max_elapsed_out = 0x10000000 | count;
-                return 0;
-            }
-            if (elapsed >= interval - interval / 4) {
-                *max_elapsed_out = ((uint32_t)rate_stage << 20)
-                    | (elapsed & 0x000fffff);
-                return 0;
-            }
-            if (s.last_step_t)
-                s.step_interval = step_t - s.last_step_t;
-            s.last_step_t = step_t;
-            s.t_prev = step_t;
-            s.target16 += STEP_Q;
-            if (++count > 64) {
-                *max_elapsed_out = 0x20000000 | count;
-                return 0;
-            }
+        if (status) {
+            // Fits the self_test_result low-24-bit diagnostic payload.
+            *max_elapsed_out = ((uint32_t)status << 20)
+                | ((uint32_t)rate_stage << 16)
+                | (max_elapsed & 0x0000ffff);
+            return 0;
         }
         if (max_elapsed > overall_max)
             overall_max = max_elapsed;
-        // The next boundary must be the first one beyond the exact endpoint.
-        // The captured 1x vector additionally fixes its known pulse count.
-        if (s.q16_end >= s.target16
-            || s.q16_end < s.target16 - STEP_Q
-            || (scale == 1 && count != 38)) {
-            // Encode log2(rate)+1 in bits 20..23 for field diagnosis; the
-            // low 20 bits retain the measured worst solve time.
-            *max_elapsed_out = ((uint32_t)rate_stage << 20)
-                | (max_elapsed & 0x000fffff);
-            return 0;
-        }
     }
     *max_elapsed_out = overall_max;
     return 1;
@@ -804,6 +755,109 @@ enum {
     TB_SPATIAL,
     TB_DEADLINE,
 };
+
+uint_fast8_t
+traj_stepper_probe_captured_quintic(uint_fast8_t scale,
+                                    uint32_t *pulses_out,
+                                    uint32_t *max_elapsed_out,
+                                    uint32_t *min_interval_out,
+                                    uint32_t *max_error_out)
+{
+    *pulses_out = *max_elapsed_out = *min_interval_out = *max_error_out = 0;
+#if !CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    return TB_SETUP;
+#else
+    if (!scale || scale > 32 || (scale & (scale - 1)))
+        return TB_BAD_ARGS;
+    uint32_t scale2 = (uint32_t)scale * scale;
+    uint32_t scale3 = scale2 * scale;
+    uint32_t scale4 = scale3 * scale;
+    uint32_t scale5 = scale4 * scale;
+    struct traj_stepper s = { };
+    s.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+    s.tq.duration = 1856000 / scale;
+    s.tq.velocity = 77024 * scale;
+    s.tq.accel = -2721 * scale2;
+    s.tq.jerk = 1426 * scale3;
+    s.tq.snap = -245 * scale4;
+    s.tq.crackle = 17 * scale5;
+    s.dir = 1;
+    s.q16_end = trajq_end_delta_seg(&s.tq) >> 16;
+    traj_poly_fast_setup(&s);
+    if (!s.poly_fast_valid)
+        return TB_SETUP;
+    int64_t acc = (int64_t)404429 << 32;
+    s.target16 = traj_stepper_calc_target16(acc, 6, s.dir);
+    s.step_interval = 56912 / scale;
+    uint64_t first_magnitude = s.target16 < 0
+        ? -(uint64_t)s.target16 : (uint64_t)s.target16;
+    s.first_step_guess = (first_magnitude * s.step_interval) >> 32;
+    if (!s.first_step_guess)
+        s.first_step_guess = 1;
+    int64_t initial_v120 = trajq_velocity24_at_seg_fast(&s.tq, 0) * 5;
+    uint64_t initial_speed = initial_v120 < 0
+        ? -(uint64_t)initial_v120 : (uint64_t)initial_v120;
+    while (initial_speed > 131071) {
+        initial_speed >>= 1;
+        initial_v120 = traj_signed_shr(initial_v120, 1);
+    }
+    traj_recip_init(&s, initial_v120 < 0
+                    ? -(uint32_t)initial_v120 : (uint32_t)initial_v120);
+
+    uint32_t count = 0, max_elapsed = 0, min_interval = UINT32_MAX;
+    uint32_t max_error = 0;
+    for (;;) {
+        uint32_t step_t, before = timer_read_time();
+        int result = traj_solve_step(&s, &step_t);
+        uint32_t elapsed = timer_read_time() - before;
+        if (elapsed > max_elapsed)
+            max_elapsed = elapsed;
+        if (!result)
+            break;
+        if (result != 1 || step_t <= s.t_prev
+            || step_t > s.tq.duration)
+            return TB_SOLVER;
+        uint32_t interval = step_t - s.t_prev;
+        if (interval < min_interval)
+            min_interval = interval;
+        int64_t error120 = trajq_pos120_at_seg_fast(
+            &s.tq, step_t) - s.target16 * 120;
+        uint64_t magnitude120 = error120 < 0
+            ? -(uint64_t)error120 : (uint64_t)error120;
+        uint64_t error = magnitude120 / 120;
+        if (error > UINT32_MAX)
+            error = UINT32_MAX;
+        if (error > max_error)
+            max_error = error;
+        count++;
+        *pulses_out = count;
+        *max_elapsed_out = max_elapsed;
+        *min_interval_out = min_interval;
+        *max_error_out = max_error;
+        if (magnitude120 > STEP_Q * 15)
+            return TB_SPATIAL;
+        if (elapsed >= interval - interval / 4)
+            return TB_DEADLINE;
+        if (s.last_step_t)
+            s.step_interval = step_t - s.last_step_t;
+        s.last_step_t = step_t;
+        s.t_prev = step_t;
+        s.target16 += STEP_Q;
+        if (count > 64)
+            return TB_SOLVER;
+    }
+    if (s.q16_end >= s.target16 || s.q16_end < s.target16 - STEP_Q
+        || count != 38)
+        return TB_SOLVER;
+    if (min_interval == UINT32_MAX)
+        min_interval = 0;
+    *pulses_out = count;
+    *max_elapsed_out = max_elapsed;
+    *min_interval_out = min_interval;
+    *max_error_out = max_error;
+    return TB_PASS;
+#endif
+}
 
 #define TRAJ_BENCH_MAX_AXES 8
 #define TRAJ_BENCH_PULSES 32
@@ -1017,12 +1071,14 @@ traj_stepper_load(struct traj_stepper *s)
         v120 = traj_signed_shr(v120, shift);
         uint32_t normalized = v120 < 0
             ? -(uint32_t)v120 : (uint32_t)v120;
-        if (normalized && (!s->recip_speed
+        if (normalized >= RECIP_MIN_SPEED && (!s->recip_speed
             || normalized > s->recip_speed * 2U
             || s->recip_speed > normalized * 2U))
             // Initial division is paid while loading the segment, not in the
             // recurring pulse path. Continuous segments reuse the prior r.
             traj_recip_init(s, normalized);
+        else if (normalized < RECIP_MIN_SPEED)
+            s->recip_speed = s->recip_q39 = 0;
     } else
         s->recip_speed = s->recip_q39 = 0;
 #endif
@@ -1136,6 +1192,41 @@ traj_stepper_start(struct trajq *tq)
 }
 
 static void
+traj_stepper_record_stop(struct trajq *tq, uint32_t now)
+{
+    if (!(tq->flags & TQF_ACTIVE)
+        || timer_is_before(now, tq->seg_start_clock))
+        return;
+    uint32_t t = now - tq->seg_start_clock;
+    if (t > tq->duration)
+        t = tq->duration;
+    tq->acc = trajq_acc_add(
+        tq->acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
+    tq->seg_start_clock += t;
+}
+
+#if CONFIG_WANT_SELF_TEST
+uint_fast8_t
+traj_stepper_test_prestart_stop(void)
+{
+    struct trajq tq = { };
+    tq.flags = TQF_ACTIVE;
+    tq.seg_start_clock = 100000;
+    tq.duration = 20000;
+    tq.velocity = 65536;
+    int64_t start_acc = 0x123456789LL;
+    tq.acc = start_acc;
+    traj_stepper_record_stop(&tq, tq.seg_start_clock - 1);
+    if (tq.acc != start_acc || tq.seg_start_clock != 100000)
+        return 0;
+    traj_stepper_record_stop(&tq, 110000);
+    int64_t want = trajq_acc_add(
+        start_acc, trajq_q16_to_acc(trajq_pos_at_seg(&tq, 10000)));
+    return tq.acc == want && tq.seg_start_clock == 110000;
+}
+#endif
+
+static void
 traj_stepper_stop(struct trajq *tq)
 {
     struct traj_stepper *s = container_of(tq, struct traj_stepper, tq);
@@ -1144,15 +1235,10 @@ traj_stepper_stop(struct trajq *tq)
         // Mid step pulse: complete the edge
         gpio_out_toggle_noirq(s->step_pin);
     s->wake_kind = WK_POLL;
-    if (tq->flags & TQF_ACTIVE) {
-        // Record the live sub-unit position at the moment of the stop
-        uint32_t t = timer_read_time() - tq->seg_start_clock;
-        if (t > tq->duration)
-            t = tq->duration;
-        tq->acc = trajq_acc_add(
-            tq->acc, trajq_q16_to_acc(trajq_pos_at_seg(tq, t)));
-        tq->seg_start_clock += t;
-    }
+    // An active stream may still be scheduled in the future. Stopping in
+    // that lead window must retain its start position rather than unsigned-
+    // wrapping the elapsed time and recording the segment endpoint.
+    traj_stepper_record_stop(tq, timer_read_time());
 }
 
 static void

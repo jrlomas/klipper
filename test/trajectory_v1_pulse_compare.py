@@ -27,6 +27,7 @@ MCU_FREQ = 12_000_000.
 STEP_DIST = .00125
 SU_PER_MM = 65536. / STEP_DIST
 START_TIME = 1.
+MAX_EDGE_ERROR_US = 550.
 
 
 def build_mcu_solver():
@@ -422,6 +423,7 @@ def compare_case(solver, name, start_z, distance, speed, accel,
     # Half-microstep spatial fitting tolerance permits larger time offsets
     # near zero velocity; the aggregate edge stream must remain close to V1.
     assert mean_us < 75., (name, mean_us)
+    assert max_us < MAX_EDGE_ERROR_US, (name, mean_us, max_us)
     expected_end = round((start_z + distance) / STEP_DIST)
     if trigger_after is None:
         assert end_mpos == expected_end, (name, end_mpos, expected_end)
@@ -443,6 +445,7 @@ def compare_quintic_case(solver, name, start_z, distance, speed, accel):
     # itersolve.  At nonzero velocity this timing bound is substantially
     # tighter; near the zero-speed endpoints the mean is the useful measure.
     assert mean_us < 75., (name, mean_us, max_us)
+    assert max_us < MAX_EDGE_ERROR_US, (name, mean_us, max_us)
     expected_end = round((start_z + distance) / STEP_DIST)
     assert end_mpos == expected_end, (name, end_mpos, expected_end)
     print("PASS: %-15s %4d quintic pulses, mean %.2fus, max %.2fus"

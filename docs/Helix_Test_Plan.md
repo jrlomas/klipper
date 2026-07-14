@@ -394,8 +394,11 @@ Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
   reserving 25% of the following pulse interval. The 16x case is about
   20,000 steps/s (28.3 mm/s filament at the active 705.5 steps/mm gearing)
   and passes. A 32x / about 40,000-step/s probe took 1,304 ticks (20.4 us) at
-  its failing crossing and was rejected against the 18.75 us reserve budget;
-  it is not claimed. V1-versus-HELIX regressions match the complete edge count
+  its failing crossing and was rejected against the 18.75 us solve deadline
+  required to retain a 6.25 us / 25% reserve; it is not claimed. The committed
+  `run_captured_quintic_probe` diagnostic reproduces the 16x and 32x results
+  without weakening the automatic 16x pass gate. V1-versus-HELIX regressions
+  match the complete edge count
   and direction stream for homing, reverse, phase-wrap, short, and 19.2k
   step/s quintic profiles. See
   [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md).
