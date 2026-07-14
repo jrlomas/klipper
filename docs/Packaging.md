@@ -1,8 +1,8 @@
 # Packaging Helix
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 Helix is somewhat of a packaging anomaly among python programs, as it doesn't
 use setuptools to build and install. Some notes regarding how best to package it

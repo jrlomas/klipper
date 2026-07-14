@@ -1,8 +1,8 @@
 # Pressure advance
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on tuning pressure advance that Helix builds on. New to Helix?
-> Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents tuning
+> pressure advance in Helix; the capability is shared with upstream
+> Klipper. New to Helix? Start with the **[Helix overview](HELIX.md)**.
 
 This document provides information on tuning the "pressure advance"
 configuration variable for a particular nozzle and filament. The

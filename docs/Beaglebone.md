@@ -1,8 +1,9 @@
 # Beaglebone
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on running the firmware on a Beaglebone, which Helix carries
-> forward unchanged. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents running
+> Helix firmware on a Beaglebone; the platform support is shared with
+> upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 This document describes the process of running Helix on a Beaglebone
 Programmable Real-time Unit (PRU).
@@ -209,7 +210,7 @@ you can't use them for stepper control.
 
 Complete the installation by configuring Helix
 following the instructions in
-the main [Installation](Installation.md#configuring-octoprint-to-use-klipper) document.
+the main [Installation](Installation.md) document and [OctoPrint](OctoPrint.md#configuring-octoprint-to-use-helix).
 
 ## Printing on the Beaglebone
 

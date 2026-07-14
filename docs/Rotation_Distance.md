@@ -1,8 +1,8 @@
 # Rotation distance
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 Stepper motor drivers on Helix require a `rotation_distance`
 parameter in each

@@ -11,6 +11,9 @@ option must be present, and (for firmware capabilities) the board's
 firmware must be built with the matching Kconfig flag. Ask any running
 machine what it actually has with **`HELIX_STATUS`**.
 
+Terms like *segment*, *execution log*, or *framing v2* are defined in the
+[glossary](Glossary.md).
+
 ## Console commands
 
 ### Trajectory motion — `[trajectory_queuing]`

@@ -1,8 +1,8 @@
 # SDCard updates
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on updating micro-controller firmware from an SD Card, which
-> Helix carries forward unchanged. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents updating
+> micro-controller firmware from an SD Card for Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 Many of today's popular controller boards ship with a bootloader capable of

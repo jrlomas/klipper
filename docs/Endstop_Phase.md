@@ -1,8 +1,8 @@
 # Endstop phase
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to improve endstop accuracy
-> using stepper phase. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> improve endstop accuracy using stepper phase in Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes Helix's stepper phase adjusted endstop

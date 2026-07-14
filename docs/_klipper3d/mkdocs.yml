@@ -82,9 +82,13 @@ extra:
 nav:
   - HELIX:
     - HELIX.md
+    - Coming_From_Klipper.md
     - Helix_User_Guide.md
     - Helix_Developer_Guide.md
     - Helix_Commands.md
+    - Glossary.md
+    - Helix_Troubleshooting.md
+    - Secure_Networking.md
     - Helix_Implementation_Status.md
     - Helix_Test_Plan.md
     - Atlas_Bring-up_Plan.md

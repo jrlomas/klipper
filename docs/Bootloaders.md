@@ -1,8 +1,8 @@
 # Bootloaders
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on the bootloaders found on supported micro-controllers, which
-> Helix carries forward unchanged. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents the
+> bootloaders found on supported micro-controllers in Helix; the platform
+> support is shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document provides information on common bootloaders found on

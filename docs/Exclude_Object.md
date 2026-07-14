@@ -1,8 +1,8 @@
 # Exclude Objects
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on the object-exclusion module that Helix builds on. New to
-> Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents the
+> object-exclusion module in Helix; the module is shared with upstream
+> Klipper. New to Helix? Start with the **[Helix overview](HELIX.md)**.
 
 The `[exclude_object]` module allows Helix to exclude objects while a print is
 in progress. To enable this feature include an [exclude_object config

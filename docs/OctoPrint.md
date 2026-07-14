@@ -1,8 +1,8 @@
 # OctoPrint for Helix
 
-> **This is Helix** — an evolution of Klipper. This is inherited Klipper
-> documentation covering OctoPrint as a front end for Helix, our
-> source-compatible firmware. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents
+> OctoPrint as a front end for Helix; the integration is shared with
+> upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 Helix has a few options for its front ends, Octoprint was the first
@@ -47,7 +47,7 @@ KIAUH can be used to install OctoPrint on a variety of Linux based systems
 that run a form of Debian. More information can be found
 at https://github.com/dw-0/kiauh
 
-## Configuring OctoPrint to use Klipper
+## Configuring OctoPrint to use Helix
 
 The OctoPrint web server needs to be configured to communicate with the Helix
 host software. Using a web browser, login to the OctoPrint web page and then

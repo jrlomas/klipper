@@ -1,8 +1,9 @@
 # Probe calibration
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to calibrate an automatic Z
-> probe. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> calibrate an automatic Z probe in Helix; the capability is shared with
+> upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 This document describes the method for calibrating the X, Y, and Z
 offsets of an "automatic z probe" in Helix. This is useful for users

@@ -1,8 +1,8 @@
 # Using PWM tools
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on driving PWM lasers and spindles that Helix builds on. New to
-> Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents driving
+> PWM lasers and spindles in Helix; the capability is shared with upstream
+> Klipper. New to Helix? Start with the **[Helix overview](HELIX.md)**.
 
 This document describes how to setup a pulse-width modulation (PWM)-controlled
 laser or spindle using `pwm_tool` and some macros.

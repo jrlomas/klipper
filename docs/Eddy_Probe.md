@@ -1,8 +1,8 @@
 # Eddy Current Inductive probe
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to configure and calibrate
-> eddy current inductive probes. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> configure and calibrate eddy current inductive probes in Helix; the
+> capability is shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes the support for

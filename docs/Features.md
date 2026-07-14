@@ -76,7 +76,7 @@ for them behaves exactly like the Klipper it grew from.
   module is written once against the API, not once per chip. *(FD-0001 doc [13](founding/0001-motion-intentions/13-Syscall_API.md).)*
 
 * **ESP32 as a network-native target.** A dual-core ESP32 runs bare-metal
-  motion on one core with the radio stack quarantined on the other,
+  motion on one core with the radio stack isolated on the other,
   making a WiFi toolhead a real, first-class target. *(FD-0001 doc [12](founding/0001-motion-intentions/12-ESP32_Architecture.md).)*
 
 * **New console surface.** `HELIX_STATUS` reports exactly which

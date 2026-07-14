@@ -1,7 +1,7 @@
 # Frequently Asked Questions
 
-> **This is Helix** — an evolution of Klipper. These are inherited Klipper
-> answers that also apply to Helix, our source-compatible firmware. New to
+> **This is Helix** — an evolution of Klipper. These are Helix's answers to
+> common questions; the guidance is shared with upstream Klipper. New to
 > Helix? Start with the **[Helix overview](HELIX.md)**.
 
 ## How can I donate to the project?

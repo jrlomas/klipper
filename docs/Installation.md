@@ -1,8 +1,8 @@
 # Installation
 
-> **This is Helix** — an evolution of Klipper. This is inherited Klipper
-> documentation, adapted for installing Helix, our source-compatible
-> firmware. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> installing Helix; the guidance is shared with upstream Klipper. New to
+> Helix? Start with the **[Helix overview](HELIX.md)**.
 
 These instructions assume Helix runs on a Linux-based host running a
 Klipper-compatible front end. It is recommended that a single-board
@@ -111,7 +111,7 @@ If the comments at the top of the
 [printer configuration file](#obtain-a-helix-configuration-file)
 describe custom steps for "flashing" the final image to the printer
 control board, then follow those steps and then proceed to
-[configuring OctoPrint](#configuring-octoprint-to-use-klipper).
+[configuring OctoPrint](OctoPrint.md#configuring-octoprint-to-use-helix).
 
 Otherwise, the following steps are often used to "flash" the printer
 control board. First, it is necessary to determine the serial port
@@ -136,7 +136,7 @@ run the command again, the missing item will be your print board(see the
 [FAQ](FAQ.md#wheres-my-serial-port) for more information).
 
 For common micro-controllers with STM32 or clone chips, LPC chips and
-others, it is usual that these need an initial Helix flash via SD card.
+others, it is usual that these need an initial firmware flash via SD card.
 
 When flashing with this method, it is important to make sure that the
 print board is not connected with USB to the host, due to some boards

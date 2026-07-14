@@ -1,8 +1,8 @@
 # RPi microcontroller
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on using a Raspberry Pi as a secondary micro-controller, which
-> Helix carries forward unchanged. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents using a
+> Raspberry Pi as a secondary micro-controller in Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes the process of running Helix on a Raspberry Pi (RPi)

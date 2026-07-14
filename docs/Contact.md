@@ -1,146 +1,117 @@
 # Contact
 
-> **This is Helix** — an evolution of Klipper. This page is inherited
-> Klipper documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page tells you where to
+> ask questions, report bugs, and propose features. New to Helix? Start
+> with the **[Helix overview](HELIX.md)**.
 
-This document provides contact information for Helix.
+Helix has two places to turn, and picking the right one gets you help
+faster:
 
-Helix has its own project home for firmware-specific questions,
-development, and bug reports. The community links below, however, point
-to the shared **upstream Klipper community** (Discord, Discourse forum,
-and GitHub). Because Helix is source-compatible with Klipper, that
-community remains an excellent resource for general 3D-printer firmware
-questions — please use the Helix project channels for anything specific
-to Helix itself.
+- **Anything specific to Helix** — the trajectory motion path,
+  pause-and-hold recovery, machine time, the authenticated network
+  transport, signed firmware, or any `HELIX_`/`TRAJECTORY_` command —
+  belongs on the **Helix project's own GitHub**:
+  [github.com/jrlomas/klipper](https://github.com/jrlomas/klipper)
+  ([issues](https://github.com/jrlomas/klipper/issues) ·
+  [discussions](https://github.com/jrlomas/klipper/discussions)). Helix
+  owns this code, so this is the only place a Helix-specific bug can
+  actually be fixed.
+- **General 3D-printer and Klipper questions** — kinematics, slicers,
+  probes, TMC drivers, tuning, and everything Helix shares unchanged with
+  upstream Klipper — are well served by the large **upstream Klipper
+  community** below. Because Helix is source-compatible with Klipper, that
+  knowledge applies directly.
 
-## Discourse Forum
+When in doubt: if the behavior only exists because you turned on a Helix
+feature, use the Helix GitHub; otherwise the Klipper community is your
+fastest answer.
+
+## The upstream Klipper community
+
+These are run by the upstream Klipper project, not by Helix. They are the
+right venue for general 3D-printer-firmware questions.
+
+### Discourse Forum
 
 There is a
 [Klipper Community Discourse server](https://community.klipper3d.org)
-for "forum" style discussions on Klipper. Note that Discourse is not
-Discord.
+for "forum" style discussions. Note that Discourse is not Discord.
 
-## Discord Chat
+### Discord Chat
 
-There is a Discord server dedicated to Klipper at:
-[https://discord.klipper3d.org](https://discord.klipper3d.org). Note
-that Discord is not Discourse.
+There is a Discord server dedicated to Klipper at
+[discord.klipper3d.org](https://discord.klipper3d.org). Note that Discord
+is not Discourse. It is run by a community of Klipper enthusiasts and lets
+you chat with other users in real time.
 
-This server is run by a community of Klipper enthusiasts dedicated to
-discussions on Klipper. It allows users to chat with other users in
-real-time.
+## I have a question
 
-## I have a question about Klipper
+First, check the documentation — many questions are already answered.
+Start with the [Helix documentation overview](Overview.md), and if you are
+coming from Klipper, [Coming from Klipper](Coming_From_Klipper.md).
 
-Many questions we receive are already answered in the
-[Klipper documentation](Overview.md). Please be sure to to read the
-documentation and follow the directions provided there.
+- **Helix-specific question:** open a
+  [GitHub Discussion](https://github.com/jrlomas/klipper/discussions) on
+  the Helix project.
+- **General printing or Klipper question:** search or post in the
+  [Klipper Discourse Forum](#discourse-forum) or
+  [Klipper Discord Chat](#discord-chat), or a forum dedicated to your
+  printer hardware.
 
-It is also possible to search for similar questions in the
-[Klipper Discourse Forum](#discourse-forum).
-
-If you are interested in sharing your knowledge and experience with
-other Klipper users then you can join the
-[Klipper Discourse Forum](#discourse-forum) or
-[Klipper Discord Chat](#discord-chat). Both are communities where
-Klipper users can discuss Klipper with other users.
-
-If you have a general question or are experiencing general printing
-problems, then also consider a general 3d-printing forum or a forum
-dedicated to the printer hardware.
+If you are experiencing a general printing problem, first carefully
+inspect the printer hardware (joints, wires, screws) — most printing
+problems are mechanical, not firmware.
 
 ## I have a feature request
 
-All new features require someone interested and able to implement that
-feature. If you are interested in helping to implement or test a new
-feature, you can search for ongoing developments in the
-[Klipper Discourse Forum](#discourse-forum). There is also
-[Klipper Discord Chat](#discord-chat) for discussions between
-collaborators.
+Every feature needs someone willing to build **and maintain** it — that is
+a core part of how Helix works (see
+[Our philosophy](CONTRIBUTING.md#our-philosophy-pragmatic-and-you-maintain-what-you-add)).
+Open a [GitHub Discussion](https://github.com/jrlomas/klipper/discussions)
+or [issue](https://github.com/jrlomas/klipper/issues) on the Helix project
+to propose one or to offer to help implement or test existing work.
 
-## Help! It doesn't work!
+## I found a bug
 
-If you are experiencing problems we recommend you carefully read the
-[Klipper documentation](Overview.md) and double check that all steps
-were followed.
+Helix is open-source and we appreciate careful bug reports. **Report Helix
+bugs on the Helix GitHub:**
+[github.com/jrlomas/klipper/issues](https://github.com/jrlomas/klipper/issues).
 
-If you are experiencing a printing problem, then we recommend
-carefully inspecting the printer hardware (all joints, wires, screws,
-etc.) and verify nothing is abnormal. We find most printing problems
-are not related to the Klipper software. If you do find a problem with
-the printer hardware then consider searching general 3d-printing
-forums or forums dedicated to the printer hardware.
+Before reporting, gather the information that makes a bug fixable:
 
-It is also possible to search for similar issues in the
-[Klipper Discourse Forum](#discourse-forum).
+1. **Confirm it's a Helix issue.** If the problem also happens on a
+   configuration that uses none of Helix's features, it may be a general
+   Klipper issue — the [Klipper community](#the-upstream-klipper-community)
+   can help there. If it only appears with a Helix feature enabled, it
+   belongs on the Helix GitHub. (Do **not** try to reproduce a
+   Helix-specific failure on upstream Klipper — the Helix motion path
+   doesn't exist there.)
+2. **Capture the shutdown state.** If possible, run an `M112` command
+   immediately after the undesirable event. This puts the firmware into a
+   shutdown state and writes extra debugging information to the log.
+3. **Attach the full log file.** The log is `klippy.log`, engineered to
+   answer the common questions a maintainer will have (software version,
+   hardware type, configuration, event timing, and much more).
+   - A Helix/Klipper web interface (Mainsail, Fluidd) can download the log
+     directly — the easiest option. Otherwise copy it with `scp`/`sftp`
+     (WinSCP on Windows). It is usually at
+     `~/printer_data/logs/klippy.log`, and sometimes at `/tmp/klippy.log`.
+   - Attach the **full, unmodified** log — not a snippet. Only the
+     complete log has the necessary context. Compressing it with zip or
+     gzip is appreciated.
+4. **Open an issue** on the
+   [Helix GitHub](https://github.com/jrlomas/klipper/issues) with a clear
+   description: what you did, what you expected, and what actually
+   happened. Attach the compressed log.
 
-If you are interested in sharing your knowledge and experience with
-other Klipper users then you can join the
-[Klipper Discourse Forum](#discourse-forum) or
-[Klipper Discord Chat](#discord-chat). Both are communities where
-Klipper users can discuss Klipper with other users.
+## I'd like to contribute a change
 
-## I found a bug in the Klipper software
-
-Klipper is an open-source project and we appreciate when collaborators
-diagnose errors in the software.
-
-Problems should be reported in the
-[Klipper Discourse Forum](#discourse-forum).
-
-There is important information that will be needed in order to fix a
-bug. Please follow these steps:
-1. Make sure you are running unmodified code from
-   [https://github.com/Klipper3d/klipper](https://github.com/Klipper3d/klipper).
-   If the code has been modified or is obtained from another source,
-   then you should reproduce the problem on the unmodified code from
-   [https://github.com/Klipper3d/klipper](https://github.com/Klipper3d/klipper)
-   prior to reporting.
-2. If possible, run an `M112` command immediately after the
-   undesirable event occurs. This causes Klipper to go into a
-   "shutdown state" and it will cause additional debugging information
-   to be written to the log file.
-3. Obtain the Klipper log file from the event. The log file has been
-   engineered to answer common questions the Klipper developers have
-   about the software and its environment (software version, hardware
-   type, configuration, event timing, and hundreds of other
-   questions).
-   1. Dedicated Klipper web interfaces have the ability to directly
-      obtain the Klipper log file. It's the easiest way to obtain the
-      log when using one of these interfaces. Otherwise, an "scp" or
-      "sftp" utility is needed to copy the log file to your desktop
-      computer. The "scp" utility comes standard with Linux and MacOS
-      desktops. There are freely available scp utilities for other
-      desktops (eg, WinSCP). The log file may be located in the
-      `~/printer_data/logs/klippy.log` file (if using a graphical scp
-      utility, look for the "printer_data" folder, then the "logs"
-      folder under that, then the `klippy.log` file). The log file may
-      alternatively be located in the `/tmp/klippy.log` file (if using
-      a graphical scp utility that can not directly copy
-      `/tmp/klippy.log` then repeatedly click on `..` or
-      "parent folder" until reaching the root directory, click on
-      the `tmp` folder, and then select the `klippy.log` file).
-   2. Copy the log file to your desktop so that it can be attached to
-      an issue report.
-   3. Do not modify the log file in any way; do not provide a snippet
-      of the log. Only the full unmodified log file provides the
-      necessary information.
-   4. It is a good idea to compress the log file with zip or gzip.
-5. Open a new topic on the [Klipper Discourse Forum](#discourse-forum)
-   and provide a clear description of the problem. Other Klipper
-   contributors will need to understand what steps were taken, what
-   the desired outcome was, and what outcome actually occurred. The
-   compressed Klipper log file should be attached to that topic.
-
-## I am making changes that I'd like to include in Klipper
-
-Klipper is open-source software and we appreciate new contributions.
-
-See the [CONTRIBUTING document](CONTRIBUTING.md) for information.
-
-There are several
-[documents for developers](Overview.md#developer-documentation). If
-you have questions on the code then you can also ask in the
-[Klipper Discourse Forum](#discourse-forum) or on the
-[Klipper Discord Chat](#discord-chat).
+Helix welcomes contributions. Read the
+[Contributing guide](CONTRIBUTING.md) first — especially
+[How to change Helix without fighting upstream](CONTRIBUTING.md#how-to-change-helix-without-fighting-upstream),
+which explains where a change should live so it stays merge-clean, and the
+expectation that you maintain what you add. The
+[developer documentation](Overview.md#developer-documentation) and the
+[Helix Developer Guide](Helix_Developer_Guide.md) cover the architecture.
+Open a [pull request or discussion](https://github.com/jrlomas/klipper) on
+the Helix project when you're ready.

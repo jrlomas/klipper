@@ -1,8 +1,9 @@
 # Multiple Micro-controller Homing and Probing
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on homing across multiple micro-controllers that Helix builds on.
-> New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents homing
+> across multiple micro-controllers in Helix; the capability is shared with
+> upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 Helix supports a mechanism for homing with an endstop attached to
 one micro-controller unit (MCU) while its stepper motors are on a different

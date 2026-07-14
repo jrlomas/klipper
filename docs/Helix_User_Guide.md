@@ -8,7 +8,9 @@ that doesn't ask for them behaves like the Klipper you already know.
 
 If you want the *why* behind any of this, the
 [HELIX overview](HELIX.md) tells the story; this guide tells you which
-knobs to turn.
+knobs to turn. New to a term like *intention*, *segment*, or *execution
+log*? The [glossary](Glossary.md) defines them in plain language, and
+[Coming from Klipper](Coming_From_Klipper.md) is the five-minute tour.
 
 ## The mental model shift
 
@@ -46,9 +48,9 @@ Check what's live at any time:
 TRAJECTORY_STATUS
 ```
 
-## Surviving failures (pause-and-hold)
+## Surviving failures
 
-This is the flagship user-facing feature. Add a `[failure_recovery]`
+This is the flagship user-facing feature — **pause-and-hold** recovery. Add a `[failure_recovery]`
 section and set per-heater failsafe policies so a stumble becomes a
 pause instead of a ruined print.
 

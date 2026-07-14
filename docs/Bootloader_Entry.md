@@ -1,8 +1,9 @@
 # Bootloader Entry
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on rebooting a board into its bootloader, which Helix carries
-> forward unchanged. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> rebooting a board into its bootloader for Helix; the behavior is shared
+> with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 Helix can be instructed to reboot into a [Bootloader](Bootloaders.md) in one
 of the following ways:

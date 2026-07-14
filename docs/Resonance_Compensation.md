@@ -1,8 +1,9 @@
 # Resonance Compensation
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on resonance compensation and input shaping that Helix builds on.
-> New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> resonance compensation and input shaping for Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 Helix supports Input Shaping - a technique that can be used to reduce ringing
 (also known as echoing, ghosting or rippling) in prints. Ringing is a surface

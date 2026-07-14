@@ -1,8 +1,9 @@
 # Delta calibration
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering automatic calibration of delta
-> printers. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> automatic calibration of delta printers in Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 This document describes Helix's automatic calibration system for
 "delta" style printers.

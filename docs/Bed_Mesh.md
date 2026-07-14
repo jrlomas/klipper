@@ -1,8 +1,8 @@
 # Bed Mesh
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to probe and compensate for
-> an uneven bed surface. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> probe and compensate for an uneven bed surface in Helix; the capability
+> is shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 The Bed Mesh module may be used to compensate for bed surface irregularities

@@ -1,8 +1,8 @@
 # Manual leveling
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to calibrate a Z endstop and
-> adjust bed leveling screws. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> calibrate a Z endstop and adjust bed leveling screws in Helix; the
+> capability is shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes tools for calibrating a Z endstop and for

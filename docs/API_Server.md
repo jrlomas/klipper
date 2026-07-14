@@ -1,8 +1,8 @@
 # API server
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 This document describes Helix's Application Programmer Interface
 (API). This interface enables external applications to query and

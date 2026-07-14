@@ -1,8 +1,8 @@
 # MCU commands
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 This document provides information on the low-level micro-controller
 unit (MCU) commands that are sent from the Helix "host" software and

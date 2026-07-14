@@ -1,8 +1,8 @@
 # CANBUS
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on Controller Area Network (CAN) bus support, which Helix
-> carries forward unchanged. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents
+> Controller Area Network (CAN) bus support in Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes Helix's Controller Area Network (CAN) bus support.

@@ -6,22 +6,30 @@
 > **[User Guide](Helix_User_Guide.md)** to run it, or the
 > **[Developer Guide](Helix_Developer_Guide.md)** to build it. The
 > **[HELIX command &amp; feature reference](Helix_Commands.md)** lists
-> everything new in one place. The pages below are the inherited Klipper
-> documentation, which HELIX builds on.
+> everything new in one place. The pages below are the full reference;
+> most describe capabilities HELIX shares with upstream Klipper.
 
-Welcome to the Helix documentation. If new to Helix, start with
-the [features](Features.md) and [installation](Installation.md)
-documents.
+Welcome to the Helix documentation. The banner above points to the
+Helix story and guides; the pages indexed below are the complete
+reference. To get a printer running, begin with the
+[features](Features.md) and [installation](Installation.md) guides — and
+if you already run Klipper, [Coming from Klipper](Coming_From_Klipper.md)
+is the fastest path in. Terms you don't recognize are defined in the
+[glossary](Glossary.md).
 
 ## Overview information
 
 - [Features](Features.md): A high-level list of features in Helix.
 - [FAQ](FAQ.md): Frequently asked questions.
-- [Releases](Releases.md): The history of Klipper releases.
+- [Releases](Releases.md): Helix release history, and the Klipper
+  release history it builds on.
 - [Config changes](Config_Changes.md): Recent software changes that
 may require users to update their printer config file.
-- [Contact](Contact.md): Information on bug reporting and general
-communication with the Klipper developers.
+- [Contact](Contact.md): Where to report bugs and reach the Helix
+project and the Klipper community.
+- [Coming from Klipper](Coming_From_Klipper.md): What changes, what stays
+the same, and your first Helix feature in five minutes.
+- [Glossary](Glossary.md): Plain-language definitions of Helix terms.
 
 ## Installation and Configuration
 
@@ -88,13 +96,13 @@ communication with the Klipper developers.
 - [Benchmarks](Benchmarks.md): Information on the Helix benchmark
   method.
 - [Contributing](CONTRIBUTING.md): Information on how to submit
-  improvements to Klipper.
+  improvements to Helix.
 - [Packaging](Packaging.md): Information on building OS packages.
 
 ## Device Specific Documents
 
 - [Example configs](Example_Configs.md): Information on adding an
-  example config file to Klipper.
+  example config file to Helix.
 - [SDCard Updates](SDCard_Updates.md): Flash a micro-controller by
   copying a binary to an sdcard in the micro-controller.
 - [Raspberry Pi as Micro-controller](RPi_microcontroller.md): Details

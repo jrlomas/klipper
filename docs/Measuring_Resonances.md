@@ -1,8 +1,9 @@
 # Measuring Resonances
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on measuring printer resonances with an accelerometer that Helix
-> builds on. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> measuring printer resonances with an accelerometer in Helix; the
+> capability is shared with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 Helix has built-in support for the ADXL345, MPU-9250, LIS2DW and LIS3DH compatible
 accelerometers (small MEMS chips that sense acceleration) which can be used to

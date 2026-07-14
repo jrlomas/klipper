@@ -13,6 +13,12 @@ title: HELIX
 Motion firmware that trusts its micro-controllers.
 </p>
 
+When a toolhead cable works loose mid-print, an ordinary printer kills the
+heaters, drops the motors, and abandons the job. HELIX **pauses, holds
+position, and keeps the bed warm** — so you walk over, reconnect it, and
+resume the print. That is what changes when the control board actually
+*knows where it is*.
+
 HELIX is an evolution of [Klipper](https://www.klipper3d.org/) — rebuilt
 around motion **intentions**, machine time, and networks. Instead of
 streaming a pre-computed firehose of step pulses to a micro-controller
@@ -38,10 +44,14 @@ across the STM32 and ESP32 families.
   protocol library, and how to build or port HELIX.
 - **[Command &amp; feature reference](Helix_Commands.md)** — every new
   command, config option, and firmware capability in one place.
-- **[Features](Features.md)** · **[FD-0001 design canon](founding/0001-motion-intentions/00-Vision.md)**
+- **[Coming from Klipper](Coming_From_Klipper.md)** — already run Klipper?
+  What changes, what stays the same, and your first HELIX feature in five
+  minutes.
+- **[Features](Features.md)** · **[Glossary](Glossary.md)** ·
+  **[FD-0001 design canon](founding/0001-motion-intentions/00-Vision.md)**
 
-Start running it with the [installation guide](Installation.md); the
-inherited Klipper documentation lives under the [Overview](Overview.md).
+Start running it with the [installation guide](Installation.md); the full
+reference documentation lives under the [Overview](Overview.md).
 
 ---
 

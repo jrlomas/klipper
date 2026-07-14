@@ -1,8 +1,9 @@
 # TMC drivers
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on configuring Trinamic stepper drivers that Helix builds on.
-> New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents
+> configuring Trinamic stepper drivers in Helix; the capability is shared
+> with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 This document provides information on using Trinamic (TMC) stepper motor
 drivers in SPI/UART mode on Helix.

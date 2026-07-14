@@ -1,8 +1,8 @@
 # Configuration checks
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 This document provides a list of steps to help confirm the pin
 settings in the Helix printer.cfg file.  It is a good idea to run

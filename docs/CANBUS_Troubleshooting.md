@@ -1,8 +1,8 @@
 # CANBUS Troubleshooting
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on diagnosing CAN bus communication problems, which Helix
-> carries forward unchanged. New to Helix? Start with the
+> **This is Helix** — an evolution of Klipper. This page documents
+> diagnosing CAN bus communication problems in Helix; the guidance is
+> shared with upstream Klipper. New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document provides information on troubleshooting communication
@@ -31,7 +31,7 @@ intermittent communication errors.
 
 ## Check for incrementing bytes_invalid counter
 
-The Helix log file will report a `Stats` line once a second when the
+The log file (`klippy.log`) will report a `Stats` line once a second when the
 printer is active. These "Stats" lines will have a `bytes_invalid`
 counter for each micro-controller. This counter should not increment
 during normal printer operation (it is normal for the counter to be
@@ -82,7 +82,7 @@ with a `txqueuelen 128` to increase that size.
 
 If Helix transmits a packet and Linux has filled all of its transmit
 queue space then Linux will drop that packet and messages like the
-following will appear in the Helix log:
+following will appear in the log (`klippy.log`):
 ```
 Got error -1 in can write: (105)No buffer space available
 ```
@@ -92,7 +92,7 @@ message is a warning and it does not indicate an unrecoverable error.
 
 If a complete CAN bus failure occurs (such as a CAN wire break) then
 Linux will not be able to transmit any messages on the CAN bus and it
-is common to find the above message in the Helix log. In this case,
+is common to find the above message in the log. In this case,
 the log message is a symptom of a larger problem (the inability to
 transmit any messages) and is not directly related to Linux
 `txqueuelen`.

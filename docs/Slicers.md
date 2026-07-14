@@ -1,8 +1,8 @@
 # Slicers
 
-> **This is Helix** — an evolution of Klipper. This is inherited Klipper
-> documentation on slicer setup that applies to Helix, our source-compatible
-> firmware. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents slicer
+> setup for Helix; the guidance is shared with upstream Klipper. New to
+> Helix? Start with the **[Helix overview](HELIX.md)**.
 
 This document provides some tips for configuring a "slicer"
 application for use with Helix. Common slicers used with Helix are

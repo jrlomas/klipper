@@ -1,8 +1,8 @@
 # Load Cells
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation on load cell support that Helix builds on. New to Helix? Start
-> with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents load
+> cell support in Helix; the capability is shared with upstream Klipper.
+> New to Helix? Start with the **[Helix overview](HELIX.md)**.
 
 This document describes Helix's support for load cells. Basic load cell
 functionality can be used to read force data and to weigh things like filament.

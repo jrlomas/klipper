@@ -1,8 +1,9 @@
 # BL-Touch
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to wire, test, and calibrate
-> a BL-Touch probe. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> wire, test, and calibrate a BL-Touch probe in Helix; the capability is
+> shared with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 ## Connecting BL-Touch
 

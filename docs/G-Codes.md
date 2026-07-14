@@ -1,8 +1,8 @@
 # G-Codes
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on. New to Helix? Start with the
-> **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents a
+> capability Helix shares with upstream Klipper. New to Helix? Start with
+> the **[Helix overview](HELIX.md)**.
 
 This document describes the commands that Helix supports. These are
 commands that one may enter into the OctoPrint terminal tab.
@@ -526,7 +526,7 @@ the hold is released on every configured heater.
 #### EXECLOG_DUMP
 `EXECLOG_DUMP`: Drains the retained micro-controller execution logs
 (the "flight recorder") of every configured board and writes the
-records to the Helix log file.
+records to the log file (`klippy.log`).
 
 #### RECONNECT_MCU
 `RECONNECT_MCU MCU=<name>`: Attempts to re-handshake with a micro-

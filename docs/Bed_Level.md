@@ -1,8 +1,9 @@
 # Bed leveling
 
-> **This is Helix** — an evolution of Klipper. This page is inherited Klipper
-> documentation that Helix builds on, covering how to level and calibrate your
-> print bed. New to Helix? Start with the **[Helix overview](HELIX.md)**.
+> **This is Helix** — an evolution of Klipper. This page documents how to
+> level and calibrate your print bed in Helix; the capability is shared
+> with upstream Klipper. New to Helix? Start with the
+> **[Helix overview](HELIX.md)**.
 
 Bed leveling (sometimes also referred to as "bed tramming") is
 critical to getting high quality prints. If a bed is not properly
