@@ -64,10 +64,11 @@ For each migrated joint, per flush interval:
    it would exceed it. Continuity is C0 by chaining (each segment
    starts at the previous quantized endpoint); velocity continuity is
    implicit wherever the underlying trajectory is smooth. When a quantized
-   pure-velocity fit also meets the error budget and its chained endpoint bias
-   is at most 32 sub-units, prefer it over a quadratic with a tiny
-   rounding-induced acceleration; this enables the MCU cruise fast path
-   without weakening positional fidelity.
+   pure-velocity fit also meets the error budget, prefer it over a quadratic
+   with a tiny rounding-induced acceleration. Motion fitting may spend the
+   configured path-tolerance budget to enter the MCU cruise fast path after an
+   acceleration ramp; value/PWM fitting additionally limits chained endpoint
+   bias to 32 sub-units so final-value errors cannot accumulate across chunks.
 3. **Force breakpoints** at velocity zero-crossings (protocol
    invariant), at trapq move boundaries (natural fit boundaries), and
    at the duration caps of

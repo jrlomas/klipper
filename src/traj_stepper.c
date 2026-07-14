@@ -40,15 +40,71 @@ struct traj_stepper {
     uint32_t t_prev;        // ticks into segment of last solve point
     int64_t target16;       // next boundary, Q16.16 rel segment start
     int64_t q16_end;        // segment end position, Q16.16 rel start
+    // Pure-cruise crossing recurrence.  Division is paid once per segment;
+    // recurring step IRQs advance quotient/remainder with adds only.
+    uint64_t cruise_q, cruise_step_q;
+    uint32_t cruise_r, cruise_step_r, cruise_speed;
+    int64_t cruise_target16;
     int32_t mpos;           // microsteps actually stepped (absolute)
     int8_t dir;             // +1 / -1 for the active segment
     uint8_t wake_kind;
     uint8_t flags;
+    uint8_t cruise_valid;
     struct trsync_signal stop_signal;
 };
 
 enum { TSF_INVERT_STEP = 1 << 0, TSF_DIR_HIGH = 1 << 1,
        TSF_INVERT_DIR = 1 << 2 };
+
+static void
+traj_cruise_set_target(struct traj_stepper *s)
+{
+    int64_t target = s->target16;
+    if (s->dir > 0 ? target <= 0 : target >= 0) {
+        s->cruise_valid = 0;
+        return;
+    }
+    uint64_t magnitude = target < 0
+        ? -(uint64_t)target : (uint64_t)target;
+    s->cruise_q = magnitude / s->cruise_speed;
+    s->cruise_r = magnitude % s->cruise_speed;
+    s->cruise_target16 = target;
+    s->cruise_valid = 1;
+}
+
+static void
+traj_cruise_setup(struct traj_stepper *s)
+{
+    int32_t velocity = s->tq.velocity;
+    uint32_t speed = velocity < 0
+        ? -(uint32_t)velocity : (uint32_t)velocity;
+    s->cruise_valid = 0;
+    s->cruise_speed = speed;
+    if (!speed)
+        return;
+    s->cruise_step_q = (uint64_t)STEP_Q / speed;
+    s->cruise_step_r = (uint64_t)STEP_Q % speed;
+    traj_cruise_set_target(s);
+}
+
+static void
+traj_cruise_advance_target(struct traj_stepper *s)
+{
+    int64_t expected = s->cruise_target16
+        + (s->dir > 0 ? STEP_Q : -STEP_Q);
+    if (!s->cruise_valid || s->target16 != expected) {
+        traj_cruise_set_target(s);
+        return;
+    }
+    s->cruise_q += s->cruise_step_q;
+    uint64_t remainder = (uint64_t)s->cruise_r + s->cruise_step_r;
+    if (remainder >= s->cruise_speed) {
+        s->cruise_q++;
+        remainder -= s->cruise_speed;
+    }
+    s->cruise_r = remainder;
+    s->cruise_target16 = s->target16;
+}
 
 // Solve for the tick (relative to segment start) where the active
 // segment next crosses s->target16, strictly after s->t_prev.
@@ -70,20 +126,28 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
         return 0;
     // Cruise is overwhelmingly the common case.  Avoid running the generic
     // Newton solver (and its repeated signed 64-bit divisions) in the timer
-    // IRQ for every pulse: q(t)=v*t has an exact closed-form crossing.  This
-    // also keeps other precision timer clients such as the TMC software UART
-    // inside their bit sampling window on division-poor MCUs (RP2040 M0+).
+    // IRQ for every pulse.  q(t)=v*t crossings form a quotient/remainder
+    // recurrence: division is paid once when the segment loads, and each
+    // following pulse needs only additions.  This keeps precision timer
+    // clients such as the TMC software UART inside their bit sampling window
+    // on division-poor MCUs (RP2040 M0+).
     if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK)) {
         int64_t target = s->target16;
         uint32_t t;
         if ((dir > 0 && target <= 0) || (dir < 0 && target >= 0)) {
             t = s->t_prev + 1;
         } else {
-            uint64_t magnitude = target < 0
-                ? -(uint64_t)target : (uint64_t)target;
             uint32_t speed = tq->velocity < 0
                 ? -(uint32_t)tq->velocity : (uint32_t)tq->velocity;
-            uint64_t crossing = (magnitude + speed - 1) / speed;
+            if (!speed)
+                return 0;
+            if (s->cruise_speed != speed)
+                traj_cruise_setup(s);
+            if (!s->cruise_valid || s->cruise_target16 != target)
+                traj_cruise_advance_target(s);
+            if (!s->cruise_valid)
+                return 0;
+            uint64_t crossing = s->cruise_q + !!s->cruise_r;
             if (crossing > tq->duration)
                 return 0;
             t = (uint32_t)crossing;
@@ -166,6 +230,35 @@ traj_stepper_test_halfstep_phase(void)
     int64_t negative = ((2LL * 0 - 1) << 47) >> 16;
     return positive == STEP_Q / 2 && negative == -STEP_Q / 2;
 }
+
+uint_fast8_t
+traj_stepper_test_cruise_recurrence(void)
+{
+    // Compare the division-free recurring path with the closed-form crossing
+    // for enough pulses to exercise many remainder carries in both directions.
+    int8_t dir;
+    for (dir = -1; dir <= 1; dir += 2) {
+        struct traj_stepper s = { };
+        s.tq.duration = 600000;
+        s.tq.velocity = dir * 1145325;
+        s.dir = dir;
+        s.target16 = dir * (STEP_Q / 2);
+        s.q16_end = (int64_t)s.tq.velocity * s.tq.duration;
+        traj_cruise_setup(&s);
+        uint32_t i;
+        for (i = 0; i < 128; i++) {
+            uint64_t magnitude = s.target16 < 0
+                ? -(uint64_t)s.target16 : (uint64_t)s.target16;
+            uint32_t want = (magnitude + 1145325 - 1) / 1145325;
+            uint32_t got;
+            if (traj_solve_step(&s, &got) != 1 || got != want)
+                return 0;
+            s.t_prev = got;
+            s.target16 += dir > 0 ? STEP_Q : -STEP_Q;
+        }
+    }
+    return 1;
+}
 #endif
 
 // Set up solver state when a segment becomes active
@@ -188,6 +281,10 @@ traj_stepper_load(struct traj_stepper *s)
     int64_t boundary = dir > 0 ? ((2LL * s->mpos + 1) << 47)
                                : ((2LL * s->mpos - 1) << 47);
     s->target16 = (boundary - tq->acc) >> 16;
+    if (!tq->accel && !(tq->seg_flags & TSEG_POLY_MASK))
+        traj_cruise_setup(s);
+    else
+        s->cruise_valid = s->cruise_speed = 0;
     uint8_t dirstate = (dir > 0) ^ !!(s->flags & TSF_INVERT_DIR);
     if (dirstate != !!(s->flags & TSF_DIR_HIGH)) {
         s->flags ^= TSF_DIR_HIGH;
