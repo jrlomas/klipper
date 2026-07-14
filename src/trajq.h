@@ -99,7 +99,7 @@ void trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
                             , int32_t velocity, int32_t accel, int32_t jerk
                             , int32_t snap, int32_t crackle);
 #endif
-void trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos);
+int trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos);
 int trajq_advance(struct trajq *tq);
 void trajq_halt(struct trajq *tq, uint8_t set_flags);
 int64_t trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel);

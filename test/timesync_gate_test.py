@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(ROOT, 'klippy', 'extras'))
 
 import timesync
 import mcu as klippy_mcu
+import stepper as klippy_stepper
 sys.modules['chelper'] = types.ModuleType('chelper')
 import trajectory_queuing
 import trajectory_pwm
@@ -36,6 +37,18 @@ def test_real_mcu_exposes_clocksync():
     mcu = klippy_mcu.MCU.__new__(klippy_mcu.MCU)
     mcu._clocksync = clocksync
     assert mcu.get_clocksync() is clocksync
+
+
+def test_trajectory_anchor_uses_physical_step_space():
+    stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
+    stepper._step_dist = .00125
+    stepper._mcu_position_offset = .028
+    # A 0.166667mm logical coordinate after homing can correspond to a
+    # different physical MCU count. Preserve that offset at sub-step
+    # resolution instead of rebasing the board to the logical coordinate.
+    pos_su = stepper.commanded_to_mcu_position_su(.166667)
+    want = round((.166667 + .028) / .00125 * 65536.)
+    assert pos_su == want
 
 
 class FakeMCU:
@@ -154,8 +167,11 @@ class SyncedOwner:
 class AnchorFFI:
     def __init__(self, active_time):
         self.active_time = active_time
+        self.checked_to = []
+        self.generated_to = []
 
     def itersolve_check_active(self, sk, flush_time):
+        self.checked_to.append(flush_time)
         return self.active_time
 
     def segfit_get_anchor(self, segfit):
@@ -165,6 +181,7 @@ class AnchorFFI:
         return self.active_time
 
     def segfit_generate(self, segfit, flush_time):
+        self.generated_to.append(flush_time)
         return 0
 
     def segfit_get_segs(self, segfit):
@@ -208,7 +225,7 @@ def test_trajectory_anchor_starts_at_activity():
     stepper.owner = SyncedOwner()
     stepper.mcu = FakeMCU()
     stepper.mcu_stepper = FakeMCUStepper()
-    stepper.ffi_lib = AnchorFFI(12.5)
+    ffi_lib = stepper.ffi_lib = AnchorFFI(12.5)
     stepper.segfit = object()
     stepper.anchored = False
     stepper.intentions = []
@@ -219,8 +236,10 @@ def test_trajectory_anchor_starts_at_activity():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper.flush(13., 13.)
+    stepper.flush(13., 13.4)
     assert anchors == [12.5]
+    assert ffi_lib.checked_to == [13.4]
+    assert ffi_lib.generated_to == [13.4]
 
 
 def test_value_trajectory_fails_before_fitter_advance():
@@ -241,6 +260,9 @@ def test_value_trajectory_fails_before_fitter_advance():
 def main():
     test_real_mcu_exposes_clocksync()
     print("PASS: the real MCU API exposes its per-link clock regression")
+    test_trajectory_anchor_uses_physical_step_space()
+    print("PASS: trajectory anchors preserve the physical MCU position"
+          " offset")
     test_secondary_freshness()
     print("PASS: host freewheel freshness mirrors the firmware gate")
     test_mixed_frequency_rate_representation()
@@ -250,7 +272,8 @@ def main():
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
     test_trajectory_anchor_starts_at_activity()
-    print("PASS: trajectory anchor starts at first activity")
+    print("PASS: trajectory anchor starts at activity and fits to the"
+          " step-generation horizon")
     test_value_trajectory_fails_before_fitter_advance()
     print("PASS: value fitting fails before unsynchronized send")
 

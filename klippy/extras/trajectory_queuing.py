@@ -240,7 +240,8 @@ class TrajectoryStepper:
         self.hold_cmd = self.mcu.lookup_command(
             "traj_hold oid=%c duration=%u", cq=cmd_queue)
         self.rebase_cmd = self.mcu.lookup_command(
-            "trajectory_rebase oid=%c clock=%u pos=%i", cq=cmd_queue)
+            "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i",
+            cq=cmd_queue)
         # Higher-order commands exist only if the firmware was built with
         # CONFIG_WANT_TRAJECTORY_HIGHER_ORDER; look them up optionally.
         self.cubic_cmd = self.mcu.try_lookup_command(
@@ -307,7 +308,9 @@ class TrajectoryStepper:
         anchor_su = int(ctrl_su[0])
         # Rebase this joint at the first control point, then emit.
         self.note_rebase_needed()
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_su])
+        anchor_mcu_pos = int(round(anchor_su / SUBUNITS))
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_su,
+                              anchor_mcu_pos])
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
                                        anchor_su << 32)
         self.anchored = False   # standalone emit; not fitter-driven
@@ -325,10 +328,14 @@ class TrajectoryStepper:
         # itersolve_generate_steps(), so that legacy solver's commanded_pos
         # can be stale after a homing halt or kinematic position change.
         pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
-        pos_su = int(round(pos_mm * self.su_per_mm))
+        # segfit samples commanded joint space. Convert it through the
+        # stepper position offset so the wire anchor stays in physical MCU
+        # step space across homing and SET_POSITION.
+        pos_su = self.mcu_stepper.commanded_to_mcu_position_su(pos_mm)
+        mcu_pos = self.mcu_stepper.get_mcu_position(pos_mm)
         acc = pos_su << 32
         clock = self.mcu.print_time_to_clock(print_time)
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
         self.ffi_lib.segfit_set_anchor(self.segfit, print_time, acc)
         self.anchored = True
         self.need_rebase = False
@@ -339,7 +346,16 @@ class TrajectoryStepper:
         sk = self.mcu_stepper.get_stepper_kinematics()
         if sk is None:
             return
-        active_time = self.ffi_lib.itersolve_check_active(sk, flush_time)
+        # This callback receives two horizons.  flush_time is the point up to
+        # which already generated queue data may be committed; step_gen_time
+        # is the (later) point to which kinematic motion must be generated.
+        # A trajectory segment is itself the generated step data, so using
+        # flush_time here can first transmit an anchor only after that anchor
+        # is already due (most visibly on the retract after a homing drip).
+        # Match the legacy itersolve/stepcompress path and generate through the
+        # step-generation horizon.
+        gen_time = step_gen_time
+        active_time = self.ffi_lib.itersolve_check_active(sk, gen_time)
         if ((active_time or self.anchored)
                 and not self.owner.is_mcu_synced(self.mcu)):
             # Do not advance segfit or the persisted intention twin while
@@ -361,7 +377,7 @@ class TrajectoryStepper:
             self._anchor(anchor_time)
         prev_acc = self.ffi_lib.segfit_get_anchor(self.segfit)
         prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        n = self.ffi_lib.segfit_generate(self.segfit, flush_time)
+        n = self.ffi_lib.segfit_generate(self.segfit, gen_time)
         if n < 0:
             logging.warning("segfit overflow on %s", self.name)
             n = 0
@@ -419,7 +435,8 @@ class TrajectoryStepper:
             return
         clock = int(clock)
         pos_su = int(pos_su)
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
+        mcu_pos = int(round(pos_su / SUBUNITS))
+        self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su, mcu_pos])
         try:
             print_time = self.mcu.clock_to_print_time(clock)
             self.ffi_lib.segfit_set_anchor(self.segfit, print_time,

@@ -85,7 +85,8 @@ work. They do not convert any unchecked target or hardware item into a pass.
   lengths are rejected, an authenticated peer is cleared across hardware
   reinitialization, and a failed/reset chip is health-checked and reopened.
 * A real V0 rig now runs this branch with a USB SKR Pico (RP2040, 12 MHz
-  Klipper clock) and USB EBB36 v1.2 (STM32G0B1, 64 MHz). The signed
+  Klipper scheduler clock and 200 MHz core) and USB EBB36 v1.2 (STM32G0B1,
+  64 MHz). The signed
   provisioning executor verified Ed25519 signatures, rebuilt from archived
   Kconfig, required exact artifact equality, flashed both normal bootloader
   paths, and recorded the successful jobs. Both boards booted `9d111f1b`,

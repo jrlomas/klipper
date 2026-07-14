@@ -200,6 +200,12 @@ class MCU_stepper:
     def _set_mcu_position(self, mcu_pos):
         mcu_pos_dist = mcu_pos * self._step_dist
         self._mcu_position_offset = mcu_pos_dist - self.get_commanded_position()
+    def commanded_to_mcu_position_su(self, cmd_pos):
+        # Continuous MCU step-space position for a commanded joint position.
+        # Keep the fractional phase for trajectory fitting; get_mcu_position()
+        # remains the nearest physical integer microstep counter.
+        mcu_steps = (cmd_pos + self._mcu_position_offset) / self._step_dist
+        return int(round(mcu_steps * 65536.))
     def _query_traj_readback(self):
         # Read the trajectory stepper's live position accumulator.
         # traj_position reports integer sub-units (1 microstep = 2^16)

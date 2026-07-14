@@ -23,6 +23,7 @@
 #if CONFIG_WANT_TRAJECTORY
 #include "trajq.h" // trajq_end_delta
 uint_fast8_t traj_stepper_test_hold_boundary(void);
+uint_fast8_t traj_stepper_test_halfstep_phase(void);
 #endif
 
 enum {
@@ -132,6 +133,10 @@ test_traj_kernel(uint32_t *value)
     }
     if (!traj_stepper_test_hold_boundary()) {
         *value = 0x80000000;
+        return ST_FAIL;
+    }
+    if (!traj_stepper_test_halfstep_phase()) {
+        *value = 0x80000001;
         return ST_FAIL;
     }
     *value = ARRAY_SIZE(traj_golden);

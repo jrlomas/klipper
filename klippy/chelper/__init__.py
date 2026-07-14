@@ -43,6 +43,7 @@ defs_stepcompress = """
     void stepcompress_set_invert_sdir(struct stepcompress *sc
         , uint32_t invert_sdir);
     int stepcompress_reset(struct stepcompress *sc, uint64_t last_step_clock);
+    int stepcompress_flush(struct stepcompress *sc, uint64_t move_clock);
     int stepcompress_set_last_position(struct stepcompress *sc
         , uint64_t clock, int64_t last_position);
     int64_t stepcompress_find_past_position(struct stepcompress *sc
@@ -75,6 +76,8 @@ defs_steppersync = """
 """
 
 defs_itersolve = """
+    int32_t itersolve_generate_steps(struct stepper_kinematics *sk
+        , struct stepcompress *sc, double flush_time);
     double itersolve_check_active(struct stepper_kinematics *sk
         , double flush_time);
     int32_t itersolve_is_active_axis(struct stepper_kinematics *sk, char axis);

@@ -130,6 +130,15 @@ traj_stepper_test_hold_boundary(void)
     s.dir = -1;
     return traj_solve_step(&s, &step_t) == 0;
 }
+
+uint_fast8_t
+traj_stepper_test_halfstep_phase(void)
+{
+    // The two nearest V1 quantization thresholds around physical mpos=0.
+    int64_t positive = ((2LL * 0 + 1) << 47) >> 16;
+    int64_t negative = ((2LL * 0 - 1) << 47) >> 16;
+    return positive == STEP_Q / 2 && negative == -STEP_Q / 2;
+}
 #endif
 
 // Set up solver state when a segment becomes active
@@ -144,10 +153,13 @@ traj_stepper_load(struct traj_stepper *s)
     s->dir = dir;
     s->t_prev = 0;
     s->q16_end = trajq_end_delta_seg(tq) >> 16;
-    // Next microstep boundary in the direction of travel, relative
-    // to the exact chained anchor.
-    int64_t boundary = dir > 0 ? ((int64_t)(s->mpos + 1) << 48)
-                               : ((int64_t)s->mpos << 48);
+    // Match Klipper's legacy itersolve quantizer: the physical integer
+    // microstep position changes when the continuous commanded position
+    // crosses the half-step boundary around it.  mpos is deliberately
+    // independent of tq->acc -- a logical coordinate rebase must not invent
+    // physical pulses or reset the MCU's step count.
+    int64_t boundary = dir > 0 ? ((2LL * s->mpos + 1) << 47)
+                               : ((2LL * s->mpos - 1) << 47);
     s->target16 = (boundary - tq->acc) >> 16;
     uint8_t dirstate = (dir > 0) ^ !!(s->flags & TSF_INVERT_DIR);
     if (dirstate != !!(s->flags & TSF_DIR_HIGH)) {
@@ -242,8 +254,6 @@ traj_stepper_start(struct trajq *tq)
     uint32_t now = timer_read_time();
     if (timer_is_before(tq->seg_start_clock + PAST_GUARD_TICKS, now))
         shutdown("Trajectory anchor in past");
-    // Derive microstep phase from the exact anchor (floor)
-    s->mpos = (int32_t)(tq->acc >> 48);
     traj_stepper_load(s);
     s->wake_kind = WK_POLL;
     s->t_prev = 0;
@@ -371,10 +381,14 @@ void
 command_trajectory_rebase(uint32_t *args)
 {
     struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
-    trajq_rebase(&s->tq, args[1], args[2]);
+    if (!trajq_rebase(&s->tq, args[1], args[2]))
+        return;
+    // The physical integer counter is distinct from the continuous anchor,
+    // just as it is in legacy stepcompress across homing and SET_POSITION.
+    s->mpos = args[3];
 }
 DECL_COMMAND(command_trajectory_rebase,
-             "trajectory_rebase oid=%c clock=%u pos=%i");
+             "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i");
 
 void
 command_traj_get_position(uint32_t *args)

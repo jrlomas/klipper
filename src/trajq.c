@@ -107,16 +107,14 @@ trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel)
 // Take the most aggressive physically reachable move and the worst
 // (largest per-tick) parameters a trajectory MCU runs at:
 //   J<=1e6 mm/s^3, S<=1e8 mm/s^4, C<=1e10 mm/s^5 (extreme S-curve),
-//   sub-units/mm <= ~1e7 (fine microstepping), CLOCK_FREQ >= 64 MHz.
+//   sub-units/mm <= ~1e7 (fine microstepping), CLOCK_FREQ >= 12 MHz.
 // Per-tick true values scale as (rate * su_per_mm / F^order):
-//   j_true <= 1e6 *1e7 / (64e6)^3 = 3.8e-11 su/tick^3
-//   s_true <= 1e8 *1e7 / (64e6)^4 = 6.0e-17 su/tick^4
-//   c_true <= 1e10*1e7 / (64e6)^5 = 9.3e-23 su/tick^5
+//   j_true <= 1e6 *1e7 / (12e6)^3 = 5.8e-9 su/tick^3
+//   s_true <= 1e8 *1e7 / (12e6)^4 = 4.8e-14 su/tick^4
+//   c_true <= 1e10*1e7 / (12e6)^5 = 4.0e-19 su/tick^5
 // Stored integers:
-//   |j| <= 3.8e-11 * 2^48 ~= 1.1e4
-//   |s| <= 6.0e-17 * 2^64 ~= 1.1e3
-//   |c| <= 9.3e-23 * 2^80 ~= 1.1e2
-// all far inside int32 (+-2.1e9): >=17 bits of headroom on jerk. No
+//   |j| <= 1.63e6, |s| <= 8.90e5, |c| <= 4.86e5
+// all far inside int32 (+-2.1e9): >10 bits of headroom. No
 // int32 wire field is needed. (At very high F the small higher-order
 // corrections quantize to a few LSB; that is a resolution, not a range,
 // limit and is harmless because the host fitter keeps the *quantized*
@@ -481,14 +479,14 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 }
 #endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 
-void
+int
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
 {
     if (!timesync_class0_ok()) {
         // A rebase is the anchor for subsequent Class-0 segments.  Do not
         // translate it through a mapping that is still moving or stale.
         tq->dropped++;
-        return;
+        return 0;
     }
     // The anchor is a machine-time instant (FD-0001 doc 01);
     // identity when timesync is unconfigured
@@ -506,6 +504,7 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos)
     execlog_append(EL_REBASE, tq->oid, clock, pos, 0);
     LOG1(TRACE_SUB_MOTION, TRACE_LVL_INFO, TRACE_EV_rebase, clock);
     irq_enable();
+    return 1;
 }
 
 // Abort all motion (trsync trigger, shutdown). Callers must have

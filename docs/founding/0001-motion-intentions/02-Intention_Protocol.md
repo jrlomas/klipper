@@ -38,8 +38,9 @@ Segments for one actuator form an ordered stream with these rules:
   the stepper backend never solves for a reversal mid-segment, and
   q(t) is monotonic within every segment. It is the single biggest
   simplification of the MCU execution path.
-* **Bounded duration.** A segment lasts at most 2²⁶ ticks (≈0.4–1.4 s
-  across 48–180 MHz targets). The host splits longer cruises. This
+* **Bounded duration.** A moving segment lasts at most 2²⁶ ticks
+  (≈0.37–5.59 s across 12–180 MHz scheduler clocks). The host splits longer
+  cruises. This
   bounds fixed-point error accumulation (analysis below) and bounds
   exposure to 32-bit clock wrap-around exactly as today's protocol
   does.
@@ -66,7 +67,7 @@ New commands (encodings follow the existing VLQ argument scheme of
 
 ```
 config_trajectory oid=%c backend=%c underrun_decel=%u
-trajectory_rebase oid=%c clock=%u pos=%i
+trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i
 queue_traj_segment oid=%c flags=%c duration=%u velocity=%i accel=%i
 queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i accel=%i \
     jerk=%i                                       (Kconfig-gated)
@@ -75,6 +76,12 @@ queue_traj_segment_quintic oid=%c flags=%c duration=%u velocity=%i \
 traj_hold oid=%c duration=%u
 traj_get_position oid=%c
 ```
+
+For the stepper backend, `pos` is the continuous Q-position anchor while
+`mcu_pos` is the physical integer microstep counter.  They intentionally
+remain separate: Klipper may change its logical coordinate or position offset
+without a motor pulse, and the next edge must still use the same half-step
+quantization phase as the legacy `itersolve`/`stepcompress` path.
 
 MCU→host messages:
 
@@ -216,16 +223,17 @@ the existing v = Q16.16, a = Q0.32 ladder:
 aggressive physically reachable move and the worst-case (largest
 per-tick) parameters a trajectory MCU runs at: J ≤ 1e6 mm/s³,
 S ≤ 1e8 mm/s⁴, C ≤ 1e10 mm/s⁵, ≤ ~1e7 sub-units/mm (fine
-microstepping), CLOCK_FREQ ≥ 64 MHz. Per-tick true values scale as
+microstepping), and the lowest deployed scheduler clock, the RP2040's
+12 MHz `CLOCK_FREQ`. Per-tick true values scale as
 `rate · su_per_mm / F^order`:
 
-    j_true ≤ 1e6 ·1e7 / (64e6)³ = 3.8e-11 su/tick³
-    s_true ≤ 1e8 ·1e7 / (64e6)⁴ = 6.0e-17 su/tick⁴
-    c_true ≤ 1e10·1e7 / (64e6)⁵ = 9.3e-23 su/tick⁵
+    j_true ≤ 1e6 ·1e7 / (12e6)³ = 5.8e-9  su/tick³
+    s_true ≤ 1e8 ·1e7 / (12e6)⁴ = 4.8e-14 su/tick⁴
+    c_true ≤ 1e10·1e7 / (12e6)⁵ = 4.0e-19 su/tick⁵
 
-so the stored integers are |j| ≤ 3.8e-11·2⁴⁸ ≈ 1.1e4,
-|s| ≤ 6.0e-17·2⁶⁴ ≈ 1.1e3, |c| ≤ 9.3e-23·2⁸⁰ ≈ 1.1e2 — all far inside
-int32 (±2.1e9), with ≥ 17 bits of headroom on jerk. **No int64 wire
+so the stored integers are |j| ≤ 1.63e6, |s| ≤ 8.90e5, and
+|c| ≤ 4.86e5 — all far inside int32 (±2.1e9), with more than ten bits
+of headroom. **No int64 wire
 field is required.** (At very high CLOCK_FREQ the small higher-order
 corrections quantize to a few LSB; that is a resolution, not a range,
 limit, and is harmless — the host fitter keeps the *quantized*
@@ -318,7 +326,7 @@ the legacy per-step cost. Ceilings:
 | --- | --- | --- | --- |
 | stm32f042 (M0) | 48 MHz | ~190–240K | ~578K |
 | stm32f103 (M3) | 72 MHz | ~290–360K | ~818K |
-| rp2040 (M0+, dual core) | 133 MHz | ~530–665K per core | ~2.5M (3 steppers, 14 ticks of its 12 MHz sched timer) |
+| rp2040 (M0+, dual core) | 200 MHz core / 12 MHz scheduler | estimate pending refresh | ~2.5M (3 steppers, 14 scheduler ticks) |
 
 A typical printer demands 20–80K steps/s aggregate; the budget is
 comfortable on mainstream boards and tight only for extreme

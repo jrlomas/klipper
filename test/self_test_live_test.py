@@ -14,7 +14,8 @@ import time
 import unittest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-ELF = os.path.join(REPO, 'out', 'klipper.elf')
+ELF = os.environ.get('HELIX_TEST_ELF',
+                     os.path.join(REPO, 'out', 'klipper.elf'))
 PTY = '/tmp/klipper_selftest_unittest'
 
 sys.path.insert(0, os.path.join(REPO, 'scripts'))
@@ -23,7 +24,7 @@ sys.path.insert(0, os.path.join(REPO, 'scripts'))
 def is_linux_build():
     if not os.path.exists(ELF):
         return False
-    with open(os.path.join(REPO, 'out', 'autoconf.h')) as f:
+    with open(os.path.join(os.path.dirname(ELF), 'autoconf.h')) as f:
         return 'CONFIG_MACH_LINUX 1' in f.read()
 
 

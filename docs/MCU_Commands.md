@@ -332,10 +332,13 @@ and coexist with the legacy queue_step path.
 * `traj_hold oid=%c duration=%u` : Appends a stationary (hold) segment
   of the given 'duration'.
 
-* `trajectory_rebase oid=%c clock=%u pos=%i` : Anchors the chained
-  position stream, declaring that position 'pos' (in sub-units) is
-  reached at the given 'clock' time. Sent before the first segment of a
-  motion and whenever the accumulator must be re-anchored.
+* `trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i` : Anchors the
+  chained position stream, declaring that continuous position 'pos' (in
+  sub-units) is reached at the given 'clock' time and separately restoring
+  the physical integer microstep counter 'mcu_pos'. Sent before the first
+  segment of a motion and whenever the accumulator must be re-anchored. The
+  separate counter preserves step phase across homing and logical coordinate
+  changes.
 
 * `traj_get_position oid=%c` : Generates a "traj_position oid=%c
   clock=%u pos=%i" response with the current interpolated position.
