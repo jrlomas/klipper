@@ -11,7 +11,10 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+import importlib.util
 import logging
+import os
+import sys
 
 # (label, a representative command format the firmware registers when the
 # feature is built). Presence is checked against the served dictionary.
@@ -35,9 +38,35 @@ MCU_FEATURES = [
 ]
 
 
+def _load_fleet_modules():
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    loaded = []
+    for name, relpath in (
+            ("_helix_fleet_abi", ("atlas", "fleet", "abi.py")),
+            ("_helix_fleet_coherence",
+             ("atlas", "fleet", "coherence.py"))):
+        path = os.path.join(root, *relpath)
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        # dataclasses resolves annotations through sys.modules while loading.
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        loaded.append(module)
+    return loaded
+
+
 class HelixStatus:
     def __init__(self, config):
         self.printer = config.get_printer()
+        self.host_hash = None
+        self.host_abi = 0x00010000
+        self._coherence = None
+        try:
+            abi, self._coherence = _load_fleet_modules()
+            self.host_hash = abi.host_protocol_hash()
+        except Exception:
+            logging.exception("HELIX_STATUS could not load fleet contract")
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('HELIX_STATUS', self.cmd_HELIX_STATUS,
                                desc=self.cmd_HELIX_STATUS_help)
@@ -63,6 +92,23 @@ class HelixStatus:
             caps = consts.get('BOARD_SYSCALL_CAPS', 0)
             feats.append('unified syscall API v%d.%d (caps 0x%02x)'
                          % (abi >> 16, abi & 0xffff, caps))
+        if not feats:
+            feats.append('stock command set - no HELIX firmware features '
+                         'detected')
+        board_hash = consts.get('PROTOCOL_ABI_HASH', '')
+        if board_hash:
+            feats.append('protocol ABI %s' % board_hash)
+        if self.host_hash is not None and self._coherence is not None:
+            state = self._coherence.BoardState(
+                name=name, protocol_hash=board_hash,
+                syscall_abi=abi or 0,
+                framing_v2=bool(consts.get('FRAMING_V2')))
+            report = self._coherence.check_board(
+                self.host_hash, self.host_abi, state)
+            suffix = ("; signed flash required" if
+                      report.requires_signed_flash else "")
+            feats.append('fleet %s (action=%s%s)'
+                         % (report.status, report.action, suffix))
         return feats
 
     cmd_HELIX_STATUS_help = ("Report which HELIX capabilities each MCU and the"

@@ -37,7 +37,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 ### Capability introspection — `[helix_status]` (auto-loaded)
 | Command | Summary |
 | --- | --- |
-| `HELIX_STATUS` | Which HELIX firmware features each MCU was built with (read from its served dictionary) and which host subsystems are loaded. The fastest answer to "what does this printer support, and what's on?" |
+| `HELIX_STATUS` | Which HELIX firmware features each MCU was built with (read from its served dictionary), its protocol/ABI hash, the live fleet verdict/action, and which host subsystems are loaded. The fastest answer to "what does this printer support, and is it in lockstep?" |
 
 ### Built-in self test — `[helix_self_test]`
 | Command | Summary |

@@ -9,7 +9,9 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import os
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
@@ -138,6 +140,21 @@ def test_abi_header_emits_constant():
     print("PASS: abi_header bakes the hash as a firmware DECL_CONSTANT_STR")
 
 
+def test_build_generator_matches_host_contract():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as td:
+        output = os.path.join(td, "protocol_abi_hash.h")
+        subprocess.check_call([
+            sys.executable, os.path.join(root, "scripts",
+                                         "gen_protocol_abi.py"),
+            "--output", output])
+        with open(output, encoding="utf-8") as fh:
+            generated = fh.read()
+    assert ('DECL_CONSTANT_STR("PROTOCOL_ABI_HASH", "%s")'
+            % host_protocol_hash()) in generated
+    print("PASS: firmware build generator embeds the live host contract hash")
+
+
 def main():
     test_parse_core_ids()
     test_hash_stable_and_order_independent()
@@ -151,6 +168,7 @@ def main():
     test_hash_divergence_without_abi()
     test_check_fleet_mixed()
     test_abi_header_emits_constant()
+    test_build_generator_matches_host_contract()
     print("ALL PASS")
 
 

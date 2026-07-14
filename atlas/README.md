@@ -33,7 +33,7 @@ honesty; Atlas gives it a mind.
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
 | `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
 | `provision/` | **A6** board catalog (53 boards), confidence-bounded USB/CAN detection (including running Klipper peers), planner, and non-shell confirmed job runner with real Ed25519 verification and private audit | ✅ hardware exercised |
-| `fleet/` | **A7** protocol/ABI hash from `intentproto` + lockstep handshake; remediation reuses the signed provisioning runner | ✅ |
+| `fleet/` | **A7** protocol/ABI hash generated into every firmware dictionary + live `HELIX_STATUS` lockstep verdict; remediation reuses the signed provisioning runner | ✅ software; hardware transition pending |
 | `kb/` | **A8** blackbox bundle/redaction, consent-bound outbox, structured feedback, GitHub intake, and signed atomic catalog activation/rollback | ✅ |
 
 ¹ A1 is software-authored and hardware-unvalidated (mirrors `execlog.c`

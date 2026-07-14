@@ -68,7 +68,9 @@ They are the same chore.
 
 So the **library is the single version authority.** A **protocol/ABI hash**
 derived from `intentproto` ([`atlas/fleet/abi.py`](../../../atlas/fleet/abi.py))
-is baked into every image and into the host, and checked at handshake —
+is generated into every image's ordinary Klipper data dictionary and checked
+by the host during the existing identify handshake — no additional command or
+round trip is required —
 building on FD-0001's `HELIX_STATUS` / `BOARD_SYSCALL_ABI` / `FRAMING_V2`
 capability advertisement. When a board is **behind**, the host offers or
 performs the in-band **signed** flash that brings it into lockstep

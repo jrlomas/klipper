@@ -355,7 +355,9 @@ pin:
 
 Enables the `HELIX_STATUS` command, a machine-wide introspection report
 of which HELIX capabilities each micro-controller's firmware was built
-with and which host subsystems are loaded (see the
+with, whether its dictionary-advertised protocol/ABI contract is in fleet
+lockstep with the host, the required remediation action, and which host
+subsystems are loaded (see the
 [command reference](G-Codes.md#helix_status)). The command is also made
 available automatically whenever the trajectory motion subsystem is
 configured, so this section is only needed to expose it on a machine that

@@ -103,6 +103,15 @@ $(OUT)board-link: $(KCONFIG_CONFIG)
 	$(Q)$(MAKE) create-board-link
 include $(OUT)board-link
 
+# Fleet-coherence contract baked into every firmware data dictionary.
+# Generate from intentproto's spec-frozen ids so host and MCU cannot drift.
+$(OUT)protocol_abi_hash.h: scripts/gen_protocol_abi.py \
+		lib/intentproto/include/intentproto/core_ids.hpp atlas/fleet/abi.py
+	@echo "  Generating $@"
+	$(Q)$(PYTHON) scripts/gen_protocol_abi.py --output $@
+
+$(OUT)src/protocol_abi.o: $(OUT)protocol_abi_hash.h
+
 ################ Kconfig rules
 
 $(OUT)autoconf.h: $(KCONFIG_CONFIG)

@@ -80,6 +80,7 @@ class FakeConfig:
 
 # Pull the real firmware format strings the module checks.
 FMT = dict((label.strip(), fmt) for label, fmt in hs.MCU_FEATURES)
+HOST_HASH = hs._load_fleet_modules()[0].host_protocol_hash()
 
 
 def test_feature_detection():
@@ -89,7 +90,8 @@ def test_feature_detection():
         FMT['trajectory motion'], FMT['cubic/quintic segments'],
         FMT['hardware trigger sources']],
         constants={'FRAMING_V2': 1, 'BOARD_SYSCALL_ABI': 0x10000,
-                   'BOARD_SYSCALL_CAPS': 0xff})
+                   'BOARD_SYSCALL_CAPS': 0xff,
+                   'PROTOCOL_ABI_HASH': HOST_HASH})
     # a toolhead with only heater hold + execlog, no framing v2
     tool = FakeMcu('toolhead', [FMT['heater failsafe hold'],
                                 FMT['execution log']])
@@ -109,6 +111,8 @@ def test_feature_detection():
     assert "cubic/quintic segments" in out
     assert "hardware trigger sources" in out
     assert "framing v2 (FEC)" in out
+    assert "protocol ABI %s" % HOST_HASH in out
+    assert "fleet lockstep (action=none)" in out
     assert "MCU 'toolhead':" in out
     assert "heater failsafe hold" in out
     # The toolhead must NOT claim features it doesn't advertise. Bound
@@ -116,6 +120,8 @@ def test_feature_detection():
     tool_section = out.split("MCU 'toolhead':")[1].split("Host subsystems:")[0]
     assert "trajectory motion" not in tool_section
     assert "framing v2" not in tool_section
+    assert "fleet board-behind" in tool_section
+    assert "signed flash required" in tool_section
     # Host subsystems + trajectory joints.
     assert "failure recovery" in out
     assert "trajectory motion emitter" in out
