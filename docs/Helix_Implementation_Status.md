@@ -14,8 +14,8 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `fdad253f` on `claude/software-redesign-impl-finn0j` | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, reset recovery, and the V0 trajectory-homing corrections recorded below. |
-| `jrlomas/mainsail` | `0631ec0b` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; the Atlas timeline is bounded/resized; unit tests, lint, formatting, and production build pass. |
+| `jrlomas/klipper` | `e1ec0b9e` on `claude/software-redesign-impl-finn0j` | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, V0 trajectory-homing corrections, and the RP2040 interrupt-trigger port recorded below. |
+| `jrlomas/mainsail` | `28807856` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; Atlas is centered, bounded to ten visible events, and responsive; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
 
@@ -86,15 +86,17 @@ work. They do not convert any unchecked target or hardware item into a pass.
   reinitialization, and a failed/reset chip is health-checked and reopened.
 * A real V0 rig now runs this branch with a USB SKR Pico (RP2040, 12 MHz
   Klipper scheduler clock and 200 MHz core) and USB EBB36 v1.2 (STM32G0B1,
-  64 MHz). The signed
+  64 MHz). The Pico dictionary now distinguishes
+  `MCU_CORE_FREQ=200000000` from `CLOCK_FREQ=12000000`, and Mainsail displays
+  the former while Klipper continues to schedule against the latter. The signed
   provisioning executor verified Ed25519 signatures, rebuilt from archived
   Kconfig, required exact artifact equality, flashed both normal bootloader
-  paths, and recorded the successful jobs. Both boards booted `fdad253f`,
-  advertised ABI `27141a58f61f9fbc`, and `HELIX_STATUS` reported fleet
-  lockstep.
+  paths, and recorded the successful jobs. The Pico now runs `e1ec0b9e`; the
+  EBB36 remains on `fdad253f`. Both advertise ABI `27141a58f61f9fbc`, and
+  `HELIX_STATUS` reports fleet lockstep.
 * All five live self-tests passed on both V0 boards after a standard
-  `FIRMWARE_RESTART`; at the current checkpoint Pico RTT was 0.20 ms and
-  EBB36 RTT 0.35 ms. Both MCU
+  `FIRMWARE_RESTART`; after the final RP2040 trigger flash Pico RTT was 0.21 ms
+  and EBB36 RTT 0.30 ms. Both MCU
   reset implementations re-enumerated, reconfigured, and returned Klipper to
   ready without manual intervention.
 * The 64 MHz EBB36 disciplined to the 12 MHz Pico's machine time for ten
@@ -119,14 +121,27 @@ work. They do not convert any unchecked target or hardware item into a pass.
   stops, found five explicit holds, and reported zero errors. The recorded
   unwrapped path crossed -2³¹ sub-units while the compact wire phase wrapped
   exactly as designed.
+* RP2040 homing now uses IO_BANK0 edge interrupts instead of periodic endstop
+  polling. Fresh X, Y, and Z homes completed on `e1ec0b9e`; each flight-recorder
+  window contained a distinct hardware-source record before its actuator stop
+  record. The 261–300 tick gap (21.8–25.0 us at 12 MHz) matches the configured
+  20 us qualification plus dispatch. The RP2040 timestamp is read at ISR entry,
+  not by timer input capture. The final full X/Y/Z homing and self-test run
+  accumulated zero invalid bytes and no retransmissions while Klipper remained
+  ready. Repeatability, forced-polled comparison, and scoped physical edge-to-
+  stop latency remain open measurements.
 * The deterministic Atlas decoder diagnosed a genuine earlier host/MCU
   `sync_beacon` format fault from the live V0 log and captured the unmatched
   case for the knowledge base. Its real-machine GitHub-issue bundle passed
   manual review under the numeric-only policy with no hostname, key, USB
   serial, or filesystem path exposed.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
-  and OpenAMS panels pass 47 unit tests across 7 test files, lint, formatting,
+  and OpenAMS panels pass 50 unit tests across 8 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.
+  The served build matches the production artifact byte-for-byte. Atlas now
+  shares the center dashboard column with Temperatures, shows the newest ten
+  matching events, and uses a wrapping, bounded, full-width table so later
+  columns remain visible.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.
@@ -168,8 +183,8 @@ the authenticated WiFi component/modem console and controlled-loss pair FEC.
 
 The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
 remain material: trajectory drift/underrun/stress tests, trigger repeatability
-and latency comparison, trace-off step timing, scoped cross-MCU action, PWM
-waveform quality, heater hold, fault injection, soak, real printing, V2.4 CAN,
+and forced-polled latency comparison, trace-off step timing, scoped cross-MCU
+action, PWM waveform quality, heater hold, fault injection, soak, real printing, V2.4 CAN,
 constrained F072 silicon, native RMII/W5500 PHYs, product-key provisioning,
 and Pi/Hailo deployment.
 USB success on the V0 is not implicit CAN sign-off for the V2.4.

@@ -1,7 +1,8 @@
 # FD-0001: Hardware Triggers
 
-Status: Framework implemented in HELIX 0.9; target-specific wiring and
-hardware validation remain.
+Status: Framework, STM32 wiring, and RP2040 IO_BANK0 wiring implemented in
+HELIX 0.9. The RP2040 GPIO path is live-validated on a V0; remaining ports,
+input-capture precision, analog sources, and comparison measurements remain.
 
 Klipper made MCUs deliberately dumb, and nowhere is the cost clearer
 than in how the firmware *senses*: endstops are polled by software
@@ -9,8 +10,8 @@ timers, analog thresholds are polled through scheduled ADC reads, and
 every one of those polls competes for the same hard timer list as
 step generation. This document turns sensing over to the peripherals
 32-bit MCUs actually ship — external interrupts, analog comparators,
-timer capture units — so that triggers are *events*, timestamped in
-hardware, instead of samples that got lucky.
+timer capture units — so that triggers are *events*, timestamped at capture
+or ISR entry instead of samples that got lucky.
 
 This is the second half of "give MCUs power where they shine": the
 intention protocol ([02-Intention_Protocol.md](02-Intention_Protocol.md))
@@ -39,10 +40,12 @@ assumes ([00-Vision.md](00-Vision.md)):
 
 ### 1. GPIO edge interrupts (EXTI / pin-change)
 
-A digital endstop or probe output arms an edge interrupt; the ISR
-fires trsync directly. Latency drops from a polling quantum
-(typically tens of µs to ms) to interrupt latency (~1 µs), and idle
-cost drops to zero — no timer-list entries while nothing happens.
+A digital endstop or probe output arms an edge interrupt; the ISR latches the
+event time and starts qualification before firing trsync. Detection latency
+drops from a polling quantum (typically tens of µs to ms) to interrupt
+latency, and idle cost drops to zero — no timer-list entries while nothing
+happens. A port may deliberately add a short qualification window before the
+coordinated stop.
 
 Noise is handled by **qualify-after-event**, inverting today's logic:
 instead of continuously sampling *hoping* to catch a level, the edge
@@ -171,7 +174,7 @@ say so.
 
 | Capability | Coverage on 32-bit targets |
 | --- | --- |
-| GPIO edge IRQ | universal (EXTI on STM32, IO-IRQ on RP2040, EIC on SAMD, GPIO IRQ on ESP32) |
+| GPIO edge IRQ | implemented for selected STM32 EXTI families and RP2040 IO_BANK0; live-validated on RP2040; EIC/GPIO-IRQ ports remain |
 | Analog comparator | common but not universal (STM32 COMP, RP2350; feature-detected per port) |
 | ADC watchdog | most STM32; fallback where COMP absent |
 | Timer input capture | universal in some form; capture-to-trsync wiring is per-port work |
@@ -205,6 +208,20 @@ and `bltouch` — because they all drive `home_start`/`home_wait`
 polymorphically. Set
 `[mcu] hardware_endstop_trigger: False` to force the legacy polled path
 on a given MCU.
+
+### RP2040 live result
+
+The RP2040 port owns and arms IO_BANK0 edge latches per configured GPIO,
+clears stale pending state on arm/disarm, and gives the shared bank handler a
+higher NVIC priority than the timer IRQ. RP2040 has no routed timer
+input-capture implementation here, so it records `timer_read_time()` once at
+ISR entry. On 2026-07-14 an SKR Pico running `e1ec0b9e` completed X and Y
+sensorless homing and both passes of the physical Z endstop. Distinct
+hardware-source flight-recorder records preceded their actuator stop records
+by 261–300 ticks at the 12 MHz scheduler timebase (21.8–25.0 us), matching a
+20 us qualify-after-event window plus dispatch. This validates interrupt
+detection and coordinated stop; it is not a physical-edge latency benchmark
+or timer-input-capture claim.
 
 ## Open questions
 

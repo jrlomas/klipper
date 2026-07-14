@@ -97,12 +97,13 @@ and gates every commit. No hardware, no GPU, no model.
   automated by `test_rendered_issue_drops_planted_free_text_secrets`.
 - [x] **Mainsail Atlas/OpenAMS panels.** *Do:* run the Mainsail unit suite,
   lint, and production build. *Expect:* the panels consume the Moonraker
-  boundary without recomputing Atlas facts. *Pass:* 47 tests across 7 test
+  boundary without recomputing Atlas facts. *Pass:* 50 tests across 8 test
   files, lint, formatting, build, and distribution zip all green on
-  2026-07-13 after merging `mainsail-crew/develop` at `e9e33c11`. The Atlas
-  timeline is capped at the newest 100 matching events and scrolls within a
-  bounded, wide table instead of growing the page or clipping later columns;
-  published to `jrlomas/mainsail` at `0631ec0b`.
+  2026-07-14 after merging `mainsail-crew/develop` at `e9e33c11`. Atlas now
+  shares the center dashboard column with Temperatures, shows the newest ten
+  matching events, and uses a bounded, wrapping, full-width table so every
+  column remains visible. The deployed nginx files match the production build;
+  published to `jrlomas/mainsail` at `28807856`.
 
 ## Phase 1 — Contracts (any CPU, stub model)
 
@@ -205,7 +206,11 @@ F072** it was designed to fit.
   byte equality with the signed artifacts, flashed, and appended successful
   jobs to `atlas-provision-audit.json`. The same gate was repeated for the
   long-axis trajectory correction on 2026-07-14; both boards booted
-  `fdad253f`, passed all five self-tests, and reported fleet lockstep.
+  `fdad253f`, passed all five self-tests, and reported fleet lockstep. It was
+  repeated again for the RP2040 interrupt-trigger image: the Pico booted
+  `e1ec0b9e`, passed all five self-tests, homed X/Y/Z through distinct hardware
+  trigger records, and its signed UF2, signature, and Kconfig were archived
+  under `firmware-backups/atlas-e1ec0b9e/pico-trace`.
 - [x] **ABI-hash handshake.** *Do:* bake the protocol hash into an image;
   connect. *Expect:* a matching board reads *lockstep*; a stale one is
   offered a signed flash. *Pass:* `HELIX_STATUS` reported both live boards at

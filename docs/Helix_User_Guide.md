@@ -90,10 +90,11 @@ re-home for that axis before resuming. Full rationale in
 
 If your board's firmware is built with hardware trigger support, HELIX
 uses an on-chip **edge interrupt** for endstop and probe detection
-automatically — microsecond stops and a hardware-exact trigger position,
-with no config change. It falls back to the classic polled path where
-the hardware or firmware can't. To force the legacy polled path on a
-given board:
+automatically — an interrupt-latched trigger position with no config change.
+Boards with timer input capture can timestamp the physical edge to a hardware
+tick; other ports use the ISR-entry timer read and may add a short
+qualification window. It falls back to the classic polled path where the
+hardware or firmware can't. To force the legacy polled path on a given board:
 
 ```
 [mcu]

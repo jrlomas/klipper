@@ -161,10 +161,10 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
 Prove the wire before you trust it to carry motion.
 
 - [~] **2.1 — Identify.** Host connects; MCU serves its dictionary.
-  Pass: klippy starts, no version/CRC complaints. On 2026-07-13 the SKR Pico
-  and EBB36 v1.2 served their 192/204-command dictionaries over USB from
-  `9d111f1b` and configured cleanly. This qualifies these two USB targets,
-  not the remaining board matrix.
+  Pass: klippy starts, no version/CRC complaints. On 2026-07-14 the SKR Pico
+  and EBB36 v1.2 served their 198/204-command dictionaries over USB from
+  `e1ec0b9e`/`fdad253f` and configured cleanly. This qualifies these two USB
+  targets, not the remaining board matrix.
 - [~] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
   (board built with `WANT_SELF_TEST`; `[helix_self_test]` configured —
   or `on_connect: True` to make it automatic).
@@ -178,8 +178,14 @@ Prove the wire before you trust it to carry motion.
   failure here is a silicon/toolchain porting bug, catch it before
   anything moves.** Both boards passed all five advertised tests after a
   live `FIRMWARE_RESTART`: CRC wire, timer monotonic, timer rate, RAM pattern,
-  and trajectory kernel. Pico baseline: timer rate 124, RTT 0.20 ms; EBB36:
-  timer rate 2052, RTT 0.23 ms.
+  and trajectory kernel. The final post-trigger-port run on 2026-07-14 recorded
+  Pico timer rate 123 and RTT 0.21 ms; EBB36 timer rate 2052 and RTT 0.30 ms.
+- [x] **2.1c — Core-clock identity.** A port whose real CPU clock differs
+  from Klipper's scheduler timebase advertises both values unambiguously.
+  Pass: the live RP2040 dictionary reports `MCU_CORE_FREQ=200000000` and
+  `CLOCK_FREQ=12000000`; Mainsail prefers the core constant for its Machine
+  display while scheduling and timestamp conversion continue to use the
+  12 MHz timer timebase.
 - [~] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute. The Pico and
@@ -324,17 +330,24 @@ queue.
 Requires `WANT_TRIGGER_SOURCE`. This is a **capability unlock**, not just
 a faster stop — test both the latency and the things polling could not do.
 
-- [~] **7.1 — Edge-interrupt endstop.** With
+- [x] **7.1 — Edge-interrupt endstop.** With
   `hardware_endstop_trigger` on (default), home one axis.
-  Expect: the stop fires on the pin edge in hardware; the trigger tick is
-  latched in hardware, not sampled by a software timer.
-  Pass: homes repeatably; trigger position variance ≤ legacy polled path. The
-  V0 Z endstop produced two hardware execution-log trigger records during a
-  successful `G28 Z` on 2026-07-14, and both reconciled exactly in the motion
-  audit. The repeatability series and legacy-polling comparison remain.
+  Expect: the stop begins from a GPIO edge interrupt rather than a periodic
+  software sample; timestamp precision is the port's advertised capture
+  method (timer input capture where wired, ISR-entry time otherwise).
+  Pass: the V0 Pico running `e1ec0b9e` completed independent `G28 X`, `G28 Y`,
+  and `G28 Z` runs and remained ready. The flight recorder showed distinct
+  hardware-source records before the actuator-stop records: OID 19 for X,
+  OID 21 for Y, and two OID 23 firings for Z. The RP2040 port timestamps at
+  IO_BANK0 ISR entry; its source records preceded actuator stops by 261–300
+  scheduler ticks (21.8–25.0 us), consistent with the configured 20 us
+  qualification window plus dispatch. This supersedes the earlier inference
+  from trajectory-stop records, which alone did not prove a GPIO interrupt.
 - [ ] **7.2 — Latency vs polling.** Compare stop latency with
   `hardware_endstop_trigger: False` (forced legacy) vs on.
-  Pass: hardware path stops measurably sooner; record both numbers.
+  Pass: hardware path stops measurably sooner; record both numbers and a
+  repeatability series showing trigger-position variance no worse than the
+  legacy path.
 - [ ] **7.3 — Multi-MCU homing.** Endstop on one board, motor on another.
   Pass: coordinated stop within the time-model tolerance.
 - [ ] **7.4 — Comparator / analog trigger.** Where wired, arm an analog
