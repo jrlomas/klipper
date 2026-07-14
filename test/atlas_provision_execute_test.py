@@ -214,6 +214,25 @@ def test_katapult_usb_flash_command_names_image_and_offset():
     print("PASS: Katapult USB flasher receives exact image and 8 KiB offset")
 
 
+def test_flash_address_ignores_non_address_kconfig_symbols():
+    board = load_board({
+        "id": "ebb-usb-chipboot", "name": "EBB USB", "mcu": "stm32g0b1",
+        "flash_method": "katapult-usb", "usb_ids": ["1d50:6177"],
+        "kconfig": {
+            # olddefconfig emits this selector before the actual hex offset.
+            "CONFIG_STM32_FLASH_START_CHIPBOOT_16K": "n",
+            "CONFIG_STM32_FLASH_START_2000": "y",
+            "CONFIG_USB": "y",
+        },
+    })
+    target = DetectedBoard("klipper-usb", "/dev/ttyACM0", [board])
+    plan = build_plan(board, target, klipper_dir="/tmp/klipper")
+    command = ProvisionExecutor._flash_command(
+        plan, "/verified/release/klipper.bin")
+    assert command[-3:-1] == ["-s", str(0x08002000)]
+    print("PASS: non-address STM32 flash selectors cannot corrupt offset")
+
+
 def main():
     test_real_ed25519_verifier_fails_closed()
     test_executor_uses_argv_signed_gate_and_private_audit()
@@ -223,6 +242,7 @@ def main():
     test_signed_release_inside_build_tree_is_blocked_before_clean()
     test_rp2040_flash_command_names_verified_image_directly()
     test_katapult_usb_flash_command_names_image_and_offset()
+    test_flash_address_ignores_non_address_kconfig_symbols()
     print("ALL PASS")
 
 

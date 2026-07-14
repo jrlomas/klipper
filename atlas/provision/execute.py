@@ -3,6 +3,7 @@
 import filecmp
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -121,8 +122,11 @@ class ProvisionExecutor:
             address = "0x08000000"
             for key in plan.kconfig:
                 prefix = "CONFIG_STM32_FLASH_START_"
-                if key.startswith(prefix):
+                if (key.startswith(prefix)
+                        and re.fullmatch(r"[0-9A-Fa-f]+",
+                                         key[len(prefix):])):
                     address = "0x0800%s" % key[len(prefix):].zfill(4)
+                    break
             return ["dfu-util", "-d", ident or "0483:df11", "-a", "0",
                     "-s", address + ":leave", "-D", image]
         if plan.method == "katapult-can":
@@ -135,8 +139,11 @@ class ProvisionExecutor:
             address = 0x08000000
             for key in plan.kconfig:
                 prefix = "CONFIG_STM32_FLASH_START_"
-                if key.startswith(prefix):
+                if (key.startswith(prefix)
+                        and re.fullmatch(r"[0-9A-Fa-f]+",
+                                         key[len(prefix):])):
                     address = int("0800%s" % key[len(prefix):].zfill(4), 16)
+                    break
             return ["python3", "scripts/flash_usb.py", "-t", plan.mcu,
                     "-d", ident, "-s", str(address), image]
         if plan.method == "serial":
