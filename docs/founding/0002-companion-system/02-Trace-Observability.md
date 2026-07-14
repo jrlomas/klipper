@@ -7,12 +7,15 @@ the stock Klipper data dictionary, F072-fit); the live and offline host
 collectors are [`klippy/extras/atlas_trace.py`](../../../klippy/extras/atlas_trace.py)
 and [`atlas/decode/trace.py`](../../../atlas/decode/trace.py); the merged store
 is [`atlas/timeline.py`](../../../atlas/timeline.py); the live viewer is
-[`atlas/view.py`](../../../atlas/view.py). The firmware side is software-
-authored and hardware-unvalidated (it mirrors `execlog.c`
-primitive-for-primitive), consistent with HELIX 0.9's status — it needs an
-on-target bring-up before "it works" is true. The streamer drains at most one
-configured batch per wake; a periodic host status query paces any backlog so
-the MCU response queue cannot become a second, unaccounted drop point.
+[`atlas/view.py`](../../../atlas/view.py). On 2026-07-13 the firmware and live
+collector were qualified over USB on a 12 MHz RP2040 SKR Pico and a 64 MHz
+STM32G0B1 EBB36: registered diagnostic records merged on machine time, and
+deliberate ring overload reconciled every host sequence gap to a firmware
+overwrite. The constrained F072 fit is build-measured but still awaits its own
+on-target run, and the real `step_underrun` call-site remains part of motion
+qualification. The streamer drains at most one configured batch per wake; a
+periodic host status query paces any backlog so the MCU response queue cannot
+become a second, unaccounted drop point.
 
 Everything else in Atlas reads a timeline. Before there can be a decoder,
 a diagnosis engine, or a companion that answers "why did my print fail?",
@@ -101,6 +104,14 @@ it; the health monitor and the LLM interpreter all read the same store.
   view; live tail + filter by subsystem / severity / board. *Built:*
   [`atlas/view.py`](../../../atlas/view.py), reachable via
   `python3 -m atlas.cli view /path/to/klippy.log --min-severity warning`.
+
+The Pico/EBB36 qualification used a bounded `trace_probe` event: three clean
+records per board produced no gaps or write errors. A subsequent 256-record
+burst into each 64-record ring produced 192 firmware drops and exactly 192
+host sequence gaps on both links, with zero `unaccounted_gaps`; all 64
+survivors drained in paced four-record batches. This proves the ring,
+dictionary rendering, paced uplink, drop accounting, and cross-MCU time merge
+on those targets without claiming motion-path timing or F072 silicon proof.
 
 This lands first because everything else gets easier once the machine can
 talk — and now it does.

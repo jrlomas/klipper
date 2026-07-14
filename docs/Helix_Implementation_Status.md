@@ -14,8 +14,8 @@ in a local working tree:
 
 | Repository | Published checkpoint | Notes |
 | --- | --- | --- |
-| `jrlomas/klipper` | `claude/software-redesign-impl-finn0j` (current checkpoint) | Includes the Helix transport/security review, host Class-0 preflight, ESP resilience work, real ARM W5500/RMII plus ESP-IDF builds, and the Lolin32 secure-session hardware validation recorded below. |
-| `jrlomas/mainsail` | `fe5d30a9` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; unit tests, lint, formatting, and production build pass. |
+| `jrlomas/klipper` | `9d111f1b` on `claude/software-redesign-impl-finn0j` (evidence checkpoint) | Adds the reviewed transport/security work, ESP validation, Pico/EBB36 mixed-frequency time discipline, signed provisioning, structured trace qualification, and reset recovery recorded below. |
+| `jrlomas/mainsail` | `0631ec0b` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; the Atlas timeline is bounded/resized; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
 | `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
 
@@ -84,8 +84,30 @@ work. They do not convert any unchecked target or hardware item into a pass.
   Its SPI command waits and counter reads are bounded, malformed receive
   lengths are rejected, an authenticated peer is cleared across hardware
   reinitialization, and a failed/reset chip is health-checked and reopened.
+* A real V0 rig now runs this branch with a USB SKR Pico (RP2040, 12 MHz
+  Klipper clock) and USB EBB36 v1.2 (STM32G0B1, 64 MHz). The signed
+  provisioning executor verified Ed25519 signatures, rebuilt from archived
+  Kconfig, required exact artifact equality, flashed both normal bootloader
+  paths, and recorded the successful jobs. Both boards booted `9d111f1b`,
+  advertised ABI `27141a58f61f9fbc`, and `HELIX_STATUS` reported fleet
+  lockstep.
+* All five live self-tests passed on both V0 boards after a standard
+  `FIRMWARE_RESTART`; Pico RTT was 0.20 ms and EBB36 RTT 0.23 ms. Both MCU
+  reset implementations re-enumerated, reconfigured, and returned Klipper to
+  ready without manual intervention.
+* The 64 MHz EBB36 disciplined to the 12 MHz Pico's machine time for ten
+  minutes without losing lock, including 32-bit local-clock wraps. Final
+  error was 36 EBB ticks (0.56 us). It reconverged after restart; the
+  remaining physical coordinated-pin/scope test and CAN repetition are still
+  open.
+* Structured trace is live-qualified on both boards. Registered diagnostic
+  records rendered and merged in cross-board machine-time order. Under a
+  256-record burst, each 64-record ring reported 192 overwrites, the host saw
+  exactly 192 sequence gaps, and paced draining left zero unaccounted gaps or
+  write errors. This validates the trace carrier and accounting, not the
+  motion-path `step_underrun` call-site or trace-off step-timing cost.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
-  and OpenAMS panels pass 46 unit tests across 7 test files, lint, formatting,
+  and OpenAMS panels pass 47 unit tests across 7 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
@@ -120,12 +142,18 @@ optional later architecture:
 
 ## Hardware and printer qualification
 
-All remaining board, Pi, Hailo, signal-integrity, timing, thermal, fault-
-injection, soak, and real-print evidence stays unchecked in the
-[HELIX Test and Bring-up Plan](Helix_Test_Plan.md). Host emulation is useful
-evidence, but it does not establish flash/RAM fit on every target, ISR jitter,
-PWM waveform quality, native-RMII behavior on a real PHY, network behavior on
-a real radio, or safe recovery on a moving and heated printer.
+The V0 USB rig now establishes real Pico/EBB36 identification, signed
+build/flash, feature/ABI advertisement, built-in self-tests, legacy telemetry,
+mixed-frequency machine-time discipline, structured trace/drop accounting,
+and firmware-reset recovery. The Lolin32 evidence above separately establishes
+the authenticated WiFi component/modem console and controlled-loss pair FEC.
+
+The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
+remain material: actual trajectory motion, trace-off step timing, scoped
+cross-MCU action, endstop/trigger timing, PWM waveform quality, heater hold,
+fault injection, soak, real printing, V2.4 CAN, constrained F072 silicon,
+native RMII/W5500 PHYs, product-key provisioning, and Pi/Hailo deployment.
+USB success on the V0 is not implicit CAN sign-off for the V2.4.
 
 HELIX should not be called 1.0 or production-ready until the applicable
 bring-up-plan evidence and product-key provisioning are recorded.

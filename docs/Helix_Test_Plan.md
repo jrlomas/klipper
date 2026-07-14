@@ -160,9 +160,12 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
 
 Prove the wire before you trust it to carry motion.
 
-- [ ] **2.1 — Identify.** Host connects; MCU serves its dictionary.
-  Pass: klippy starts, no version/CRC complaints.
-- [ ] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
+- [~] **2.1 — Identify.** Host connects; MCU serves its dictionary.
+  Pass: klippy starts, no version/CRC complaints. On 2026-07-13 the SKR Pico
+  and EBB36 v1.2 served their 192/204-command dictionaries over USB from
+  `9d111f1b` and configured cleanly. This qualifies these two USB targets,
+  not the remaining board matrix.
+- [~] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
   (board built with `WANT_SELF_TEST`; `[helix_self_test]` configured —
   or `on_connect: True` to make it automatic).
   Expect: every advertised test passes ON THE BOARD — `crc_wire` returns
@@ -173,10 +176,17 @@ Prove the wire before you trust it to carry motion.
   Pass: all PASS; record `timer_rate` and rtt as this board's baseline.
   **This item is most of Phase 0 executed on the real hardware — a
   failure here is a silicon/toolchain porting bug, catch it before
-  anything moves.**
-- [ ] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
+  anything moves.** Both boards passed all five advertised tests after a
+  live `FIRMWARE_RESTART`: CRC wire, timer monotonic, timer rate, RAM pattern,
+  and trajectory kernel. Pico baseline: timer rate 124, RTT 0.20 ms; EBB36:
+  timer rate 2052, RTT 0.23 ms.
+- [~] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
-  Pass: stable, `link_stats().crc_errors == 0` over a minute.
+  Pass: stable, `link_stats().crc_errors == 0` over a minute. The Pico and
+  EBB36 carried continuous temperature/status/trace traffic through a
+  ten-minute machine-time run with zero invalid bytes and no loss of lock;
+  both remained ready. This is the stock USB/serial carrier, not datagram or
+  console-v2.
 - [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
   its stock v1 frames to v2 via the transport bridge
   (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
@@ -210,12 +220,16 @@ Prove the wire before you trust it to carry motion.
 - [ ] **3.1 — Single-clock sanity.** With `[timesync]` loaded,
   `TIMESYNC_STATUS` on a lone MCU.
   Pass: reports converged (trivially) with ~0 error.
-- [ ] **3.2 — Beacon discipline (needs a 2nd MCU — revisit after Phase 9).**
+- [x] **3.2 — Beacon discipline (needs a 2nd MCU — revisit after Phase 9).**
   Two boards discipline to shared machine time.
   Expect: secondary converges; `TIMESYNC_STATUS` shows sync error settling
   into the converge window and a stable ppm correction.
   Pass: sustained sync error within the documented bound; no loss of lock
-  over 10 min.
+  over 10 min. On 2026-07-13 a 64 MHz EBB36 disciplined to the 12 MHz Pico
+  for ten minutes without losing lock; the final error was 36 EBB ticks
+  (0.56 us). After the final signed flash and `FIRMWARE_RESTART` it
+  reconverged and reported -1.6 us. This qualifies mixed-frequency USB
+  discipline; the scoped physical action in 3.3 and CAN repetition remain.
 - [ ] **3.3 — "Do this at T" agreement.** Schedule a synchronized action
   (e.g. a coordinated pin toggle) on two boards; scope both pins.
   Pass: edges land within the time-model's stated tolerance.
@@ -494,8 +508,9 @@ of the `HAVE_LIMITED_CODE_SIZE` policy.
 Type every new command once on a real machine and confirm it does what
 [Helix_Commands.md](Helix_Commands.md) says. Tick each:
 
-- [ ] **13.1** `HELIX_STATUS` — reports MCUs' built features + loaded host
-  subsystems.
+- [x] **13.1** `HELIX_STATUS` — reports MCUs' built features + loaded host
+  subsystems. Pico and EBB36 reported their live feature sets, identical ABI
+  hash, and fleet lockstep on 2026-07-13.
 - [ ] **13.2** `TRAJECTORY_STATUS` — per-actuator state, position,
   resolution, higher-order support.
 - [ ] **13.3** `BEZIER_MOVE …` — cubic and quintic (idle, opt-in).
@@ -504,7 +519,9 @@ Type every new command once on a real machine and confirm it does what
 - [ ] **13.6** `RESUME_MOTION` — reconcile + resume.
 - [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
 - [ ] **13.9** `EXECLOG_DUMP` — flight recorder drains.
-- [ ] **13.10** `TIMESYNC_STATUS` — per-secondary discipline state.
+- [x] **13.10** `TIMESYNC_STATUS` — per-secondary discipline state. The
+  EBB36 reported `CONVERGED` against the Pico after cold connect and after
+  `FIRMWARE_RESTART`.
 - [ ] **13.11** Every new config option in
   [Helix_Commands.md](Helix_Commands.md) §"Config surface" loads without
   error and has the documented effect (per-stepper `motion_*`, the new

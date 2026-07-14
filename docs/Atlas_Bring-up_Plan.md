@@ -97,10 +97,12 @@ and gates every commit. No hardware, no GPU, no model.
   automated by `test_rendered_issue_drops_planted_free_text_secrets`.
 - [x] **Mainsail Atlas/OpenAMS panels.** *Do:* run the Mainsail unit suite,
   lint, and production build. *Expect:* the panels consume the Moonraker
-  boundary without recomputing Atlas facts. *Pass:* 46 tests across 7 test
+  boundary without recomputing Atlas facts. *Pass:* 47 tests across 7 test
   files, lint, formatting, build, and distribution zip all green on
-  2026-07-13 after merging `mainsail-crew/develop` at `e9e33c11`; published
-  to `jrlomas/mainsail` at `fe5d30a9`.
+  2026-07-13 after merging `mainsail-crew/develop` at `e9e33c11`. The Atlas
+  timeline is capped at the newest 100 matching events and scrolls within a
+  bounded, wide table instead of growing the page or clipping later columns;
+  published to `jrlomas/mainsail` at `0631ec0b`.
 
 ## Phase 1 — Contracts (any CPU, stub model)
 
@@ -169,12 +171,20 @@ F072** it was designed to fit.
 - [ ] **Events reach the host.** *Do:* raise a subsystem level, provoke a
   `step_underrun`. *Expect:* the host renders "step_underrun
   horizon_us=… queue_depth=…" from the dictionary. *Pass:* the rendered
-  string matches the event.
-- [ ] **Machine-time merge.** *Do:* trace from two MCUs. *Expect:* events
-  merge into one machine-time timeline (A2). *Pass:* ordering is correct
-  across boards.
-- [ ] **Ring integrity under load.** *Expect:* dropped records are counted
-  (`trace_status`), never silently lost. *Pass:* drop count reconciles.
+  string matches the event. The same end-to-end path is hardware-proven with
+  the bounded `trace_probe` diagnostic; the actual underrun call-site remains
+  for the motion phase.
+- [x] **Machine-time merge.** *Do:* trace from two MCUs. *Expect:* events
+  merge into one machine-time timeline (A2). *Pass:* on 2026-07-13, three
+  diagnostic records from each of the 12 MHz Pico and 64 MHz EBB36 rendered
+  through their dictionaries on the shared machine-time axis with correct
+  cross-board ordering and zero gaps, drops, or write errors.
+- [x] **Ring integrity under load.** *Expect:* dropped records are counted
+  (`trace_status`), never silently lost. *Pass:* each 64-record hardware ring
+  received a 256-record burst after three clean records. Both boards reported
+  exactly 192 overwrites, the host observed exactly 192 sequence gaps, and
+  `unaccounted_gaps` was zero. Paced four-record batches drained all 64
+  survivors (`seq=195..258`) without overflowing the MCU response queue.
 
 ## Phase 3 — Provisioning, fleet coherence & model quality (dev GPU)
 
@@ -187,12 +197,18 @@ F072** it was designed to fit.
   including the USB-specific `btt-ebb36-42-v1.2-g0b1-usb`) instead of
   guessing a PCB. Hardware inspection confirms those two catalog entries;
   the exact board remains a required confirmation input to a flash job.
-- [ ] **One-touch build+flash.** *Do:* run the plan for that board.
+- [x] **One-touch build+flash.** *Do:* run the plan for that board.
   *Expect:* it builds and flashes over the existing bootloader. *Pass:*
-  the board boots the new image. **Never flash on UNCONFIRMED.**
-- [ ] **ABI-hash handshake.** *Do:* bake the protocol hash into an image;
+  the board boots the new image. **Never flash on UNCONFIRMED.** On
+  2026-07-13, explicitly confirmed Pico and EBB36 USB plans rebuilt from the
+  archived Kconfig, verified detached Ed25519 signatures, required exact
+  byte equality with the signed artifacts, flashed, and appended successful
+  jobs to `atlas-provision-audit.json`. Both boards booted `9d111f1b`.
+- [x] **ABI-hash handshake.** *Do:* bake the protocol hash into an image;
   connect. *Expect:* a matching board reads *lockstep*; a stale one is
-  offered a signed flash. *Pass:* the verdict matches reality.
+  offered a signed flash. *Pass:* `HELIX_STATUS` reported both live boards at
+  protocol ABI `27141a58f61f9fbc`, fleet lockstep, action `none`. The stale
+  verdict/remediation matrix remains covered by the deterministic fleet test.
 - [x] **Pinned-model CPU preflight.** *Do:* run
   `scripts/atlas_llm_smoke.py` and `scripts/atlas_llm_eval.py` against the
   verified Qwen3-4B Q4_K_M artifact. *Pass:* 9/9 labelled cases, real
