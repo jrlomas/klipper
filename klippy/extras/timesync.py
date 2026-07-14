@@ -58,6 +58,9 @@ class SecondaryLink:
         self.last_state = {'flags': 0, 'last_err': 0, 'rate': 0}
         self.freewheel_time = 0.
         self.last_beacon_time = None
+        self.last_machine_clock = None
+        self.last_local_est = None
+        self.sample_rate = None
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
@@ -66,6 +69,13 @@ class SecondaryLink:
     def relay(self, seq, machine_clock, systime):
         local_est = int(_get_clocksync(self.mcu).systime_to_local_clock(
             systime))
+        if self.last_machine_clock is not None:
+            machine_delta = machine_clock - self.last_machine_clock
+            local_delta = local_est - self.last_local_est
+            if machine_delta > 0:
+                self.sample_rate = local_delta / machine_delta
+        self.last_machine_clock = machine_clock
+        self.last_local_est = local_est
         self.relay_cmd.send([seq, machine_clock & 0xffffffff,
                              local_est & 0xffffffff])
         # systime is the host-monotonic instant corresponding to the
@@ -172,6 +182,14 @@ class MachineTimeSync:
         if self.prime_remaining:
             self.prime_remaining -= 1
             if not self.prime_remaining:
+                # _beacon_event scheduled this response's successor while
+                # prime_remaining was still non-zero. Replace that pending
+                # 50ms event with the steady cadence; otherwise the first
+                # disciplined sample sees startup USB jitter over a tiny
+                # denominator and can kick the PI loop far from nominal.
+                self.reactor.update_timer(
+                    self.beacon_timer,
+                    self.reactor.monotonic() + self.beacon_interval)
                 self._check_convergence()
         else:
             # Keep the host-side gate current after startup. This query is
@@ -181,6 +199,14 @@ class MachineTimeSync:
     def _check_convergence(self):
         for link in self.secondaries:
             state = link.query()
+            logging.debug(
+                "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
+                " sample_rate=%s flags=%d prime=%d rate=%d err=%d"
+                " map_m=%d map_l=%d",
+                link.name, link.last_machine_clock, link.last_local_est,
+                link.sample_rate, state['flags'], state['prime_count'],
+                state['rate'], state['last_err'], state['machine_ref'],
+                state['local_ref'])
             converged = link.is_converged(self.reactor.monotonic())
             if self._last_converged.get(link.name) != converged:
                 logging.info(
@@ -209,8 +235,15 @@ class MachineTimeSync:
             'machine_time': machine_time,
             'mcus': {link.name: {
                 'converged': link.is_converged(eventtime),
+                'flags': link.last_state['flags'],
+                'prime_count': link.last_state.get('prime_count', 0),
                 'last_err_ticks': link.last_state['last_err'],
                 'rate': link.last_state['rate'],
+                'machine_ref': link.last_state.get('machine_ref', 0),
+                'local_ref': link.last_state.get('local_ref', 0),
+                'relay_machine_clock': link.last_machine_clock,
+                'relay_local_est': link.last_local_est,
+                'sample_rate': link.sample_rate,
             } for link in self.secondaries},
         }
     cmd_TIMESYNC_STATUS_help = "Report machine-time beacon discipline state"

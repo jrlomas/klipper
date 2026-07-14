@@ -86,7 +86,9 @@ slew-limited proportional-integral filter: offset errors are corrected
 gradually by biasing rate, never by stepping the clock — a stepped
 clock would corrupt in-flight segment schedules. Beacon cadence:
 ~1 Hz, matching today's clock-query cadence (0.9839 s in
-clocksync.py).
+clocksync.py). Positive and negative Q8.24 corrections use the same
+explicitly signed saturation bound; the fixed-point numerator is formed by
+signed multiplication so negative phase error has fully defined C behavior.
 
 **Why keep the host in the relay path?** It requires zero new
 transport capability (works over point-to-point USB/serial where MCUs

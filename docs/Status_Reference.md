@@ -562,6 +562,15 @@ The following information is available in the
   applied by that micro-controller's discipline filter. `TIMESYNC_STATUS`
   reports its correction in ppm relative to the boards' nominal frequency
   ratio.
+- `mcus.<mcu_name>.flags` and `prime_count`: The raw firmware discipline
+  state and number of startup samples accumulated.
+- `mcus.<mcu_name>.machine_ref` and `local_ref`: The current 32-bit mapping
+  anchors published by the secondary micro-controller.
+- `mcus.<mcu_name>.relay_machine_clock`, `relay_local_est`, and
+  `sample_rate`: The latest host relay sample (using extended clocks) and
+  the local-ticks-per-machine-tick ratio measured between the two most recent
+  relay samples. These fields make host-regression and MCU-filter faults
+  distinguishable during bring-up.
 
 ## trajectory_queuing
 

@@ -79,12 +79,15 @@ def test_secondary_freshness():
     link = timesync.SecondaryLink(mcu, 1_000_000.)
     link.setup(5., .000010)
     link.relay(7, 1000, 20.)
+    link.relay(8, 2000, 20.001)
     link.query()
     assert link.is_converged(24.999)
-    assert not link.is_converged(25.001)
+    assert not link.is_converged(25.002)
     assert mcu.commands['timesync_setup'].sent == [
         [5_000_000, 10, 1 << timesync.RATE_SHIFT]]
-    assert mcu.commands['sync_beacon_relay'].sent == [[7, 1000, 20_000_000]]
+    assert mcu.commands['sync_beacon_relay'].sent == [
+        [7, 1000, 20_000_000], [8, 2000, 20_001_000]]
+    assert link.sample_rate == 1.
 
 
 def test_mixed_frequency_rate_representation():

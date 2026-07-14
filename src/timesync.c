@@ -34,16 +34,12 @@
 #include "command.h" // DECL_COMMAND_FLAGS
 #include "execlog.h" // execlog_append
 #include "timesync.h" // timesync_ticks_to_local
+#include "timesync_math.h" // timesync_err_to_adj
 
-#define RATE_SHIFT 24
-#define RATE_ONE (1U << RATE_SHIFT)
-#define RATE_HALF (1U << (RATE_SHIFT - 1))
 // Q8.24 covers ratios [0, 256). Keep symmetric practical bounds around
 // one while retaining sub-ppm resolution throughout the supported range.
 #define RATE_MIN (RATE_ONE / 128)
 #define RATE_MAX (RATE_ONE * 128U)
-// Largest per-interval rate correction considered meaningful (Q8.24)
-#define MAX_ADJ (RATE_ONE / 4)
 // Beacons blended before the filter leaves the priming phase
 // (mirrors clocksync.py's 8-sample connect priming)
 #define PRIME_TARGET 8
@@ -155,19 +151,6 @@ timesync_set_mapping(struct timesync_state *ts, uint32_t machine_ref
     ts->local_ref = local_ref;
     ts->rate = rate;
     irq_enable();
-}
-
-// Full-interval rate correction (Q8.24) implied by an offset error
-// of 'err' local ticks accrued over 'dm' machine ticks.
-static int32_t
-timesync_err_to_adj(int32_t err, int32_t dm)
-{
-    int64_t adj = ((int64_t)err << RATE_SHIFT) / dm;
-    if (adj > MAX_ADJ)
-        return MAX_ADJ;
-    if (adj < -MAX_ADJ)
-        return -MAX_ADJ;
-    return (int32_t)adj;
 }
 
 void
