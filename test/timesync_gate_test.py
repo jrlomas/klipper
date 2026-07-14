@@ -320,6 +320,43 @@ class ScanWindowFFI(AnchorFFI):
         return self.active_time - .020
 
 
+class DisconnectedWindowsFFI(AnchorFFI):
+    def __init__(self, windows):
+        super().__init__(windows[0][0])
+        self.windows = list(windows)
+        self.selected = None
+        self.gen_time = 0.
+        self.checked_from = []
+
+    def itersolve_get_gen_steps_pre_active(self, sk):
+        return .020
+
+    def itersolve_get_gen_steps_post_active(self, sk):
+        return .020
+
+    def segfit_check_activity(self, segfit, from_time, through_time):
+        self.checked_from.append(from_time)
+        self.checked_to.append(through_time)
+        self.selected = next((window for window in self.windows
+                              if window[1] > from_time
+                              and window[0] <= through_time), None)
+        return self.selected is not None
+
+    def segfit_get_activity_start(self, segfit):
+        return self.selected[0]
+
+    def segfit_get_activity_end(self, segfit):
+        return self.selected[1]
+
+    def segfit_get_gen_time(self, segfit):
+        return self.gen_time
+
+    def segfit_generate(self, segfit, flush_time):
+        self.generated_to.append(flush_time)
+        self.gen_time = flush_time
+        return 0
+
+
 class UnsyncedTimeSync:
     def is_mcu_synced(self, mcu_name):
         return False
@@ -397,6 +434,39 @@ def test_trajectory_anchor_includes_kinematic_scan_preroll():
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
     assert ffi_lib.finalized == 1
+
+
+def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = DisconnectedWindowsFFI(
+        [(10., 10.2), (10.5, 10.7)])
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+    anchors = []
+    holds = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        ffi_lib.gen_time = print_time
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = lambda: holds.append(True)
+    stepper._send_segs = lambda count: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    stepper.flush(11., 12.)
+    assert anchors == [10., 10.5]
+    assert holds == [True, True]
+    assert ffi_lib.generated_to == [10.2, 10.7]
+    assert ffi_lib.checked_from == [0., 10.2, 10.7]
+    assert ffi_lib.finalized == 2
+    assert stepper.activity_cursor == 12.
 
 
 def test_external_generator_delay_survives_scan_window_rescan():
@@ -659,6 +729,9 @@ def main():
     test_trajectory_anchor_includes_kinematic_scan_preroll()
     print("PASS: trajectory anchors include pressure-advance and shaping"
           " scan preroll")
+    test_trajectory_drains_disconnected_windows_before_trapq_cleanup()
+    print("PASS: one flush drains every disconnected shaped activity"
+          " window before trapq cleanup")
     test_external_generator_delay_survives_scan_window_rescan()
     print("PASS: trajectory transport reserves its motion-generation lead")
     test_trajectory_end_always_queues_terminal_hold()

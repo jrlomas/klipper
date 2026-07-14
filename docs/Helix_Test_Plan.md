@@ -705,6 +705,18 @@ Now put it together on the **full printer**.
   Pass: homes, probes, meshes; no regressions vs stock Klipper behavior.
 - [ ] **14.2 — Benchmark print (baseline).** Print a known-good model.
   Pass: quality ≥ the machine's stock-Klipper baseline; measure and record.
+  The first supervised attempt on 2026-07-14 ran at 25% speed for 3 min 49 s
+  with stable 260 C / 110 C temperatures, no print stalls, and sustained
+  quintic XY/extruder execution before Klippy shut down in the host flush
+  handler. The cause was not an MCU disconnect: one lookahead horizon
+  contained multiple disconnected pressure-advance/input-shaper activity
+  windows, but the trajectory emitter consumed only the first before trapq
+  cleanup discarded the sampling context for the next. Its later anchor
+  therefore produced a non-finite position. The emitter now drains every
+  disconnected window before cleanup and rejects any non-finite anchor with
+  an actuator-specific diagnostic. A multi-window regression plus the
+  pressure-advance, fitting, execution-audit, and V1 pulse-equivalence suites
+  pass; a real-print retry remains required to check this item.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

@@ -603,6 +603,10 @@ class TrajectoryStepper:
             self._queue_terminal_hold()
             self.rebase_requires_hold = False
         pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
+        if not math.isfinite(print_time) or not math.isfinite(pos_mm):
+            raise self.mcu.error(
+                "Non-finite trajectory anchor for %s at print_time=%r:"
+                " position=%r" % (self.name, print_time, pos_mm))
         # segfit samples commanded joint space. Convert it through the
         # stepper position offset so the wire anchor stays in physical MCU
         # step space across homing and SET_POSITION.
@@ -703,70 +707,75 @@ class TrajectoryStepper:
         # nominal trapq interval (pressure-advance and input-shaper pre/post
         # roll). Fit its complete connected activity window rather than
         # converting the leading displacement into a rebase.
-        activity_cursor = getattr(self, 'activity_cursor', 0.)
-        from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
-                     if self.anchored else activity_cursor)
-        has_activity = self.ffi_lib.segfit_check_activity(
-            self.segfit, from_time, gen_time)
-        if ((has_activity or self.anchored)
-                and not self.owner.is_mcu_synced(self.mcu)):
-            # Do not advance segfit or the persisted intention twin while
-            # the firmware's Class-0 gate will reject these same segments.
-            # Failing before send preserves one shared view of what ran.
-            raise self.mcu.error(
-                "Machine-time discipline for %s is not converged; refusing"
-                " trajectory Class-0 traffic" % (self.mcu.get_name(),))
-        if not self.anchored:
-            if not has_activity:
-                # Nothing through this generation horizon can move the
-                # joint.  Advancing the search cursor prevents a completed
-                # historical move from being selected after its trapq entry
-                # lingers for lookback diagnostics.
-                self.activity_cursor = max(activity_cursor, gen_time)
-                return
-            # Anchor at the complete kinematic activity boundary, not merely
-            # the nominal trapq move. Pressure advance and input shaping use
-            # pre-active scan windows whose pulses are real motion; skipping
-            # them would turn their initial displacement into a position
-            # rebase. segfit_check_activity() also extends the corresponding
-            # post-active tail below.
-            anchor_time = self.ffi_lib.segfit_get_activity_start(self.segfit)
-            self._anchor(anchor_time)
-        activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
-                        if has_activity else from_time)
-        fit_end = min(gen_time, activity_end)
-        prev_acc = self._chained_acc()
-        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        # Never sample beyond the connected activity window. The tail
-        # sentinel is a held coordinate, not a new destination; fitting past
-        # it previously manufactured a one-sample return-to-zero burst.
-        n = (self.ffi_lib.segfit_generate(self.segfit, fit_end)
-             if has_activity and fit_end > prev_time else 0)
-        if n < 0:
-            raise self.mcu.error(
-                "Trajectory for %s exceeds representable wire limits"
-                % (self.name,))
-        self._send_segs(n)
-        self._record_intention(prev_acc, prev_time)
-        # Do not retain a valid candidate across host flush callbacks.  A
-        # long constant-velocity phase may keep fitting until the 4.096s wire
-        # duration cap; if it is only emitted then, its declared start clock
-        # is already seconds in the past.  Seal the prefix generated for this
-        # step-generation horizon so every queued segment is delivered while
-        # it is still future motion.
-        prev_acc = self._chained_acc()
-        prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        n = self.ffi_lib.segfit_finalize(self.segfit)
-        if n < 0:
-            raise self.mcu.error(
-                "Trajectory for %s exceeds representable wire limits"
-                % (self.name,))
-        if n > 0:
+        while True:
+            activity_cursor = getattr(self, 'activity_cursor', 0.)
+            from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
+                         if self.anchored else activity_cursor)
+            has_activity = self.ffi_lib.segfit_check_activity(
+                self.segfit, from_time, gen_time)
+            if ((has_activity or self.anchored)
+                    and not self.owner.is_mcu_synced(self.mcu)):
+                # Do not advance segfit or the persisted intention twin while
+                # the firmware's Class-0 gate will reject these same segments.
+                # Failing before send preserves one shared view of what ran.
+                raise self.mcu.error(
+                    "Machine-time discipline for %s is not converged;"
+                    " refusing trajectory Class-0 traffic"
+                    % (self.mcu.get_name(),))
+            if not self.anchored:
+                if not has_activity:
+                    # Nothing through this generation horizon can move the
+                    # joint.  Advancing the search cursor prevents a completed
+                    # historical move from being selected after its trapq entry
+                    # lingers for lookback diagnostics.
+                    self.activity_cursor = max(activity_cursor, gen_time)
+                    return
+                # Anchor at the complete kinematic activity boundary, not
+                # merely the nominal trapq move. Pressure advance and input
+                # shaping use pre-active scan windows whose pulses are real
+                # motion; skipping them would turn their initial displacement
+                # into a position rebase. segfit_check_activity() also extends
+                # the corresponding post-active tail below.
+                anchor_time = self.ffi_lib.segfit_get_activity_start(
+                    self.segfit)
+                self._anchor(anchor_time)
+            activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
+                            if has_activity else from_time)
+            fit_end = min(gen_time, activity_end)
+            prev_acc = self._chained_acc()
+            prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+            # Never sample beyond the connected activity window. The tail
+            # sentinel is a held coordinate, not a new destination; fitting
+            # past it previously manufactured a one-sample return-to-zero
+            # burst.
+            n = (self.ffi_lib.segfit_generate(self.segfit, fit_end)
+                 if has_activity and fit_end > prev_time else 0)
+            if n < 0:
+                raise self.mcu.error(
+                    "Trajectory for %s exceeds representable wire limits"
+                    % (self.name,))
             self._send_segs(n)
-        self._record_intention(prev_acc, prev_time)
-        window_done = (not has_activity
-                       or fit_end >= activity_end - 1.e-12)
-        if window_done:
+            self._record_intention(prev_acc, prev_time)
+            # Do not retain a valid candidate across host flush callbacks. A
+            # long constant-velocity phase may keep fitting until the 4.096s
+            # wire duration cap; if it is only emitted then, its declared
+            # start clock is already seconds in the past. Seal the prefix
+            # generated for this step-generation horizon so every queued
+            # segment is delivered while it is still future motion.
+            prev_acc = self._chained_acc()
+            prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+            n = self.ffi_lib.segfit_finalize(self.segfit)
+            if n < 0:
+                raise self.mcu.error(
+                    "Trajectory for %s exceeds representable wire limits"
+                    % (self.name,))
+            if n > 0:
+                self._send_segs(n)
+            self._record_intention(prev_acc, prev_time)
+            window_done = (not has_activity
+                           or fit_end >= activity_end - 1.e-12)
+            if not window_done:
+                return
             # Motion has ended.  Terminate every joint with an explicit
             # zero-velocity segment instead of relying on the final fitted
             # coefficient rounding to exactly zero.  Without this, one side
@@ -778,6 +787,13 @@ class TrajectoryStepper:
             self.anchored = False
             self.activity_cursor = max(activity_cursor, activity_end,
                                        fit_end)
+            if fit_end >= gen_time - 1.e-12:
+                return
+            # A single host lookahead horizon can contain many disconnected
+            # extrusion islands or shaped moves. Drain all of them before
+            # motion_queuing finalizes old trapq entries; otherwise the next
+            # callback may no longer have the pre-active context needed by
+            # pressure advance or input shaping.
 
     def _queue_terminal_hold(self):
         self.hold_cmd.send([self.oid, self.terminal_hold_ticks])
