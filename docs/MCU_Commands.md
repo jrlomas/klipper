@@ -424,6 +424,12 @@ relays its beacons so secondary boards can discipline their clocks
   rate=%u last_err=%i machine_ref=%u local_ref=%u" response describing
   the filter state.
 
+### Structured trace commands
+
+* `trace_test count=%hu` : Emits up to 1024 registered `trace_probe`
+  commissioning records when core tracing is enabled. This exercises the
+  real trace ring and streamer without moving an actuator.
+
 ### Hardware trigger commands
 
 Hardware-event trigger sources deliver endstop/probe-style events

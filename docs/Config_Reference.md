@@ -291,7 +291,10 @@ itself, enable or validate the HELIX datagram carrier, FEC, or ESP32 modem.
 
 Runtime inspection and control are available through `ATLAS_TRACE_STATUS`,
 `ATLAS_TRACE_LEVEL MCU=<name> SUB=<subsystem> LEVEL=<level>`, and
-`ATLAS_TRACE_STREAM MCU=<name> MAX=<records>`.
+`ATLAS_TRACE_STREAM MCU=<name> MAX=<records>`. During commissioning,
+`ATLAS_TRACE_TEST MCU=<name> COUNT=<records>` emits a bounded sequence of
+registered `trace_probe` records through the real firmware ring and streamer;
+it does not move an actuator.
 
 ### [trajectory_queuing]
 

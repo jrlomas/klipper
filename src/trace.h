@@ -41,6 +41,7 @@ enum {
     TRACE_EV_hold_enter,      // entered hold: reason
     TRACE_EV_rebase,          // host re-anchored: new_anchor
     TRACE_EV_trigger_fire,    // hardware trigger: source_oid, reason
+    TRACE_EV_trace_probe,     // bounded diagnostic emission: index
     TRACE_EV_COUNT,
 };
 

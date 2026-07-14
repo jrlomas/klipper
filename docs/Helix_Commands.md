@@ -34,6 +34,14 @@ machine what it actually has with **`HELIX_STATUS`**.
 | --- | --- |
 | `TIMESYNC_STATUS` | Per-secondary beacon-discipline state: converged?, current sync error (µs), clock-rate correction (ppm). |
 
+### Structured trace — `[atlas_trace]`
+| Command | Summary |
+| --- | --- |
+| `ATLAS_TRACE_STATUS` | Per-MCU trace availability, received records, sequence gaps, ring bounds, and explicit drop counts. |
+| `ATLAS_TRACE_LEVEL MCU=<name> SUB=<subsystem> LEVEL=<level>` | Set one subsystem's trace threshold. |
+| `ATLAS_TRACE_STREAM MCU=<name> MAX=<records>` | Set the records-per-task-wake streaming budget; zero disables streaming. |
+| `ATLAS_TRACE_TEST MCU=<name> [COUNT=<records>]` | Emit bounded registered commissioning records through the real ring/streamer without motion. |
+
 ### Capability introspection — `[helix_status]` (auto-loaded)
 | Command | Summary |
 | --- | --- |
@@ -62,6 +70,7 @@ machine what it actually has with **`HELIX_STATUS`**.
 | `[failure_recovery]` | Enables pause-and-hold and the recovery commands. |
 | `[helix_status]` | Enables `HELIX_STATUS` (also auto-loaded with the trajectory subsystem). |
 | `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`). |
+| `[atlas_trace]` | Structured per-MCU trace collection, subsystem levels, bounded streaming, and drop accounting. |
 | `[asyncio_bridge]` | The asyncio↔reactor seam (`start_timeout`, `stop_timeout`). |
 | `[helix_self_test]` | Built-in test mode: `HELIX_SELF_TEST` plus `on_connect`/`required` to run the boards' live verification gates at every connect. |
 | `[intentproto_transport NAME]` | The v2 transport bridge: klippy speaks intentproto v2 (auth + FEC envelope around stock v1 frames) to a network (`mode: datagram`) or serial (`mode: bch`) board; point `[mcu NAME] serial:` at its PTY. |

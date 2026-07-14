@@ -49,7 +49,9 @@ class FakeMcu:
         self.callbacks.append(callback)
 
     def try_lookup_command(self, message):
-        return FakeCommand() if self.trace else None
+        if not self.trace:
+            return None
+        return self.commands.setdefault(message, FakeCommand())
 
     def add_config_cmd(self, command):
         self.config_cmds.append(command)
@@ -193,6 +195,8 @@ def test_configures_and_tolerates_rolling_firmware():
         stream = mcus["mcu"].commands[
             "trace_stream oid=%c max_per_wake=%c"].sent
         assert stream == [[7, 4]]
+        manager.links["mcu"].emit_test(256)
+        assert mcus["mcu"].commands["trace_test count=%hu"].sent == [[256]]
         print("PASS: live collector configures trace and tolerates old MCU")
 
 

@@ -187,6 +187,20 @@ command_trace_stream(uint32_t *args)
 }
 DECL_COMMAND(command_trace_stream, "trace_stream oid=%c max_per_wake=%c");
 
+// Bounded commissioning aid: exercise the real ring, dictionary, streamer,
+// and multi-MCU time merge without requiring an actuator to underrun. The
+// core subsystem must be enabled or the LOG1 guard makes this a cheap no-op.
+void
+command_trace_test(uint32_t *args)
+{
+    uint16_t count = args[0];
+    if (count > 1024)
+        count = 1024;
+    for (uint16_t i = 0; i < count; i++)
+        LOG1(TRACE_SUB_CORE, TRACE_LVL_INFO, TRACE_EV_trace_probe, i);
+}
+DECL_COMMAND(command_trace_test, "trace_test count=%hu");
+
 // Best-effort live streaming (Class-2). Records evicted before they
 // stream are counted, never silently lost.
 void
@@ -239,6 +253,7 @@ DECL_ENUMERATION("trace_event", "comm_retransmit", TRACE_EV_comm_retransmit);
 DECL_ENUMERATION("trace_event", "hold_enter", TRACE_EV_hold_enter);
 DECL_ENUMERATION("trace_event", "rebase", TRACE_EV_rebase);
 DECL_ENUMERATION("trace_event", "trigger_fire", TRACE_EV_trigger_fire);
+DECL_ENUMERATION("trace_event", "trace_probe", TRACE_EV_trace_probe);
 
 DECL_CONSTANT_STR("trace_fmt_step_underrun", "horizon_us=%u queue_depth=%u");
 DECL_CONSTANT_STR("trace_fmt_queue_refill", "depth=%u added=%u");
@@ -246,3 +261,4 @@ DECL_CONSTANT_STR("trace_fmt_comm_retransmit", "seq=%u count=%u");
 DECL_CONSTANT_STR("trace_fmt_hold_enter", "reason=%u");
 DECL_CONSTANT_STR("trace_fmt_rebase", "new_anchor=%u");
 DECL_CONSTANT_STR("trace_fmt_trigger_fire", "source_oid=%u reason=%u");
+DECL_CONSTANT_STR("trace_fmt_trace_probe", "index=%u");

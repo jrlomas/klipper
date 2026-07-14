@@ -123,6 +123,7 @@ class AtlasTraceLink:
         self.set_level_cmd = None
         self.stream_cmd = None
         self.query_cmd = None
+        self.test_cmd = None
         self.renderer = None
         self.records = 0
         self.sequence_gaps = 0
@@ -152,6 +153,7 @@ class AtlasTraceLink:
         self.stream_cmd = self.mcu.lookup_command(
             "trace_stream oid=%c max_per_wake=%c", cq=cq)
         self.query_cmd = self.mcu.lookup_command("trace_query oid=%c", cq=cq)
+        self.test_cmd = self.mcu.try_lookup_command("trace_test count=%hu")
         self.mcu.register_serial_response(
             self._handle_data,
             "trace_data oid=%c seq=%u clock=%u event=%hu sub=%c level=%c"
@@ -189,6 +191,11 @@ class AtlasTraceLink:
 
     def set_stream_max(self, maximum):
         self.stream_cmd.send([self.oid, maximum])
+
+    def emit_test(self, count):
+        if self.test_cmd is None:
+            raise ValueError("firmware does not advertise trace_test")
+        self.test_cmd.send([count])
 
     def _sub_id(self, sub_name):
         enums = self.mcu.get_enumerations().get("trace_sub", {})
@@ -279,6 +286,9 @@ class AtlasTrace:
         gcode.register_command(
             "ATLAS_TRACE_STREAM", self.cmd_ATLAS_TRACE_STREAM,
             desc="Set one MCU trace streaming budget")
+        gcode.register_command(
+            "ATLAS_TRACE_TEST", self.cmd_ATLAS_TRACE_TEST,
+            desc="Emit bounded diagnostic trace records on one MCU")
 
     def _ready(self):
         for link in self.links.values():
@@ -340,6 +350,16 @@ class AtlasTrace:
         link.set_stream_max(maximum)
         gcmd.respond_info("%s trace stream max_per_wake=%d"
                           % (link.mcu_name, maximum))
+
+    def cmd_ATLAS_TRACE_TEST(self, gcmd):
+        link = self._get_link(gcmd)
+        count = gcmd.get_int("COUNT", 1, minval=1, maxval=1024)
+        try:
+            link.emit_test(count)
+        except ValueError as exc:
+            raise gcmd.error(str(exc))
+        gcmd.respond_info("%s emitted %d diagnostic trace records"
+                          % (link.mcu_name, count))
 
     def get_status(self, eventtime):
         return {

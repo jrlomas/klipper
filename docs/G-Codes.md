@@ -1665,6 +1665,28 @@ This command is only available during drift calibration.
 compensation on or off. If ENABLE is set to 0, drift compensation
 will be disabled, if set to 1 it is enabled.
 
+### [atlas_trace]
+
+The following commands are available when an
+[atlas_trace config section](Config_Reference.md#atlas_trace) is enabled.
+
+#### ATLAS_TRACE_STATUS
+`ATLAS_TRACE_STATUS`: Reports availability, received records, sequence gaps,
+ring bounds, and explicit firmware drop counters for every configured MCU.
+
+#### ATLAS_TRACE_LEVEL
+`ATLAS_TRACE_LEVEL MCU=<name> SUB=<subsystem> LEVEL=<level>`: Sets a firmware
+subsystem threshold to `off`, `error`, `warning`, `info`, or `debug`.
+
+#### ATLAS_TRACE_STREAM
+`ATLAS_TRACE_STREAM MCU=<name> MAX=<records>`: Sets the maximum records sent
+per firmware task wake. Zero disables live streaming.
+
+#### ATLAS_TRACE_TEST
+`ATLAS_TRACE_TEST MCU=<name> [COUNT=<records>]`: Emits 1-1024 registered
+`trace_probe` commissioning records through the selected MCU's real trace ring
+and streamer. It does not move an actuator.
+
 ### [timesync]
 
 The following command is available when a
