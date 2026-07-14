@@ -153,7 +153,11 @@ def flash_dfuutil(device, binfile, extra_flags=[], sudo=True):
     if detect_canboot(devpath):
         call_flashcan(serbypath, binfile)
     else:
-        call_dfuutil(["-p", buspath] + extra_flags, binfile, sudo)
+        # The application USB interface can remain present briefly after the
+        # 1200-baud reboot request.  wait_path() may therefore observe the
+        # old interface before the STM32 ROM DFU device has enumerated.  Let
+        # dfu-util wait on the stable physical bus path instead of racing it.
+        call_dfuutil(["-w", "-p", buspath] + extra_flags, binfile, sudo)
 
 def call_hidflash(binfile, sudo):
     args = ["lib/hidflash/hid-flash", binfile]
