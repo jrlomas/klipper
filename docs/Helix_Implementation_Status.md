@@ -167,6 +167,20 @@ pass.
   EBB36, and Linux builds plus Linuxprocess live self-tests pass. Flashing the
   new images and a supervised physical print remain open, so benchmark item
   14.2 is not yet a hardware pass.
+* Repeat supervised runs on `5f652c6e` separated two later failure modes. A
+  disabled-trace comparison bug first generated 257 trace records/s on the
+  EBB36 and destabilized time discipline; 2,048 live disabled probes now
+  produce zero records. With that fix holding, an uninterrupted print stopped
+  at an E rebase whose local deadline was 19,931 ticks (311.4 us) in the past.
+  The recorder proved timesync was converged, both USB links had zero invalid
+  bytes, and the MCU had not overrun its solver. The host scanner had returned
+  a historical pressure-advance pre-active start after generation was already
+  inside that window. It now clips the activity boundary to the generation
+  cursor, matching stock itersolve's `last_flush_time` rule. The focused host
+  suite and the same cube's 100% two-layer replay pass (63,846 E edges,
+  4,896-tick minimum, no <=64-tick interval). Klipper is ready with converged
+  Class-0 time after restart; a supervised repeat remains required, so this is
+  not yet a repeatable full-print qualification.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and

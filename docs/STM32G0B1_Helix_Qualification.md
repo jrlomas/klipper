@@ -283,6 +283,30 @@ discipline reconverged. The printer returned to `ready`. A new supervised
 physical print remains the final acceptance gate; no heater target was issued
 as part of this qualification.
 
+### Experiment 1e: late pressure-advance activity boundary
+
+A later supervised run on firmware `5f652c6e` stopped during ordinary
+mid-print extrusion with `MCU 'ebb36' shutdown: Timer too close`. This was
+not a pause, an underrun, a lost time lock, or solver exhaustion. The EBB36
+flight recorder showed a completed local hold at clock 1,432,722,549, then a
+new `trajectory_rebase_local` for clock 1,432,803,549. The command was
+processed at clock 1,432,823,480: its requested start was already 19,931
+EBB36 ticks, or 311.4 us, in the past. Timesync remained converged, both USB
+links retained zero invalid bytes, and disabled trace retained zero records.
+
+The host activity scanner expanded an extrusion move by its pressure-advance
+pre-active window. When that move became visible after generation had already
+advanced into the window, `segfit_check_activity()` returned the historical
+unclipped start. Stock `itersolve_generate_steps()` explicitly clips this
+lookback to `last_flush_time`; the HELIX fitter now applies the same rule and
+returns no activity boundary before its supplied generation cursor. The new
+extruder regression starts inside a 40 ms pressure-advance window and proves
+that the anchor is exactly the forward cursor, not the stale pre-active
+start. The focused host suite and a 100% two-layer replay of the same cube
+pass; the replay emits 63,846 E pulses, has a 4,896-tick minimum interval,
+and contains no interval at or below 64 ticks. The physical benchmark remains
+open until this host correction completes a new supervised print.
+
 ## Experiment 2: on-silicon deadline scaling
 
 `traj_stepper_test_quintic_deadline()` runs inside `HELIX_SELF_TEST`, so it
@@ -533,8 +557,10 @@ non-zero when the requested set intentionally includes the rejected 32x case.
 ## Remaining qualification
 
 - Run a real sliced print with sustained coordinated XY, Z, and extrusion;
-  the current evidence qualifies the motion pieces and hot extruder, not a
-  complete part.
+  one cube reached coherent full-speed motion, but subsequent repeat runs
+  exposed the trace flood and late pressure-advance boundary above. The
+  current evidence qualifies the corrected pieces and hot extruder, not yet
+  a repeatable complete part.
 - Repeat the toolhead qualification over CAN for the V2.4. USB success proves
   the protocol and solver but not CAN physical-layer behavior.
 - Measure GPIO edges with a logic analyzer if an external timing reference is

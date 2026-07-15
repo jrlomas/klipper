@@ -302,7 +302,14 @@ segfit_check_activity(struct segfit *sf, double from_time, double through_time)
                          + sk->gen_steps_post_active;
             if (end > from_time && start <= through_time) {
                 if (!found) {
-                    sf->activity_start = start;
+                    // A move may be appended after the caller has already
+                    // generated through part of its pre-active scan window.
+                    // Legacy itersolve clips that lookback to
+                    // last_flush_time; do the same for trajectory fitting.
+                    // Returning the historical start here makes the host
+                    // transmit a rebase whose MCU clock is already due.
+                    sf->activity_start = start < from_time
+                        ? from_time : start;
                     sf->activity_end = end;
                     found = 1;
                 } else if (start <= sf->activity_end) {

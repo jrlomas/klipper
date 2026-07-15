@@ -258,6 +258,23 @@ def test_pressure_advance_is_in_the_fitted_path():
     return advanced, abs(advanced_pos - nominal_pos)
 
 
+def test_pressure_advance_activity_clips_to_generation_cursor():
+    # Klippy can append a move after step generation has advanced into its
+    # pressure-advance lookback window.  That historical part is no longer a
+    # valid rebase deadline; stock itersolve clips it to last_flush_time.
+    # HELIX must return the same forward-only boundary.
+    ffi, lib, trapq, sk, end_time = build_path(
+        8., 16., 320., pressure_advance=.030175, smooth_time=.040,
+        pressure_advance_allowed=True)
+    sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(sf, sk, MCU_FREQ, SU_PER_MM,
+                     TOLERANCE_SU, SAMPLE_TIME)
+    cursor = START_TIME - .005
+    assert lib.segfit_check_activity(sf, cursor, end_time + .020)
+    assert lib.segfit_get_activity_start(sf) == cursor
+    assert lib.segfit_get_activity_end(sf) > cursor
+
+
 def main():
     forward = test_forward_extrusion()
     print("PASS: forward extrusion -> %d quintic segments, worst %.2f su"
@@ -268,6 +285,8 @@ def main():
     advanced, pa_delta = test_pressure_advance_is_in_the_fitted_path()
     print("PASS: pressure advance is fitted (delta %.6fmm, %d segments)"
           % (pa_delta, advanced['segments']))
+    test_pressure_advance_activity_clips_to_generation_cursor()
+    print("PASS: late pressure-advance lookback clips to generation cursor")
     print("extruder_trajectory_test: all E-axis paths within motion_tolerance")
     return 0
 

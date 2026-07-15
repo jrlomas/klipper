@@ -801,6 +801,29 @@ Now put it together on the **full printer**.
   Pico, EBB36, and Linux firmware builds, focused motion/fitter suites, and
   Linuxprocess live self-tests pass. Item 14.2 remains open until these new
   MCU images are flashed and the supervised physical print completes.
+
+  After flashing `5f652c6e`, one cube produced coherent motion through a
+  full-speed interval, but repeat runs exposed two independent faults. The
+  first was a disabled-trace sentinel bug that flooded the EBB36 with 257
+  trace and 258 execution records/s until time discipline lost convergence;
+  disabled probes are now silent (2,048 live attempts, zero records). The
+  next repeat failed during uninterrupted printing with EBB36 `Timer too
+  close`. Its recorder showed the next E rebase clock was already 19,931
+  local ticks (311.4 us) old when processed. Timesync was still converged,
+  trace remained empty, and both links had zero invalid bytes, separating it
+  from the earlier failure.
+
+  The mid-print deadline came from pressure-advance lookback discovery, not a
+  user pause or an MCU solver overrun. If a move was appended after generation
+  had entered its pre-active interval, the HELIX scanner returned that
+  interval's historical start. Stock itersolve clips the same case to its
+  `last_flush_time`; `segfit_check_activity()` now clips to the supplied
+  generation cursor. A dedicated 40 ms pressure-advance regression, the full
+  focused host suite, and a 100% two-layer replay of the failing cube pass.
+  The replay emits 63,846 E edges with a 4,896-tick minimum and no interval at
+  or below 64 ticks. Klipper has been restarted with the correction and both
+  boards are ready with converged Class-0 time. Item 14.2 remains open pending
+  a clean supervised repeat.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.
