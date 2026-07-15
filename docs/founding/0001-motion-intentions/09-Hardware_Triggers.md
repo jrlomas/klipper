@@ -1,8 +1,9 @@
 # FD-0001: Hardware Triggers
 
 Status: Framework, STM32 wiring, and RP2040 IO_BANK0 wiring implemented in
-HELIX 0.9. The RP2040 GPIO path is live-validated on a V0; remaining ports,
-input-capture precision, analog sources, and comparison measurements remain.
+HELIX 0.9. The RP2040 GPIO path and interrupt-versus-polling comparison are
+live-validated on a V0; remaining ports, input-capture precision, and analog
+sources remain.
 
 Klipper made MCUs deliberately dumb, and nowhere is the cost clearer
 than in how the firmware *senses*: endstops are polled by software
@@ -227,7 +228,18 @@ live capability report included hardware trigger sources, all five board
 self-tests passed, and cold homing retained OID 19/21/23 hardware-source
 records. The first corresponding actuator stops followed by 264, 262, and
 277 scheduler ticks, respectively. Thus the current candidate preserves the
-interrupt path; the separate polling comparison remains a qualification item.
+interrupt path.
+
+The 2026-07-15 forced-fallback comparison then ran 16 physical Z homes per
+mode in a balanced poll--interrupt--interrupt--poll order. Across the 32
+interrupt contacts, the ISR-entry record preceded the trajectory stop by
+23.086 us on average with a 23.000--23.167 us range. The legacy path cannot
+record the edge; its configured cadence bounds the corresponding detector
+path at an estimated 48.1--110.6 us for the 20 mm/s pass and 48.1--464.8 us
+for the 3 mm/s pass. Whole-system trigger-position variance was no worse and
+was lower in both series. See the measured technical note
+[Interrupt-driven homing versus legacy polling](../../Interrupt_vs_Polling.md)
+for the method, repeatability data, and limitations.
 
 ## Open questions
 

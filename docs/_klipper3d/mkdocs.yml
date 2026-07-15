@@ -91,6 +91,7 @@ nav:
     - Secure_Networking.md
     - Helix_Implementation_Status.md
     - Helix_Test_Plan.md
+    - Interrupt_vs_Polling.md
     - Atlas_Bring-up_Plan.md
     - Atlas_Model_Eval.md
   - Overview.md
