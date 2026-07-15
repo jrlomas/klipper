@@ -1557,6 +1557,19 @@ DECL_COMMAND(command_trajectory_rebase,
              "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i");
 
 void
+command_trajectory_rebase_local(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    // args[1] retains the shared machine-time intent on the wire and in the
+    // host flight record. args[2] is the immutable execution barrier for the
+    // local-time segment stream queued behind it.
+    trajq_rebase_local(&s->tq, args[2], args[3], args[4]);
+}
+DECL_COMMAND(command_trajectory_rebase_local,
+             "trajectory_rebase_local oid=%c machine_clock=%u local_clock=%u"
+             " pos=%i mcu_pos=%i");
+
+void
 command_traj_get_position(uint32_t *args)
 {
     uint8_t oid = args[0];

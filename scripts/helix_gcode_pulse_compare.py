@@ -196,7 +196,8 @@ def trajectory_streams(commands):
         if name == "config_traj_stepper":
             streams[fields["oid"]] = []
         elif name in (
-                "trajectory_rebase", "traj_hold", "queue_traj_segment",
+                "trajectory_rebase", "trajectory_rebase_local",
+                "traj_hold", "queue_traj_segment",
                 "queue_traj_segment_cubic", "queue_traj_segment_quintic"):
             streams[fields["oid"]].append((name, fields))
     return streams
@@ -227,9 +228,11 @@ def replay_trajectory(streams, solver, local_frequency, primary_frequency):
         prior_direction = ctypes.c_int32(0)
         pulse_buffer = (ctypes.c_uint32 * 65536)()
         for name, fields in stream:
-            if name == "trajectory_rebase":
-                clock = int(round(
-                    fields["clock"] * local_frequency / primary_frequency))
+            if name in ("trajectory_rebase", "trajectory_rebase_local"):
+                clock = (fields["local_clock"]
+                         if name == "trajectory_rebase_local" else int(round(
+                             fields["clock"] * local_frequency
+                             / primary_frequency)))
                 acc = signed_i64(fields["pos"] << 32)
                 mcu_position = fields["mcu_pos"]
                 continue
@@ -447,7 +450,9 @@ def main():
                 captured_pulses[mode][name] = pulses
                 item["steppers"] = {
                     str(oid): {
-                        "rebases": sum(c[0] == "trajectory_rebase"
+                        "rebases": sum(c[0] in (
+                                           "trajectory_rebase",
+                                           "trajectory_rebase_local")
                                        for c in stream),
                         "segments": sum(c[0].startswith("queue_traj_segment")
                                         for c in stream),

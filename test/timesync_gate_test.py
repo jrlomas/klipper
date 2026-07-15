@@ -614,7 +614,7 @@ def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
     assert stepper.activity_cursor == 12.
 
 
-def test_held_stream_survives_close_windows_across_flush_callbacks():
+def test_close_extrusion_windows_rebase_across_flush_callbacks():
     stepper = trajectory_queuing.TrajectoryStepper.__new__(
         trajectory_queuing.TrajectoryStepper)
     stepper.owner = SyncedOwner()
@@ -623,8 +623,6 @@ def test_held_stream_survives_close_windows_across_flush_callbacks():
     ffi_lib = stepper.ffi_lib = DisconnectedWindowsFFI([(10., 10.2)])
     stepper.segfit = object()
     stepper.anchored = False
-    stepper.is_relative = True
-    stepper.stream_held = False
     stepper.activity_cursor = 0.
     stepper.intentions = []
     anchors = []
@@ -634,11 +632,9 @@ def test_held_stream_survives_close_windows_across_flush_callbacks():
         anchors.append(print_time)
         ffi_lib.gen_time = print_time
         stepper.anchored = True
-        stepper.stream_held = False
 
     def hold(*args):
         holds.append(True)
-        stepper.stream_held = True
         return True
 
     stepper._anchor = anchor
@@ -649,14 +645,15 @@ def test_held_stream_survives_close_windows_across_flush_callbacks():
 
     # Reproduce the physical-print shape: the next pressure-advanced E
     # island becomes visible only on a later callback, four milliseconds
-    # after the first one. It must append after the held accumulator rather
-    # than transmit a second absolute rebase into the still-queued window.
+    # after the first one. It must get its own trapq-derived position anchor;
+    # retaining one print-long relative-E accumulator caused catastrophic
+    # physical over-extrusion.
     ffi_lib.windows.append((10.204, 10.5))
     stepper.flush(10.5, 10.6)
-    assert anchors == [10.]
+    assert anchors == [10., 10.204]
     assert holds == [True, True]
     assert ffi_lib.generated_to == [10.2, 10.5]
-    assert stepper.anchored and stepper.stream_held
+    assert not stepper.anchored
 
 
 def test_trajectory_drains_capped_segment_batch_before_hold():
@@ -879,6 +876,38 @@ def test_rebase_waits_for_previous_horizon():
     assert stepper.ffi_lib.offset == 652.
 
 
+def test_secondary_rebase_uses_immutable_local_horizon():
+    class MixedClockOwner:
+        def __init__(self):
+            self.machine = FakeMCU(12_000_000.)
+        def get_machine_mcu(self):
+            return self.machine
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = MixedClockOwner()
+    stepper.mcu = FakeMCU(64_000_000.)
+    stepper.name = 'extruder'
+    stepper.oid = 5
+    stepper.rebase_cmd = FakeCommand()
+    stepper.local_rebase_cmd = FakeCommand()
+    stepper.rebase_min_clock = 12_500_000
+    stepper.rebase_min_execution_clock = 66_000_000
+    stepper._record_wire = lambda fields: None
+
+    # At a disconnected E island, preserve both the shared machine-time
+    # intent and the exact local schedule used by its already-local segments.
+    stepper._send_rebase(1.1, 123456, 42)
+    assert stepper.rebase_cmd.sent == []
+    assert stepper.local_rebase_cmd.sent == [[
+        5, 13_200_000, 70_400_000, 123456, 42]]
+    assert stepper.local_rebase_cmd.send_options == [{
+        'minclock': 66_000_000, 'reqclock': 70_400_000}]
+    assert stepper.execution_clock == 70_400_000
+    assert stepper.rebase_min_clock == 0
+    assert stepper.rebase_min_execution_clock == 0
+
+
 def test_active_path_is_held_before_rebase_boundary():
     class PhysicalStepper:
         def commanded_to_mcu_position_su(self, pos):
@@ -928,10 +957,12 @@ def test_confirmed_stop_does_not_queue_a_pre_rebase_hold():
     stepper.need_rebase = False
     stepper.rebase_requires_hold = False
     stepper.rebase_min_clock = 1234
+    stepper.rebase_min_execution_clock = 5678
     stepper.note_rebase_needed(stopped=True)
     assert stepper.need_rebase and not stepper.anchored
     assert not stepper.rebase_requires_hold
     assert stepper.rebase_min_clock == 0
+    assert stepper.rebase_min_execution_clock == 0
 
 
 def test_value_trajectory_fails_before_fitter_advance():
@@ -987,8 +1018,8 @@ def main():
     test_trajectory_drains_disconnected_windows_before_trapq_cleanup()
     print("PASS: one flush drains every disconnected shaped activity"
           " window before trapq cleanup")
-    test_held_stream_survives_close_windows_across_flush_callbacks()
-    print("PASS: held streams bridge close activity windows across flushes")
+    test_close_extrusion_windows_rebase_across_flush_callbacks()
+    print("PASS: close extrusion windows retain per-island position anchors")
     test_trajectory_drains_capped_segment_batch_before_hold()
     print("PASS: full fitter batches drain before the terminal hold")
     test_external_generator_delay_survives_scan_window_rescan()
@@ -1005,6 +1036,8 @@ def main():
     print("PASS: normal G1 quintics bypass the quadratic wire command")
     test_rebase_waits_for_previous_horizon()
     print("PASS: a new rebase waits for the previous physical horizon")
+    test_secondary_rebase_uses_immutable_local_horizon()
+    print("PASS: secondary rebases preserve an immutable local horizon")
     test_active_path_is_held_before_rebase_boundary()
     print("PASS: an active path gets an explicit hold before rebase")
     test_confirmed_stop_does_not_queue_a_pre_rebase_hold()

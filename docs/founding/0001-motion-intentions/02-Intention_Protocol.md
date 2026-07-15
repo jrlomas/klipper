@@ -74,6 +74,8 @@ New commands (encodings follow the existing VLQ argument scheme of
 ```
 config_trajectory oid=%c backend=%c underrun_decel=%u
 trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i
+trajectory_rebase_local oid=%c machine_clock=%u local_clock=%u pos=%i \
+    mcu_pos=%i
 queue_traj_segment oid=%c flags=%c duration=%u velocity=%i accel=%i
 queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i accel=%i \
     jerk=%i                                       (Kconfig-gated)
@@ -100,7 +102,8 @@ traj_status oid=%c horizon_clock=%u free_slots=%hu   (telemetry, Class 2)
 Field definitions:
 
 * `duration` — segment length in ticks of the *executing MCU's* clock
-  after machine-time conversion (see 01-Time_Model.md), ≤ 2²⁶.
+  after machine-time conversion, or already in that clock domain when
+  `TSEG_LOCAL_TIME` is set (see 01-Time_Model.md), ≤ 2²⁶.
 * `velocity` — signed 32-bit, in **sub-units per 2¹⁶ ticks**
   (Q16.16 sub-units/tick). Range: ±2¹⁵ = ±32768 sub-units/tick — far
   above any physical rate (a 1 MHz step rate on a 100 MHz clock is
@@ -121,9 +124,13 @@ Field definitions:
   coordinate. This pair permits long travel while preserving a compact
   command. Decoders normalize both signed fields even when an intermediate
   transport or variadic encoder presents their wire bits as unsigned.
-* `flags` — bit 0 proposed: *hold-at-end* hint — prefer position hold
-  over underrun ramp if the queue empties after this segment (see
-  underrun policy). Bits 6–7 carry the **segment polynomial order**
+* `flags` — bit 0 is the *hold-at-end* hint; bit 1 is
+  `TSEG_LOCAL_TIME`, declaring that duration and every derivative were fitted
+  in the executing MCU's local timer domain. A secondary local-time stream
+  must use `trajectory_rebase_local` for its absolute boundary. This keeps
+  one clock domain throughout the queued stream while retaining
+  `machine_clock` for shared intent and discipline gating. Bits 6–7 carry the
+  **segment polynomial order**
   (`00` = quadratic, `01` = cubic, `10` = quintic). The cubic/quintic
   orders are the Kconfig-gated higher-order extension described under
   "Higher-order segments" above; they are carried on the dedicated

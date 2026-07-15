@@ -48,6 +48,17 @@ pass.
   freewheel freshness. Both stepper and PWM/DAC trajectory paths fail before
   advancing their fitted-intention twins when a secondary is not converged;
   firmware also refuses an unsynchronized rebase or segment.
+* Workstation remediation for the EBB36 disconnected-island failure restores
+  a fresh trapq-derived extrusion anchor at every pressure-advance/retraction
+  island. Secondary local-time streams now carry an immutable local rebase
+  boundary alongside their shared machine-time intent, preventing later
+  discipline changes from moving a boundary into queued work. The focused
+  host regressions and Pico/EBB36 target builds pass. A full 99-layer replay
+  with regenerated dictionaries produced 422 E rebases and 1,135,901 HELIX
+  pulses versus 1,134,514 V1 pulses, with no interval at or below 64 ticks.
+  The rejected print-long E-stream workaround physically over-extruded and is
+  not considered qualified; board flashing and a supervised hot print are
+  still required for the replacement.
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
   unsigned-image refusal, and bad-signature rejection.
 * Static datagram FEC uses bounded pair blocks: tests drop either the first or

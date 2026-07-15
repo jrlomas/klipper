@@ -166,7 +166,7 @@ def main():
     traj.segfit = object()
     traj.ffi_lib = FakeFFI()
     traj.note_rebase_needed = lambda: None
-    traj._wire_rebase = lambda clock, pos, mpos: None
+    traj._wire_rebase = lambda clock, pos, mpos, **kwargs: None
     terminal_holds = []
     traj._queue_terminal_hold = lambda: terminal_holds.append(True)
     captured = []

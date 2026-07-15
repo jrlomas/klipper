@@ -344,6 +344,15 @@ and coexist with the legacy queue_step path.
   counter preserves and unwraps step phase across homing, long travel, and
   logical coordinate changes.
 
+* `trajectory_rebase_local oid=%c machine_clock=%u local_clock=%u pos=%i
+  mcu_pos=%i` : Anchors a secondary MCU stream whose segment durations and
+  coefficients carry `TSEG_LOCAL_TIME`. `machine_clock` retains the shared
+  machine-time intent; `local_clock` is the immutable execution barrier in
+  the same timer domain as the queued segments. The Class-0 discipline gate
+  still applies. This prevents a later discipline-map correction from moving
+  a new rebase backward into local-time trajectory data already in the queue.
+  Primary-MCU streams continue to use `trajectory_rebase`.
+
 * `traj_get_position oid=%c` : Generates a "traj_position oid=%c
   clock=%u pos=%i mcu_pos=%i" response with the current interpolated
   low-word phase and physical microstep counter.

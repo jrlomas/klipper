@@ -88,11 +88,6 @@ def _signed_i32(x):
     return x - (1 << 32) if x & 0x80000000 else x
 
 
-def _signed_i64(x):
-    x = int(x) & 0xffffffffffffffff
-    return x - (1 << 64) if x & (1 << 63) else x
-
-
 def _snap_bezier_anchor(requested_su, current_su):
     if abs(requested_su - current_su) > SUBUNITS:
         return None
@@ -323,15 +318,16 @@ class TrajectoryStepper:
         self.segfit = ffi_main.gc(self.ffi_lib.segfit_alloc(),
                                   self.ffi_lib.segfit_free)
         self.queue_cmd = self.hold_cmd = self.rebase_cmd = None
+        self.local_rebase_cmd = None
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
         self.rebase_requires_hold = False
         self.rebase_min_clock = 0
+        self.rebase_min_execution_clock = 0
         self.wire_clock = None
         self.wire_acc = None
         self.activity_cursor = 0.
-        self.stream_held = False
         self.su_per_mm = 1.
         # Rolling record of intentions SENT: the host twin the resume
         # reconciler (FD-0001 doc 08) diffs against what the board
@@ -440,6 +436,9 @@ class TrajectoryStepper:
         self.rebase_cmd = self.mcu.lookup_command(
             "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i",
             cq=cmd_queue)
+        self.local_rebase_cmd = self.mcu.try_lookup_command(
+            "trajectory_rebase_local oid=%c machine_clock=%u"
+            " local_clock=%u pos=%i mcu_pos=%i", cq=cmd_queue)
         # Higher-order commands exist only if the firmware was built with
         # CONFIG_WANT_TRAJECTORY_HIGHER_ORDER; look them up optionally.
         self.cubic_cmd = self.mcu.try_lookup_command(
@@ -451,6 +450,12 @@ class TrajectoryStepper:
             cq=cmd_queue)
 
     def connect(self):
+        if (self.mcu is not self._machine_mcu()
+                and self.local_rebase_cmd is None):
+            raise self.mcu.error(
+                "Firmware for %s lacks the local-clock rebase barrier"
+                " required by secondary-MCU trajectory streams"
+                % (self.name,))
         if self.g1_segment_order == TSEG_POLY_QUINTIC >> 6 \
                 and self.quintic_cmd is None:
             raise self.mcu.error(
@@ -475,13 +480,13 @@ class TrajectoryStepper:
             # next anchor seals the old path before its rebase barrier.
             self.rebase_requires_hold = True
         self.anchored = False
-        self.stream_held = False
         self.need_rebase = True
         if stopped:
             # A trsync/query or underrun event proves the backend is idle, so
             # no previous planned horizon needs to delay the next rebase.
             self.rebase_requires_hold = False
             self.rebase_min_clock = 0
+            self.rebase_min_execution_clock = 0
 
     def commanded_pos_su(self):
         # Current commanded joint position in sub-units, from the host
@@ -539,8 +544,6 @@ class TrajectoryStepper:
         # queued toolhead horizon, otherwise the firmware correctly rejects
         # the stale rebase clock as already in the past.
         anchor_time = max(print_time, est_print_time + BEZIER_QUEUE_MARGIN)
-        clock = self._machine_clock(anchor_time)
-        local_clock = self.mcu.print_time_to_clock(anchor_time)
         duration = int(round(duration_s * self.mcu.seconds_to_clock(1.)))
         if duration <= 0:
             raise self.mcu.error("BEZIER_MOVE duration must be positive")
@@ -557,14 +560,7 @@ class TrajectoryStepper:
         # Rebase this joint at the first control point, then emit.
         self.note_rebase_needed()
         anchor_mcu_pos = int(round(anchor_su / SUBUNITS))
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff, anchor_wire_su,
-                              anchor_mcu_pos],
-                             minclock=(self._local_clock_for_machine_clock(
-                                 self.rebase_min_clock)
-                                 if self.rebase_min_clock else 0),
-                             reqclock=local_clock)
-        self._wire_rebase(clock, anchor_su, anchor_mcu_pos)
-        self.rebase_min_clock = 0
+        self._send_rebase(anchor_time, anchor_su, anchor_mcu_pos)
         self.ffi_lib.segfit_set_anchor(self.segfit, anchor_time,
                                        anchor_wire_su << 32)
         self.ffi_lib.segfit_set_anchor_position(self.segfit, anchor_su)
@@ -605,6 +601,42 @@ class TrajectoryStepper:
         self.note_rebase_needed()
         return end_commanded_su
 
+    def _send_rebase(self, print_time, pos_su, mcu_pos):
+        clock = int(self._machine_clock(print_time))
+        local_clock = int(self.mcu.print_time_to_clock(print_time))
+        min_machine = getattr(self, 'rebase_min_clock', 0)
+        min_local = getattr(self, 'rebase_min_execution_clock', 0)
+        if min_machine and clock < min_machine:
+            raise self.mcu.error(
+                "Trajectory boundary for %s overlaps the previous hold:"
+                " rebase machine clock %d < horizon %d" % (
+                    self.name, clock, min_machine))
+        if min_local and local_clock < min_local:
+            raise self.mcu.error(
+                "Trajectory boundary for %s overlaps the previous local"
+                " horizon: rebase clock %d < horizon %d" % (
+                    self.name, local_clock, min_local))
+        wire_pos_su = _signed_i32(pos_su)
+        if self.mcu is self._machine_mcu():
+            send_min_local = min_local or min_machine
+            self.rebase_cmd.send(
+                [self.oid, clock & 0xffffffff, wire_pos_su, mcu_pos],
+                minclock=send_min_local, reqclock=local_clock)
+        else:
+            if self.local_rebase_cmd is None:
+                raise self.mcu.error(
+                    "Firmware for %s lacks the local-clock rebase barrier"
+                    % (self.name,))
+            self.local_rebase_cmd.send(
+                [self.oid, clock & 0xffffffff, local_clock & 0xffffffff,
+                 wire_pos_su, mcu_pos],
+                minclock=min_local, reqclock=local_clock)
+        self._wire_rebase(clock, pos_su, mcu_pos,
+                          execution_clock=local_clock)
+        self.rebase_min_clock = 0
+        self.rebase_min_execution_clock = 0
+        return clock
+
     def _anchor(self, print_time):
         # Anchor to the queued path at this time.  Trajectory steppers bypass
         # itersolve_generate_steps(), so that legacy solver's commanded_pos
@@ -629,27 +661,12 @@ class TrajectoryStepper:
                 " microstep range: %d" % (self.name, mcu_pos))
         position_offset_su = pos_su - pos_mm * self.su_per_mm
         acc = wire_pos_su << 32
-        clock = self._machine_clock(print_time)
-        local_clock = self.mcu.print_time_to_clock(print_time)
-        if self.rebase_min_clock and clock < self.rebase_min_clock:
-            raise self.mcu.error(
-                "Trajectory boundary for %s overlaps the previous hold:"
-                " rebase clock %d < horizon %d" % (
-                    self.name, clock, self.rebase_min_clock))
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff,
-                              wire_pos_su, mcu_pos],
-                             minclock=(self._local_clock_for_machine_clock(
-                                 self.rebase_min_clock)
-                                 if self.rebase_min_clock else 0),
-                             reqclock=local_clock)
-        self._wire_rebase(clock, pos_su, mcu_pos)
-        self.rebase_min_clock = 0
+        clock = self._send_rebase(print_time, pos_su, mcu_pos)
         self.ffi_lib.segfit_set_position_offset(self.segfit,
                                                 position_offset_su)
         self.ffi_lib.segfit_set_anchor(self.segfit, print_time, acc)
         self.ffi_lib.segfit_set_anchor_position(self.segfit, pos_su)
         self.anchored = True
-        self.stream_held = False
         self.need_rebase = False
         # Record the (re-)anchor point in the host intention twin.
         self.intentions.append((int(clock), int(clock), int(pos_su)))
@@ -696,29 +713,6 @@ class TrajectoryStepper:
             return False
         return motion_queuing.check_drip_timing() is not None
 
-    def _retire_expired_hold(self):
-        # Retaining an anchor is useful only while its explicit hold remains
-        # in the future. After that horizon the MCU is proven idle, so a later
-        # motion should take a fresh absolute rebase instead of fitting and
-        # transmitting an arbitrarily long historical idle span.
-        if (not self.anchored
-                or not getattr(self, 'stream_held', False)):
-            return
-        printer = getattr(self.owner, 'printer', None)
-        if printer is None:
-            return
-        machine_mcu = self._machine_mcu()
-        estimated = machine_mcu.estimated_print_time(
-            printer.get_reactor().monotonic())
-        held_until = self.ffi_lib.segfit_get_gen_time(self.segfit)
-        if held_until > estimated:
-            return
-        self.anchored = False
-        self.stream_held = False
-        self.need_rebase = True
-        self.activity_cursor = max(
-            getattr(self, 'activity_cursor', 0.), held_until)
-
     def _flush_standard_activity(self, sk, gen_time):
         # Homing drip mode can replace an interrupted trapq while future
         # rebase barriers are already queued; ending at the nominal trapq
@@ -764,7 +758,6 @@ class TrajectoryStepper:
         # converting the leading displacement into a rebase.
         prefetched_from = None
         prefetched_activity = False
-        self._retire_expired_hold()
         while True:
             activity_cursor = getattr(self, 'activity_cursor', 0.)
             from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
@@ -802,14 +795,6 @@ class TrajectoryStepper:
                 anchor_time = self.ffi_lib.segfit_get_activity_start(
                     self.segfit)
                 self._anchor(anchor_time)
-            if (not has_activity
-                    and getattr(self, 'stream_held', False)):
-                # A preceding completed window already ended in a hold. Keep
-                # its exact anchor available for a later callback, but do not
-                # manufacture repeated holds or fitter finalizations while
-                # the trapq remains inactive through this horizon.
-                self.activity_cursor = max(activity_cursor, gen_time)
-                return
             activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
                             if has_activity else from_time)
             fit_end = min(gen_time, activity_end)
@@ -878,48 +863,14 @@ class TrajectoryStepper:
             wire_clock = getattr(self, 'wire_clock', None)
             max_hold_ticks = (None if wire_clock is None else max(
                 0, self._machine_clock(hold_until) - wire_clock))
-            previous_wire_clock = wire_clock
-            hold_queued = self._queue_terminal_hold(max_hold_ticks)
-            if hold_queued:
-                self.stream_held = True
-            if not getattr(self, 'is_relative', False):
-                # Absolute axes can recover their accumulator directly from
-                # trapq position, and historically re-anchor at each activity
-                # island.  Preserve that behavior: carrying their finite wire
-                # accumulator across long jobs needlessly consumes range and
-                # can make a distant Z island unrepresentable.  Relative E is
-                # the stream that must remain continuous across close islands.
-                self.anchored = False
-                self.stream_held = False
-                self.activity_cursor = max(activity_cursor, activity_end,
-                                           fit_end)
-                if fit_end >= gen_time - 1.e-12:
-                    return
-                continue
-            # A clean hold preserves the exact actuator accumulator. Keep
-            # that stream anchored so a following activity island can append
-            # after the hold instead of converting another absolute
-            # machine-time rebase through a mapping that may have disciplined
-            # slightly while the first island was queued. This matters most
-            # for pressure-advanced extrusion, where slicers commonly leave
-            # only a few milliseconds between islands.
-            #
-            # Advance the fitter's time anchor by the exact machine-domain
-            # duration recorded by _queue_terminal_hold(). The position and
-            # position offset remain unchanged; the MCU and host wire twin
-            # are both holding the same chained accumulator.
-            hold_end = fit_end
-            if (previous_wire_clock is not None
-                    and self.wire_clock != previous_wire_clock):
-                hold_end += ((self.wire_clock - previous_wire_clock)
-                             / self._machine_freq())
-                self.ffi_lib.segfit_set_anchor(
-                    self.segfit, hold_end, _signed_i64(self.wire_acc))
-                self.ffi_lib.segfit_set_anchor_position(
-                    self.segfit, self.wire_acc / 4294967296.)
-            self.anchored = True
+            self._queue_terminal_hold(max_hold_ticks)
+            # Every disconnected window is a fresh physical-position island.
+            # In particular, relative extrusion must re-anchor from trapq E;
+            # carrying one modulo accumulator across a whole print changes the
+            # semantics of pressure-advance/retraction islands.
+            self.anchored = False
             self.activity_cursor = max(activity_cursor, activity_end,
-                                       fit_end, hold_end)
+                                       fit_end)
             if fit_end >= gen_time - 1.e-12:
                 return
             # A single host lookahead horizon can contain many disconnected
@@ -949,9 +900,12 @@ class TrajectoryStepper:
                 if self.wire_clock is not None:
                     self.rebase_min_clock = max(
                         self.rebase_min_clock, self.wire_clock)
+                if getattr(self, 'execution_clock', None) is not None:
+                    self.rebase_min_execution_clock = max(
+                        getattr(self, 'rebase_min_execution_clock', 0),
+                        self.execution_clock)
                 return False
         self.hold_cmd.send([self.oid, local_duration])
-        self.stream_held = True
         self._wire_segment(1, machine_duration, 0, 0,
                            exec_duration=local_duration)
         # wire_clock is the exact machine-clock horizon after the hold.  A
@@ -960,6 +914,10 @@ class TrajectoryStepper:
         wire_clock = getattr(self, 'wire_clock', None)
         if wire_clock is not None:
             self.rebase_min_clock = max(self.rebase_min_clock, wire_clock)
+        if getattr(self, 'execution_clock', None) is not None:
+            self.rebase_min_execution_clock = max(
+                getattr(self, 'rebase_min_execution_clock', 0),
+                self.execution_clock)
         return True
 
     def _record_intention(self, prev_acc, prev_time):
@@ -1008,13 +966,10 @@ class TrajectoryStepper:
             return
         local_clock = int(clock)
         print_time = self.mcu.clock_to_print_time(local_clock)
-        clock = int(self._machine_clock(print_time))
         pos_su = int(pos_su)
         mcu_pos = int(round(pos_su / SUBUNITS))
         wire_pos_su = _signed_i32(pos_su)
-        self.rebase_cmd.send([self.oid, clock & 0xffffffff,
-                              wire_pos_su, mcu_pos], reqclock=local_clock)
-        self._wire_rebase(clock, pos_su, mcu_pos)
+        clock = self._send_rebase(print_time, pos_su, mcu_pos)
         try:
             pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
             self.ffi_lib.segfit_set_position_offset(
@@ -1052,12 +1007,10 @@ class TrajectoryStepper:
             if (not s.velocity and not s.accel and not s.jerk
                     and not s.snap and not s.crackle):
                 self.hold_cmd.send([self.oid, s.duration])
-                self.stream_held = True
                 self._wire_segment(1, machine_duration, 0, 0,
                                    exec_duration=s.duration)
                 continue
             order = s.flags & TSEG_POLY_MASK
-            self.stream_held = False
             if order == TSEG_POLY_QUINTIC:
                 if self.quintic_cmd is None:
                     raise self.mcu.error(
@@ -1084,9 +1037,11 @@ class TrajectoryStepper:
                     "Unsupported fitted polynomial order 0x%x for %s"
                     % (order, self.name))
 
-    def _wire_rebase(self, clock, pos_su, mcu_pos):
+    def _wire_rebase(self, clock, pos_su, mcu_pos, execution_clock=None):
         self.wire_clock = int(clock)
-        self.execution_clock = self._execution_clock_for_record(clock)
+        self.execution_clock = (self._execution_clock_for_record(clock)
+                                if execution_clock is None
+                                else int(execution_clock))
         self.wire_acc = int(pos_su) << 32
         wire_pos_su = _signed_i32(pos_su)
         self._record_wire({

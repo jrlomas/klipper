@@ -209,6 +209,41 @@ This workstation result and the Pico, EBB36, and Linux target builds pass. It
 does not replace the required on-silicon self-test and supervised print after
 flashing the corrected firmware.
 
+### Experiment 1c: disconnected extrusion-island rebase failure
+
+A subsequent supervised cube reached stable full-speed XY execution but then
+failed on the EBB36 with `Rebase overlaps active trajectory`. The extrusion
+fitter emits `TSEG_LOCAL_TIME`: its quintic durations and coefficients are
+already quantized at 64 MHz. The old secondary rebase still carried only a
+12 MHz machine-time clock, which firmware converted through the *current*
+discipline map. Between two close pressure-advance islands, that map had
+changed after the first local-time stream was queued. Re-evaluating the second
+absolute boundary placed it approximately 6.39 million EBB ticks (about
+99.8 ms) inside the first island's queued local horizon, so the firmware
+correctly rejected the overlap.
+
+An attempted workaround retained one relative-E accumulator across all
+activity islands. Offline endpoint totals stayed close to V1, and it avoided
+the overlap, but the physical printer emitted catastrophically too much
+plastic on the same G-code that had previously extruded correctly. That
+experiment invalidates print-long E retention: each disconnected pressure-
+advance/retraction island must recover its own trapq-derived physical anchor.
+
+The corrected protocol keeps those per-island rebases and adds
+`trajectory_rebase_local`. A secondary rebase now carries both the shared
+machine clock and the exact local execution clock used by its already-local
+segments. Firmware gates the command on Class-0 convergence but schedules the
+immutable local barrier, so later mapping corrections cannot move it into
+queued work. The host also rejects a boundary before its exact recorded local
+horizon before transmission. Unit regressions prove two close E windows
+produce two anchors and select the local command. The complete 99-layer cube
+replay with regenerated Pico/EBB36 dictionaries produced 422 E rebases,
+31,904 quintics, 423 holds, and 1,135,901 HELIX pulses versus 1,134,514 V1
+pulses (+0.122%), with a 3,909-tick minimum interval and no interval at or
+below 64 ticks. Both target builds pass. On-silicon self-tests and a
+supervised hot print remain the acceptance gates; this is not yet a physical
+pass.
+
 ## Experiment 2: on-silicon deadline scaling
 
 `traj_stepper_test_quintic_deadline()` runs inside `HELIX_SELF_TEST`, so it

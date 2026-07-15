@@ -761,18 +761,10 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 }
 #endif // CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
 
-int
-trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
+static int
+trajq_rebase_at_local_clock(struct trajq *tq, uint32_t clock, int32_t pos,
+                            int32_t aux)
 {
-    if (!timesync_class0_ok()) {
-        // A rebase is the anchor for subsequent Class-0 segments.  Do not
-        // translate it through a mapping that is still moving or stale.
-        tq->dropped++;
-        return 0;
-    }
-    // The anchor is a machine-time instant (FD-0001 doc 01);
-    // identity when timesync is unconfigured
-    clock = timesync_clock_to_local(clock);
     struct traj_segment *barrier = move_alloc();
     barrier->kind = TSEGK_REBASE;
     barrier->flags = 0;
@@ -802,6 +794,36 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
     tq->dropped = 0;
     irq_enable();
     return 1;
+}
+
+int
+trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
+{
+    if (!timesync_class0_ok()) {
+        // A rebase is the anchor for subsequent Class-0 segments.  Do not
+        // translate it through a mapping that is still moving or stale.
+        tq->dropped++;
+        return 0;
+    }
+    // The anchor is a machine-time instant (FD-0001 doc 01);
+    // identity when timesync is unconfigured.
+    return trajq_rebase_at_local_clock(
+        tq, timesync_clock_to_local(clock), pos, aux);
+}
+
+int
+trajq_rebase_local(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
+{
+    if (!timesync_class0_ok()) {
+        tq->dropped++;
+        return 0;
+    }
+    // TSEG_LOCAL_TIME streams have already committed their complete timing
+    // to this board's timer domain.  Their next queue barrier must therefore
+    // use the local clock captured with that stream, not re-convert the same
+    // machine-time instant through a mapping that may have disciplined since
+    // earlier local segments were queued.
+    return trajq_rebase_at_local_clock(tq, clock, pos, aux);
 }
 
 // Abort all motion (trsync trigger, shutdown). Callers must have

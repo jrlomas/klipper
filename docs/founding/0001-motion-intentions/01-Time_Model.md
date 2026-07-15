@@ -31,9 +31,13 @@ crystal ticks — but the contract changes:
   times now protects segment *arrival deadlines*.
 * **Secondary MCUs** discipline their local clocks to machine time via
   sync beacons (below) and convert on ingest.
-* The host never converts motion times into secondary-local clocks
-  anymore — segments are stamped in machine time everywhere, and the
-  board that executes them owns the conversion.
+* The canonical wire profile stamps segments in machine time and lets the
+  executing board own conversion. The implemented higher-order fitter also
+  has an explicit `TSEG_LOCAL_TIME` profile: its coefficients are already in
+  the executing timer domain. A secondary stream using that profile carries
+  both its shared machine-time intent and an immutable local execution clock
+  on each rebase boundary; mixing a machine-time rebase conversion with
+  already-local queued durations is forbidden.
 
 ## Wire representation
 
@@ -43,6 +47,12 @@ crystal ticks — but the contract changes:
   grows.
 * Segment durations are 32-bit tick counts (bounded to 2²⁶ by
   [02-Intention_Protocol.md](02-Intention_Protocol.md)).
+* `TSEG_LOCAL_TIME` is a complete stream-domain choice, not a per-field
+  optimization. Its durations and derivatives are fitted in the executing
+  MCU's timer domain, and a secondary uses `trajectory_rebase_local` so the
+  absolute boundary is committed to that same domain. `machine_clock` remains
+  present for shared intent/telemetry and the Class-0 convergence gate remains
+  mandatory.
 * Each secondary maintains a discipline pair **(offset, rate)** mapping
   machine time → local ticks, with rate as an unsigned fixed-point Q8.24
   ratio. The integer range covers different nominal timer frequencies
