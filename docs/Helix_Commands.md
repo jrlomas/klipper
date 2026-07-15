@@ -79,6 +79,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `[intentproto_transport NAME]` | The v2 transport bridge: klippy speaks intentproto v2 (auth + FEC envelope around stock v1 frames) to a network (`mode: datagram`) or serial (`mode: bch`) board; point `[mcu NAME] serial:` at its PTY. |
 | `[mcu] on_comm_timeout: pause` | Turn a lost link on a secondary MCU into pause-and-hold instead of shutdown. |
 | `[mcu] hardware_endstop_trigger: False` | Force the legacy polled endstop path on a board (default: use hardware edge interrupts when the firmware supports them). |
+| `[mcu] hardware_endstop_observer: True` | Commissioning only: timestamp GPIO edges through a passive ISR while the legacy poller remains the stop owner. |
 | `[heater_*] failure_policy: hold` | Keep a heater at its target through a fault (`hold_max_temp`, `hold_max_duration`). |
 
 ## Firmware capabilities (Kconfig)

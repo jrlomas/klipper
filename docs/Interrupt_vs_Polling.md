@@ -1,169 +1,193 @@
-# Interrupt-driven homing versus legacy polling
+# Why interrupt-driven endstops? A direct comparison
 
-Status: measured technical note, 2026-07-15.
+Status: physical measurement and explanatory note, 2026-07-15.
 
-## Abstract
+## The short answer
 
-HELIX replaces Klipper's periodic endstop sampling with a GPIO edge interrupt
-where the MCU supports it. On an SKR Pico driving a Voron V0 Z axis, the
-interrupt path stopped the active trajectory **23.086 us after the RP2040
-IO_BANK0 ISR-entry timestamp** (32 contacts, 23.000--23.167 us). The equivalent
-legacy path cannot timestamp the edge; its configured polling cadence implies
-an estimated 48.1--110.6 us edge-to-stop interval on the 20 mm/s pass and
-48.1--464.8 us on the 3 mm/s pass, before allowing for switch behavior.
+The main result is **repeatability**, not whether a few micrometers of overrun
+matter mechanically. The interrupt path stopped the trajectory about
+**23.1 us** after every observed edge. Its standard deviation was only 0.042 us
+on the fast pass and 0.050 us on the slow pass—approximately the resolution of
+the 12 MHz measurement clock.
 
-A balanced physical series also found lower whole-system trigger-position
-variance with interrupts: 17.9 um versus 40.5 um standard deviation on the
-fast pass, and 14.4 um versus 28.7 um on the slow pass. This result supports
-using event-driven detection by default while retaining polling as the
-portability fallback.
+Polling also worked correctly: all 32 contacts completed without a shutdown,
+missed trigger, or scheduler fault. But its response depended on sampling
+phase. Standard deviation grew to **19.7 us** at 20 mm/s and **129.0 us** at
+3 mm/s, with full ranges of 48.6--104.0 us and 54.6--453.5 us respectively.
 
-## Why the architectures differ
+![Direct interrupt versus polling timing and overrun](img/interrupt-polling-direct.svg)
 
-Both paths feed the same `trsync` coordinated-stop fan-out. Only detection
-changes:
+The honest conclusion is not "polling is broken." It is that the ISR converts
+a phase-dependent detector into a consistent one. That consistency is useful
+even where the absolute distance is mechanically insignificant: it removes a
+source of run-to-run uncertainty and provides a trustworthy event timestamp.
+This experiment measures detector response, not final nozzle-position
+repeatability, and it did not force the scheduler into overload.
+
+## What is different?
+
+A physical switch does not change state exactly when a software timer happens
+to inspect it.
 
 ```text
 Legacy polling
-edge -> wait 0..poll_period -> four stable samples over 45 us -> trsync -> stop
 
-HELIX interrupt
-edge -> GPIO IRQ -> four qualification reads over 20 us -> trsync -> stop
+switch edge       next scheduled read    three confirmation reads     stop
+     |---------- variable wait ----------|---- 15 us ---- 15 us ---- 15 us -->
+
+Hardware interrupt
+
+switch edge       GPIO IRQ      four 5 us qualification reads         stop
+     |-------------|---------------------- fixed work --------------------->
 ```
 
-The legacy implementation in [`src/endstop.c`](../src/endstop.c) places an
-endstop timer on the MCU scheduler, samples every `rest_ticks`, and requires
-four successful samples. The physical edge may therefore arrive anywhere in
-one polling period. Its timestamp is reconstructed as the first successful
-sample, not observed at the edge.
+Both paths ultimately call the same `trsync` coordinated-stop fan-out and halt
+the same trajectory backend. Only the detection step changes.
+
+The legacy implementation in [`src/endstop.c`](../src/endstop.c) schedules a
+pin read on the MCU timer list. Once a matching sample is found, it requires
+four matching reads in total. The first wait depends on where the switch edge
+lands in the poll cycle.
 
 The HELIX implementation in
-[`src/trigger_source.c`](../src/trigger_source.c) lets the GPIO peripheral wake
-the MCU. It latches a timestamp at hardware input capture where a port provides
-one, or at ISR entry on RP2040, then performs a short qualify-after-event burst.
-There is no standing timer-list work while the input is idle and no polling
-phase uncertainty.
+[`src/trigger_source.c`](../src/trigger_source.c) lets the GPIO peripheral
+interrupt the MCU. The RP2040 timestamps entry to the GPIO interrupt, performs
+a fixed 20 us qualification burst, and fires `trsync`. Boards with a routed
+timer-capture input can timestamp the electrical edge even more precisely.
 
-## Test method
+One subtle but important point is that Klipper scales the poll period with
+step rate. The slow pass can therefore wait much longer in *time*, but the axis
+also travels more slowly. Polling's physical overrun remains near the scale of
+a step even when its response time grows into hundreds of microseconds.
 
-The system under test was:
+## A direct A/B experiment
 
-- Voron V0 with a physical Z microswitch on Pico GPIO25;
-- SKR Pico RP2040 firmware `915760f5`;
-- 12 MHz Pico scheduler timebase;
-- trajectory motion on the Z stepper;
-- 20 mm/s first home and 3 mm/s second home, 800 microsteps/mm;
-- four 15 us samples on the legacy path and four 5 us qualification reads on
-  the interrupt path.
-
-The live path was toggled with:
+The earlier test could timestamp the interrupt edge but not the polling edge,
+so its polling result was an architecture-derived range. This experiment adds
+a passive shadow observer for commissioning:
 
 ```ini
 [mcu]
 hardware_endstop_trigger: False
+hardware_endstop_observer: True
 ```
 
-Four eight-home blocks were run in poll--interrupt--interrupt--poll order to
-reduce time-order bias. Every `G28 Z` contained a fast and slow switch contact,
-giving 32 contacts per mode. A temporary test fixture removed the unrelated Z
-hop and parked at Z10 between runs. It was then removed, and the production
-configuration was verified byte-for-byte against its pre-test copy. No heater
-commands were issued and no run faulted.
+In that mode the GPIO ISR records the first edge and immediately returns. It
+does **not** qualify the edge, fire `trsync`, or stop motion. The original
+polling timer remains the sole stop owner. The flight recorder then contains
+both the observer edge clock and the actual trajectory halt clock. Normal ISR
+mode records the same two clocks with the interrupt as stop owner.
 
-The flight recorder supplied:
+The passive timestamp uses the non-stopping `edge_observed` execution-record
+type. It is deliberately distinct from `trigger`, so failure recovery and
+Atlas do not mistake a measurement for a trajectory truncation or incident.
 
-- interrupt-source OID 23 with the ISR-entry clock;
-- trajectory-stepper OID 10 with the actual stop clock and accumulator;
-- rebase clocks used to compare repeated physical moves.
+This makes the comparison direct:
 
-One polling fast pass began from an unknown pre-test physical position and was
-excluded from the move-repeatability statistics. No interrupt contact and no
-slow contact was excluded.
+```text
+response time = trajectory halt clock - observed edge clock
+physical overrun = homing speed x response time
+```
 
-## Results
+The passive observer necessarily adds a small GPIO-ISR and log-write cost to
+the polling run. It skips the active path's 20 us busy-wait specifically to
+minimize that disturbance. The remaining observer overhead biases the result
+slightly against polling; a logic-analyzer capture of the switch and step pins
+would remove it completely.
 
-### Detector latency
+### Test system
 
-The interrupt source-to-actuator delta was 276--278 scheduler ticks across all
-32 contacts:
+- Voron V0 Z microswitch on SKR Pico GPIO25;
+- RP2040 firmware `52e5c7f0-dirty-20260715_094507-linuxathena`;
+- 12 MHz scheduler timebase;
+- HELIX trajectory motion on Z;
+- 20 mm/s first contact and 3 mm/s second contact;
+- 32 microsteps, 8 mm rotation distance, 200 full steps per rotation:
+  800 configured microsteps/mm, or 1.25 um/microstep;
+- four 15 us confirmation samples for polling;
+- four 5 us qualification reads for the active ISR path.
 
-| Metric | Interrupt result |
-| --- | ---: |
-| Mean | 277.031 ticks / 23.086 us |
-| Standard deviation | 0.394 ticks / 0.033 us |
-| Minimum--maximum | 276--278 ticks / 23.000--23.167 us |
+The balanced order was ISR(8 homes), poll(8), poll(8), ISR(8). Every home has
+a fast and slow contact, yielding 32 contacts per mode and 16 observations per
+speed per mode. A temporary fixture removed an unrelated Z hop and released
+the switch to Z10 between homes. The exact pre-test configuration was restored
+on disk after the series. No heater command was issued by the test.
 
-RP2040 does not route this pin to timer input capture in the current port, so
-the measurement starts at ISR entry, not at the electrical edge. It includes
-the configured 20 us qualification window, `trsync` dispatch, and trajectory
-halt. The residual after qualification is about 3.086 us.
+## Results: timing and physical overrun
 
-The polling path has no electrical-edge record by design, so its result must be
-bounded from the actual timer cadence. At 800 microsteps/mm, the poll periods
-are 62.5 us at 20 mm/s and 416.667 us at 3 mm/s. Four samples span three 15 us
-intervals, or 45 us. Reusing the observed 3.086 us dispatch cost gives:
+| Pass | Stop owner | Contacts | Edge-to-stop mean | Timing SD | Minimum--maximum | Mean motion after edge | Maximum motion after edge |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 mm/s | GPIO ISR | 16 | 23.115 us | 0.042 us | 23.083--23.167 us | 0.462 um / 0.370 step | 0.463 um / 0.371 step |
+| 20 mm/s | polling | 16 | 80.156 us | 19.662 us | 48.583--104.000 us | 1.603 um / 1.283 steps | 2.080 um / 1.664 steps |
+| 3 mm/s | GPIO ISR | 16 | 23.141 us | 0.050 us | 23.083--23.250 us | 0.069 um / 0.056 step | 0.070 um / 0.056 step |
+| 3 mm/s | polling | 16 | 268.214 us | 128.954 us | 54.583--453.500 us | 0.805 um / 0.644 step | 1.361 um / 1.088 steps |
 
-| Homing pass | Poll period | Estimated poll edge-to-stop | Estimated mean | Interrupt ISR-entry-to-stop |
-| --- | ---: | ---: | ---: | ---: |
-| 20 mm/s | 62.5 us | 48.1--110.6 us | 79.3 us | 23.1 us |
-| 3 mm/s | 416.7 us | 48.1--464.8 us | 256.4 us | 23.1 us |
+The distribution is the finding. Across both speeds, ISR response occupied a
+0.17 us band—two 12 MHz clock ticks. Polling varied across 55.4 us on the fast
+pass and 398.9 us on the slow pass. At 20 mm/s, polling timing SD was about
+472 times the ISR value; at 3 mm/s it was over 2,500 times the ISR value. Those
+large ratios partly reflect the measurement clock becoming the ISR noise
+floor, but they make the architectural difference unambiguous.
 
-The polling estimate assumes an arbitrary edge phase uniformly distributed
-within one poll interval. GPIO interrupt-entry latency is not included in the
-23.1 us measurement, so this table is not a claim of electrical-edge precision
-on RP2040. It is a direct measurement of the event path after ISR entry and an
-architecture-derived bound for a path that cannot observe the edge.
+The absolute scale provides context, not the conclusion. Polling's worst result
+was 2.08 um. That is measurable and larger than the ISR result, but it is not
+evidence of a catastrophic homing overrun. Switch mechanics, frame compliance,
+and motor holding behavior may dominate final homing-position repeatability.
 
-### Whole-system repeatability
+## Did polling overrun the scheduler or shut the printer down?
 
-At both contact speeds the axis was in constant-velocity travel, so the
-standard deviation of rebase-to-stop time converts directly to an equivalent
-trigger-position deviation:
+No—not in this series.
 
-| Pass | Mode | Contacts | Mean move time | Time sigma | Equivalent position sigma | Position range |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 20 mm/s | polling | 15 | 692.007 ms | 2.025 ms | 40.5 um | 196.3 um |
-| 20 mm/s | interrupt | 16 | 691.501 ms | 0.897 ms | 17.9 um | 73.5 um |
-| 3 mm/s | polling | 16 | 1003.629 ms | 9.555 ms | 28.7 um | 143.8 um |
-| 3 mm/s | interrupt | 16 | 1005.834 ms | 4.807 ms | 14.4 um | 57.1 um |
+"Overrun" can mean two different things:
 
-These move-level numbers include the switch, mechanics, driver, trajectory,
-and detector. They are not pure firmware latency measurements. In particular,
-the slow-pass mean did not order by detector latency; mechanical hysteresis and
-block-to-block drift were larger than the expected sub-millisecond difference.
-The useful result is the variance: the interrupt path was no worse and reduced
-the observed position sigma by 2.3x on the fast pass and 2.0x on the slow pass.
+1. **Physical overrun:** distance traveled after the switch edge. That is what
+   the table and graph measure directly.
+2. **Scheduler overrun:** firmware cannot service a timer before its deadline,
+   leading to a `Timer too close`, shutdown, or related real-time fault. None
+   occurred in these 32 polling contacts.
 
-## Why the change is worthwhile
+This distinction matters when interpreting past experience. A printer that
+sometimes shuts down while homing may have an overloaded timer schedule, a
+driver communication fault, a trajectory deadline problem, electrical noise,
+or another failure that merely happens during homing. The baseline data here
+cannot identify that historical cause.
 
-The measured benefit is not merely a smaller average number:
+The architectural case for interrupts under load remains plausible: on the
+RP2040 the GPIO interrupt has higher priority than the scheduler interrupt, so
+an edge is not forced to wait for the next endstop timer slot. But proving the
+shutdown-resistance claim requires a separate controlled-load experiment that
+increases repeatable MCU timer work until one path reaches its deadline limit.
+It should not be inferred from this no-fault baseline.
 
-1. **Bounded response.** Polling adds a speed-dependent uncertainty interval;
-   an interrupt begins qualification as soon as the peripheral reports an
-   edge.
-2. **A meaningful timestamp.** A capture or ISR-entry tick can be reconciled
-   with the executed trajectory. A poll only proves the input was active when
-   sampled.
-3. **No standing scheduler load.** Idle endstops consume no periodic timer
-   callbacks, leaving the hard real-time queue to motion and genuinely timed
-   work.
-4. **A scalable sensing model.** The same event interface admits timer capture,
-   comparators, and ADC watchdogs without turning high-rate sensing into more
-   software polling.
-5. **No compatibility cliff.** Boards without the peripheral or firmware
-   support silently retain the legacy path, and the operator can force it with
-   `hardware_endstop_trigger: False`.
+## What the data supports
 
-## Limits and conclusion
+The direct evidence supports four narrower claims:
 
-This is one printer, one RP2040 port, one switch, and 32 contacts per mode. It
-does not qualify STM32 timer capture, analog triggers, probes, or multi-MCU
-stop propagation. A logic-analyzer measurement from GPIO edge to step-pin halt
-would further isolate electrical-edge latency. Those limits do not weaken the
-central finding: the current HELIX path executes a qualified local stop in a
-tightly repeatable 23.1 us after ISR entry, while legacy polling necessarily
-adds an unobservable polling interval and showed higher physical stop variance
-in this balanced series.
+1. **Interrupt response is repeatable.** The active path stayed within
+   23.083--23.250 us across both homing speeds.
+2. **Polling response is phase-dependent.** Its broad distributions match the
+   expected wait for a scheduled sample, especially at the slow step rate.
+3. **Polling is a valid fallback.** It completed every baseline run and its
+   absolute physical overrun was small.
+4. **Interrupts improve observability.** They retain an edge-related clock that can
+   be reconciled with the executed trajectory instead of reconstructing a
+   trigger time from a later sample.
 
-For motion control, sensing is naturally event-driven. Polling remains a sound
-fallback; it should no longer be the design center.
+That is sufficient reason to use hardware events by default where supported,
+while retaining polling for portability. It is not sufficient reason to claim
+that interrupts alone prevent every homing shutdown.
+
+## Reproducing the graph
+
+The 64 direct edge/stop records are retained in
+[`data/interrupt_polling_direct.csv`](data/interrupt_polling_direct.csv). The
+graph uses no plotting dependency:
+
+```shell
+python3 scripts/plot_interrupt_polling.py
+```
+
+The script derives microseconds from the 12 MHz clock and micrometers from the
+constant contact speed. Raw edge clocks, halt clocks, sequence numbers, block
+order, and tick deltas remain in the CSV so the aggregates can be independently
+checked.

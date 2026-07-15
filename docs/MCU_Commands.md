@@ -473,6 +473,11 @@ without host polling (FD-0001
   the source to signal the given trsync with 'reason' on the next event;
   'capture' requests an input-capture timestamp.
 
+* `trigger_source_observe oid=%c capture=%c` : Arms a passive commissioning
+  observer that timestamps and logs the edge but does not fire trsync. This
+  permits direct timing of the legacy poller while it remains responsible for
+  the stop. The record type is `edge_observed`, not the stopping `trigger`.
+
 * `trigger_source_disarm oid=%c` : Disarms the source.
 
 * `trigger_source_query oid=%c` : Generates a "trigger_source_state

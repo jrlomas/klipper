@@ -366,6 +366,7 @@ class TriggerDispatch:
 # the firmware's QUALIFY_MAX_TICKS safety cap.
 TRIGGER_QUALIFY_COUNT = 4
 TRIGGER_QUALIFY_TIME = 0.000005
+TRIGGER_SOURCE_TRIGGERED = 1 << 1
 
 class MCU_endstop:
     def __init__(self, mcu, pin_params):
@@ -384,9 +385,11 @@ class MCU_endstop:
         # always kept for query_endstop and as the automatic fallback.
         self._trigger_oid = None
         self._trigger_arm_cmd = self._trigger_disarm_cmd = None
+        self._trigger_observe_cmd = None
         self._trigger_query_cmd = None
         self._trigger_edge = 0
         self._hw_triggered = False
+        self._trigger_observing = False
     def get_mcu(self):
         return self._mcu
     def add_stepper(self, stepper):
@@ -416,7 +419,8 @@ class MCU_endstop:
         # Opt into the hardware edge-interrupt detector when the firmware
         # advertises the trigger_source command set and it is not disabled
         # on this MCU.  Falls back silently to the polled path otherwise.
-        if not self._mcu.want_hw_endstop_trigger():
+        if not (self._mcu.want_hw_endstop_trigger()
+                or self._mcu.want_hw_endstop_observer()):
             return
         if not self._mcu.check_valid_response(
                 "config_trigger_gpio oid=%c pin=%u edge=%c pull_up=%c"
@@ -439,6 +443,9 @@ class MCU_endstop:
         self._trigger_arm_cmd = self._mcu.lookup_command(
             "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c",
             cq=cmd_queue)
+        if self._mcu.want_hw_endstop_observer():
+            self._trigger_observe_cmd = self._mcu.lookup_command(
+                "trigger_source_observe oid=%c capture=%c", cq=cmd_queue)
         self._trigger_disarm_cmd = self._mcu.lookup_command(
             "trigger_source_disarm oid=%c", cq=cmd_queue)
         self._trigger_query_cmd = self._mcu.lookup_query_command(
@@ -450,7 +457,13 @@ class MCU_endstop:
         # triggered=True hit level; a homing move that instead waits for
         # the pin to release (triggered=False) uses the polled path, which
         # can look for either level per move.
-        return (self._trigger_oid is not None
+        return (self._mcu.want_hw_endstop_trigger()
+                and self._trigger_oid is not None
+                and bool(triggered) == bool(self._trigger_edge ^ self._invert))
+    def _use_hw_observer(self, triggered):
+        return (not self._mcu.want_hw_endstop_trigger()
+                and self._mcu.want_hw_endstop_observer()
+                and self._trigger_observe_cmd is not None
                 and bool(triggered) == bool(self._trigger_edge ^ self._invert))
     def home_start(self, print_time, sample_time, sample_count, rest_time,
                    triggered=True):
@@ -467,6 +480,12 @@ class MCU_endstop:
                 reqclock=clock)
             return trigger_completion
         self._hw_triggered = False
+        self._trigger_observing = self._use_hw_observer(triggered)
+        if self._trigger_observing:
+            # Timestamp through the GPIO ISR while the legacy poller remains
+            # the only component allowed to fire trsync and stop motion.
+            self._trigger_observe_cmd.send(
+                [self._trigger_oid, 1], reqclock=clock)
         self._home_cmd.send(
             [self._oid, clock, self._mcu.seconds_to_clock(sample_time),
              sample_count, rest_ticks, triggered ^ self._invert,
@@ -479,6 +498,8 @@ class MCU_endstop:
             self._trigger_disarm_cmd.send([self._trigger_oid])
         else:
             self._home_cmd.send([self._oid, 0, 0, 0, 0, 0, 0, 0])
+            if self._trigger_observing:
+                self._trigger_disarm_cmd.send([self._trigger_oid])
         res = self._dispatch.stop()
         if res >= MCU_trsync.REASON_COMMS_TIMEOUT:
             cmderr = self._mcu.get_printer().command_error
@@ -494,6 +515,15 @@ class MCU_endstop:
             params = self._trigger_query_cmd.send([self._trigger_oid])
             tclock = self._mcu.clock32_to_clock64(params['clock'])
             return self._mcu.clock_to_print_time(tclock)
+        if self._trigger_observing:
+            params = self._trigger_query_cmd.send([self._trigger_oid])
+            if params['flags'] & TRIGGER_SOURCE_TRIGGERED:
+                oclock = self._mcu.clock32_to_clock64(params['clock'])
+                logging.info("endstop observer mcu=%s oid=%d edge_clock=%d",
+                             self._mcu.get_name(), self._trigger_oid, oclock)
+            else:
+                logging.warning("endstop observer mcu=%s oid=%d missed edge",
+                                self._mcu.get_name(), self._trigger_oid)
         params = self._query_cmd.send([self._oid])
         next_clock = self._mcu.clock32_to_clock64(params['next_clock'])
         return self._mcu.clock_to_print_time(next_clock - self._rest_ticks)
@@ -1530,6 +1560,13 @@ class MCU:
         # lacks the commands; set False to force the legacy polled path.
         self._hw_endstop_trigger = config.getboolean(
             'hardware_endstop_trigger', True)
+        # Commissioning-only shadow measurement: with active triggering off,
+        # timestamp the edge while the legacy poller still owns the stop.
+        self._hw_endstop_observer = config.getboolean(
+            'hardware_endstop_observer', False)
+        if self._hw_endstop_trigger and self._hw_endstop_observer:
+            raise config.error("hardware_endstop_observer requires"
+                               " hardware_endstop_trigger: False")
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():
@@ -1544,6 +1581,8 @@ class MCU:
         return self._printer.get_start_args().get('debugoutput') is not None
     def want_hw_endstop_trigger(self):
         return self._hw_endstop_trigger
+    def want_hw_endstop_observer(self):
+        return self._hw_endstop_observer
     # MCU Configuration wrappers
     def setup_pin(self, pin_type, pin_params):
         return self._config_helper.setup_pin(pin_type, pin_params)

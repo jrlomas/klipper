@@ -555,21 +555,22 @@ a faster stop — test both the latency and the things polling could not do.
   candidate now on the machine, not only in the historical image.
 - [x] **7.2 — Latency vs polling.** Compare stop latency with
   `hardware_endstop_trigger: False` (forced legacy) vs on.
-  Pass: hardware path stops measurably sooner; record both numbers and a
-  repeatability series showing trigger-position variance no worse than the
-  legacy path. On 2026-07-15 a cold V0/Pico Z-switch comparison ran four
-  eight-home blocks in poll--interrupt--interrupt--poll order. Each home had a
-  20 mm/s and a 3 mm/s contact, yielding 32 contacts per mode without a fault.
-  OID 23 ISR-entry records preceded the OID 10 trajectory halt by 276--278
-  scheduler ticks: 23.086 us mean with a 0.033 us standard deviation. The
-  legacy path cannot record the edge; its 62.5/416.7 us poll periods and 45 us
-  confirmation window imply 48.1--110.6 us (79.3 us mean) at 20 mm/s and
-  48.1--464.8 us (256.4 us mean) at 3 mm/s, using the measured common dispatch
-  cost. Whole-system equivalent trigger-position sigma was also lower with
-  interrupts: 17.9 vs 40.5 um fast and 14.4 vs 28.7 um slow. The original
-  config was restored byte-for-byte. Method, aggregates, caveats, and the
-  distinction between RP2040 ISR-entry and physical-edge timing are recorded
-  in [Interrupt-driven homing versus legacy polling](Interrupt_vs_Polling.md).
+  Pass: measure both paths from the same hardware edge clock and record both
+  response time and physical motion after contact. On 2026-07-15 the Pico
+  passive observer timestamped the GPIO edge while the legacy poller retained
+  sole ownership of `trsync`; the active run used the normal ISR stop. A
+  balanced ISR--poll--poll--ISR series yielded 32 contacts per mode with no
+  fault. At 20 mm/s, mean edge-to-halt time was 23.115 us ISR versus 80.156 us
+  polling and mean overrun was 0.462 versus 1.603 um. At 3 mm/s, it was
+  23.141 versus 268.214 us and 0.069 versus 0.805 um. Polling's worst observed
+  overrun was 2.080 um (1.664 configured microsteps). The main result was
+  detector consistency: ISR timing SD was 0.042/0.050 us fast/slow versus
+  19.662/128.954 us for polling. Polling did not reproduce a scheduler overrun
+  or homing shutdown. The exact pre-test config was restored on disk. Raw
+  clocks, a generated comparison graph, limitations, and the explicit
+  distinction between detector timing, physical overrun, scheduler overrun,
+  and whole-machine positional repeatability are in
+  [Why interrupt-driven endstops?](Interrupt_vs_Polling.md).
 - [ ] **7.3 — Multi-MCU homing.** Endstop on one board, motor on another.
   Pass: coordinated stop within the time-model tolerance.
 - [ ] **7.4 — Comparator / analog trigger.** Where wired, arm an analog

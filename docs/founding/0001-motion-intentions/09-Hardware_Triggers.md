@@ -103,11 +103,15 @@ config_trigger_source oid=%c trsync_oid=%c kind=%c ...
         comparator (channel/pin, upper_threshold, lower_threshold, window_mode)
         adc_watchdog (channel, high, low)
 trigger_source_arm oid=%c reason=%c capture=%c
+trigger_source_observe oid=%c capture=%c
 ```
 
 Trigger events append a `trigger` record — with the hardware-captured
 timestamp where available — to the execution log
 ([08-Failure_Recovery.md](08-Failure_Recovery.md)).
+`trigger_source_observe` is a commissioning instrument: it records the edge
+without firing trsync, permitting the legacy poller to remain the stop owner
+while both paths are measured from the same clock.
 
 The polled `endstop.c` path remains as the portability fallback and
 for genuinely slow signals, but it stops being the design center.
@@ -208,7 +212,9 @@ interface — cartesian/CoreXY homing, trajectory-stepper homing, `probe`,
 and `bltouch` — because they all drive `home_start`/`home_wait`
 polymorphically. Set
 `[mcu] hardware_endstop_trigger: False` to force the legacy polled path
-on a given MCU.
+on a given MCU. Pair it temporarily with
+`hardware_endstop_observer: True` to timestamp polling edges for direct
+qualification; the observer is not a production operating mode.
 
 ### RP2040 live result
 
@@ -230,16 +236,21 @@ records. The first corresponding actuator stops followed by 264, 262, and
 277 scheduler ticks, respectively. Thus the current candidate preserves the
 interrupt path.
 
-The 2026-07-15 forced-fallback comparison then ran 16 physical Z homes per
-mode in a balanced poll--interrupt--interrupt--poll order. Across the 32
-interrupt contacts, the ISR-entry record preceded the trajectory stop by
-23.086 us on average with a 23.000--23.167 us range. The legacy path cannot
-record the edge; its configured cadence bounds the corresponding detector
-path at an estimated 48.1--110.6 us for the 20 mm/s pass and 48.1--464.8 us
-for the 3 mm/s pass. Whole-system trigger-position variance was no worse and
-was lower in both series. See the measured technical note
-[Interrupt-driven homing versus legacy polling](../../Interrupt_vs_Polling.md)
-for the method, repeatability data, and limitations.
+The comparison was then repeated with a passive ISR observer timestamping the
+same physical edge while polling retained sole ownership of the stop. A
+balanced ISR--poll--poll--ISR series produced 32 contacts per mode. Mean
+edge-to-halt time was 23.115 us ISR versus 80.156 us polling at 20 mm/s, and
+23.141 versus 268.214 us at 3 mm/s. Mean physical overrun was 0.462 versus
+1.603 um fast and 0.069 versus 0.805 um slow. Polling completed every run; its
+worst overrun was 2.080 um (1.664 configured microsteps), and no scheduler
+overrun or shutdown was observed. The central result was consistency: ISR
+timing SD was 0.042/0.050 us fast/slow versus 19.662/128.954 us for polling.
+This supports the ISR's bounded response but does not show that ordinary
+polling is intrinsically unsafe or establish final nozzle-position
+repeatability. See
+[Why interrupt-driven endstops?](../../Interrupt_vs_Polling.md) for the raw
+data, graph, direct method, and the distinction between physical and scheduler
+overrun.
 
 ## Open questions
 

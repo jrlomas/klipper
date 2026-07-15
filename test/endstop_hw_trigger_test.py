@@ -12,6 +12,8 @@
 #      polled endstop_home path, whose edge sense is per-move;
 #   3. when the firmware lacks the commands, detection falls back to the
 #      polled path even with hardware homing enabled.
+#   4. commissioning observer mode arms both the passive GPIO timestamp and
+#      the legacy poller, while only the poller owns the stop.
 #
 # No printer, MCU, or chelper build is required.  Exits 0 on success.
 #
@@ -94,9 +96,10 @@ class FakePrinter:
 
 
 class FakeMCU:
-    def __init__(self, has_trigger=True, want_hw=True):
+    def __init__(self, has_trigger=True, want_hw=True, want_observer=False):
         self._has_trigger = has_trigger
         self._want_hw = want_hw
+        self._want_observer = want_observer
         self._oid = 0
         self.config_cmds = []
         self.sends = []
@@ -117,6 +120,12 @@ class FakeMCU:
 
     def want_hw_endstop_trigger(self):
         return self._want_hw
+
+    def want_hw_endstop_observer(self):
+        return self._want_observer
+
+    def get_name(self):
+        return "mcu"
 
     def check_valid_response(self, fmt):
         if fmt.startswith("config_trigger_gpio"):
@@ -159,8 +168,9 @@ class FakeMCU:
 PIN = {'pin': 'PA1', 'pullup': 1, 'invert': 0}
 
 
-def make_endstop(has_trigger=True, want_hw=True):
-    mcu = FakeMCU(has_trigger=has_trigger, want_hw=want_hw)
+def make_endstop(has_trigger=True, want_hw=True, want_observer=False):
+    mcu = FakeMCU(has_trigger=has_trigger, want_hw=want_hw,
+                  want_observer=want_observer)
     # Patch out the real TriggerDispatch (chelper trdispatch + trsync) so
     # the test exercises only the endstop's detection-path selection.
     orig = mcu_mod.TriggerDispatch
@@ -232,11 +242,30 @@ def test_disabled_opt_out():
     print("PASS: hardware_endstop_trigger=False -> polled path forced")
 
 
+def test_polling_with_shadow_observer():
+    mcu, e = make_endstop(has_trigger=True, want_hw=False,
+                          want_observer=True)
+    assert any(c.startswith("config_trigger_gpio") for c in mcu.config_cmds)
+    e.home_start(1.0, 0.001, 4, 0.01, triggered=True)
+    names = sent_names(mcu)
+    assert "trigger_source_observe" in names
+    assert "endstop_home" in names
+    assert "trigger_source_arm" not in names
+    res = e.home_wait(2.0)
+    names = sent_names(mcu)
+    assert "trigger_source_disarm" in names
+    assert "trigger_source_query" in names
+    expected = (mcu.endstop_next_clock - 10) / 1000.
+    assert res == expected, res
+    print("PASS: passive ISR timestamps edge while polling owns stop")
+
+
 def main():
     test_hw_trigger_used()
     test_release_move_uses_polled()
     test_fallback_when_absent()
     test_disabled_opt_out()
+    test_polling_with_shadow_observer()
     print("ALL PASS")
 
 

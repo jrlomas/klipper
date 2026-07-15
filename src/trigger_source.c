@@ -113,7 +113,7 @@ command_trigger_source_arm(uint32_t *args)
     irq_disable();
     tsrc->ts = ts;
     tsrc->reason = args[2];
-    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON);
+    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON | TSRC_OBSERVER);
     // Use the hardware-captured edge tick when the host requests it
     // and the board actually wired a capture channel for this source.
     if (args[3] && (tsrc->flags & TSRC_CAN_CAPTURE))
@@ -126,6 +126,26 @@ command_trigger_source_arm(uint32_t *args)
 DECL_COMMAND(command_trigger_source_arm,
              "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c");
 
+// Commissioning-only passive observer: latch and log the hardware edge but
+// leave the legacy endstop timer solely responsible for firing trsync.
+void
+command_trigger_source_observe(uint32_t *args)
+{
+    struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
+    irq_disable();
+    tsrc->ts = NULL;
+    tsrc->reason = 0;
+    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON);
+    if (args[1] && (tsrc->flags & TSRC_CAN_CAPTURE))
+        tsrc->flags |= TSRC_CAPTURE_ON;
+    tsrc->flags |= TSRC_ARMED | TSRC_OBSERVER;
+    if (tsrc->hw_arm)
+        tsrc->hw_arm(tsrc, 1);
+    irq_enable();
+}
+DECL_COMMAND(command_trigger_source_observe,
+             "trigger_source_observe oid=%c capture=%c");
+
 void
 command_trigger_source_disarm(uint32_t *args)
 {
@@ -133,7 +153,7 @@ command_trigger_source_disarm(uint32_t *args)
     irq_disable();
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 0);
-    tsrc->flags &= ~TSRC_ARMED;
+    tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER);
     tsrc->ts = NULL;
     irq_enable();
 }
@@ -158,9 +178,15 @@ DECL_COMMAND(command_trigger_source_query, "trigger_source_query oid=%c");
 void
 trigger_source_notify(struct trigger_source *tsrc, uint32_t clock)
 {
-    if (!(tsrc->flags & TSRC_ARMED) || !tsrc->ts)
+    if (!(tsrc->flags & TSRC_ARMED)
+        || (!tsrc->ts && !(tsrc->flags & TSRC_OBSERVER)))
         return;
-    if (tsrc->flags & TSRC_CAN_QUALIFY && tsrc->qualify_count) {
+    uint8_t observer = tsrc->flags & TSRC_OBSERVER;
+    // The active path qualifies before firing trsync. The observer records
+    // the first edge immediately: doing the 20us busy-wait there would
+    // materially perturb the polling latency it is intended to measure.
+    if (!observer && tsrc->flags & TSRC_CAN_QUALIFY
+        && tsrc->qualify_count) {
         uint32_t start = timer_read_time();
         uint32_t elapsed_target = 0;
         uint8_t i;
@@ -182,13 +208,15 @@ trigger_source_notify(struct trigger_source *tsrc, uint32_t clock)
     // the meantime.
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 0);
-    tsrc->flags &= ~TSRC_ARMED;
+    tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER);
     tsrc->flags |= TSRC_TRIGGERED;
     tsrc->trigger_clock = clock;
     struct trsync *ts = tsrc->ts;
     tsrc->ts = NULL;
-    trsync_do_trigger(ts, tsrc->reason);
-    execlog_append(EL_TRIGGER, tsrc->oid, clock, 0, tsrc->reason);
+    if (!observer)
+        trsync_do_trigger(ts, tsrc->reason);
+    execlog_append(observer ? EL_EDGE_OBSERVED : EL_TRIGGER,
+                   tsrc->oid, clock, 0, observer ? 0 : tsrc->reason);
     LOG2(TRACE_SUB_TRIGGER, TRACE_LVL_INFO, TRACE_EV_trigger_fire,
          tsrc->oid, tsrc->reason);
 }
@@ -201,7 +229,7 @@ trigger_source_shutdown(void)
     foreach_oid(oid, tsrc, command_config_trigger_gpio) {
         if (tsrc->hw_arm)
             tsrc->hw_arm(tsrc, 0);
-        tsrc->flags &= ~TSRC_ARMED;
+        tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER);
         tsrc->ts = NULL;
     }
 }

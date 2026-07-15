@@ -39,6 +39,7 @@ EXECUTION_TYPES = {
     6: "heater",
     7: "fault",
     8: "discipline",
+    9: "edge_observed",
 }
 
 

@@ -257,15 +257,20 @@ def test_execution_and_wire_intention_share_machine_time():
         })
         manager.record_execution(
             mcus["mcu"], (12, 1, 4, 2_050_000, 3276, 0))
+        manager.record_execution(
+            mcus["mcu"], (13, 9, 23, 2_060_000, 0, 0))
         records = [json.loads(line)
                    for line in pathlib.Path(output).read_text().splitlines()]
-        assert [r["kind"] for r in records] == ["intention", "execution"]
+        assert [r["kind"] for r in records] == [
+            "intention", "execution", "execution"]
         assert all(r["session_id"] == manager.session_id for r in records)
         assert records[0]["machine_time"] == 12.
         assert records[0]["fields"]["velocity"] == 65536
         assert records[1]["machine_time"] == 12.05
         assert records[1]["fields"]["event"] == "segment_done"
         assert records[1]["fields"]["position_su"] == 3276
+        assert records[2]["fields"]["event"] == "edge_observed"
+        assert records[2]["severity"] == "info"
         print("PASS: wire coefficients and execution records share one"
               " machine-time axis")
 

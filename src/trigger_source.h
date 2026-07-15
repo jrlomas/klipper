@@ -38,6 +38,9 @@ enum {
     // means the host armed it with capture=1 so the latched
     // hardware-exact edge tick is used instead of the ISR-entry read.
     TSRC_CAN_CAPTURE = 1 << 3, TSRC_CAPTURE_ON = 1 << 4,
+    // Observer mode timestamps and records the edge but deliberately does
+    // not fire trsync. It permits a direct comparison with legacy polling.
+    TSRC_OBSERVER = 1 << 5,
 };
 
 // Allocate a trigger source oid for a non-gpio hardware kind (e.g.

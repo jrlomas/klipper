@@ -84,6 +84,15 @@ serial:
 #   (for example a code-size-constrained board) or for a homing move
 #   that waits for the pin to release. Set this to False to force the
 #   legacy polled path on this micro-controller. The default is True.
+#hardware_endstop_observer: False
+#   Commissioning-only measurement aid. When hardware_endstop_trigger is
+#   False, arm the GPIO interrupt as a passive timestamp observer while the
+#   legacy polled endstop remains solely responsible for stopping motion.
+#   The edge and actuator-stop clocks are written as distinct execution-log
+#   records so polling latency and physical overrun can be measured directly.
+#   The observer adds a small interrupt/logging cost and should remain False
+#   in production. Enabling it while hardware_endstop_trigger is True is a
+#   configuration error. The default is False.
 ```
 
 ### [mcu my_extra_mcu]
