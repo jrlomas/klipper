@@ -84,6 +84,7 @@ for TEST in \
     test/segment_lib_test.py \
     test/session_bridge_test.py \
     test/timesync_gate_test.py \
+    test/tmc_motion_poll_test.py \
     test/tmc_uart_baud_test.py \
     test/traj_higher_order_test.py \
     test/trajectory_status_test.py \

@@ -94,6 +94,7 @@ class TMCErrorCheck:
         self.mcu_tmc = mcu_tmc
         self.fields = mcu_tmc.get_fields()
         self.check_timer = None
+        self.toolhead = None
         self.last_drv_status = self.last_drv_fields = None
         # Setup for GSTAT query
         reg_name = self.fields.lookup_register("drv_err")
@@ -129,6 +130,20 @@ class TMCErrorCheck:
         if self.adc_temp_reg is not None:
             pheaters = self.printer.load_object(config, 'heaters')
             pheaters.register_monitor(config)
+    def _motion_is_queued(self, eventtime):
+        # The bit-banged TMC UART is itself a precision-timer client.  On
+        # smaller MCUs, starting a diagnostic register read during a dense
+        # trajectory pulse stream can leave the timer dispatcher permanently
+        # catching up.  Configuration writes and explicit register queries do
+        # not use this gate; only the background once-per-second health poll
+        # waits for a gap in queued motion.
+        if self.toolhead is None:
+            self.toolhead = self.printer.lookup_object('toolhead', None)
+        if self.toolhead is None:
+            return False
+        print_time, est_print_time, lookahead_empty = self.toolhead.check_busy(
+            eventtime)
+        return not lookahead_empty or print_time > est_print_time + 0.050
     def _query_register(self, reg_info, try_clear=False):
         last_value, reg_name, mask, err_mask, cs_actual_mask = reg_info
         cleared_flags = 0
@@ -176,6 +191,11 @@ class TMCErrorCheck:
             self.adc_temp = None
             return
     def _do_periodic_check(self, eventtime):
+        if self._motion_is_queued(eventtime):
+            # Recheck frequently so a natural queue gap restores fault
+            # monitoring promptly, without injecting a software-UART timer
+            # burst into active Class-0 trajectory execution.
+            return eventtime + 0.100
         try:
             self._query_register(self.drv_status_reg_info)
             if self.gstat_reg_info is not None:
