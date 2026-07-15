@@ -176,6 +176,23 @@ wiring. The beacon protocol, the convergence gate, and the freewheel budget
 are specified in
 [FD-0001 doc 01](founding/0001-motion-intentions/01-Time_Model.md).
 
+### An RP2040 USB MCU disappeared or unexpectedly rebooted
+
+**Symptom.** The host reports a lost serial connection, and the kernel log
+shows the RP2040 USB device disconnecting and enumerating again.  This is
+different from a machine-time rejection on a secondary MCU: it means the USB
+device itself left the bus.
+
+**What to check / do.** On every connection, RP2040 firmware reports its
+retained watchdog reason to `klippy.log` as `MCU '<name>' reset reason`.
+`watchdog timer expiry` implicates firmware that stopped servicing its
+watchdog; `forced watchdog reset` identifies a reset requested through the
+watchdog block.  `power-on/external/ARM reset` means neither watchdog bit was
+set, so correlate the timestamp with the kernel journal and inspect USB power,
+the cable/connectors, and external-reset sources.  The RP2040 register cannot
+distinguish those non-watchdog causes from one another, so the log deliberately
+does not claim more precision than the silicon provides.
+
 ### Authenticated transport rejects a board
 
 **Symptom.** A networked board (UDP over WiFi/Ethernet) or a v2 serial board

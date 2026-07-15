@@ -43,6 +43,19 @@ def test_real_mcu_exposes_clocksync():
     assert mcu.get_clocksync() is clocksync
 
 
+def test_rp2040_reset_reason_formatting():
+    assert klippy_mcu._format_reset_reason(0) == (
+        "power-on/external/ARM reset", 0)
+    assert klippy_mcu._format_reset_reason(1) == (
+        "watchdog timer expiry", 1)
+    assert klippy_mcu._format_reset_reason(2) == (
+        "forced watchdog reset", 2)
+    assert klippy_mcu._format_reset_reason(3) == (
+        "watchdog timer expiry, forced watchdog reset", 3)
+    # Reserved upper bits must not leak into the diagnostic.
+    assert klippy_mcu._format_reset_reason(0xff)[1] == 3
+
+
 def test_trajectory_anchor_uses_physical_step_space():
     stepper = klippy_stepper.MCU_stepper.__new__(klippy_stepper.MCU_stepper)
     stepper._step_dist = .00125
@@ -1115,6 +1128,8 @@ def test_value_trajectory_fails_before_fitter_advance():
 def main():
     test_real_mcu_exposes_clocksync()
     print("PASS: the real MCU API exposes its per-link clock regression")
+    test_rp2040_reset_reason_formatting()
+    print("PASS: RP2040 reset reasons retain watchdog attribution")
     test_trajectory_anchor_uses_physical_step_space()
     print("PASS: trajectory anchors preserve the physical MCU position"
           " offset")

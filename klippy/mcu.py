@@ -18,6 +18,17 @@ MAX_SCHEDULE_TICKS = (1<<31) - 1
 # Directly caused by the limitation of MAX_SCHEDULE_TICKS.
 MAX_NOMINAL_DURATION = 3.0
 
+def _format_reset_reason(flags):
+    flags &= 0x03
+    reasons = []
+    if flags & 0x01:
+        reasons.append("watchdog timer expiry")
+    if flags & 0x02:
+        reasons.append("forced watchdog reset")
+    if not reasons:
+        reasons.append("power-on/external/ARM reset")
+    return ", ".join(reasons), flags
+
 ######################################################################
 # Command transmit helper classes
 ######################################################################
@@ -1372,9 +1383,25 @@ class MCUConfigHelper:
             raise error("Can not update MCU '%s' config as it is shutdown" % (
                 self._name,))
         return config_params
+    def _log_reset_reason(self):
+        # New RP2040 firmware exposes the watchdog reason register.  Keep this
+        # optional so older firmware and other architectures connect exactly
+        # as before.  Query before get_config so a board already in shutdown
+        # still leaves useful reset evidence in klippy.log.
+        if (self._mcu.is_fileoutput()
+            or not self._mcu.check_valid_response("get_reset_reason")
+            or not self._mcu.check_valid_response("reset_reason flags=%c")):
+            return
+        query = self._mcu.lookup_query_command(
+            "get_reset_reason", "reset_reason flags=%c")
+        params = query.send()
+        reason, flags = _format_reset_reason(params['flags'])
+        logging.info("MCU '%s' reset reason: %s (flags=0x%x)",
+                     self._name, reason, flags)
     def _connect(self):
         # Finalize the config and check if a restart is needed
         restart_helper = self._conn_helper.get_restart_helper()
+        self._log_reset_reason()
         config_params = self._send_get_config()
         if not config_params['is_config']:
             # Not configured - sending full config will be required
