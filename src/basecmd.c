@@ -5,6 +5,7 @@
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
 #include <string.h> // memset
+#include "autoconf.h" // CONFIG_WANT_TRAFFIC_CLASSES
 #include "basecmd.h" // oid_lookup
 #include "board/irq.h" // irq_save
 #include "board/misc.h" // alloc_maxsize

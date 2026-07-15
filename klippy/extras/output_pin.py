@@ -203,6 +203,10 @@ class PrinterOutputPin:
         ppins = self.printer.lookup_object('pins')
         # Determine pin type
         self.is_pwm = config.getboolean('pwm', False)
+        self.machine_time = config.getboolean('machine_time', False)
+        if self.machine_time and self.is_pwm:
+            raise config.error(
+                "machine_time is currently supported only on digital pins")
         if self.is_pwm:
             self.mcu_pin = ppins.setup_pin('pwm', config.get('pin'))
             max_duration = self.mcu_pin.get_mcu().max_nominal_duration()
@@ -215,6 +219,8 @@ class PrinterOutputPin:
             self.mcu_pin = ppins.setup_pin('digital_out', config.get('pin'))
             self.scale = 1.
         self.mcu_pin.setup_max_duration(0.)
+        if self.machine_time:
+            self.mcu_pin.setup_machine_time()
         # Determine start and shutdown values
         self.last_value = config.getfloat(
             'value', 0., minval=0., maxval=self.scale) / self.scale
@@ -224,24 +230,81 @@ class PrinterOutputPin:
         # Create gcode request queue
         self.gcrq = GCodeRequestQueue(config, self.mcu_pin.get_mcu(),
                                       self._set_pin)
+        self.legacy_timing_gcrq = None
+        if self.machine_time:
+            # Commissioning comparator: schedule the same fanout through
+            # Klipper's original per-MCU print-time conversion so a scope can
+            # quantify legacy and machine-time clock alignment on identical
+            # pins.  This is deliberately a separate, explicit command; the
+            # configured output's normal semantics remain machine-time.
+            self.legacy_timing_gcrq = GCodeRequestQueue(
+                config, self.mcu_pin.get_mcu(), self._set_pin_legacy_timing)
         # Template handling
         self.template_eval = lookup_template_eval(config)
+        self.machine_mcu = self.timesync = None
+        self.target_mcus = []
+        if self.machine_time:
+            self.printer.register_event_handler(
+                "klippy:connect", self._handle_machine_time_connect)
         # Register commands
         pin_name = config.get_name().split()[1]
         gcode = self.printer.lookup_object('gcode')
         gcode.register_mux_command("SET_PIN", "PIN", pin_name,
                                    self.cmd_SET_PIN,
                                    desc=self.cmd_SET_PIN_help)
+        if self.legacy_timing_gcrq is not None:
+            gcode.register_mux_command(
+                "SET_PIN_LEGACY_TIMING", "PIN", pin_name,
+                self.cmd_SET_PIN_LEGACY_TIMING,
+                desc=self.cmd_SET_PIN_LEGACY_TIMING_help)
+        if not self.is_pwm:
+            gcode.register_mux_command(
+                "QUERY_PIN_TIMING", "PIN", pin_name,
+                self.cmd_QUERY_PIN_TIMING,
+                desc=self.cmd_QUERY_PIN_TIMING_help)
     def get_status(self, eventtime):
         return {'value': self.last_value}
+    def _handle_machine_time_connect(self):
+        self.machine_mcu = self.printer.lookup_object('mcu')
+        self.timesync = self.printer.lookup_object('timesync', None)
+        get_mcus = getattr(self.mcu_pin, 'get_mcus', None)
+        self.target_mcus = (get_mcus() if get_mcus is not None
+                            else [self.mcu_pin.get_mcu()])
+        if (self.timesync is None
+                and any(mcu is not self.machine_mcu
+                        for mcu in self.target_mcus)):
+            raise self.printer.config_error(
+                "machine_time output spanning multiple MCUs requires"
+                " a [timesync] section")
+    def _require_machine_time(self, error):
+        if self.machine_mcu is None:
+            raise error("machine_time output is not connected")
+        if self.timesync is None:
+            return
+        for mcu in self.target_mcus:
+            if not self.timesync.is_mcu_synced(mcu.get_name()):
+                raise error(
+                    "Machine-time discipline for %s is not converged;"
+                    " refusing synchronized output" % (mcu.get_name(),))
     def _set_pin(self, print_time, value):
         if value == self.last_value:
             return "discard", 0.
+        if self.machine_time:
+            self._require_machine_time(self.printer.command_error)
         self.last_value = value
         if self.is_pwm:
             self.mcu_pin.set_pwm(print_time, value)
+        elif self.machine_time:
+            machine_clock = self.machine_mcu.print_time_to_clock(print_time)
+            self.mcu_pin.set_digital_machine_time(
+                print_time, machine_clock, value)
         else:
             self.mcu_pin.set_digital(print_time, value)
+    def _set_pin_legacy_timing(self, print_time, value):
+        if value == self.last_value:
+            return "discard", 0.
+        self.last_value = value
+        self.mcu_pin.set_digital(print_time, value)
     def _template_update(self, text):
         try:
             value = float(text)
@@ -263,8 +326,36 @@ class PrinterOutputPin:
         value /= self.scale
         if not self.is_pwm and value not in [0., 1.]:
             raise gcmd.error("Invalid pin value")
+        if self.machine_time:
+            self._require_machine_time(gcmd.error)
         # Queue requested value
         self.gcrq.queue_gcode_request(value)
+    cmd_SET_PIN_LEGACY_TIMING_help = (
+        "Commissioning-only legacy clock-domain output comparator")
+    def cmd_SET_PIN_LEGACY_TIMING(self, gcmd):
+        value = gcmd.get_float('VALUE', minval=0., maxval=1.)
+        if value not in [0., 1.]:
+            raise gcmd.error("Invalid pin value")
+        self.legacy_timing_gcrq.queue_gcode_request(value)
+    cmd_QUERY_PIN_TIMING_help = (
+        "Report scheduled-versus-actual MCU GPIO edge timing")
+    def cmd_QUERY_PIN_TIMING(self, gcmd):
+        query = getattr(self.mcu_pin, 'query_digital_timing', None)
+        states = query() if query is not None else []
+        if not states:
+            raise gcmd.error(
+                "MCU firmware does not expose digital output timing")
+        lines = []
+        for mcu, state in states:
+            late_ticks = state['late']
+            late_us = late_ticks / mcu.seconds_to_clock(1.) * 1000000.
+            lines.append(
+                "mcu '%s': value=%d dropped=%d scheduled=%d actual=%d"
+                " late=%d ticks (%.3fus)" % (
+                    mcu.get_name(), state['value'], state['dropped'],
+                    state['scheduled'], state['actual'], late_ticks,
+                    late_us))
+        gcmd.respond_info("\n".join(lines))
 
 def load_config_prefix(config):
     return PrinterOutputPin(config)

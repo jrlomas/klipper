@@ -242,6 +242,18 @@ class TrajectoryPWM:
         self.last_plan = None
         self.mcu.register_config_callback(self._build_config)
 
+    def _machine_mcu(self):
+        lookup_object = getattr(self.printer, 'lookup_object', None)
+        if lookup_object is None:
+            return self.mcu
+        return lookup_object('mcu', self.mcu)
+
+    def _machine_frequency(self):
+        return self._machine_mcu().seconds_to_clock(1.)
+
+    def _machine_clock(self, print_time):
+        return self._machine_mcu().print_time_to_clock(print_time)
+
     def _require_machine_time(self):
         lookup_object = getattr(self.printer, 'lookup_object', None)
         timesync = (lookup_object('timesync', None)
@@ -292,7 +304,7 @@ class TrajectoryPWM:
         # units) as of print_time.  Required before any segment.
         self._require_machine_time()
         pos_su = int(round(pos_native * SUBUNITS))
-        clock = self.mcu.print_time_to_clock(print_time)
+        clock = self._machine_clock(print_time)
         self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
         self.need_rebase = False
         # A manual re-anchor invalidates the fitter's chained stream; the
@@ -345,7 +357,7 @@ class TrajectoryPWM:
         """
         if sample_time is None:
             sample_time = self.sample_time
-        frequency = self.mcu.seconds_to_clock(1.)
+        frequency = self._machine_frequency()
         try:
             plan = plan_value_trajectory(
                 duration, value_at, frequency, sample_time)
@@ -379,11 +391,11 @@ class TrajectoryPWM:
                 "value trajectory needs at least 2 (time, value) knots")
         if self._fitter is None:
             self._fitter = ValueTrajectoryFitter(
-                self.mcu.seconds_to_clock(1.), self.tolerance_su,
+                self._machine_frequency(), self.tolerance_su,
                 self.sample_time)
         t0, v0 = knots[0]
         if self.need_rebase or not self._fitter.anchored:
-            clock = self.mcu.print_time_to_clock(t0)
+            clock = self._machine_clock(t0)
             pos_su = self._fitter.anchor(t0, v0)
             self.rebase_cmd.send([self.oid, clock & 0xffffffff, pos_su])
             self.need_rebase = False

@@ -12,6 +12,23 @@
 // -MAX_ADJ is a large positive value and every negative adjustment clamps.
 #define MAX_ADJ ((int32_t)(RATE_ONE / 4U))
 
+// Discrete PI gains used by the on-board clock discipline.  The firmware
+// publishes the newly integrated base rate in the same sample in which it
+// applies the proportional slew, so the phase/rate state transition is:
+//
+//   [e']   [1-Kp-Ki  1] [e]
+//   [q'] = [  -Ki    1] [q]
+//
+// Kp=1/4 and Ki=1/32 put that matrix's poles off the real axis and produced
+// a repeatable ~44-second phase oscillation on the Pico/EBB36 scope rig.
+// Ki=1/64 is slightly overdamped; retain shifts here so the stability choice
+// is visible to, and regression-testable by, the host-native math test.
+#define TIMESYNC_PROP_SHIFT 2
+#define TIMESYNC_INTEGRAL_SHIFT 6
+
+_Static_assert(TIMESYNC_INTEGRAL_SHIFT >= 2 * TIMESYNC_PROP_SHIFT + 2,
+               "timesync PI gains must not be underdamped");
+
 // Convergence has deliberately asymmetric hysteresis: acquiring trust takes
 // several bounded samples, and revoking established trust takes several
 // consecutive marginal misses.  A gross timing excursion still revokes trust

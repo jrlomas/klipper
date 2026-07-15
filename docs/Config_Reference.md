@@ -166,14 +166,77 @@ exposed printer object.
 #   Time (in seconds) a secondary micro-controller will freewheel on
 #   its last machine-time estimate after beacons stop arriving before
 #   flagging a loss. The default is 5.0.
-#converge_window: 0.000020
-#   Inter-micro-controller synchronization error target (in seconds).
-#   A secondary reports "converged" once its discipline filter is
-#   within this operational trust window. The discipline filter continues
-#   to target zero error. The default is 0.000020 (20us), which accommodates
-#   measured host-relay endpoint noise without allowing the Class-0 gate to
-#   flap during otherwise healthy multi-MCU motion.
+#converge_window: 0.000010
+#   Secondary discipline-residual window (in seconds). A secondary reports
+#   internally "converged" once its PI filter is within this window; the
+#   filter continues to target zero error. The default is 0.000010 (10us).
+#   This value does not bound absolute physical phase across independent
+#   links: transport delay asymmetry is outside the MCU residual. A hard
+#   physical timing-assurance claim additionally requires a transport whose
+#   timestamp uncertainty is bounded within the requested budget and scope-
+#   qualified. This is separate from Class-0 Scheduled traffic; USB motion
+#   may be statistically qualified against its print-domain tolerance.
+#   Host relay samples use an outlier-resistant endpoint fit so isolated USB
+#   or scheduler latency has limited leverage.
+#usb_sof: False
+#   Use matching USB Start-of-Frame timestamps as the primary-to-secondary
+#   phase observation when supported by both MCUs. The implementation enables
+#   the 1kHz SOF interrupt for only a 10ms window at each beacon (about once a
+#   second), then disables it. If a matching frame is unavailable, that beacon
+#   falls back to the existing host clock estimate. The default is False.
 ```
+
+### [machine_time_sync_line]
+
+Commissioning-only direct-wire measurement of the primary-to-secondary clock
+mapping. The source must be a digital-output-capable pin on the primary MCU;
+the capture pin must be an unused GPIO on a disciplined secondary MCU. The
+module drives only rising test edges, passively timestamps them on the
+secondary, and never owns a motion stop. A `[timesync]` section is required.
+
+```
+[machine_time_sync_line]
+source_pin: gpio24
+capture_pin: ebb36:PB8
+#samples: 20
+#   Default edge count for SYNC_LINE_TEST. The default is 20.
+#lead_time: 0.100
+#   Seconds between queuing each edge and its scheduled execution. The
+#   default is 0.100.
+#settle_time: 0.025
+#   Seconds allowed after the scheduled edge before timestamp queries. The
+#   default is 0.025.
+```
+
+The source is always configured with startup and shutdown value zero. Do not
+configure either pin in any other section, and never connect two pins while
+both are outputs. See the
+[command reference](G-Codes.md#machine_time_sync_line).
+
+### [usb_sof_sync]
+
+Commissioning-only comparison of matching USB Start-of-Frame timestamps from
+two full-speed USB MCUs. The current firmware implementation supports the
+RP2040 device controller and STM32 USB FS peripheral. This section is only a
+measurement tool; production discipline is enabled separately with
+`[timesync] usb_sof: True`. A `[machine_time_sync_line]` section is required
+so the commissioning result can be calibrated against a direct electrical
+edge.
+
+```
+[usb_sof_sync]
+secondary: ebb36
+#primary: mcu
+#   MCU names participating in the comparison. The primary defaults to mcu.
+#samples: 50
+#   Default number of matching 11-bit USB frame numbers to capture. The
+#   default is 50.
+```
+
+Both devices should be on the same USB bus/root controller. Matching frame
+numbers do not by themselves prove simultaneous port delivery; the direct
+sync-line calibration quantifies any fixed offset and jitter. See the
+[command reference](G-Codes.md#usb_sof_sync).
 
 ### [asyncio_bridge]
 
@@ -4064,6 +4127,13 @@ pin:
 #   If this is true, the value fields should be between 0 and 1; if it
 #   is false the value fields should be either 0 or 1. The default is
 #   False.
+#machine_time: False
+#   For a digital pin, schedule each SET_PIN edge against the primary MCU's
+#   shared machine clock instead of this pin's local clock. This option is
+#   digital-only. It fails closed while the target MCU is not converged; a
+#   secondary target requires a [timesync] section. Combine it with a
+#   [multi_pin] containing pins on different MCUs to queue the same timestamp
+#   on every board. The default is False.
 #value:
 #   The value to initially set the pin to during MCU configuration.
 #   The default is 0 (for low voltage).
@@ -4093,6 +4163,27 @@ pin:
 #static_value:
 #   These options are deprecated and should no longer be specified.
 ```
+
+For example, this produces one cross-board output suitable for a scope or
+logic-analyzer machine-time agreement test:
+
+```
+[multi_pin synchronized_scope]
+pins: gpio16, ebb36:PB6
+
+[output_pin synchronized_scope]
+pin: multi_pin:synchronized_scope
+machine_time: True
+```
+
+`SET_PIN PIN=synchronized_scope VALUE=1` queues one primary-machine-clock
+timestamp. Each secondary converts that timestamp through its on-board
+disciplined mapping. `QUERY_PIN_TIMING PIN=synchronized_scope` reports each
+MCU's scheduled and actual GPIO-write clocks so ISR latency can be separated
+from clock-mapping error. During commissioning only,
+`SET_PIN_LEGACY_TIMING PIN=synchronized_scope VALUE=<0|1>` schedules the same
+fanout through Klipper's original per-MCU `print_time` conversion for a direct
+scope comparison; normal operation should continue to use `SET_PIN`.
 
 ### [static_pwm_clock]
 

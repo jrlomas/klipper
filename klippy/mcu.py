@@ -443,9 +443,12 @@ class MCU_endstop:
         self._trigger_arm_cmd = self._mcu.lookup_command(
             "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c",
             cq=cmd_queue)
-        if self._mcu.want_hw_endstop_observer():
-            self._trigger_observe_cmd = self._mcu.lookup_command(
-                "trigger_source_observe oid=%c capture=%c", cq=cmd_queue)
+        # Always resolve the passive observer when the firmware provides the
+        # trigger-source command set.  Normal homing still selects it only
+        # when hardware_endstop_observer is enabled, but commissioning tools
+        # may use the same edge latch without taking ownership of trsync.
+        self._trigger_observe_cmd = self._mcu.lookup_command(
+            "trigger_source_observe oid=%c capture=%c", cq=cmd_queue)
         self._trigger_disarm_cmd = self._mcu.lookup_command(
             "trigger_source_disarm oid=%c", cq=cmd_queue)
         self._trigger_query_cmd = self._mcu.lookup_query_command(
@@ -465,6 +468,27 @@ class MCU_endstop:
                 and self._mcu.want_hw_endstop_observer()
                 and self._trigger_observe_cmd is not None
                 and bool(triggered) == bool(self._trigger_edge ^ self._invert))
+    def has_edge_observer(self):
+        return self._trigger_observe_cmd is not None
+    def edge_observe_start(self, print_time, capture=True):
+        if self._trigger_observe_cmd is None:
+            raise self._mcu.get_printer().command_error(
+                "MCU '%s' does not support passive edge observation"
+                % (self._mcu.get_name(),))
+        clock = self._mcu.print_time_to_clock(print_time)
+        self._trigger_observe_cmd.send(
+            [self._trigger_oid, bool(capture)], reqclock=clock)
+    def edge_observe_query(self):
+        if self._trigger_query_cmd is None:
+            raise self._mcu.get_printer().command_error(
+                "MCU '%s' does not support passive edge observation"
+                % (self._mcu.get_name(),))
+        params = self._trigger_query_cmd.send([self._trigger_oid])
+        params['clock64'] = self._mcu.clock32_to_clock64(params['clock'])
+        return params
+    def edge_observe_disarm(self):
+        if self._trigger_disarm_cmd is not None:
+            self._trigger_disarm_cmd.send([self._trigger_oid])
     def home_start(self, print_time, sample_time, sample_count, rest_time,
                    triggered=True):
         clock = self._mcu.print_time_to_clock(print_time)
@@ -545,6 +569,9 @@ class MCU_digital_out:
         self._max_duration = 2.
         self._last_clock = 0
         self._set_cmd = None
+        self._machine_time = False
+        self._machine_set_cmd = None
+        self._timing_query_cmd = None
     def get_mcu(self):
         return self._mcu
     def setup_max_duration(self, max_duration):
@@ -552,6 +579,10 @@ class MCU_digital_out:
     def setup_start_value(self, start_value, shutdown_value):
         self._start_value = (not not start_value) ^ self._invert
         self._shutdown_value = (not not shutdown_value) ^ self._invert
+    def setup_machine_time(self):
+        self._machine_time = True
+    def get_mcus(self):
+        return [self._mcu]
     def _build_config(self):
         if self._max_duration and self._start_value != self._shutdown_value:
             raise pins.error("Pin with max duration must have start"
@@ -571,11 +602,38 @@ class MCU_digital_out:
         cmd_queue = self._mcu.alloc_command_queue()
         self._set_cmd = self._mcu.lookup_command(
             "queue_digital_out oid=%c clock=%u on_ticks=%u", cq=cmd_queue)
+        if self._machine_time:
+            self._machine_set_cmd = self._mcu.lookup_command(
+                "queue_machine_digital_out oid=%c clock=%u on_ticks=%u",
+                cq=cmd_queue)
+        query_format = "digital_out_query oid=%c"
+        response_format = ("digital_out_state oid=%c value=%c dropped=%hu"
+                           " scheduled=%u actual=%u late=%i")
+        if (self._mcu.try_lookup_command(query_format, cq=cmd_queue)
+                is not None
+                and self._mcu.check_valid_response(response_format)):
+            self._timing_query_cmd = self._mcu.lookup_query_command(
+                query_format, response_format, oid=self._oid, cq=cmd_queue)
     def set_digital(self, print_time, value):
         clock = self._mcu.print_time_to_clock(print_time)
         self._set_cmd.send([self._oid, clock, (not not value) ^ self._invert],
                            minclock=self._last_clock, reqclock=clock)
         self._last_clock = clock
+    def set_digital_machine_time(self, print_time, machine_clock, value):
+        # reqclock/minclock remain local transport scheduling metadata; only
+        # the command payload is the shared primary-MCU machine timestamp.
+        local_clock = self._mcu.print_time_to_clock(print_time)
+        self._machine_set_cmd.send(
+            [self._oid, machine_clock & 0xffffffff,
+             (not not value) ^ self._invert],
+            minclock=self._last_clock, reqclock=local_clock)
+        self._last_clock = local_clock
+    def query_digital_timing(self):
+        if self._timing_query_cmd is None:
+            return []
+        return [(self._mcu, self._timing_query_cmd.send([self._oid]))]
+    def has_digital_timing(self):
+        return self._timing_query_cmd is not None
 
 class MCU_pwm:
     def __init__(self, mcu, pin_params):

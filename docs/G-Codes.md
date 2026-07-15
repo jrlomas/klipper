@@ -1146,6 +1146,19 @@ parsed as Python literals). If TEMPLATE is an empty string then this
 command will clear any previous template assigned to the pin (one can
 then use `SET_PIN` commands to manage the values directly).
 
+#### QUERY_PIN_TIMING
+`QUERY_PIN_TIMING PIN=config_name`: On digital outputs whose firmware exposes
+the Helix timing diagnostic, report the last scheduled GPIO clock, actual
+write clock, and lateness for every target MCU. This is intended for
+commissioning with a scope or logic analyzer.
+
+#### SET_PIN_LEGACY_TIMING
+`SET_PIN_LEGACY_TIMING PIN=config_name VALUE=<0|1>`: Available only for a
+digital output configured with `machine_time: True`. It schedules that one
+diagnostic edge through Klipper's original per-MCU `print_time` conversion
+instead of machine time, allowing an apples-to-apples clock-domain scope
+comparison. This is a commissioning command, not an operational output mode.
+
 ### [palette2]
 
 The following commands are available when the
@@ -1704,6 +1717,31 @@ rationale.
 each disciplined secondary micro-controller - whether it has converged,
 its current synchronization error (in microseconds), and its clock rate
 correction (in ppm).
+
+### [machine_time_sync_line]
+
+The following commissioning command is available when a
+[machine_time_sync_line config section](Config_Reference.md#machine_time_sync_line)
+is enabled.
+
+#### SYNC_LINE_TEST
+`SYNC_LINE_TEST [SAMPLES=<count>]`: Schedules repeated primary rising edges,
+passively captures each edge on the secondary, and reports the raw clock
+pairs, physical affine-fit residual, oscillator-rate offset, and error of the
+current USB-derived machine-time mapping. It performs no motion and does not
+take ownership of homing or `trsync`.
+
+### [usb_sof_sync]
+
+The following commissioning command is available when a
+[usb_sof_sync config section](Config_Reference.md#usb_sof_sync) is enabled.
+
+#### USB_SOF_TEST
+`USB_SOF_TEST [SAMPLES=<count>]`: After `SYNC_LINE_TEST` establishes the
+physical clock relationship, briefly enables USB SOF interrupts on both MCUs,
+matches their 11-bit frame numbers, and reports the direct-wire-calibrated SOF
+phase plus affine residual jitter. SOF interrupts are disabled when the test
+finishes, including on an error path.
 
 ### [trajectory_queuing]
 

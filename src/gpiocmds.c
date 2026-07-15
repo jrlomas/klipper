@@ -4,12 +4,16 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include "autoconf.h" // CONFIG_WANT_TRAFFIC_CLASSES
 #include "basecmd.h" // oid_alloc
 #include "board/gpio.h" // struct gpio_out
 #include "board/irq.h" // irq_disable
 #include "board/misc.h" // timer_is_before
 #include "command.h" // DECL_COMMAND
 #include "sched.h" // sched_add_timer
+#if CONFIG_WANT_TRAJECTORY
+#include "timesync.h" // timesync_clock_to_local
+#endif
 
 struct digital_out_s {
     struct timer timer;
@@ -19,6 +23,7 @@ struct digital_out_s {
     struct move_queue_head mq;
 #if CONFIG_WANT_TRAFFIC_CLASSES
     uint16_t drop_count;
+    uint32_t last_scheduled, last_actual;
     uint8_t apply_late;
 #endif
     uint8_t flags;
@@ -78,6 +83,13 @@ digital_load_event(struct timer *timer)
     uint32_t on_duration = m->on_duration;
     uint8_t flags = on_duration ? DF_ON : 0;
     gpio_out_write(d->pin, flags);
+#if CONFIG_WANT_TRAFFIC_CLASSES
+    // The edge has already occurred; this read therefore bounds timer-ISR
+    // entry plus scheduler/GPIO dispatch latency without perturbing the edge
+    // being measured. Expose the local-clock result for scope correlation.
+    d->last_scheduled = m->waketime;
+    d->last_actual = timer_read_time();
+#endif
     move_free(m);
 
     // Calculate next end_time and flags
@@ -154,10 +166,10 @@ command_set_digital_out_pwm_cycle(uint32_t *args)
 DECL_COMMAND(command_set_digital_out_pwm_cycle,
              "set_digital_out_pwm_cycle oid=%c cycle_ticks=%u");
 
-void
-command_queue_digital_out(uint32_t *args)
+static void
+queue_digital_out(struct digital_out_s *d, uint32_t time,
+                  uint32_t on_duration)
 {
-    struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
 #if CONFIG_WANT_TRAFFIC_CLASSES
     struct digital_move *m = move_alloc_soft();
     if (!m) {
@@ -168,8 +180,8 @@ command_queue_digital_out(uint32_t *args)
 #else
     struct digital_move *m = move_alloc();
 #endif
-    uint32_t time = m->waketime = args[1];
-    m->on_duration = args[2];
+    m->waketime = time;
+    m->on_duration = on_duration;
 
     irq_disable();
     int first_on_queue = move_queue_push(&m->node, &d->mq);
@@ -202,8 +214,33 @@ command_queue_digital_out(uint32_t *args)
     }
     irq_enable();
 }
+
+void
+command_queue_digital_out(uint32_t *args)
+{
+    struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+    queue_digital_out(d, args[1], args[2]);
+}
 DECL_COMMAND(command_queue_digital_out,
              "queue_digital_out oid=%c clock=%u on_ticks=%u");
+
+#if CONFIG_WANT_TRAJECTORY
+// Queue a Class-0 digital edge against the primary MCU's machine clock.
+// The primary mapping is the identity; a disciplined secondary converts the
+// shared timestamp once at ingest.  This is deliberately separate from the
+// legacy queue_digital_out ABI, whose clock is already in the target MCU's
+// local domain.
+void
+command_queue_machine_digital_out(uint32_t *args)
+{
+    if (!timesync_class0_ok())
+        shutdown("Machine time not synchronized");
+    struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+    queue_digital_out(d, timesync_clock_to_local(args[1]), args[2]);
+}
+DECL_COMMAND(command_queue_machine_digital_out,
+             "queue_machine_digital_out oid=%c clock=%u on_ticks=%u");
+#endif
 
 #if CONFIG_WANT_TRAFFIC_CLASSES
 void
@@ -223,7 +260,9 @@ command_digital_out_query(uint32_t *args)
     uint8_t value = !!(d->flags & DF_ON);
     irq_enable();
     sendf("digital_out_state oid=%c value=%c dropped=%hu"
-          , args[0], value, d->drop_count);
+          " scheduled=%u actual=%u late=%i"
+          , args[0], value, d->drop_count, d->last_scheduled
+          , d->last_actual, d->last_actual - d->last_scheduled);
 }
 DECL_COMMAND(command_digital_out_query, "digital_out_query oid=%c");
 #endif

@@ -574,8 +574,12 @@ The following information is available in the
   (in seconds), exposed so external clients may synchronize to machine
   time. `None` until the beacon loop is active.
 - `mcus.<mcu_name>.converged`: True once the named secondary micro-
-  controller's discipline filter reports it is within the configured
-  `converge_window`.
+  controller's discipline filter is within the configured `converge_window`
+  and the host's two underlying clock models have remained rate-consistent
+  with unchanged minimum-RTT anchors for the required stability window. This
+  is an ingest/preflight state, not proof of absolute physical phase: link
+  asymmetry is not observable in the MCU residual and must be bounded by the
+  transport's timing class and external qualification.
 - `mcus.<mcu_name>.last_err_ticks`: The last measured synchronization
   error for that micro-controller, in its own clock ticks.
 - `mcus.<mcu_name>.rate`: The raw Q8.24 local-ticks-per-machine-tick rate
@@ -593,6 +597,21 @@ The following information is available in the
   cross-link estimate and ratio between the two most recent raw samples.
   Comparing these with the relay fields makes host-regression noise and
   MCU-filter faults distinguishable during bring-up.
+- `primary_host_clock` and `mcus.<mcu_name>.host_clock`: Diagnostic host
+  `ClockSync` frequency, minimum half-RTT anchor, prediction variance, and
+  sample time used to bridge the two independent links.
+- `mcus.<mcu_name>.host_model_stable`, `host_stable_count`, `host_rate`, and
+  `host_rate_error_ppm`: The host-side machine-time preflight state. A minimum-RTT
+  anchor change or disagreement between the direct clock-frequency ratio and
+  robust relay fit clears this gate immediately; eight consecutive steady
+  beacons are required to reacquire it. It rejects moving host models but
+  cannot prove that two independent link midpoints are unbiased. In USB-SOF
+  mode, the rate and error are instead derived from consistency between
+  consecutive exact same-frame clock pairs; a startup software clock estimate
+  cannot veto the hardware-derived rate.
+- `mcus.<mcu_name>.usb_sof`: True when this secondary supports and is using
+  matched USB Start-of-Frame timestamps for discipline. A missed matching
+  frame falls back to the host clock estimate for that beacon.
 
 ## trajectory_queuing
 

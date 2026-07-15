@@ -32,6 +32,8 @@ class FakeCommand:
 
 
 class FakeClockSync:
+    clock_est = (0., 0., 0.)
+
     def systime_to_local_clock(self, systime):
         return int(systime * 1_000_000.)
 
@@ -239,6 +241,82 @@ def test_mixed_frequency_rate_representation():
         [320_000_000, 640, encoded]]
 
 
+def test_startup_rate_uses_connected_clock_regressions():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 12_000_300.)
+    local_sync = FakeClockSync()
+    local_sync.clock_est = (0., 0., 64_000_640.)
+    link = timesync.SecondaryLink(
+        FakeMCU(64_000_000., clocksync=local_sync), 12_000_000.,
+        primary_sync)
+    assert abs(link.nominal_rate - 64_000_640. / 12_000_300.) < 1.e-12
+
+
+def test_interval_diagnostics_report_observed_two_link_bound():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 1_000_000.)
+    local_sync = FakeClockSync()
+    local_sync.clock_est = (0., 0., 1_000_000.)
+    link = timesync.SecondaryLink(
+        FakeMCU(clocksync=local_sync), 1_000_000., primary_sync)
+    link.note_interval(
+        1, 1_000_000, .999960, 1.000040,
+        2_001_000, 1.000950, 1.001050)
+    diag = link.interval_diagnostics
+    assert link.interval_samples == 1
+    assert abs(diag['primary_rtt_us'] - 80.) < 1.e-6
+    assert abs(diag['secondary_rtt_us'] - 100.) < 1.e-6
+    assert abs(diag['relative_half_width_us'] - 90.) < 1.e-6
+    assert abs(diag['relative_midpoint_change_us']) < 1.e-6
+    link.note_interval(
+        2, 2_000_000, 1.999960, 2.000040,
+        3_001_000, 2.000950, 2.001050)
+    assert link.interval_samples == 2
+    assert abs(link.interval_diagnostics[
+        'relative_midpoint_change_us']) < 1.e-6
+    link.note_interval(
+        3, 3_000_000, 3.1, 3.0,
+        4_001_000, 3.001, 3.002)
+    assert link.interval_samples == 2
+
+
+def test_relay_fit_waits_for_steady_span():
+    # Five 50ms priming samples do not contain enough elapsed time for a
+    # trustworthy ppm estimate.  They must be relayed raw until the fit spans
+    # the configured multi-second floor.
+    noise = [0, 100, -100, 50, 1000]
+    mcu = FakeMCU(clocksync=NoisyClockSync(noise))
+    link = timesync.SecondaryLink(mcu, 1_000_000.)
+    for index in range(5):
+        link.relay(index, index * 50_000, index * .05)
+    assert link.relay_rate is None
+    assert mcu.commands['sync_beacon_relay'].sent[-1][2] == 201_000
+
+
+def test_live_host_model_must_stabilize_before_convergence():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 1_000_000.)
+    primary_sync.min_half_rtt = .000050
+    local_sync = FakeClockSync()
+    local_sync.clock_est = (0., 0., 1_000_000.)
+    local_sync.min_half_rtt = .000050
+    mcu = FakeMCU(clocksync=local_sync)
+    link = timesync.SecondaryLink(mcu, 1_000_000., primary_sync)
+    link.query()
+    for index in range(11):
+        link.relay(index, index * 1_000_000, float(index))
+    assert not link.is_converged(11.)
+    assert link.host_stable_count < timesync.HOST_STABLE_COUNT
+    for index in range(11, 19):
+        link.relay(index, index * 1_000_000, float(index))
+    assert link.host_model_stable
+    assert link.is_converged(19.)
+    primary_sync.min_half_rtt = .000040
+    link.relay(19, 19_000_000, 19.)
+    assert not link.host_model_stable
+    assert not link.is_converged(19.)
+
+
 class NoisyClockSync:
     def __init__(self, noise):
         self.noise = iter(noise)
@@ -258,6 +336,24 @@ def test_relay_regression_rejects_endpoint_jitter():
     assert link.last_raw_local_est == raw
     assert abs(sent - 7_000_000) < abs(raw - 7_000_000) / 2
     assert abs(link.relay_rate - 1.) < .0001
+
+
+def test_relay_regression_rejects_mid_window_clock_update():
+    # Reproduce the shape of the live non-RT/USB failure: one clocksync
+    # endpoint update jumps by ~12us in an otherwise stable 64MHz series.
+    # The relayed endpoint must stay close to the crystal trend instead of
+    # slewing the secondary machine-time map toward that isolated sample.
+    true_rate = 5.3332
+    machine_step = 12_000_000
+    samples = []
+    for index in range(16):
+        machine = index * machine_step
+        noise = 768 if index == 9 else (index % 3 - 1) * 32
+        samples.append((machine, round(machine * true_rate) + noise))
+    endpoint, rate = timesync._robust_endpoint_fit(samples)
+    expected = round(samples[-1][0] * true_rate)
+    assert abs(endpoint - expected) <= 64
+    assert abs(rate - true_rate) < 1.e-6
 
 
 class FakeStepperKinematics:
@@ -1318,6 +1414,86 @@ def test_value_trajectory_fails_before_fitter_advance():
     assert pwm._fitter is None
 
 
+def test_exact_sof_pairs_stabilize_without_host_endpoint_fit():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.nominal_rate = 64. / 12. * (1. - 25.e-6)
+    link.last_machine_clock = None
+    link.last_local_est = link.last_raw_local_est = None
+    link.last_beacon_time = None
+    link.sample_rate = link.host_rate = link.host_rate_error_ppm = None
+    link.host_stable_count = 0
+    link.host_model_stable = False
+    link.sof_rates = []
+    link.sof_unpaired_beacons = 0
+    link.sof_pending_beacon = (9, 10, 11.)
+    link.sof_relay_cmd = FakeCommand()
+    rate = link.nominal_rate
+    for index in range(timesync.HOST_STABLE_COUNT + 1):
+        machine = 1_000_000 + index * 12_000_000
+        local = round(5_000_000 + index * 12_000_000 * rate)
+        link.sof_pending_beacon = (index, machine, 20. + index)
+        link.relay_sof(index, machine, local, 20. + index)
+    assert link.host_model_stable
+    assert link.host_stable_count == timesync.HOST_STABLE_COUNT
+    assert link.sof_pending_beacon is None
+    assert link.sof_unpaired_beacons == 0
+    assert len(link.sof_relay_cmd.sent) == timesync.HOST_STABLE_COUNT + 1
+
+
+def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    actual_rate = 64. / 12. * (1. - 25.e-6)
+    # Reproduce the live restart: the one-time software-derived seed was
+    # outside the 2ppm stability gate, while exact SOF intervals agreed.
+    link.nominal_rate = actual_rate * (1. + 4.2e-6)
+    link.last_machine_clock = None
+    link.last_local_est = link.last_raw_local_est = None
+    link.last_beacon_time = None
+    link.sample_rate = link.host_rate = link.host_rate_error_ppm = None
+    link.host_stable_count = 0
+    link.host_model_stable = False
+    link.sof_rates = []
+    link.sof_unpaired_beacons = 0
+    link.sof_pending_beacon = None
+    link.sof_relay_cmd = FakeCommand()
+    for index in range(timesync.HOST_STABLE_COUNT + 1):
+        machine = 1_000_000 + index * 12_000_000
+        local = round(5_000_000 + index * 12_000_000 * actual_rate)
+        link.relay_sof(index, machine, local, 20. + index)
+    assert link.host_model_stable
+    assert link.host_stable_count == timesync.HOST_STABLE_COUNT
+    assert abs(link.host_rate_error_ppm) < .1
+    assert link.sof_unpaired_beacons == timesync.HOST_STABLE_COUNT + 1
+
+
+def test_exact_sof_rate_discontinuity_restarts_stability_gate():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    rate = 64. / 12. * (1. - 25.e-6)
+    link.nominal_rate = rate
+    link.last_machine_clock = None
+    link.last_local_est = link.last_raw_local_est = None
+    link.last_beacon_time = None
+    link.sample_rate = link.host_rate = link.host_rate_error_ppm = None
+    link.host_stable_count = 0
+    link.host_model_stable = False
+    link.sof_rates = []
+    link.sof_unpaired_beacons = 0
+    link.sof_pending_beacon = None
+    link.sof_relay_cmd = FakeCommand()
+    for index in range(timesync.HOST_STABLE_COUNT + 1):
+        machine = 1_000_000 + index * 12_000_000
+        local = round(5_000_000 + index * 12_000_000 * rate)
+        link.relay_sof(index, machine, local, 20. + index)
+    assert link.host_model_stable
+    index += 1
+    machine = 1_000_000 + index * 12_000_000
+    local = round(5_000_000 + index * 12_000_000 * rate
+                  + 12_000_000 * rate * 20.e-6)
+    link.relay_sof(index, machine, local, 20. + index)
+    assert not link.host_model_stable
+    assert link.host_stable_count == 1
+
+
 def main():
     test_real_mcu_exposes_clocksync()
     print("PASS: the real MCU API exposes its per-link clock regression")
@@ -1342,8 +1518,24 @@ def main():
     print("PASS: pre-pause timesync query cancellation cannot kill reactor")
     test_mixed_frequency_rate_representation()
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
+    test_startup_rate_uses_connected_clock_regressions()
+    print("PASS: startup rate uses connected per-link clock regressions")
+    test_interval_diagnostics_report_observed_two_link_bound()
+    print("PASS: interval diagnostics expose the observed two-link bound")
+    test_relay_fit_waits_for_steady_span()
+    print("PASS: relay fit rejects the short priming-burst span")
+    test_live_host_model_must_stabilize_before_convergence()
+    print("PASS: live host clock models must stabilize before Class-0")
     test_relay_regression_rejects_endpoint_jitter()
     print("PASS: relay regression suppresses noisy endpoint estimates")
+    test_relay_regression_rejects_mid_window_clock_update()
+    print("PASS: relay regression rejects an isolated clock-model update")
+    test_exact_sof_pairs_stabilize_without_host_endpoint_fit()
+    print("PASS: exact USB SOF pairs stabilize without host endpoint fit")
+    test_exact_sof_rate_supersedes_biased_startup_host_estimate()
+    print("PASS: exact USB SOF rate supersedes a biased startup estimate")
+    test_exact_sof_rate_discontinuity_restarts_stability_gate()
+    print("PASS: exact USB SOF rate discontinuity restarts stability gate")
     test_move_preflight_rejects_unsynced_secondary_before_lookahead()
     print("PASS: unconverged secondary moves fail before lookahead")
     test_stepper_activity_notification_is_one_shot()

@@ -9,9 +9,11 @@
 #include "board/armcm_timer.h" // udelay
 #include "board/gpio.h" // gpio_out_setup
 #include "board/io.h" // writeb
+#include "board/misc.h" // timer_read_time
 #include "board/usb_cdc.h" // usb_notify_ep0
 #include "board/usb_cdc_ep.h" // USB_CDC_EP_BULK_IN
 #include "command.h" // DECL_CONSTANT_STR
+#include "generic/usb_sof.h" // usb_sof_notify
 #include "internal.h" // GPIO
 #include "sched.h" // DECL_INIT
 
@@ -333,7 +335,21 @@ usb_stall_ep0(void)
                                 , USB_EP_RX_STALL | USB_EP_TX_STALL);
 }
 
-static uint8_t set_address;
+static uint8_t set_address, usb_sof_enabled;
+
+static uint32_t
+usb_irq_mask(void)
+{
+    return (USB_CNTR_CTRM | USB_CNTR_RESETM
+            | (usb_sof_enabled ? USB_CNTR_SOFM : 0));
+}
+
+void
+usb_sof_board_enable(uint8_t enable)
+{
+    usb_sof_enabled = enable;
+    USB->CNTR = usb_irq_mask();
+}
 
 void
 usb_set_address(uint_fast8_t addr)
@@ -384,7 +400,7 @@ usb_reset(void)
     }
     USB_EPR[ep] = bi_epr_flags;
 
-    USB->CNTR = USB_CNTR_CTRM | USB_CNTR_RESETM;
+    USB->CNTR = usb_irq_mask();
     USB->DADDR = USB_DADDR_EF;
 }
 
@@ -393,6 +409,12 @@ void
 USB_IRQHandler(void)
 {
     uint32_t istr = USB->ISTR;
+    if (istr & USB_ISTR_SOF) {
+        uint32_t clock = timer_read_time();
+        uint16_t frame = USB->FNR & USB_FNR_FN;
+        USB->ISTR = (uint16_t)~USB_ISTR_SOF;
+        usb_sof_notify(frame, clock);
+    }
     if (istr & USB_ISTR_CTR) {
         // Endpoint activity
         uint32_t ep = istr & USB_ISTR_EP_ID, epr = USB_EPR[ep];
@@ -453,7 +475,7 @@ usb_init(void)
     // Reset usb controller and enable interrupts
     USB->CNTR = USB_CNTR_FRES;
     USB->DADDR = 0;
-    USB->CNTR = USB_CNTR_RESETM;
+    USB->CNTR = usb_irq_mask() & ~USB_CNTR_CTRM;
     USB->ISTR = 0;
     armcm_enable_irq(USB_IRQHandler, USBx_IRQn, 1);
 }

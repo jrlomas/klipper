@@ -13,6 +13,28 @@ All dates in this document are approximate.
 
 ## Changes
 
+20260715: Digital `[output_pin]` sections gained the optional
+`machine_time: True` setting. It schedules `SET_PIN` edges in the primary
+MCU's shared machine-clock domain and may be combined with `[multi_pin]` for
+cross-board synchronized outputs. It is fully opt-in; ordinary output pins
+retain their local-clock behavior. Machine-time outputs also expose
+`QUERY_PIN_TIMING` and the commissioning-only `SET_PIN_LEGACY_TIMING`
+comparator. See the
+[Config Reference](Config_Reference.md#output_pin).
+
+20260715: New commissioning-only `[machine_time_sync_line]` section and
+`SYNC_LINE_TEST` command compare a direct primary-to-secondary GPIO timestamp
+with the USB-derived machine-time map. The capture is passive and cannot stop
+motion.
+
+20260715: RP2040 and STM32 USB FS firmware gained opt-in USB Start-of-Frame
+timestamp rings. `[timesync] usb_sof: True` uses matching hardware frame
+timestamps for discipline, enabling the 1 kHz interrupt for only a 10 ms
+window at each beacon and falling back to the host estimate if a frame is
+missed. New `[usb_sof_sync]` and `USB_SOF_TEST` commissioning support matches
+frame numbers across MCUs and calibrates their phase against a direct sync
+line.
+
 20260713: New optional config section `[helix_self_test]` and G-Code
 command `HELIX_SELF_TEST`: run the boards' built-in verification gates
 live through the protocol (firmware option `WANT_SELF_TEST`, on by

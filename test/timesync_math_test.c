@@ -7,6 +7,29 @@
 int
 main(void)
 {
+    // The discrete filter publishes its newly integrated base rate in the
+    // same sample as the proportional slew.  Exercise that exact recurrence
+    // with an initial 10us phase error.  The selected overdamped gains must
+    // decay without the alternating phase lobes seen with Ki=1/32.
+    int32_t phase = 640, rate_error = 0, minimum = phase;
+    uint8_t sign_changes = 0;
+    for (uint8_t i = 0; i < 80; i++) {
+        int32_t old_phase = phase;
+        int32_t integral = phase >> TIMESYNC_INTEGRAL_SHIFT;
+        rate_error -= integral;
+        phase += rate_error - (phase >> TIMESYNC_PROP_SHIFT);
+        if (phase < minimum)
+            minimum = phase;
+        if (old_phase && phase && (old_phase < 0) != (phase < 0))
+            sign_changes++;
+    }
+    // A rate integrator can create one small phase overshoot even with real,
+    // positive poles.  It must not ring through alternating lobes; the
+    // fixed-point tail is bounded by one integral quantization interval.
+    assert(sign_changes <= 1);
+    assert(minimum >= -80);
+    assert(phase >= -16 && phase <= 16);
+
     // Live Pico/EBB36 failure case: this must be a small negative
     // correction, not the -MAX_ADJ saturation seen with an unsigned limit.
     int32_t neg = timesync_err_to_adj(-4399, 11815309);

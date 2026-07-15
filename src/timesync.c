@@ -173,20 +173,17 @@ timesync_set_mapping(struct timesync_state *ts, uint32_t machine_ref
     irq_enable();
 }
 
-void
-command_sync_beacon_relay(uint32_t *args)
+static void
+timesync_ingest_sample(uint8_t seq, uint32_t m, uint32_t l, uint32_t now)
 {
     struct timesync_state *ts = &timesync;
-    uint8_t seq = args[0];
-    uint32_t m = args[1], l = args[2];
-    uint32_t now = timer_read_time();
     if (!(ts->flags & TS_ENABLED)) {
         // Receiving a relay marks this board a secondary
         ts->flags = TS_ENABLED;
         ts->rate = ts->rate_base = RATE_ONE;
     }
     if (ts->flags & TS_PRIMED) {
-        if (seq == ts->last_seq)
+        if (seq == ts->last_seq && m == ts->last_machine)
             // Duplicate relay
             return;
         if (ts->freewheel_ticks
@@ -215,15 +212,11 @@ command_sync_beacon_relay(uint32_t *args)
         // Out-of-order or repeated machine timestamp
         return;
     if (ts->prime_count < PRIME_TARGET) {
-        // Priming: measure over the full span since the first sample.
-        // Per-interval estimates over the 50ms host burst magnify USB
-        // timestamp jitter and can seed the discipline loop far from the
-        // known nominal clock ratio.
-        int32_t prime_dm = m - ts->prime_machine;
-        uint32_t prime_dl = l - ts->prime_local;
-        if (prime_dm > 0)
-            ts->rate_base = clamp_rate(
-                ((uint64_t)prime_dl << RATE_SHIFT) / prime_dm);
+        // Priming steps the offset while Class-0 traffic is gated.  Retain
+        // the host-supplied initial rate: the former 350ms rate estimate
+        // amplified a few microseconds of independent USB clock noise into
+        // >100us of post-startup phase error.  The disciplined
+        // loop refines the rate from steady 1Hz samples after priming.
         // Class-0 is not yet enabled, so stepping onto each priming sample
         // is harmless.
         timesync_set_mapping(ts, m, l, ts->rate_base);
@@ -236,13 +229,14 @@ command_sync_beacon_relay(uint32_t *args)
         uint32_t predicted = timesync_clock_to_local(m);
         int32_t err = l - predicted;
         int32_t adj = timesync_err_to_adj(err, dm);
-        // Integral: absorb 1/32 of the implied rate error per beacon
-        // (gains validated with 5us-sigma beacon stamping noise and 70ppm
-        // crystal mismatch; the host selects the Class-0 trust window)
+        // Integral: absorb 1/64 of the implied rate error per beacon.  Paired
+        // with the 1/4 proportional term this is slightly overdamped; 1/32
+        // produced a repeatable ~44-second phase oscillation in cross-MCU
+        // scope measurements even though ISR latency itself was stable.
         ts->rate_base = clamp_rate(
-            (int64_t)ts->rate_base + (adj >> 5));
+            (int64_t)ts->rate_base + (adj >> TIMESYNC_INTEGRAL_SHIFT));
         // Proportional: slew out a quarter of the offset per interval
-        int32_t slew = adj >> 2;
+        int32_t slew = adj >> TIMESYNC_PROP_SHIFT;
         int32_t max_slew = ts->rate_base / 2000;
         if (slew > max_slew)
             slew = max_slew;
@@ -270,8 +264,33 @@ command_sync_beacon_relay(uint32_t *args)
     ts->last_local = l;
     ts->beacon_rx_local = now;
 }
+
+void
+command_sync_beacon_relay(uint32_t *args)
+{
+    uint8_t seq = args[0];
+    uint32_t now = timer_read_time();
+    // Echo the secondary receipt timestamp.  The host serial layer attaches
+    // its command send and response receive times, producing a fresh
+    // symmetry-free RTT interval for this link on every beacon.  This is
+    // diagnostic evidence only; it does not alter the discipline filter or
+    // Class-0 gate.
+    sendf("sync_beacon_ack seq=%c local_rx=%u", seq, now);
+    timesync_ingest_sample(seq, args[1], args[2], now);
+}
 DECL_COMMAND_FLAGS(command_sync_beacon_relay, HF_IN_SHUTDOWN
                    , "sync_beacon_relay seq=%c machine_clock=%u local_est=%u");
+
+// Host-relayed pair of matching USB Start-of-Frame hardware timestamps. The
+// transport may deliver this command later; m and l already describe the same
+// captured frame, so delivery latency is irrelevant to the mapping sample.
+void
+command_sync_sof_relay(uint32_t *args)
+{
+    timesync_ingest_sample(args[0], args[1], args[2], timer_read_time());
+}
+DECL_COMMAND_FLAGS(command_sync_sof_relay, HF_IN_SHUTDOWN
+                   , "sync_sof_relay seq=%c machine_clock=%u local_clock=%u");
 
 void
 command_timesync_setup(uint32_t *args)

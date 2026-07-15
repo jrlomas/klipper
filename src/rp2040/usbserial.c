@@ -11,6 +11,7 @@
 #include "board/usb_cdc.h" // usb_notify_ep0
 #include "board/usb_cdc_ep.h" // USB_CDC_EP_BULK_IN
 #include "board/usbstd.h" // USB_ENDPOINT_XFER_INT
+#include "generic/usb_sof.h" // usb_sof_notify
 #include "hardware/regs/sysinfo.h" // SYSINFO_CHIP_ID_OFFSET
 #include "hardware/structs/iobank0.h" // iobank0_hw
 #include "hardware/structs/padsbank0.h" // padsbank0_hw
@@ -97,6 +98,23 @@ dpram_memset(void *s, int c, size_t n)
  * Interface
  ****************************************************************/
 
+static uint8_t usb_sof_enabled;
+
+static uint32_t
+usb_irq_mask(void)
+{
+    return (USB_INTE_BUFF_STATUS_BITS | USB_INTE_SETUP_REQ_BITS
+            | USB_INTE_BUS_RESET_BITS
+            | (usb_sof_enabled ? USB_INTE_DEV_SOF_BITS : 0));
+}
+
+void
+usb_sof_board_enable(uint8_t enable)
+{
+    usb_sof_enabled = enable;
+    usb_hw->inte = usb_irq_mask();
+}
+
 static uint32_t bulk_out_push_count;
 
 int_fast8_t
@@ -154,8 +172,7 @@ int_fast8_t
 usb_read_ep0_setup(void *data, uint_fast8_t max_len)
 {
     if (!(usb_hw->intr & USB_INTR_SETUP_REQ_BITS)) {
-        usb_hw->inte = (USB_INTE_BUFF_STATUS_BITS | USB_INTE_SETUP_REQ_BITS
-                        | USB_INTE_BUS_RESET_BITS);
+        usb_hw->inte = usb_irq_mask();
         return -1;
     }
     usb_dpram->ep_buf_ctrl[0].in = 0;
@@ -348,8 +365,13 @@ void
 USB_Handler(void)
 {
     uint32_t ints = usb_hw->ints;
+    if (ints & USB_INTS_DEV_SOF_BITS) {
+        uint32_t clock = timer_read_time();
+        uint16_t frame = usb_hw->sof_rd & USB_SOF_RD_COUNT_BITS;
+        usb_sof_notify(frame, clock);
+    }
     if (ints & USB_INTS_SETUP_REQ_BITS) {
-        usb_hw->inte = USB_INTE_BUFF_STATUS_BITS | USB_INTE_BUS_RESET_BITS;
+        usb_hw->inte = usb_irq_mask() & ~USB_INTE_SETUP_REQ_BITS;
         usb_notify_ep0();
     }
     if (ints & USB_INTS_BUFF_STATUS_BITS) {
@@ -421,8 +443,7 @@ usbserial_init(void)
 
     // Enable irqs
     usb_hw->sie_ctrl = USB_SIE_CTRL_EP0_INT_1BUF_BITS;
-    usb_hw->inte = (USB_INTE_BUFF_STATUS_BITS | USB_INTE_SETUP_REQ_BITS
-                    | USB_INTE_BUS_RESET_BITS);
+    usb_hw->inte = usb_irq_mask();
     armcm_enable_irq(USB_Handler, USBCTRL_IRQ_IRQn, 1);
 
     // Enable USB pullup

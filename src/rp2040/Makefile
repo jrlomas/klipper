@@ -20,7 +20,8 @@ src-y += generic/armcm_boot.c generic/armcm_irq.c
 src-y += generic/armcm_reset.c generic/crc16_ccitt.c
 src-$(CONFIG_MACH_RP2040) += rp2040/timer.c generic/timer_irq.c rp2040/bootrom.c
 src-$(CONFIG_MACH_RP2350) += generic/armcm_timer.c rp2040/rp2350_bootrom.c
-src-$(CONFIG_USBSERIAL) += rp2040/usbserial.c generic/usb_cdc.c rp2040/chipid.c
+src-$(CONFIG_USBSERIAL) += rp2040/usbserial.c generic/usb_cdc.c \
+    generic/usb_sof.c rp2040/chipid.c
 src-$(CONFIG_SERIAL) += rp2040/serial.c generic/serial_irq.c
 src-$(CONFIG_CANSERIAL) += rp2040/can.c rp2040/chipid.c ../lib/can2040/can2040.c
 src-$(CONFIG_CANSERIAL) += generic/canserial.c generic/canbus.c
@@ -28,6 +29,7 @@ src-$(CONFIG_CANSERIAL) += ../lib/fast-hash/fasthash.c
 src-$(CONFIG_USBCANBUS) += rp2040/can.c rp2040/chipid.c ../lib/can2040/can2040.c
 src-$(CONFIG_USBCANBUS) += generic/canserial.c generic/usb_canbus.c
 src-$(CONFIG_USBCANBUS) += ../lib/fast-hash/fasthash.c rp2040/usbserial.c
+src-$(CONFIG_USBCANBUS) += generic/usb_sof.c
 src-$(CONFIG_WANT_HARD_PWM) += rp2040/hard_pwm.c
 src-$(CONFIG_WANT_SPI) += rp2040/spi.c
 src-$(CONFIG_WANT_I2C) += rp2040/i2c.c

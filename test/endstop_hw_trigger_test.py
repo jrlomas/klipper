@@ -260,12 +260,27 @@ def test_polling_with_shadow_observer():
     print("PASS: passive ISR timestamps edge while polling owns stop")
 
 
+def test_commissioning_observer_api_with_hw_homing_enabled():
+    mcu, e = make_endstop(has_trigger=True, want_hw=True)
+    assert e.has_edge_observer()
+    e.edge_observe_start(1.0)
+    state = e.edge_observe_query()
+    e.edge_observe_disarm()
+    names = sent_names(mcu)
+    assert names == ["trigger_source_observe", "trigger_source_query",
+                     "trigger_source_disarm"], names
+    assert state['flags'] & mcu_mod.TRIGGER_SOURCE_TRIGGERED
+    assert state['clock64'] == mcu.trigger_clock
+    print("PASS: commissioning API observes without owning homing trsync")
+
+
 def main():
     test_hw_trigger_used()
     test_release_move_uses_polled()
     test_fallback_when_absent()
     test_disabled_opt_out()
     test_polling_with_shadow_observer()
+    test_commissioning_observer_api_with_hw_homing_enabled()
     print("ALL PASS")
 
 

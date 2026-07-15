@@ -40,12 +40,28 @@ class PrinterMultiPin:
     def setup_start_value(self, start_value, shutdown_value):
         for mcu_pin in self.mcu_pins:
             mcu_pin.setup_start_value(start_value, shutdown_value)
+    def setup_machine_time(self):
+        for mcu_pin in self.mcu_pins:
+            mcu_pin.setup_machine_time()
+    def get_mcus(self):
+        return [mcu_pin.get_mcu() for mcu_pin in self.mcu_pins]
     def setup_cycle_time(self, cycle_time, hardware_pwm=False):
         for mcu_pin in self.mcu_pins:
             mcu_pin.setup_cycle_time(cycle_time, hardware_pwm)
     def set_digital(self, print_time, value):
         for mcu_pin in self.mcu_pins:
             mcu_pin.set_digital(print_time, value)
+    def set_digital_machine_time(self, print_time, machine_clock, value):
+        for mcu_pin in self.mcu_pins:
+            mcu_pin.set_digital_machine_time(
+                print_time, machine_clock, value)
+    def query_digital_timing(self):
+        states = []
+        for mcu_pin in self.mcu_pins:
+            query = getattr(mcu_pin, 'query_digital_timing', None)
+            if query is not None:
+                states.extend(query())
+        return states
     def next_aligned_print_time(self, print_time, allow_early=0.):
         return print_time
     def set_pwm(self, print_time, value):

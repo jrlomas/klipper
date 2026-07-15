@@ -21,7 +21,8 @@ class FakeCommand:
 
 
 class FakeMCU:
-    frequency = 1000000
+    def __init__(self, frequency=1000000):
+        self.frequency = frequency
 
     def seconds_to_clock(self, seconds):
         return int(round(seconds * self.frequency))
@@ -31,6 +32,14 @@ class FakeMCU:
 
 
 class FakePrinter:
+    def __init__(self, machine_mcu=None):
+        self.machine_mcu = machine_mcu
+
+    def lookup_object(self, name, default=None):
+        if name == 'mcu' and self.machine_mcu is not None:
+            return self.machine_mcu
+        return default
+
     @staticmethod
     def command_error(message):
         return RuntimeError(message)
@@ -50,8 +59,8 @@ def test_pure_plan_corrects_quantization_and_lands_close():
 
 def make_pwm():
     pwm = TrajectoryPWM.__new__(TrajectoryPWM)
-    pwm.mcu = FakeMCU()
-    pwm.printer = FakePrinter()
+    pwm.mcu = FakeMCU(64000000)
+    pwm.printer = FakePrinter(FakeMCU(12000000))
     pwm.oid = 7
     pwm.sample_time = .001
     pwm.need_rebase = True
@@ -66,12 +75,13 @@ def test_feed_preflights_then_rebases_queues_and_holds():
     pwm = make_pwm()
     plan = pwm.feed_value_trajectory(
         2., .003, lambda t: .25 + t * 100.)
-    assert pwm.rebase_cmd.sent == [[7, 2000000, round(.25 * SUBUNITS)]]
+    assert pwm.rebase_cmd.sent == [[7, 24000000, round(.25 * SUBUNITS)]]
     assert len(pwm.queue_cmd.sent) == 3
-    assert pwm.hold_cmd.sent == [[7, 1000]]
+    assert all(cmd[2] == 12000 for cmd in pwm.queue_cmd.sent)
+    assert pwm.hold_cmd.sent == [[7, 12000]]
     assert pwm.need_rebase is False and pwm.last_plan is plan
-    print("PASS: feed emits one rebase, the preflighted spans, "
-          "and a terminal hold")
+    print("PASS: feed emits its rebase, spans, and hold in the shared"
+          " primary-MCU machine-clock domain")
 
 
 def test_bad_callback_emits_nothing():

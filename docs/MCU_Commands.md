@@ -200,6 +200,14 @@ only of interest to developers looking to gain insight into Helix.
   Otherwise, 'on_ticks' should be either 0 (for low voltage) or 1 (for
   high voltage).
 
+* `queue_machine_digital_out oid=%c clock=%u on_ticks=%u` : This HELIX
+  Class-0 variant has the same output semantics, but `clock` is in the
+  primary MCU's machine-time domain. A disciplined secondary converts that
+  timestamp through its on-board mapping exactly once before scheduling the
+  edge; the primary mapping is the identity. The command fails closed if
+  machine-time discipline is not converged. Firmware exposes this command
+  when trajectory/machine-time support is built.
+
 * `queue_pwm_out oid=%c clock=%u value=%hu` : Schedules a change to a
   hardware PWM output pin. See the 'queue_digital_out' and
   'config_pwm_out' commands for more info.
@@ -439,7 +447,16 @@ relays its beacons so secondary boards can discipline their clocks
 
 * `sync_beacon_relay seq=%c machine_clock=%u local_est=%u` : Delivers a
   relayed beacon to a secondary - the primary's 'machine_clock' and the
-  host's estimate of the secondary's local clock at that instant.
+  host's estimate of the secondary's local clock at that instant. The
+  secondary captures its receipt clock and responds with
+  "sync_beacon_ack seq=%c local_rx=%u". Combined with the host serial
+  layer's command-send and response-receive timestamps, this exposes the
+  current secondary-link RTT interval without changing the discipline gate.
+
+* `sync_sof_relay seq=%c machine_clock=%u local_clock=%u` : Delivers an exact
+  pair of primary and secondary clocks captured from the same USB
+  Start-of-Frame number. Because both clocks are hardware-event timestamps,
+  host command-delivery latency after capture does not affect the pair.
 
 * `timesync_setup freewheel_ticks=%u converge_window=%u nominal_rate=%u` :
   Starts a new secondary discipline epoch with its freewheel budget,
@@ -482,6 +499,22 @@ without host polling (FD-0001
 
 * `trigger_source_query oid=%c` : Generates a "trigger_source_state
   oid=%c flags=%c clock=%u" response with the latest event state.
+
+### USB Start-of-Frame timestamps
+
+RP2040 USB-device and STM32 USB FS builds expose an opt-in commissioning ring
+of USB Start-of-Frame timestamps:
+
+* `usb_sof_enable enable=%c` : Clears the 32-entry timestamp ring and enables
+  or disables the controller's device-SOF interrupt. Normal operation leaves
+  it disabled unless `[timesync] usb_sof: True` is active; that mode enables
+  it for only a brief window at each approximately 1 Hz beacon, so the 1 kHz
+  interrupt has no standing runtime cost.
+
+* `usb_sof_query frame=%hu` : Requests one retained 11-bit USB frame number;
+  `65535` requests the newest sample. Generates "usb_sof_state
+  requested=%hu found=%c frame=%hu clock=%u count=%u". The monotonically
+  increasing count distinguishes a fresh frame from a repeated query.
 
 ### Board syscall API commands
 

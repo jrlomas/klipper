@@ -36,6 +36,10 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | Command | Summary |
 | --- | --- |
 | `TIMESYNC_STATUS` | Per-secondary beacon-discipline state: converged?, current sync error (µs), clock-rate correction (ppm). |
+| `QUERY_PIN_TIMING PIN=<name>` | Commissioning readback of each target MCU's scheduled and actual diagnostic GPIO-write clocks. |
+| `SET_PIN_LEGACY_TIMING PIN=<name> VALUE=<0\|1>` | On a machine-time output, schedule one comparator edge through original Klipper per-MCU `print_time` conversion for scope comparison. |
+| `SYNC_LINE_TEST [SAMPLES=<count>]` | With `[machine_time_sync_line]`, compare a direct primary-to-secondary edge timestamp with the current USB clock map. |
+| `USB_SOF_TEST [SAMPLES=<count>]` | With `[usb_sof_sync]`, match USB frame timestamps across two MCUs and calibrate them against the direct sync line. |
 
 ### Structured trace — `[atlas_trace]`
 | Command | Summary |
@@ -72,7 +76,10 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `[trajectory_pwm <name>]` | Sampled PWM/DAC trajectory actuator; supports direct segments and a bounded, preflighted scalar value-function feed. |
 | `[failure_recovery]` | Enables pause-and-hold and the recovery commands. |
 | `[helix_status]` | Enables `HELIX_STATUS` (also auto-loaded with the trajectory subsystem). |
-| `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`). |
+| `[timesync]` | Machine-time beacon discipline (`beacon_interval`, `freewheel_time`, `converge_window`); `usb_sof: True` uses matching USB hardware-frame timestamps when supported. |
+| `[output_pin <name>] machine_time: True` | Schedule a digital edge in the primary MCU's machine-time domain; combine with `[multi_pin]` for a synchronized cross-board output. |
+| `[machine_time_sync_line]` | Commissioning-only direct wire from a primary output to a passive secondary edge timestamp. |
+| `[usb_sof_sync]` | Commissioning-only matching USB Start-of-Frame timestamps, calibrated against `[machine_time_sync_line]`. |
 | `[atlas_trace]` | Structured per-MCU trace collection, subsystem levels, bounded streaming, and drop accounting. |
 | `[asyncio_bridge]` | The asyncio↔reactor seam (`start_timeout`, `stop_timeout`). |
 | `[helix_self_test]` | Built-in test mode: `HELIX_SELF_TEST` plus `on_connect`/`required` to run the boards' live verification gates at every connect. |
