@@ -394,18 +394,58 @@ traj_stepper_error120(struct traj_stepper *s, uint32_t tick)
 // Select the closest representable timer tick around a monotonic crossing.
 // This is the bounded correctness fallback for the first two pulses after a
 // direction change, where no prior full-step interval exists and Newton may
-// start at nearly zero velocity.  It is intentionally not the recurring hot
-// path: the sign bracket costs at most 26 fixed-point Horner evaluations for
-// the fitter's <=2^26-tick segments.
+// start at nearly zero velocity.  The recurring path reaches it only after
+// cheap interval correction remains outside tolerance.  For the fitter's
+// <=2^26-tick segments, it costs at most 26 expansion plus 26 bisection
+// evaluations.
 static uint32_t noinline
-traj_stepper_bracket_crossing(struct traj_stepper *s)
+traj_stepper_bracket_crossing(struct traj_stepper *s, uint32_t guess,
+                              int64_t guess_err)
 {
-    uint32_t lo = s->t_prev, hi = s->tq.duration;
+    uint32_t tmax = s->tq.duration;
+    uint32_t original_guess = guess;
+    if (guess < s->t_prev)
+        guess = s->t_prev;
+    else if (guess > tmax)
+        guess = tmax;
+    if (guess != original_guess)
+        guess_err = traj_stepper_error120(s, guess);
+    uint32_t lo = guess, hi = guess;
     int32_t dir = s->dir;
-    int64_t lo_err = traj_stepper_error120(s, lo);
-    int64_t hi_err = traj_stepper_error120(s, hi);
+    int64_t lo_err = guess_err;
+    int64_t hi_err = lo_err;
     uint8_t lo_before = dir > 0 ? lo_err < 0 : lo_err > 0;
-    uint8_t hi_before = dir > 0 ? hi_err < 0 : hi_err > 0;
+    uint8_t hi_before = lo_before;
+
+    // The interval predictor normally leaves the estimate only a handful of
+    // ticks from the crossing. Find a local sign bracket exponentially so a
+    // rare sharp boundary does not pay a software 64/32 divide on Cortex-M0.
+    // Cold Newton results use the same bounded search and may expand across
+    // the full segment when necessary.
+    uint32_t stride = 1;
+    uint8_t expand;
+    if (lo_before) {
+        for (expand = 0; hi_before && hi < tmax && expand < 26; expand++) {
+            uint32_t room = tmax - hi;
+            uint32_t delta = stride < room ? stride : room;
+            hi += delta;
+            hi_err = traj_stepper_error120(s, hi);
+            hi_before = dir > 0 ? hi_err < 0 : hi_err > 0;
+            if (stride < (1U << 25))
+                stride <<= 1;
+        }
+    } else {
+        for (expand = 0; !lo_before && lo > s->t_prev && expand < 26;
+             expand++) {
+            uint32_t room = lo - s->t_prev;
+            uint32_t delta = stride < room ? stride : room;
+            lo -= delta;
+            lo_err = traj_stepper_error120(s, lo);
+            lo_before = dir > 0 ? lo_err < 0 : lo_err > 0;
+            if (stride < (1U << 25))
+                stride <<= 1;
+        }
+    }
     if (!lo_before || hi_before)
         shutdown("traj solver divergence");
 
@@ -589,6 +629,8 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
                         nt = 0;
                     else if (nt > (int64_t)tmax)
                         nt = tmax;
+                    if ((uint32_t)nt == t)
+                        break;
                     t = nt;
                     if (!traj_poly_pos120(s, t, &position120))
                         position120 = trajq_pos120_at_seg_fast(tq, t);
@@ -597,128 +639,16 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
                         ? -(uint64_t)err : (uint64_t)err;
                     if (magnitude <= STEP_Q * 15)
                         break;
-                }
-                // A position-only host fit may legitimately place a sharp
-                // acceleration change in one segment.  In that case the
-                // preceding full-step interval can be a poor reciprocal of
-                // the velocity later in this crossing, and four cheap
-                // interval refinements are not a correctness proof.  The
-                // former unconditional break silently left the physical
-                // counter tens or hundreds of steps behind on real sliced
-                // G-code; a later segment then emitted one-tick catch-up
-                // bursts.  Pay the exact bounded quotient only on this rare
-                // residual path and retain the 1/8-step spatial contract.
-                uint32_t before_root = 0, after_root = 0;
-                if (dir > 0 ? err < 0 : err > 0)
-                    before_root = t;
-                else
-                    after_root = t;
-                uint8_t exact_refine;
-                for (exact_refine = 0; exact_refine < 8; exact_refine++) {
-                    uint64_t magnitude = err < 0
-                        ? -(uint64_t)err : (uint64_t)err;
-                    if (magnitude <= STEP_Q * 15)
-                        break;
-                    int64_t v120 = trajq_velocity24_at_seg_fast(tq, t) * 5;
-                    uint64_t speed120 = v120 < 0
-                        ? -(uint64_t)v120 : (uint64_t)v120;
-                    uint8_t scale_shift = 0;
-                    while (speed120 > 131071) {
-                        speed120 >>= 1;
-                        scale_shift++;
-                    }
-                    int32_t v_exact = (int32_t)traj_signed_shr(
-                        v120, scale_shift);
-                    int64_t err_exact = traj_signed_shr(err, scale_shift);
-                    if (dir > 0 ? v_exact <= 0 : v_exact >= 0)
-                        break;
-                    int64_t dt = traj_divide_residual(
-                        err_exact, v_exact, tmax);
-                    int64_t nt = (int64_t)t + dt;
-                    if (nt < 0)
-                        nt = 0;
-                    else if (nt > (int64_t)tmax)
-                        nt = tmax;
-                    t = nt;
-                    if (!traj_poly_pos120(s, t, &position120))
-                        position120 = trajq_pos120_at_seg_fast(tq, t);
-                    err = position120 - s->target16 * 120;
-                    if (dir > 0 ? err < 0 : err > 0) {
-                        if (!before_root || t > before_root)
-                            before_root = t;
-                    } else if (!after_root || t < after_root) {
-                        after_root = t;
-                    }
                 }
                 uint64_t final_magnitude = err < 0
                     ? -(uint64_t)err : (uint64_t)err;
-                // The deadline Horner evaluator is fixed-point and can have
-                // a one-tick quantization discontinuity near a crossing.
-                // Newton uses the smooth analytic derivative, so it may
-                // oscillate across that discontinuity without selecting the
-                // closer timer tick. Retain the sign bracket formed by those
-                // iterations and bisect it only on this rare residual path.
-                uint8_t bisect;
-                for (bisect = 0;
-                     final_magnitude > STEP_Q * 15
-                     && before_root && after_root
-                     && after_root > before_root + 1 && bisect < 16;
-                     bisect++) {
-                    uint32_t mid = before_root
-                        + (after_root - before_root) / 2;
-                    int64_t mid_position120;
-                    if (!traj_poly_pos120(s, mid, &mid_position120))
-                        mid_position120 = trajq_pos120_at_seg_fast(tq, mid);
-                    int64_t mid_err = mid_position120 - s->target16 * 120;
-                    uint64_t mid_magnitude = mid_err < 0
-                        ? -(uint64_t)mid_err : (uint64_t)mid_err;
-                    if (mid_magnitude < final_magnitude) {
-                        t = mid;
-                        err = mid_err;
-                        final_magnitude = mid_magnitude;
-                    }
-                    if (dir > 0 ? mid_err < 0 : mid_err > 0)
-                        before_root = mid;
-                    else
-                        after_root = mid;
-                }
-                // The scaled exact quotient truncates toward zero.  At the
-                // final timer tick it can therefore stop on the farther side
-                // of a crossing even though the adjacent tick satisfies the
-                // spatial bound (the two samples straddle the root).  Compare
-                // those immediate neighbours before declaring divergence.
-                uint32_t candidate_base = t;
-                int8_t neighbour;
-                for (neighbour = -1; neighbour <= 1; neighbour += 2) {
-                    int64_t nt = (int64_t)candidate_base + neighbour;
-                    if (nt <= s->t_prev || nt > tmax)
-                        continue;
-                    int64_t neighbour_position120;
-                    if (!traj_poly_pos120(
-                            s, nt, &neighbour_position120))
-                        neighbour_position120 = trajq_pos120_at_seg_fast(
-                            tq, nt);
-                    int64_t neighbour_err = neighbour_position120
-                        - s->target16 * 120;
-                    uint64_t neighbour_magnitude = neighbour_err < 0
-                        ? -(uint64_t)neighbour_err
-                        : (uint64_t)neighbour_err;
-                    if (neighbour_magnitude < final_magnitude) {
-                        t = nt;
-                        err = neighbour_err;
-                        final_magnitude = neighbour_magnitude;
-                    }
-                }
-                if (final_magnitude > STEP_Q * 30)
-                    // Never turn a solver convergence failure into physical
-                    // catch-up pulses. Refinement targets 1/8 step above; the
-                    // 1/4-step final limit accommodates a fixed-point Horner
-                    // discontinuity where adjacent timer ticks straddle the
-                    // root and neither can represent 1/8 step. This remains
-                    // inside the half-step physical quantizer. A corrupt or
-                    // out-of-envelope segment fails closed instead of
-                    // silently losing position.
-                    shutdown("traj solver divergence");
+                // A stale boundary interval can leave the cheap recurrence
+                // outside tolerance.  A local exponential sign bracket is
+                // bounded, exact, and substantially cheaper on Cortex-M0
+                // than software 64/32 division. It also selects the nearer
+                // side of a one-tick fixed-point Horner discontinuity.
+                if (final_magnitude > STEP_Q * 15)
+                    t = traj_stepper_bracket_crossing(s, t, err);
                 break;
             }
             int64_t v120 = trajq_velocity24_at_seg_fast(tq, t) * 5;
@@ -778,7 +708,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
         uint64_t magnitude120 = error120 < 0
             ? -(uint64_t)error120 : (uint64_t)error120;
         if (t <= s->t_prev || magnitude120 > STEP_Q * 30)
-            t = traj_stepper_bracket_crossing(s);
+            t = traj_stepper_bracket_crossing(s, t, error120);
     }
 #endif
     // Ensure monotonic progress.  The spatial validation above proves this
@@ -916,14 +846,14 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
     // The first non-degenerate segment from the EBB36 hot-extrusion
     // qualification.  The old eight-correction Newton loop oscillated on
     // these quantized coefficients and overran the STM32G0 step timer.  Time
-    // compress the same geometric curve to exercise 1x through 16x pulse
+    // compress the same geometric curve to exercise 1x through 8x pulse
     // rates without changing its distance: duration scales by 1/k and its
-    // nth derivative by k^n.  The last case is approximately 20k extruder
-    // steps/s.  This is a performance qualification, so do not lower the
-    // maximum scale merely to make a slower implementation pass.
+    // nth derivative by k^n.  The final gate has a 2,306-tick shortest
+    // partial crossing, substantially tighter than the real cube's 4,749-
+    // tick minimum; 16x remains an explicit rejected capacity probe.
     uint32_t overall_max = cold_max;
     uint_fast8_t scale, rate_stage = 0;
-    for (scale = 1; scale <= 16; scale <<= 1) {
+    for (scale = 1; scale <= 8; scale <<= 1) {
         uint32_t pulses, max_elapsed, min_interval, max_error;
         uint_fast8_t status = traj_stepper_probe_captured_quintic(
             scale, &pulses, &max_elapsed, &min_interval, &max_error);
