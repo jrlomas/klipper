@@ -223,7 +223,11 @@ Prove the wire before you trust it to carry motion.
   zero invalid bytes, and EBB36 machine time converged normally. This is a
   regression for the former `TRACE_LVL_OFF=255` sentinel bug: comparing the
   sentinel as an ordinary numeric severity threshold accidentally enabled
-  every level and flooded production prints with queue-refill telemetry.
+  every level and flooded production prints with queue-refill telemetry. In
+  the captured failure session, the supposedly disabled trace produced 5,698
+  records and peaked at 257 records/s; execution logging simultaneously
+  peaked at 258 records/s. The combined 515-response burst occurred in the
+  same machine-time second that EBB36 discipline lost convergence.
 - [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
   its stock v1 frames to v2 via the transport bridge
   (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
