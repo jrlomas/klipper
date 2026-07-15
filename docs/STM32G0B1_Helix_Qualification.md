@@ -271,8 +271,17 @@ wrap-safe rebase/horizon comparison as firmware, so the rejected legacy stream
 fails offline while the corrected stream passes. A full 99-layer replay emits
 422 E rebases, 31,904 E quintics, and 423 local E holds; it expands 1,135,901
 E pulses with a 3,909-tick minimum interval and no interval at or below 64
-ticks. Exact Pico and EBB36 target builds pass. Flashing, onboard tests, and a
-new supervised print remain the acceptance gates for this revision.
+ticks. Exact Pico and EBB36 target builds pass. The resulting board evidence
+is recorded below.
+
+Exact clean-commit `8ca65c37` images were signed, archived, and flashed to the
+Pico and EBB36. Klippy identified 204 and 210 commands respectively, both at
+version `8ca65c37` and ABI `27141a58f61f9fbc`. All five onboard tests passed
+on both MCUs (`crc_wire`, `timer_monotonic`, `timer_rate`, `ram_pattern`, and
+`traj_kernel`), the Pico reported its 200 MHz core clock, and EBB36 Class-0
+discipline reconverged. The printer returned to `ready`. A new supervised
+physical print remains the final acceptance gate; no heater target was issued
+as part of this qualification.
 
 ## Experiment 2: on-silicon deadline scaling
 

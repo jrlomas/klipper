@@ -70,8 +70,13 @@ pass.
   local E holds and no E interval at or below 64 ticks. Exact Pico and EBB36
   target builds pass.
   The rejected print-long E-stream workaround physically over-extruded and
-  `75f03262` is not considered physically qualified; the new hold fix still
-  requires flashing, onboard tests, and a supervised hot print.
+  `75f03262` is not considered physically qualified; the new hold fix required
+  fresh flashing, onboard tests, and a supervised hot print. Exact clean
+  commit `8ca65c37` images were subsequently signed, archived, and flashed to
+  both boards. Each identified the expected ABI, passed all five onboard
+  tests, and returned Klipper to `ready` after EBB36 discipline reconverged.
+  The remaining gate is a supervised physical print; qualification did not
+  issue a heater target.
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
   unsigned-image refusal, and bad-signature rejection.
 * Static datagram FEC uses bounded pair blocks: tests drop either the first or
