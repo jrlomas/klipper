@@ -773,7 +773,7 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
     // tick pulses at the start of an otherwise ordinary G-code segment.
     // Validate its result and use a bounded monotonic bracket when necessary.
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
-    if (tq->seg_flags & TSEG_POLY_MASK) {
+    if ((tq->seg_flags & TSEG_POLY_MASK) && !s->step_interval) {
         int64_t error120 = traj_stepper_error120(s, t);
         uint64_t magnitude120 = error120 < 0
             ? -(uint64_t)error120 : (uint64_t)error120;
