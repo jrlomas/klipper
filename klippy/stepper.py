@@ -383,21 +383,28 @@ class MCU_stepper:
             printer = self._mcu.get_printer()
             motion_queuing = printer.lookup_object('motion_queuing')
             motion_queuing.register_flush_callback(self._check_active)
+    def note_active(self, print_time):
+        # Trajectory steppers bypass itersolve_generate_steps(), which is the
+        # legacy path that normally advances the activity detector used by
+        # _check_active().  Let an alternate motion generator report the
+        # exact start of physical activity so enable pins and driver state
+        # callbacks are scheduled before its first MCU-side trajectory.
+        if not self._active_callbacks:
+            return
+        printer = self._mcu.get_printer()
+        motion_queuing = printer.lookup_object('motion_queuing')
+        motion_queuing.unregister_flush_callback(self._check_active)
+        cbs = self._active_callbacks
+        self._active_callbacks = []
+        for cb in cbs:
+            cb(print_time)
     def _check_active(self, must_flush_time, max_step_gen_time):
         sk = self._stepper_kinematics
         ret = self._itersolve_check_active(sk, max_step_gen_time)
         if not ret:
             # Stepper motor still not active
             return
-        # Motor is active, disable future checking
-        printer = self._mcu.get_printer()
-        motion_queuing = printer.lookup_object('motion_queuing')
-        motion_queuing.unregister_flush_callback(self._check_active)
-        cbs = self._active_callbacks
-        self._active_callbacks = []
-        # Invoke callbacks
-        for cb in cbs:
-            cb(ret)
+        self.note_active(ret)
     def is_active_axis(self, axis):
         ffi_main, ffi_lib = chelper.get_ffi()
         a = axis.encode()

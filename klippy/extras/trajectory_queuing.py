@@ -727,6 +727,13 @@ class TrajectoryStepper:
             raise self.mcu.error(
                 "Machine-time discipline for %s is not converged; refusing"
                 " trajectory Class-0 traffic" % (self.mcu.get_name(),))
+        if active_time:
+            # The legacy stepper-enable path learns about motion from
+            # itersolve_generate_steps().  Trajectory fitting bypasses that
+            # pulse generator, so announce the same activity boundary before
+            # sending the first curve (and before a TMC init can collide with
+            # live trajectory execution on a secondary MCU).
+            self.mcu_stepper.note_active(active_time)
         if not self.anchored:
             if not active_time:
                 return
@@ -782,6 +789,10 @@ class TrajectoryStepper:
                     "Machine-time discipline for %s is not converged;"
                     " refusing trajectory Class-0 traffic"
                     % (self.mcu.get_name(),))
+            activity_start = (self.ffi_lib.segfit_get_activity_start(
+                self.segfit) if has_activity else None)
+            if activity_start is not None:
+                self.mcu_stepper.note_active(activity_start)
             if not self.anchored:
                 if not has_activity:
                     # Nothing through this generation horizon can move the
@@ -796,9 +807,7 @@ class TrajectoryStepper:
                 # motion; skipping them would turn their initial displacement
                 # into a position rebase. segfit_check_activity() also extends
                 # the corresponding post-active tail below.
-                anchor_time = self.ffi_lib.segfit_get_activity_start(
-                    self.segfit)
-                self._anchor(anchor_time)
+                self._anchor(activity_start)
             activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
                             if has_activity else from_time)
             fit_end = min(gen_time, activity_end)

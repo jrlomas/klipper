@@ -217,8 +217,42 @@ class FakeStepperKinematics:
 
 
 class FakeMCUStepper:
+    def __init__(self):
+        self.active_times = []
+
     def get_stepper_kinematics(self):
         return FakeStepperKinematics()
+
+    def note_active(self, print_time):
+        self.active_times.append(print_time)
+
+
+def test_stepper_activity_notification_is_one_shot():
+    unregistered = []
+
+    class MotionQueuing:
+        def unregister_flush_callback(self, callback):
+            unregistered.append(callback)
+
+    class Printer:
+        def lookup_object(self, name):
+            assert name == 'motion_queuing'
+            return MotionQueuing()
+
+    class StepperMCU:
+        def get_printer(self):
+            return Printer()
+
+    stepper = klippy_stepper.MCU_stepper.__new__(
+        klippy_stepper.MCU_stepper)
+    stepper._mcu = StepperMCU()
+    called = []
+    stepper._active_callbacks = [called.append]
+    stepper.note_active(7.25)
+    stepper.note_active(8.5)
+    assert called == [7.25]
+    assert unregistered == [stepper._check_active]
+    assert stepper._active_callbacks == []
 
 
 class GuardFFI:
@@ -479,7 +513,7 @@ def test_trajectory_anchor_starts_at_activity():
         trajectory_queuing.TrajectoryStepper)
     stepper.owner = SyncedOwner()
     stepper.mcu = FakeMCU()
-    stepper.mcu_stepper = FakeMCUStepper()
+    mcu_stepper = stepper.mcu_stepper = FakeMCUStepper()
     ffi_lib = stepper.ffi_lib = AnchorFFI(12.5)
     stepper.segfit = object()
     stepper.anchored = False
@@ -493,6 +527,7 @@ def test_trajectory_anchor_starts_at_activity():
     stepper._anchor = anchor
     stepper.flush(13., 13.4)
     assert anchors == [12.5]
+    assert mcu_stepper.active_times == [12.5]
     assert ffi_lib.checked_to == [13.4]
     assert ffi_lib.generated_to == [13.4]
     assert ffi_lib.finalized == 1
@@ -532,6 +567,99 @@ def test_ordinary_axis_move_ends_with_hold_before_synchronous_wait():
     assert ffi_lib.generated_to == [10.2]
     assert holds == [True]
     assert not stepper.anchored
+
+
+def test_trajectory_activity_enables_stepper_before_anchor():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    mcu_stepper = stepper.mcu_stepper = FakeMCUStepper()
+    stepper.ffi_lib = DisconnectedWindowsFFI([(20., 20.2)])
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+    ordering = []
+
+    def note_active(print_time):
+        ordering.append(('enable', print_time))
+
+    def anchor(print_time):
+        ordering.append(('anchor', print_time))
+        stepper.ffi_lib.gen_time = print_time
+        stepper.anchored = True
+
+    mcu_stepper.note_active = note_active
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = lambda *args: True
+    stepper._send_segs = lambda count: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    stepper.flush(20., 20.4)
+    assert ordering[:2] == [('enable', 20.), ('anchor', 20.)]
+
+
+def test_inflight_pause_retract_does_not_reinitialize_tmc():
+    class MotionQueuing:
+        def __init__(self):
+            self.unregistered = []
+
+        def unregister_flush_callback(self, callback):
+            self.unregistered.append(callback)
+
+    motion_queuing = MotionQueuing()
+
+    class Printer:
+        def lookup_object(self, name):
+            assert name == 'motion_queuing'
+            return motion_queuing
+
+    class StepperMCU:
+        def get_printer(self):
+            return Printer()
+
+    mcu_stepper = klippy_stepper.MCU_stepper.__new__(
+        klippy_stepper.MCU_stepper)
+    mcu_stepper._mcu = StepperMCU()
+    mcu_stepper._stepper_kinematics = FakeStepperKinematics()
+    ordering = []
+    mcu_stepper._active_callbacks = [
+        lambda print_time: ordering.append(('tmc_init', print_time))]
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = mcu_stepper
+    ffi_lib = stepper.ffi_lib = DisconnectedWindowsFFI(
+        [(30., 30.2), (31., 31.15)])
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+
+    def anchor(print_time):
+        ordering.append(('anchor', print_time))
+        ffi_lib.gen_time = print_time
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = lambda *args: True
+    stepper._send_segs = lambda count: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+
+    # First flush models the already-running print. The enable/TMC callback
+    # must be consumed before the first curve is anchored.
+    stepper.flush(30., 30.4)
+    assert ordering[:2] == [('tmc_init', 30.), ('anchor', 30.)]
+
+    # A later disconnected extrusion island models PAUSE's retract. It gets
+    # its own trajectory anchor, but must not trigger a late TMC init/read in
+    # the middle of the EBB36 curve.
+    stepper.flush(31., 31.4)
+    assert ordering == [
+        ('tmc_init', 30.), ('anchor', 30.), ('anchor', 31.)]
+    assert len(motion_queuing.unregistered) == 1
 
 
 def test_zero_scan_window_keeps_homing_drip_streaming_behavior():
@@ -1006,6 +1134,8 @@ def main():
     print("PASS: relay regression suppresses noisy endpoint estimates")
     test_move_preflight_rejects_unsynced_secondary_before_lookahead()
     print("PASS: unconverged secondary moves fail before lookahead")
+    test_stepper_activity_notification_is_one_shot()
+    print("PASS: explicit stepper activity notification is one-shot")
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
     test_trajectory_anchor_starts_at_activity()
@@ -1014,6 +1144,10 @@ def main():
     test_ordinary_axis_move_ends_with_hold_before_synchronous_wait()
     print("PASS: ordinary-axis motion ends with a hold before a"
           " synchronous wait")
+    test_trajectory_activity_enables_stepper_before_anchor()
+    print("PASS: trajectory activity enables its stepper before anchoring")
+    test_inflight_pause_retract_does_not_reinitialize_tmc()
+    print("PASS: an in-flight PAUSE retract does not reinitialize its TMC")
     test_zero_scan_window_keeps_homing_drip_streaming_behavior()
     print("PASS: homing drip retains incremental streaming behavior")
     test_trajectory_anchor_includes_kinematic_scan_preroll()
