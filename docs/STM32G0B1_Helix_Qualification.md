@@ -334,6 +334,33 @@ coverage proves both primary and mixed-clock rebases retain their requested
 clock and horizon validation without the late transmission barrier. The next
 physical repeat remains the acceptance gate.
 
+### Experiment 1g: late-visible island inside a committed hold
+
+The following physical repeat reached 48.7% of the same cube and commanded
+570.5 mm of filament without another MCU timer deadline, validating Experiment
+1f. The host then stopped before transmission because a new extruder rebase at
+local clock 35,867,360,686 preceded its recorded immutable horizon
+35,867,364,943 by 4,257 EBB ticks (66.5 us). Both USB links were clean and the
+EBB remained responsive; `Exception in flush_handler` was the host's wrapper
+around this explicit overlap rejection.
+
+The preceding flush had already transmitted the normal 1 ms terminal hold
+before the later pressure-advance island became visible. That command cannot
+be recalled. For an overlap bounded by the terminal-hold duration, the only
+coherent timeline is to retain the hold and begin the newly discovered island
+at its exact end. The host now converts the committed machine and local
+horizons back to print time, advances by any rounding tick still required,
+samples the trapq-derived E position at that adjusted instant, and uses the
+same instant for the rebase and fitter anchor. An overlap greater than 1 ms is
+still rejected as a genuine planner error rather than silently dropping
+motion.
+
+The physical 4,257-tick vector is a permanent mixed-clock regression. A 55
+layer, 100% sliced-G-code replay through and beyond the failed region produces
+194 E rebases, 195 local holds, and 568,122 E pulses. Its minimum E interval is
+4,721 ticks and no interval is at or below 64 ticks. A further supervised run
+remains the hardware acceptance gate.
+
 ## Experiment 2: on-silicon deadline scaling
 
 `traj_stepper_test_quintic_deadline()` runs inside `HELIX_SELF_TEST`, so it

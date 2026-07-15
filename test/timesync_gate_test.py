@@ -1053,6 +1053,67 @@ def test_secondary_rebase_uses_immutable_local_horizon():
     assert stepper.rebase_min_execution_clock == 0
 
 
+def test_late_visible_island_clips_to_committed_hold_horizon():
+    class MixedClockOwner:
+        def __init__(self):
+            self.machine = FakeMCU(12_000_000.)
+        def get_machine_mcu(self):
+            return self.machine
+
+    class PhysicalStepper:
+        def commanded_to_mcu_position_su(self, pos):
+            return round(pos * 100.)
+        def get_mcu_position(self, pos):
+            return round(pos * 10.)
+
+    class RecordingFFI:
+        def __init__(self):
+            self.sampled_at = []
+            self.anchored_at = None
+        def segfit_get_position(self, segfit, print_time):
+            self.sampled_at.append(print_time)
+            return 1.25
+        def segfit_set_position_offset(self, segfit, offset):
+            self.offset = offset
+        def segfit_set_anchor(self, segfit, print_time, acc):
+            self.anchored_at = print_time
+        def segfit_set_anchor_position(self, segfit, position_su):
+            self.anchor_position = position_su
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = MixedClockOwner()
+    stepper.mcu = FakeMCU(64_000_000.)
+    stepper.mcu_stepper = PhysicalStepper()
+    ffi_lib = stepper.ffi_lib = RecordingFFI()
+    stepper.segfit = object()
+    stepper.name = 'extruder'
+    stepper.oid = 5
+    stepper.su_per_mm = 100.
+    stepper.rebase_cmd = FakeCommand()
+    stepper.local_rebase_cmd = FakeCommand()
+    stepper.rebase_requires_hold = False
+    stepper.intentions = []
+    stepper._record_wire = lambda fields: None
+
+    # Exact clocks captured by the physical failure: the newly discovered
+    # island began 4,257 EBB ticks (66.5us) inside an already-sent hold.
+    requested_local = 35_867_360_686
+    stepper.rebase_min_execution_clock = 35_867_364_943
+    requested_time = requested_local / 64_000_000.
+    stepper.rebase_min_clock = round(
+        stepper.rebase_min_execution_clock * 12_000_000. / 64_000_000.)
+    stepper._anchor(requested_time)
+
+    sent = stepper.local_rebase_cmd.sent[0]
+    assert stepper.execution_clock >= 35_867_364_943
+    assert sent[2] == stepper.execution_clock & 0xffffffff
+    assert 0. < ffi_lib.sampled_at[0] - requested_time < .001
+    assert ffi_lib.anchored_at == ffi_lib.sampled_at[0]
+    assert stepper.local_rebase_cmd.send_options == [{
+        'minclock': 0, 'reqclock': stepper.execution_clock}]
+
+
 def test_active_path_is_held_before_rebase_boundary():
     class PhysicalStepper:
         def commanded_to_mcu_position_su(self, pos):
@@ -1191,6 +1252,8 @@ def main():
     print("PASS: rebases validate the old horizon without a late host release")
     test_secondary_rebase_uses_immutable_local_horizon()
     print("PASS: secondary rebases preserve an immutable local horizon")
+    test_late_visible_island_clips_to_committed_hold_horizon()
+    print("PASS: late-visible E islands clip to the committed hold horizon")
     test_active_path_is_held_before_rebase_boundary()
     print("PASS: an active path gets an explicit hold before rebase")
     test_confirmed_stop_does_not_queue_a_pre_rebase_hold()

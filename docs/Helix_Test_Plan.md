@@ -832,6 +832,18 @@ Now put it together on the **full printer**.
   now uses `minclock=0` while keeping its requested execution clock. Focused
   trajectory, extrusion, and status regressions pass. Item 14.2 remains open
   pending a clean supervised repeat.
+
+  The next repeat confirmed that change by reaching 48.7% without an MCU
+  deadline fault, then stopped at a host-side overlap check. The newly visible
+  E island requested local clock 35,867,360,686 while the preceding flush had
+  already committed a terminal hold through 35,867,364,943: a 4,257-tick
+  (66.5 us) overlap. Since an emitted hold is immutable, a late-visible island
+  overlapping by no more than the intentional 1 ms terminal hold now anchors
+  and samples its pressure-advance position at the exact committed horizon.
+  Larger overlaps remain fatal. The captured clock vector is a regression and
+  a 55-layer 100% offline run through the failed region completes with 194 E
+  rebases, 195 holds, 568,122 E edges, a 4,721-tick minimum, and no interval
+  at or below 64 ticks. Item 14.2 remains open for another physical repeat.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

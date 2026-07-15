@@ -605,6 +605,57 @@ class TrajectoryStepper:
         self.note_rebase_needed()
         return end_commanded_su
 
+    def _clamp_rebase_time_to_committed_hold(self, print_time):
+        # A pressure-advance island may be appended after the previous flush
+        # already committed its 1ms terminal hold.  Its pre-active boundary
+        # can then land a few ticks inside that immutable hold.  We cannot
+        # retract a command already sent to the MCU; start the new island at
+        # the exact committed horizon and sample its position there.  Keep
+        # the adjustment bounded by the terminal-hold duration so a real
+        # planning overlap still fails closed in _send_rebase().
+        requested_time = print_time
+        min_machine = getattr(self, 'rebase_min_clock', 0)
+        min_local = getattr(self, 'rebase_min_execution_clock', 0)
+        if not min_machine and not min_local:
+            return print_time
+        machine_clock = int(self._machine_clock(print_time))
+        local_clock = int(self.mcu.print_time_to_clock(print_time))
+        machine_freq = float(self._machine_freq())
+        local_freq = float(self.mcu.seconds_to_clock(1.))
+        overlap = max(
+            ((min_machine - machine_clock) / machine_freq
+             if min_machine > machine_clock else 0.),
+            ((min_local - local_clock) / local_freq
+             if min_local > local_clock else 0.))
+        max_tick = 1. / min(machine_freq, local_freq)
+        if overlap <= 0. or overlap > TERMINAL_HOLD_TIME + max_tick:
+            return print_time
+        if min_machine:
+            print_time = max(
+                print_time,
+                self._machine_mcu().clock_to_print_time(min_machine))
+        if min_local:
+            print_time = max(
+                print_time, self.mcu.clock_to_print_time(min_local))
+        # Float conversion at a clock boundary can round one tick down.
+        # Advance only by the missing exact ticks, then nextafter once.
+        for _ in range(2):
+            machine_clock = int(self._machine_clock(print_time))
+            local_clock = int(self.mcu.print_time_to_clock(print_time))
+            correction = max(
+                ((min_machine - machine_clock) / machine_freq
+                 if min_machine > machine_clock else 0.),
+                ((min_local - local_clock) / local_freq
+                 if min_local > local_clock else 0.))
+            if correction <= 0.:
+                break
+            print_time += correction
+        print_time = math.nextafter(print_time, math.inf)
+        logging.info(
+            "Trajectory boundary for %s clipped %.1fus to committed hold",
+            self.name, (print_time - requested_time) * 1.e6)
+        return print_time
+
     def _send_rebase(self, print_time, pos_su, mcu_pos):
         clock = int(self._machine_clock(print_time))
         local_clock = int(self.mcu.print_time_to_clock(print_time))
@@ -655,6 +706,7 @@ class TrajectoryStepper:
         if self.rebase_requires_hold:
             self._queue_terminal_hold()
             self.rebase_requires_hold = False
+        print_time = self._clamp_rebase_time_to_committed_hold(print_time)
         pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
         if not math.isfinite(print_time) or not math.isfinite(pos_mm):
             raise self.mcu.error(

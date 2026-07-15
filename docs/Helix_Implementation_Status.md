@@ -191,6 +191,19 @@ pass.
   focused trajectory, extruder, and status regressions pass. A further
   supervised repeat remains required, so this is not yet a repeatable
   full-print qualification.
+* That repeat advanced to 48.7% (570.5 mm commanded filament) with no MCU
+  timer fault, confirming the early-transmission correction. It then exposed
+  the complementary host boundary case: a later pressure-advance island began
+  4,257 EBB ticks (66.5 us) inside a terminal hold already committed by the
+  preceding flush. The host correctly rejected the overlap, but reported it as
+  a generic `Exception in flush_handler`. A committed hold cannot be retracted;
+  for overlaps no larger than its intentional 1 ms duration, the new island is
+  now anchored at the exact immutable hold horizon and its position is sampled
+  at that adjusted time. Larger planning overlaps still fail closed. The exact
+  physical clocks are a regression, focused suites pass, and a 55-layer 100%
+  replay through the failed slicer region completes with 568,122 E edges, a
+  4,721-tick minimum, and no <=64-tick interval. Another supervised repeat is
+  still required for item 14.2.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and
