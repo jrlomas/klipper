@@ -18,6 +18,15 @@ enum {
     TRACE_LVL_OFF = 255, // subsystem default: emit nothing
 };
 
+// TRACE_LVL_OFF is a sentinel, not a least-restrictive threshold.  Keep this
+// comparison in one place so the default cannot accidentally turn every
+// severity on (all real levels are numerically below 255).
+static inline int
+trace_level_enabled(uint8_t threshold, uint8_t level)
+{
+    return threshold != TRACE_LVL_OFF && level <= threshold;
+}
+
 // Trace subsystems. Add here as instrumentation lands; the host reads
 // the names from the dictionary, so ids need only be stable within a
 // build. Keep the count small — it sizes the per-subsystem level array.

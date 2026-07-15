@@ -60,7 +60,7 @@ trace_enabled(uint8_t sub, uint8_t level)
 {
     if (!main_trace || sub >= TRACE_SUB_COUNT)
         return 0;
-    return level <= trace_level[sub];
+    return trace_level_enabled(trace_level[sub], level);
 }
 
 void
@@ -68,7 +68,8 @@ trace_emit(uint16_t event, uint8_t sub, uint8_t level, uint8_t argc
            , uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3)
 {
     struct trace *t = main_trace;
-    if (!t || sub >= TRACE_SUB_COUNT || level > trace_level[sub])
+    if (!t || sub >= TRACE_SUB_COUNT
+        || !trace_level_enabled(trace_level[sub], level))
         return;
     if (argc > TRACE_MAX_ARGS)
         argc = TRACE_MAX_ARGS;
