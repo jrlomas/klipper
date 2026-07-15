@@ -444,8 +444,10 @@ The point of intentions: the segment says *where the joint should be*,
 not which pulses to send. Prove more than one backend behind the same
 queue.
 
-- [~] **6.1 — Step/dir stepper backend.** (Covered by Phase 4/5 — tick
-  once those pass.)
+- [x] **6.1 — Step/dir stepper backend.** The V0 Pico and EBB36 synthesized
+  their own step/dir pulses from production G0/G1 quintic intentions through
+  two complete sliced ABS prints. Both finished without a trajectory fault,
+  toolhead stall, invalid link byte, or operator-observed motion defect.
 - [ ] **6.2 — Sampled PWM/DAC backend.** Requires `WANT_TRAJECTORY_PWM` +
   `config_traj_pwm`. Drive a PWM/DAC actuator (or a scope on the PWM pin)
   along a trajectory.
@@ -553,7 +555,10 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
 Certify each transport the machine uses. Re-run the multi-MCU items in
 Phases 3/7/8 over each real transport.
 
-- [ ] **9.1 — USB.** (Baseline — Phases 2–8 on USB.) Pass: stable.
+- [~] **9.1 — USB.** Normal USB operation is stable across homing, coupled
+  motion audits, hot extrusion, and two complete sliced prints with no invalid
+  bytes or new retransmits. Deliberate disconnect, pause-and-hold, reconnect,
+  and resume from Phase 8 remain before the USB recovery path is complete.
 - [ ] **9.2 — CAN toolhead.** Bring up a CAN toolhead board.
   Pass: enumerates (UUID admin), data traffic on the assigned ids,
   `test_can_transport` behavior confirmed on real silicon; motion + time
@@ -717,7 +722,7 @@ Now put it together on the **full printer**.
 - [ ] **14.1 — Cold start → home → mesh.** A stock workflow end to end on
   HELIX firmware.
   Pass: homes, probes, meshes; no regressions vs stock Klipper behavior.
-- [ ] **14.2 — Benchmark print (baseline).** Print a known-good model.
+- [x] **14.2 — Benchmark print (baseline).** Print a known-good model.
   Pass: quality ≥ the machine's stock-Klipper baseline; measure and record.
   The first supervised attempt on 2026-07-14 ran at 25% speed for 3 min 49 s
   with stable 260 C / 110 C temperatures, no print stalls, and sustained
@@ -843,7 +848,21 @@ Now put it together on the **full printer**.
   Larger overlaps remain fatal. The captured clock vector is a regression and
   a 55-layer 100% offline run through the failed region completes with 194 E
   rebases, 195 holds, 568,122 E edges, a 4,721-tick minimum, and no interval
-  at or below 64 ticks. Item 14.2 remains open for another physical repeat.
+  at or below 64 ticks.
+
+  Two subsequent supervised ABS cubes completed at 100% requested speed with
+  operator-confirmed coherent print quality. Run one consumed all 417,479
+  G-code bytes in 778.7 s of print time and commanded 1,293.6 mm of filament;
+  run two consumed all 644,990 bytes in 669.0 s and commanded 1,302.9 mm.
+  Both retained zero toolhead stalls, zero invalid link bytes, the existing
+  nine-byte startup retransmit baseline, and no timer, rebase, flush-handler,
+  or MCU shutdown error. Each also encountered the repaired condition in
+  production: the host aligned a late-visible E island by 30.4 us and 31.0 us
+  to its immutable committed-hold horizon, respectively, and each print then
+  continued to completion. The second file requested up to 300 mm/s and
+  7,000 mm/s^2, but the active V0 limits clamped motion to 200 mm/s and
+  3,000 mm/s^2; it therefore closes the repeatable baseline gate, not the
+  purpose-built high-load gate in 14.3.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

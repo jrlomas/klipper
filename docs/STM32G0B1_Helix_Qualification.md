@@ -355,11 +355,20 @@ same instant for the rebase and fitter anchor. An overlap greater than 1 ms is
 still rejected as a genuine planner error rather than silently dropping
 motion.
 
-The physical 4,257-tick vector is a permanent mixed-clock regression. A 55
-layer, 100% sliced-G-code replay through and beyond the failed region produces
+The physical 4,257-tick vector is a permanent mixed-clock regression. A
+55-layer, 100% sliced-G-code replay through and beyond the failed region produces
 194 E rebases, 195 local holds, and 568,122 E pulses. Its minimum E interval is
-4,721 ticks and no interval is at or below 64 ticks. A further supervised run
-remains the hardware acceptance gate.
+4,721 ticks and no interval is at or below 64 ticks.
+
+Two following supervised ABS cubes completed at full requested speed. They
+commanded 1,293.6 mm and 1,302.9 mm of filament over 778.7 s and 669.0 s of
+print time, respectively, with operator-confirmed coherent output. Both MCU
+links retained zero invalid bytes and no new retransmits; neither run recorded
+a timer fault, rebase rejection, flush-handler exception, toolhead stall, or
+MCU shutdown. Each run also exercised this exact class of correction: its
+late-visible E island was advanced 30.4 us and 31.0 us, respectively, to the
+committed hold horizon before continuing to a clean completion. The repeated
+physical result closes the STM32G0B1 sliced-print acceptance gate.
 
 ## Experiment 2: on-silicon deadline scaling
 
@@ -610,11 +619,10 @@ non-zero when the requested set intentionally includes the rejected 32x case.
 
 ## Remaining qualification
 
-- Run a real sliced print with sustained coordinated XY, Z, and extrusion;
-  one cube reached coherent full-speed motion, but subsequent repeat runs
-  exposed the trace flood and late pressure-advance boundary above. The
-  current evidence qualifies the corrected pieces and hot extruder, not yet
-  a repeatable complete part.
+- Extend the two successful sliced-print runs into a purpose-built high-load
+  print and a long soak. The completed cubes qualify repeatable coordinated
+  XY, Z, and extrusion at the active V0 limits; they do not yet establish the
+  high-speed/deep-queue or 24-hour gates.
 - Repeat the toolhead qualification over CAN for the V2.4. USB success proves
   the protocol and solver but not CAN physical-layer behavior.
 - Measure GPIO edges with a logic analyzer if an external timing reference is

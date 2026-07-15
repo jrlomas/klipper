@@ -202,8 +202,19 @@ pass.
   at that adjusted time. Larger planning overlaps still fail closed. The exact
   physical clocks are a regression, focused suites pass, and a 55-layer 100%
   replay through the failed slicer region completes with 568,122 E edges, a
-  4,721-tick minimum, and no <=64-tick interval. Another supervised repeat is
-  still required for item 14.2.
+  4,721-tick minimum, and no <=64-tick interval. This established the final
+  physical acceptance condition described next.
+* Two subsequent supervised ABS cubes completed at 100% requested speed with
+  operator-confirmed coherent surfaces. The first consumed all 417,479 G-code
+  bytes in 778.7 s of print time and commanded 1,293.6 mm of filament; the
+  second consumed all 644,990 bytes in 669.0 s and commanded 1,302.9 mm.
+  Neither run recorded a toolhead stall, invalid link byte, new retransmit,
+  timer fault, rebase rejection, flush-handler exception, or MCU shutdown.
+  More importantly, each run exercised the bounded committed-hold correction
+  in production: late-visible E islands were advanced 30.4 us and 31.0 us,
+  respectively, then printing continued to completion. This closes benchmark
+  item 14.2 with repeatability evidence rather than a single successful path
+  that happened not to encounter the repaired boundary.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and
