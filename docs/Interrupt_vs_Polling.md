@@ -55,10 +55,62 @@ interrupt the MCU. The RP2040 timestamps entry to the GPIO interrupt, performs
 a fixed 20 us qualification burst, and fires `trsync`. Boards with a routed
 timer-capture input can timestamp the electrical edge even more precisely.
 
-One subtle but important point is that Klipper scales the poll period with
-step rate. The slow pass can therefore wait much longer in *time*, but the axis
-also travels more slowly. Polling's physical overrun remains near the scale of
-a step even when its response time grows into hundreds of microseconds.
+### Why did slower polling have more timing variation?
+
+Klipper does not use a fixed endstop polling rate. Its host computes
+`rest_time` from the duration of the homing move and the maximum number of
+steps taken by any stepper attached to the endstop:
+
+```text
+poll interval = move time / step count
+              = step distance / homing speed
+```
+
+This Z axis has 800 configured microsteps/mm, so one microstep is 1.25 um. The
+resulting polling intervals were therefore:
+
+```text
+20 mm/s: 1.25 um / 20 mm/s =  62.5 us
+ 3 mm/s: 1.25 um /  3 mm/s = 416.7 us
+```
+
+The electrical edge can occur anywhere inside that interval. For a uniformly
+distributed sampling phase, the expected standard deviation is the interval
+divided by the square root of 12. That simple model predicts 18.0 us timing SD
+fast and 120.3 us slow, close to the measured 19.7 and 129.0 us:
+
+| Pass | Poll interval | Phase-model timing SD | Measured timing SD | Distance per poll | Travel during 45 us confirmation |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20 mm/s | 62.5 us | 18.0 us | 19.7 us | 1.25 um | 0.900 um |
+| 3 mm/s | 416.7 us | 120.3 us | 129.0 us | 1.25 um | 0.135 um |
+
+This explains the initially counter-intuitive result: slower homing produces a
+larger deviation in *time* because Klipper also slows the detector. It does not
+produce a proportionally larger deviation in *distance*. Multiplying the poll
+interval by speed always returns one microstep, so the sampling-phase portion
+of spatial uncertainty remains about 1.25 um at either speed. The slower pass
+also travels less during the fixed confirmation window.
+
+Slowing down is therefore still useful. It reduces kinetic energy, switch and
+frame impact, mechanical deflection, and confirmation-window travel. What it
+does **not** improve under proportional polling is detector timing consistency
+or the roughly one-microstep spatial sampling quantum. If the purpose of the
+slow second pass includes more consistent detection—not only gentler
+mechanics—then scaling the poll interval entirely with step time works against
+that purpose.
+
+A more consistent software fallback on capable MCUs would cap the interval:
+
+```text
+poll interval = min(step interval, fixed maximum interval)
+```
+
+That would preserve Klipper's step-scaled timer load at higher speeds while
+preventing slow motion from degrading into 400+ us sampling intervals. The
+tradeoff is increased timer traffic on small or already saturated MCUs, which
+is a plausible reason for the conservative proportional policy. Hardware
+interrupts avoid the compromise: their response does not scale with motion
+speed.
 
 ## A direct A/B experiment
 
