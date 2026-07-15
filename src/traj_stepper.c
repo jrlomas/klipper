@@ -397,7 +397,7 @@ traj_stepper_error120(struct traj_stepper *s, uint32_t tick)
 // start at nearly zero velocity.  It is intentionally not the recurring hot
 // path: the sign bracket costs at most 26 fixed-point Horner evaluations for
 // the fitter's <=2^26-tick segments.
-static uint32_t
+static uint32_t noinline
 traj_stepper_bracket_crossing(struct traj_stepper *s)
 {
     uint32_t lo = s->t_prev, hi = s->tq.duration;
