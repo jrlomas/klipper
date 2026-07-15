@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 "..", "klippy"))
 
-from extras import pause_resume  # noqa: E402
+from extras import failure_recovery, pause_resume  # noqa: E402
 
 
 class FakeGcode:
@@ -51,9 +51,11 @@ class FakePrinter:
         self.webhooks = FakeWebhooks()
         self.vsd = FakeVirtualSD()
         self.handlers = {}
+        self.extra_objects = {}
     def lookup_object(self, name, default=None):
         return {'gcode': self.gcode, 'webhooks': self.webhooks,
-                'virtual_sdcard': self.vsd}.get(name, default)
+                'virtual_sdcard': self.vsd,
+                **self.extra_objects}.get(name, default)
     def register_event_handler(self, name, cb):
         self.handlers[name] = cb
 
@@ -71,6 +73,7 @@ def main():
     printer = FakePrinter()
     pr = pause_resume.PauseResume(FakeConfig(printer))
     pr.handle_connect()
+    printer.extra_objects['pause_resume'] = pr
     assert pr.pause_for_recovery()
     assert pr.is_paused and pr.recovery_pause
     assert printer.vsd.pauses == 1
@@ -80,6 +83,21 @@ def main():
     assert printer.vsd.resumes == 1
     assert printer.gcode.command_scripts == [
         "RESTORE_GCODE_STATE NAME=PAUSE_STATE MOVE=0"]
+    # Link-loss recovery uses the same macro-free primitive.  A user PAUSE
+    # macro may park/retract through the disconnected MCU and must never run
+    # at this boundary.
+    pr.is_paused = False
+    pr.recovery_pause = False
+    printer.vsd.active = True
+    recovery = failure_recovery.FailureRecovery.__new__(
+        failure_recovery.FailureRecovery)
+    recovery.printer = printer
+    recovery._comm_pause_event(0.)
+    assert pr.is_paused and pr.recovery_pause
+    assert printer.gcode.scripts == [
+        "SAVE_GCODE_STATE NAME=PAUSE_STATE",
+        "SAVE_GCODE_STATE NAME=PAUSE_STATE"]
+    assert all(script != "PAUSE" for script in printer.gcode.scripts)
     print("PASS: recovery pause bypasses motion macros and resumes in-command")
 
 

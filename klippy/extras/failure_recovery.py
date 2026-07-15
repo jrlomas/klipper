@@ -388,9 +388,9 @@ class FailureRecovery:
             " board continue autonomously. Reseat the connection and run"
             " RECONNECT_MCU MCU=%s, then RESUME.", mcu_name, mcu_name)
         # Engage every configured heater hold (belt and braces - the
-        # MCU-side holders also self-engage on ping silence).  Commands
-        # to the lost mcu are queued and delivered if/when the link
-        # returns; commands to healthy mcus take effect immediately.
+        # MCU-side holders also self-engage on ping silence).  Commands sent
+        # toward the lost MCU are discarded at transport re-arm; commands to
+        # healthy MCUs take effect immediately.
         for name, hold in sorted(self.holds.items()):
             try:
                 hold.engage()
@@ -445,13 +445,14 @@ class FailureRecovery:
             logging.info("failure_recovery: not printing - no print pause"
                          " needed after MCU link loss")
             return
-        pause_resume.send_pause_command()
         try:
-            gcode = self.printer.lookup_object('gcode')
-            gcode.run_script("PAUSE")
+            pause_resume.pause_for_recovery()
+            logging.error("failure_recovery: MCU link loss paused print"
+                          " ingestion without running a park/retract macro;"
+                          " run RESUME_MOTION after reconnect")
         except Exception:
-            logging.exception("failure_recovery: error running PAUSE after"
-                              " MCU link loss")
+            logging.exception("failure_recovery: unable to pause print"
+                              " ingestion after MCU link loss")
 
     def _handle_trajectory_recovery_hold(self, trigger):
         # Serial response handlers must remain short.  Stop print ingestion

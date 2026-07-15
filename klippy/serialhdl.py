@@ -50,8 +50,16 @@ class SerialReader:
             if response.notify_id:
                 params = {'#sent_time': response.sent_time,
                           '#receive_time': response.receive_time}
-                completion = self.pending_notifications.pop(response.notify_id)
-                self.reactor.async_complete(completion, params)
+                completion = self.pending_notifications.pop(
+                    response.notify_id, None)
+                if completion is not None:
+                    # A zero/zero notification is synthesized by the C queue
+                    # when an unsent request is discarded at reconnect.
+                    # Complete with None so raw_send_wait_ack reports a
+                    # closed/canceled transaction instead of a false ack.
+                    if not response.sent_time and not response.receive_time:
+                        params = None
+                    self.reactor.async_complete(completion, params)
                 continue
             params = self.msgparser.parse(response.msg[0:count])
             params['#sent_time'] = response.sent_time
@@ -226,6 +234,20 @@ class SerialReader:
         for pn in self.pending_notifications.values():
             pn.complete(None)
         self.pending_notifications.clear()
+    def reconnect(self):
+        """Restart transport workers after EOF without replacing queues."""
+        ret = self.ffi_lib.serialqueue_reconnect(self.serialqueue)
+        if ret < 0:
+            self._error("Unable to restart serial transport")
+        if not ret:
+            return False
+        # The old pull worker was woken when the C transport observed EOF.
+        # Join it before starting the consumer for the re-armed serialqueue.
+        if self.background_thread is not None:
+            self.background_thread.join()
+        self.background_thread = threading.Thread(target=self._bg_thread)
+        self.background_thread.start()
+        return True
     def stats(self, eventtime):
         if self.serialqueue is None:
             return ""
@@ -244,7 +266,10 @@ class SerialReader:
     def register_response(self, callback, name, oid=None):
         with self.lock:
             if callback is None:
-                del self.handlers[name, oid]
+                # Query helpers for the same response can overlap during a
+                # recovery boundary.  Cleanup must be idempotent: an older
+                # helper may already have removed the shared handler.
+                self.handlers.pop((name, oid), None)
             else:
                 self.handlers[name, oid] = callback
     # Command sending
@@ -328,8 +353,15 @@ class SerialRetryCommand:
         while 1:
             for cmd in cmds[:-1]:
                 self.serial.raw_send(cmd, minclock, reqclock, cmd_queue)
-            self.serial.raw_send_wait_ack(cmds[-1], minclock, reqclock,
-                                          cmd_queue)
+            try:
+                self.serial.raw_send_wait_ack(cmds[-1], minclock, reqclock,
+                                              cmd_queue)
+            except error:
+                # Reconnect may cancel a query that was queued but never put
+                # on the wire.  Do not leave its response handler installed
+                # while propagating that expected transport boundary.
+                self.serial.register_response(None, self.name, self.oid)
+                raise
             params = self.last_params
             if params is not None:
                 self.serial.register_response(None, self.name, self.oid)

@@ -295,6 +295,30 @@ of [07-Link_Transport.md](07-Link_Transport.md) are asyncio-native on
 the loop side of this same seam. No consumer is converted wholesale in
 this step; each migrates behind its own flag as it is validated.
 
+### In-place serial reconnect boundary
+
+Powered USB replug does not create a new logical MCU session. The host keeps
+the existing `serialqueue`, command-queue pointers, and protocol sequence so
+frames already transmitted remain eligible for ARQ retransmission. EOF does,
+however, terminate both serial workers; after the tty is reopened the C poll
+reactor and Python response consumer are explicitly restarted.
+
+Only on-wire ARQ state survives that restart. Messages still in the C
+ready/upcoming queues were never observed by the MCU and are discarded, with
+waiting notification IDs completed as local cancellations. This is a safety
+boundary: periodic queries, LED refreshes, or a user pause macro must not
+accumulate during an outage and burst into a freewheeling board after replug.
+Machine-time relay/query traffic is independently suppressed on
+`mcu:comm_pause`, and its endpoint regression history restarts only after
+`mcu:comm_resume`; a query already waiting at the loss boundary is contained
+as an expected cancellation instead of escaping the reactor.
+
+The physical EBB36 USB test on 2026-07-15 validated this path with continuous
+firmware uptime and config CRC, a successful `RECONNECT_MCU`, clock
+reconvergence, and no Klippy/MCU restart. See
+[08-Failure_Recovery.md](08-Failure_Recovery.md) for the evidence and remaining
+heater/under-print scope.
+
 ## Buffering policy restated
 
 * `BUFFER_TIME_HIGH` (1.0 s pause wall in toolhead.py) survives as the

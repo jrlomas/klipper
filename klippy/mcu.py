@@ -1117,8 +1117,9 @@ class MCUConnectHelper:
         # existing serialqueue with dup2().  The serialqueue (and the
         # C-level steppersync/trdispatch/command_queue objects holding
         # pointers to it, plus both sides' transport sequence numbers)
-        # all survive, so the session genuinely resumes: the retransmit
-        # machinery delivers anything queued during the outage.
+        # all survive.  ARQ retains frames already transmitted; transport
+        # re-arm discards commands that never reached the wire during the
+        # outage so stale timer/macro work cannot burst into the MCU.
         serial_dev = self._serial.serial_dev
         if serial_dev is None:
             raise error("MCU '%s' has no active serial session"
@@ -1180,6 +1181,15 @@ class MCUConnectHelper:
             logging.info("MCU '%s' reconnect: could not reopen port (%s);"
                          " probing the existing link", self._name, e)
             reopen_note = "port not reopened (%s)" % (e,)
+        # EOF stops both serialqueue worker threads.  Re-open alone is not
+        # sufficient: the preserved queue must be explicitly re-armed before
+        # it can transmit the liveness probes or consume their responses.
+        try:
+            if self._serial.reconnect():
+                reopen_note += ", transport re-armed"
+        except serialhdl.error as e:
+            return False, ("MCU '%s' transport restart failed: %s. Retry"
+                           " RECONNECT_MCU." % (self._name, str(e)))
         # Probe for liveness and boot state (get_uptime returns the
         # true 64-bit clock, immune to 32-bit extension aliasing)
         uptime_params = self._probe_response('get_uptime', 'uptime')

@@ -570,14 +570,30 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   `hold_max_temp`/`hold_max_duration` instead of shutting down.
   Pass: temperature held; ceiling and duration limits enforced; safe
   release at expiry.
-- [ ] **8.3 — Link loss → pause-and-hold.** Unplug a secondary MCU's link
+- [~] **8.3 — Link loss → pause-and-hold.** Unplug a secondary MCU's link
   mid-motion (`on_comm_timeout: pause`).
   Expect: the board finishes queued motion, **holds position**, does not
   shut down; host sees it paused (`FAILURE_RECOVERY_STATUS`).
   Pass: no shutdown; heaters stay on per policy.
-- [ ] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
+  On 2026-07-15 the EBB36 USB data cable was physically removed during a
+  cold 50-second Pico Z trajectory. Klipper stayed ready, entered recovery
+  pause without invoking the configured park/retract macro, suspended
+  machine-time traffic to the missing board, and the Pico completed Z40 to
+  Z30 at the exact commanded endpoint. The powered EBB36 did not reboot.
+  This qualifies host pause plus primary-board queued-motion continuation;
+  an active E trajectory and heater hold were not exercised, and both heater
+  targets were zero, so the full item remains partial.
+- [x] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
   Pass: re-handshake succeeds; link re-established (datagram auth restored
   where the transport uses it).
+  A final physical EBB36 USB unplug/replug on 2026-07-15 completed in place:
+  `RECONNECT_MCU MCU=ebb36` preserved the live transport sequence, rejected
+  stale never-transmitted outage work, verified matching config CRC and
+  continuous uptime (32,103,375,787 to 34,127,589,558 ticks), re-anchored
+  clock sync, and left Klipper ready. The EBB36 reconverged at -2.4 us; no
+  board or host shutdown occurred. The physical test also exposed and fixed
+  the required EOF worker restart, USB endpoint staging reset, stale-query
+  cancellation, and pre-loss time-sync callback containment.
 - [~] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
   Expect: each joint reconciles from its execution log to exactly where it
   stopped; the print continues; a joint marked
@@ -625,8 +641,11 @@ Phases 3/7/8 over each real transport.
 
 - [~] **9.1 — USB.** Normal USB operation is stable across homing, coupled
   motion audits, hot extrusion, and two complete sliced prints with no invalid
-  bytes or new retransmits. Deliberate disconnect, pause-and-hold, reconnect,
-  and resume from Phase 8 remain before the USB recovery path is complete.
+  bytes or new retransmits. Deliberate physical EBB36 disconnect, host
+  recovery pause, retained primary motion, in-place USB re-enumeration, and
+  `RECONNECT_MCU` with continuous board uptime now pass. Active lost-board
+  motion/heater hold and an under-print `RESUME_MOTION` witness from Phase 8
+  remain before the USB recovery path is complete.
 - [ ] **9.2 — CAN toolhead.** Bring up a CAN toolhead board.
   Pass: enumerates (UUID admin), data traffic on the assigned ids,
   `test_can_transport` behavior confirmed on real silicon; motion + time
@@ -771,7 +790,10 @@ Type every new command once on a real machine and confirm it does what
   zero configured heater holds, no paused links, and the active trajectory
   recovery hold with its triggering MCU/joint/clock/position. After
   `RESUME_MOTION` it exposed the reconciled joints and cleared the active hold.
-- [ ] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake.
+- [x] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake. A physical EBB36 USB
+  unplug/replug on 2026-07-15 retained the never-rebooted firmware session,
+  matched its config CRC, re-synchronized its clock, reconverged machine time,
+  and returned success without restarting Klippy or either MCU.
 - [x] **13.6** `RESUME_MOTION` — reconcile + resume. A cold live underrun on
   2026-07-15 reconciled four held joint accumulators at one future boundary,
   inverse-transformed the actual CoreXY/Z stop position, cleared the recovery

@@ -1,8 +1,9 @@
 # FD-0001: Failure Recovery — Pause, Hold, Resume
 
 Status: Core implemented and workstation-tested in HELIX 0.9; live
-host-stall/underrun recovery validated on RP2040 + STM32G0B1 USB hardware.
-Link-loss, heater-hold, and under-print witness validation remain.
+host-stall/underrun recovery and powered USB link-loss/reconnect validated on
+RP2040 + STM32G0B1 hardware. Active lost-board motion, heater-hold, and an
+under-print resume witness remain.
 
 Klipper's failure philosophy today is binary: any error — a late
 timer, a lost message, a homing timeout — ends in `shutdown()`, which
@@ -75,6 +76,29 @@ the completed Z segments) before firmware restart. After adding per-chunk
 flow control, two further physical pulls transferred 1,475 and 1,500 retained
 records while both USB links held `bytes_invalid=0`; the printer remained
 ready and both heater targets remained zero.
+
+The powered-link path was exercised separately on the same V0. During a cold
+50-second Z trajectory on the Pico, the EBB36 USB data cable was physically
+removed and reinserted while board power remained present. Klipper entered a
+macro-free recovery pause and stopped relaying machine-time queries to the
+missing board; the Pico completed the buffered Z40-to-Z30 trajectory at the
+exact commanded endpoint. `RECONNECT_MCU MCU=ebb36` then proved that the EBB36
+had not rebooted (continuous uptime 32,103,375,787 to 34,127,589,558 ticks),
+matched the configured CRC, re-anchored its clock regression, and reconverged
+to machine time at -2.4 us without a board or host shutdown. Both heater
+targets remained zero, so this is not heater-hold qualification.
+
+That test also defines the host transport boundary. EOF stops both the C
+serialqueue worker and its Python consumer, so reopening the tty alone is not
+a reconnect. The host retains only ARQ frames already placed on the wire,
+restarts both workers without replacing command-queue pointers or protocol
+sequence state, and discards never-transmitted ready/upcoming work accumulated
+during the outage. Waiting queries receive an explicit local cancellation so
+they cannot hang; periodic time-sync traffic is suspended for the paused link,
+and a query already in flight at the pause boundary unwinds without killing
+the reactor. USB CDC also clears partial receive/transmit staging when the
+endpoint is configured again. This prevents stale timers, LED updates, or
+motion/meta commands from arriving as a reconnect burst.
 
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped
@@ -237,9 +261,10 @@ changed the stale planned Z endpoint to the MCU-derived ramp endpoint
 (87.789057 mm in the first complete reconciliation). A follow-up run exposed
 and fixed the idle-snapshot rule above; after a deliberate delay, a cold Z
 witness moved exactly from 32.210946 to 37.210946 mm while both boards remained
-ready. The remaining qualification is an independent physical position/pulse
-measurement and an under-print witness feature plus the independent
-link-loss/heater-hold cases. The current
+ready. Powered secondary-USB loss and in-place reconnect are now independently
+qualified as described above. The remaining qualification is an independent
+physical position/pulse measurement, active motion on the disconnected board,
+heater hold, and an under-print witness feature. The current
 virtual-SD implementation resumes at the next G-Code command; it does not yet
 reconstruct the unexecuted suffix of the command that was already consumed by
 lookahead when the queue starved. Until that host replanning step exists, the

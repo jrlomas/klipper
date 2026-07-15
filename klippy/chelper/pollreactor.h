@@ -15,6 +15,7 @@ void pollreactor_update_timer(struct pollreactor *pr, int pos, double waketime);
 void pollreactor_run(struct pollreactor *pr);
 void pollreactor_do_exit(struct pollreactor *pr);
 int pollreactor_is_exit(struct pollreactor *pr);
+void pollreactor_reset(struct pollreactor *pr);
 int fd_set_non_blocking(int fd);
 
 #endif // pollreactor.h

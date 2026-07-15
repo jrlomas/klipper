@@ -192,6 +192,41 @@ def test_secondary_freshness():
     assert link.sample_rate == 1.
 
 
+def test_paused_link_suspends_timesync_traffic_and_resets_fit():
+    mcu = FakeMCU()
+    link = timesync.SecondaryLink(mcu, 1_000_000.)
+    link.setup(5., .000010)
+    link.relay(7, 1000, 20.)
+    link.query()
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+    owner.secondaries = [link]
+    owner._paused_mcus = set()
+    owner._last_converged = {link.name: True}
+    owner.reactor = types.SimpleNamespace(monotonic=lambda: 20.)
+    query_count = len(mcu.commands['timesync_query'].sent)
+    owner._handle_comm_pause(link.name)
+    owner._check_convergence()
+    assert len(mcu.commands['timesync_query'].sent) == query_count
+    assert not owner.is_mcu_synced(link.name)
+    assert link.relay_samples == [] and link.last_beacon_time is None
+    owner._handle_comm_resume(link.name)
+    assert link.name not in owner._paused_mcus
+    assert link.relay_samples == [] and link.last_machine_clock is None
+
+
+def test_pre_pause_timesync_query_cancellation_is_contained():
+    class BrokenLink:
+        name = 'mcu toolhead'
+        def query(self):
+            raise RuntimeError('Serial connection closed')
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+    owner.secondaries = [BrokenLink()]
+    owner._paused_mcus = {BrokenLink.name}
+    owner._last_converged = {}
+    owner.printer = types.SimpleNamespace(command_error=RuntimeError)
+    owner._check_convergence()
+
+
 def test_mixed_frequency_rate_representation():
     link = timesync.SecondaryLink(FakeMCU(64_000_000.), 12_000_000.)
     encoded = round(link.nominal_rate * (1 << timesync.RATE_SHIFT))
@@ -1301,6 +1336,10 @@ def main():
     print("PASS: signed protocol fields normalize high-bit wire values")
     test_secondary_freshness()
     print("PASS: host freewheel freshness mirrors the firmware gate")
+    test_paused_link_suspends_timesync_traffic_and_resets_fit()
+    print("PASS: paused links suspend timesync traffic and restart relay fit")
+    test_pre_pause_timesync_query_cancellation_is_contained()
+    print("PASS: pre-pause timesync query cancellation cannot kill reactor")
     test_mixed_frequency_rate_representation()
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
     test_relay_regression_rejects_endpoint_jitter()

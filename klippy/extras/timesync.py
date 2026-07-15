@@ -69,6 +69,19 @@ class SecondaryLink:
         self.sample_rate = None
         self.relay_rate = None
         self.relay_samples = []
+    def reset_relay_history(self):
+        # The firmware mapping is intentionally retained while a board
+        # freewheels.  Host endpoint-fit samples straddling a USB outage are
+        # not valid, however, and must not influence the first post-reconnect
+        # relay estimate.
+        self.last_state = {'flags': 0, 'last_err': 0, 'rate': 0}
+        self.last_beacon_time = None
+        self.last_machine_clock = None
+        self.last_local_est = None
+        self.last_raw_local_est = None
+        self.sample_rate = None
+        self.relay_rate = None
+        self.relay_samples = []
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
@@ -136,12 +149,17 @@ class MachineTimeSync:
         self.read_cmd = None
         self.secondaries = []
         self._last_converged = {}
+        self._paused_mcus = set()
         self.prime_remaining = 0
         self.beacon_timer = self.reactor.register_timer(self._beacon_event)
         self.printer.register_event_handler('klippy:ready',
                                             self._handle_ready)
         self.printer.register_event_handler('klippy:disconnect',
                                             self._handle_disconnect)
+        self.printer.register_event_handler('mcu:comm_pause',
+                                            self._handle_comm_pause)
+        self.printer.register_event_handler('mcu:comm_resume',
+                                            self._handle_comm_resume)
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('TIMESYNC_STATUS', self.cmd_TIMESYNC_STATUS,
                                desc=self.cmd_TIMESYNC_STATUS_help)
@@ -157,6 +175,7 @@ class MachineTimeSync:
         self.primary = primary
         self.secondaries = []
         self._last_converged = {}
+        self._paused_mcus = set()
         for name, mcu in self.printer.lookup_objects(module='mcu'):
             if mcu is primary:
                 continue
@@ -185,8 +204,32 @@ class MachineTimeSync:
         self.primary = None
         self.secondaries = []
         self._last_converged = {}
+        self._paused_mcus = set()
+    def _handle_comm_pause(self, mcu_name):
+        self._paused_mcus.add(mcu_name)
+        for link in self.secondaries:
+            if link.name == mcu_name:
+                link.reset_relay_history()
+                self._last_converged.pop(mcu_name, None)
+                break
+        logging.info("timesync: suspended traffic to paused-link MCU '%s'",
+                     mcu_name)
+    def _handle_comm_resume(self, mcu_name):
+        self._paused_mcus.discard(mcu_name)
+        # clocksync.connect() has already re-anchored this serial link before
+        # mcu.py emits comm_resume.  Start a fresh host relay fit; the next
+        # normal beacon revalidates the firmware's retained/freewheeling map.
+        for link in self.secondaries:
+            if link.name == mcu_name:
+                link.reset_relay_history()
+                self._last_converged.pop(mcu_name, None)
+                break
+        logging.info("timesync: resumed traffic to MCU '%s'", mcu_name)
     # Beacon relay loop
     def _beacon_event(self, eventtime):
+        if (self.primary is None
+                or self.primary.get_name() in self._paused_mcus):
+            return eventtime + self.beacon_interval
         self.read_cmd.send()
         if self.prime_remaining:
             return eventtime + PRIME_INTERVAL
@@ -197,7 +240,7 @@ class MachineTimeSync:
             (lambda e, p=params: self._relay_beacon(p)))
     def _relay_beacon(self, params):
         primary = self.primary
-        if primary is None:
+        if (primary is None or primary.get_name() in self._paused_mcus):
             return
         machine_clock = primary.clock32_to_clock64(params['clock'])
         # Bridge machine time to each secondary's local clock through
@@ -205,6 +248,8 @@ class MachineTimeSync:
         systime = _get_clocksync(primary).machine_time_to_systime(
             machine_clock)
         for link in self.secondaries:
+            if link.name in self._paused_mcus:
+                continue
             link.relay(params['seq'], machine_clock, systime)
         if self.prime_remaining:
             self.prime_remaining -= 1
@@ -225,7 +270,21 @@ class MachineTimeSync:
             self._check_convergence()
     def _check_convergence(self):
         for link in self.secondaries:
-            state = link.query()
+            if link.name in self._paused_mcus:
+                continue
+            try:
+                state = link.query()
+            except self.printer.command_error:
+                # A query can already be waiting for its transport ack when
+                # comm_pause is emitted.  Reconnect deliberately cancels
+                # never-transmitted work; let that pre-loss timer invocation
+                # unwind without taking down the reactor.  Fresh sampling
+                # resumes only after mcu:comm_resume.
+                if link.name not in self._paused_mcus:
+                    raise
+                logging.info("timesync: query to MCU '%s' canceled at link"
+                             " recovery boundary", link.name)
+                continue
             logging.debug(
                 "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
                 " raw_l=%s sample_rate=%s relay_rate=%s"
@@ -247,6 +306,8 @@ class MachineTimeSync:
     # timesync_class0_ok() before accepting every segment; clients can use
     # this query to avoid sending work that a syncing secondary will refuse.
     def is_mcu_synced(self, mcu_name):
+        if mcu_name in self._paused_mcus:
+            return False
         eventtime = self.reactor.monotonic()
         for link in self.secondaries:
             if link.name == mcu_name:
@@ -263,6 +324,7 @@ class MachineTimeSync:
             'machine_time': machine_time,
             'mcus': {link.name: {
                 'converged': link.is_converged(eventtime),
+                'link_paused': link.name in self._paused_mcus,
                 'flags': link.last_state['flags'],
                 'prime_count': link.last_state.get('prime_count', 0),
                 'last_err_ticks': link.last_state['last_err'],
@@ -284,6 +346,9 @@ class MachineTimeSync:
         msgs = []
         eventtime = self.reactor.monotonic()
         for link in self.secondaries:
+            if link.name in self._paused_mcus:
+                msgs.append("mcu '%s': PAUSED-LINK" % (link.name,))
+                continue
             state = link.query()
             ppm = 0.
             if state['rate']:

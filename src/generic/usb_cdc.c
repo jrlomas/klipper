@@ -439,6 +439,16 @@ usb_req_set_configuration(struct usb_ctrlrequest *req)
         usb_do_stall();
         return;
     }
+    // A host-side unbind/rebind can reconfigure USB without resetting the
+    // MCU.  Bytes retained in these software FIFOs belong to the previous
+    // endpoint incarnation: in particular, a partial maximum-size OUT frame
+    // can leave receive_pos too large to accept another packet and wedge the
+    // console forever.  Drop only the endpoint staging bytes here.  The
+    // command layer's sequence number, configured motion state, accumulators,
+    // and execution log deliberately survive so the host ARQ can retransmit
+    // and resume the same session.
+    receive_pos = 0;
+    transmit_pos = 0;
     usb_set_configure();
     usb_notify_bulk_in();
     usb_notify_bulk_out();

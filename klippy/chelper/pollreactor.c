@@ -162,6 +162,16 @@ pollreactor_is_exit(struct pollreactor *pr)
     return pr->must_exit;
 }
 
+// Re-arm a stopped reactor after its worker thread has been joined
+void
+pollreactor_reset(struct pollreactor *pr)
+{
+    pr->must_exit = 0;
+    int i;
+    for (i=0; i<pr->num_fds; i++)
+        pr->fds[i].revents = 0;
+}
+
 int
 fd_set_non_blocking(int fd)
 {
