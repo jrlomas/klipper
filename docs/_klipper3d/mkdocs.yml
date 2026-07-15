@@ -91,7 +91,12 @@ nav:
     - Secure_Networking.md
     - Helix_Implementation_Status.md
     - Helix_Test_Plan.md
-    - Interrupt_vs_Polling.md
+    - Research and Qualification:
+      - Machine_Time_White_Paper.md
+      - Machine_Time_Qualification.md
+      - Interrupt_vs_Polling.md
+      - STM32G0B1_Helix_Qualification.md
+      - Transport_Time_Synchronization.md
     - Atlas_Bring-up_Plan.md
     - Atlas_Model_Eval.md
   - Overview.md

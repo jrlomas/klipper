@@ -31,6 +31,22 @@ project and the Klipper community.
 the same, and your first Helix feature in five minutes.
 - [Glossary](Glossary.md): Plain-language definitions of Helix terms.
 
+## HELIX Research and Qualification
+
+- [Shared machine time across independent printer MCUs](Machine_Time_White_Paper.md):
+  Physical comparison of HELIX machine-time discipline and original Klipper
+  scheduling on an RP2040 and STM32G0B1 printer.
+- [Machine-time qualification](Machine_Time_Qualification.md): Translation of
+  measured cross-MCU timing error into print-domain units and assurance claims.
+- [Interrupt-driven versus polled endstops](Interrupt_vs_Polling.md): Direct
+  timing, overrun, and repeatability measurements from the physical test rig.
+- [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md):
+  Solver cost, V1 edge parity, deadlines, and hot-extrusion evidence for the
+  EBB36 trajectory executor.
+- [Transport-derived machine-time synchronization](Transport_Time_Synchronization.md):
+  CAN, Ethernet/PTP, WiFi/TSF, and dedicated-capture designs with STM32,
+  RP2040, and ESP32 capability research.
+
 ## Installation and Configuration
 
 - [Installation](Installation.md): Guide to installing Helix.
