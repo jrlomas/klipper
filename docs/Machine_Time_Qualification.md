@@ -41,6 +41,31 @@ The original-Klipper comparator's exact 30 edge deltas and capture metadata
 are retained in
 [`klipper_legacy_r1_summary.json`](evidence/machine_time/klipper_legacy_r1_summary.json).
 
+The analyzer campaign was later repeated on Ubuntu
+`6.8.1-1015-realtime`. `PREEMPT_RT` changed individual run centers and
+spreads but did not remove session-dependent acquisition: the two Helix runs
+were +3.19 ±3.74 us and -10.95 ±6.54 us (population standard deviation),
+while the original-Klipper comparator was -3.75 ±3.12 us. Realtime host
+scheduling can improve consistency, but it cannot recover unknown one-way USB
+delay.
+
+## Direct sync-line result
+
+Pico GPIO24 was then connected directly to EBB36 PB8. The Pico was the only
+output; PB8 passively latched each rising edge at GPIO-ISR entry. Across two
+30-edge runs, an affine fit of secondary ticks against primary ticks produced
+only 0.0064 us, 0.0053 us, and 0.0041 us RMS residual. The simultaneous
+software-derived USB-map prediction errors had 1.0805 us, 0.3710 us, and
+0.6072 us standard deviation.
+
+The fit also measured the stable physical oscillator ratio at -25.19 ppm from
+nominal in both runs. Removing that real rate offset leaves nanosecond-scale
+edge-pairing residuals. This directly shows that the boards' clocks and ISR
+timestamps are highly repeatable and that the remaining microsecond variation
+is chiefly USB phase observation and feedback. See the
+[raw samples](evidence/machine_time/sync_line_edges.csv) and
+[metadata](evidence/machine_time/sync_line_summary.json).
+
 The phase-continuous experiment is not the shipped policy. It is retained in
 this table because it demonstrates an important distinction: an offset can be
 very repeatable yet have a biased acquisition. Conversely, a conservative
@@ -138,6 +163,26 @@ hardware timestamps, or another directly qualified timing source may add
 **hardware-bounded assurance**. That is an optional stronger claim, not a
 prerequisite for the already-demonstrated Pico-XY plus EBB36-extruder use
 case.
+
+## USB Start-of-Frame discipline
+
+The follow-up experiment matched the same 11-bit USB frame number across the
+RP2040 and STM32 USB FS device controllers, then calibrated those clock pairs
+against the direct wire. Fifty matched frames had a stable -0.4622 us phase
+with 0.0242 us population standard deviation. When those exact pairs drove
+the discipline loop, a steady 50-edge run measured +0.5769 us mapping phase
+with only 0.0153 us standard deviation and a +0.5469 to +0.6094 us range.
+
+This is a roughly 24 to 70 fold reduction in variation from the earlier
+0.3710 to 1.0805 us software-map runs. The fixed sub-microsecond phase is
+measured, not assumed. `[timesync] usb_sof: True` enables this mode in
+production: SOF interrupts run for only 10 ms per approximately 1 Hz beacon,
+and an unmatched frame falls back to the existing host estimate. The direct
+wire is not required after commissioning. A wire-free Klipper service restart
+with both commissioning sections removed reacquired the 8/8 exact-pair host
+gate and a converged firmware map. See the
+[raw SOF samples](evidence/machine_time/usb_sof_edges.csv) and
+[summary](evidence/machine_time/usb_sof_summary.json).
 
 The remaining measurement gap is timing under representative printing and
 USB/host load. Idle scope captures characterize the clock mechanism but are

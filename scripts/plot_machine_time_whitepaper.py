@@ -11,6 +11,10 @@ from xml.sax.saxutils import escape
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(
     ROOT, 'docs/evidence/machine_time/scope_comparison_edges.csv')
+SYNC_LINE_DATA = os.path.join(
+    ROOT, 'docs/evidence/machine_time/sync_line_edges.csv')
+USB_SOF_DATA = os.path.join(
+    ROOT, 'docs/evidence/machine_time/usb_sof_edges.csv')
 OUT = os.path.join(ROOT, 'docs/img')
 
 COLORS = {
@@ -95,6 +99,30 @@ def load_data():
                 'scope': float(row['scope_delta_us']),
                 'isr': float(row['isr_delta_us']),
                 'mapping': float(row['mapping_delta_us']),
+            })
+    return grouped
+
+
+def load_sync_line_data():
+    grouped = {}
+    with open(SYNC_LINE_DATA, newline='', encoding='utf-8') as source:
+        for row in csv.DictReader(source):
+            grouped.setdefault(row['dataset'], []).append({
+                'sample': int(row['sample']),
+                'primary': int(row['primary_actual_ticks']),
+                'secondary': int(row['secondary_capture_ticks']),
+                'map_error': float(row['map_error_us']),
+            })
+    return grouped
+
+
+def load_usb_sof_data():
+    grouped = {}
+    with open(USB_SOF_DATA, newline='', encoding='utf-8') as source:
+        for row in csv.DictReader(source):
+            grouped.setdefault(row['dataset'], []).append({
+                'sample': int(row['sample']),
+                'error': float(row['error_us']),
             })
     return grouped
 
@@ -324,10 +352,162 @@ def chart_error_source(data):
     return svg.save('machine_time_error_source.svg')
 
 
+def affine_residual_sigma(records):
+    x0, y0 = records[0]['primary'], records[0]['secondary']
+    xs = [row['primary'] - x0 for row in records]
+    ys = [row['secondary'] - y0 for row in records]
+    xmean = statistics.fmean(xs)
+    ymean = statistics.fmean(ys)
+    denom = sum((x - xmean) ** 2 for x in xs)
+    slope = sum((x - xmean) * (y - ymean)
+                for x, y in zip(xs, ys)) / denom
+    intercept = ymean - slope * xmean
+    residuals_us = [
+        (y - intercept - slope * x) / 64.
+        for x, y in zip(xs, ys)]
+    return statistics.pstdev(residuals_us)
+
+
+def chart_sync_line(sync_data):
+    width, height = 1300, 640
+    svg = Svg(width, height, 'Direct sync line and USB clock-map error',
+              'Physical edge-fit residual compared with USB mapping error.')
+    add_header(svg, 'A shared edge exposes the USB mapping error directly',
+               'Pico GPIO24 drives EBB36 PB8; the secondary timestamps the '
+               'edge in its EXTI interrupt')
+    left, top, plot_w, plot_h = 90, 105, 700, 380
+    sx = lambda value: left + (value - 1.) / 29. * plot_w
+    y_min, y_max = -5., 4.5
+    sy = lambda value: top + (y_max - value) / (y_max - y_min) * plot_h
+    for value in range(-5, 5):
+        svg.line(left, sy(value), left + plot_w, sy(value), COLORS['grid'])
+        svg.text(left - 12, sy(value) + 4, value, anchor='end')
+    svg.line(left, sy(0), left + plot_w, sy(0), COLORS['slate'], 1.5)
+    for value in (1, 5, 10, 15, 20, 25, 30):
+        svg.line(sx(value), top, sx(value), top + plot_h, COLORS['grid'])
+        svg.text(sx(value), top + plot_h + 23, value, anchor='middle')
+    series = [
+        ('sync-line-rt-r1', 'Run 1', COLORS['blue']),
+        ('sync-line-rt-r2', 'Run 2', COLORS['green']),
+        ('sync-line-rt-r3', 'Run 3', COLORS['violet']),
+    ]
+    for key, _label, color in series:
+        points = [(sx(row['sample']), sy(row['map_error']))
+                  for row in sync_data[key]]
+        svg.polyline(points, color, 2.4)
+        for x, y in points:
+            svg.circle(x, y, 2.2, color)
+    svg.text(left + plot_w / 2, height - 58, 'Captured edge',
+             anchor='middle')
+    svg.text(25, top + plot_h / 2, 'USB-map prediction error (µs)',
+             anchor='middle', rotate=-90)
+
+    panel_x = 965
+    svg.text(panel_x, 116, 'Measured variation', weight='700')
+    svg.text(panel_x, 140, 'Population σ, logarithmic scale', 'subtitle')
+    entries = []
+    for key, label, color in series:
+        physical = affine_residual_sigma(sync_data[key])
+        usb = statistics.pstdev(
+            row['map_error'] for row in sync_data[key])
+        entries.extend([
+            ('%s physical fit' % label, physical, color),
+            ('%s USB map' % label, usb, COLORS['orange']),
+        ])
+    bar_left, bar_top, bar_w, bar_h = panel_x, 174, 260, 285
+    lo, hi = .001, 10.
+    bx = lambda value: bar_left + (
+        math.log10(value) - math.log10(lo)) / (
+            math.log10(hi) - math.log10(lo)) * bar_w
+    for value in (.001, .01, .1, 1., 10.):
+        svg.line(bx(value), bar_top, bx(value), bar_top + bar_h,
+                 COLORS['grid'])
+        svg.text(bx(value), bar_top + bar_h + 22, '%g' % value,
+                 anchor='middle')
+    for index, (label, value, color) in enumerate(entries):
+        y = bar_top + 25 + index * 43
+        svg.text(bar_left - 8, y + 4, label, 'legend', anchor='end')
+        svg.line(bx(lo), y, bx(value), y, color, 9)
+        svg.circle(bx(value), y, 5, color)
+        svg.text(bx(value) + 9, y + 4, '%.4f µs' % value, 'legend')
+    ratios = []
+    for key, _label, _color in series:
+        ratios.append(statistics.pstdev(
+            row['map_error'] for row in sync_data[key])
+            / affine_residual_sigma(sync_data[key]))
+    svg.text(panel_x, 525, 'Physical residual is %.0f–%.0f× smaller' % (
+                 min(ratios), max(ratios)),
+             'legend', weight='700')
+    svg.text(panel_x, 547, 'than the USB-map σ in these runs.', 'legend')
+    return svg.save('machine_time_sync_line.svg')
+
+
+def chart_sof_discipline(sof_data):
+    width, height = 1200, 620
+    svg = Svg(width, height, 'USB SOF phase and disciplined clock map',
+              'Direct-wire-calibrated phase for matching USB SOF frames and '
+              'the resulting machine-time mapping error.')
+    add_header(svg, 'USB SOF turns phase observation into a hardware event',
+               'Same-frame timestamps and the disciplined map, both '
+               'calibrated against the direct GPIO edge')
+    left, top, plot_w, plot_h = 90, 105, 720, 390
+    sx = lambda value: left + (value - 1.) / 49. * plot_w
+    y_min, y_max = -.75, .85
+    sy = lambda value: top + (y_max - value) / (y_max - y_min) * plot_h
+    for step in range(-6, 9, 2):
+        value = step / 10.
+        svg.line(left, sy(value), left + plot_w, sy(value), COLORS['grid'])
+        svg.text(left - 12, sy(value) + 4, '%+.1f' % value, anchor='end')
+    for value in (1, 10, 20, 30, 40, 50):
+        svg.line(sx(value), top, sx(value), top + plot_h, COLORS['grid'])
+        svg.text(sx(value), top + plot_h + 23, value, anchor='middle')
+    svg.line(left, sy(0), left + plot_w, sy(0), COLORS['slate'], 1.5)
+    series = [
+        ('usb-sof-rt-r1', 'Matched SOF phase', COLORS['violet']),
+        ('sof-discipline-rt-r1', 'Discipline acquisition', COLORS['cyan']),
+        ('sof-discipline-rt-r2', 'Steady discipline', COLORS['green']),
+    ]
+    for key, _label, color in series:
+        points = [(sx(row['sample']), sy(row['error']))
+                  for row in sof_data[key]]
+        svg.polyline(points, color, 2.2)
+        for x, y in points:
+            svg.circle(x, y, 2.1, color)
+    svg.text(left + plot_w / 2, height - 58, 'Matched frame / captured edge',
+             anchor='middle')
+    svg.text(25, top + plot_h / 2, 'Direct-wire-calibrated error (us)',
+             anchor='middle', rotate=-90)
+
+    panel_x = 850
+    svg.text(panel_x, 116, 'Measured distributions', weight='700')
+    svg.text(panel_x, 140, 'Mean and population sigma', 'subtitle')
+    for index, (key, label, color) in enumerate(series):
+        values = [row['error'] for row in sof_data[key]]
+        stat = summarize(values)
+        y = 190 + index * 105
+        svg.line(panel_x, y, panel_x + 28, y, color, 4)
+        svg.text(panel_x + 40, y + 4, label, 'legend', weight='700')
+        svg.text(panel_x + 40, y + 27,
+                 'mean %+.4f us' % stat['mean'], 'legend')
+        svg.text(panel_x + 40, y + 48,
+                 'sigma %.4f us' % stat['stdev'], 'legend')
+        svg.text(panel_x + 40, y + 69,
+                 'range %+.4f to %+.4f us' % (
+                     stat['min'], stat['max']), 'legend')
+    svg.text(panel_x, 515, 'Steady map jitter: 15 ns RMS',
+             'legend', weight='700')
+    svg.text(panel_x, 538, 'Fixed phase remains measurable and stable.',
+             'legend')
+    return svg.save('machine_time_sof_discipline.svg')
+
+
 def main():
     data = load_data()
+    sync_data = load_sync_line_data()
+    sof_data = load_usb_sof_data()
     paths = [chart_timeseries(data), chart_distributions(data),
-             chart_print_impact(data), chart_error_source(data)]
+             chart_print_impact(data), chart_error_source(data),
+             chart_sync_line(sync_data), chart_sof_discipline(sof_data)]
     for path in paths:
         print(path)
 

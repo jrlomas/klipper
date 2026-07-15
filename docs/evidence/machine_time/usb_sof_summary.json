@@ -1,0 +1,60 @@
+{
+  "date": "2026-07-15",
+  "host_kernel": "6.8.1-1015-realtime",
+  "usb_topology": "Bus 001, xHCI root hub, Pico port 8, EBB36 port 7",
+  "diagnostic_sof": {
+    "dataset": "usb-sof-rt-r1",
+    "samples": 50,
+    "matched_attempts": 80,
+    "direct_wire_calibrated_phase_mean_us": -0.4622,
+    "direct_wire_calibrated_phase_sigma_us": 0.0242,
+    "direct_wire_calibrated_phase_min_us": -0.5013,
+    "direct_wire_calibrated_phase_max_us": -0.4096,
+    "affine_residual_sigma_us": 0.0242,
+    "affine_residual_peak_us": 0.0528
+  },
+  "sof_discipline": [
+    {
+      "dataset": "sof-discipline-rt-r1",
+      "samples": 50,
+      "direct_wire_map_error_mean_us": -0.0241,
+      "direct_wire_map_error_sigma_us": 0.2409,
+      "direct_wire_map_error_min_us": -0.5000,
+      "direct_wire_map_error_max_us": 0.3281,
+      "physical_fit_residual_sigma_us": 0.0087,
+      "physical_fit_residual_peak_us": 0.0208
+    },
+    {
+      "dataset": "sof-discipline-rt-r2",
+      "samples": 50,
+      "direct_wire_map_error_mean_us": 0.5769,
+      "direct_wire_map_error_sigma_us": 0.0153,
+      "direct_wire_map_error_min_us": 0.5469,
+      "direct_wire_map_error_max_us": 0.6094,
+      "physical_fit_residual_sigma_us": 0.0080,
+      "physical_fit_residual_peak_us": 0.0161
+    }
+  ],
+  "operational_mode": {
+    "config": "[timesync] usb_sof: True",
+    "capture_window_ms_per_beacon": 10,
+    "normal_sof_interrupt_state": "disabled outside capture window",
+    "fallback": "existing host clock estimate for an unmatched frame"
+  },
+  "wire_free_restart_validation": {
+    "direct_sync_wire": false,
+    "commissioning_sections_loaded": false,
+    "printer_state": "ready",
+    "usb_sof": true,
+    "host_model_stable": true,
+    "host_stable_count": 8,
+    "exact_pair_rate_error_ppm": 0.0414,
+    "firmware_converged": true,
+    "firmware_last_error_ticks": -450,
+    "firmware_last_error_us": -7.0313,
+    "heater_targets_c": {
+      "bed": 0.0,
+      "extruder": 0.0
+    }
+  }
+}

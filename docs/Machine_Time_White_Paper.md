@@ -43,6 +43,18 @@ a tight one-way delay bound without an assumption about path symmetry. A
 timer-capture sync signal remains available when an application genuinely
 requires hardware-bounded phase.
 
+Three follow-up experiments sharpen that conclusion. Repeating the analyzer
+test on a `PREEMPT_RT` kernel changed individual session distributions but did
+not remove restart-dependent phase acquisition. A direct GPIO24-to-PB8 sync
+wire then reduced physical clock-pairing residuals to **0.0041–0.0064 us
+RMS**, while the simultaneously measured software-derived USB-map error was
+**0.37–1.08 us RMS**. Finally, matching the hardware timestamp of the same USB
+Start-of-Frame on both MCUs produced **0.024 us RMS** phase variation, and
+using those pairs for discipline reduced the steady mapped-clock variation to
+**0.015 us RMS** around a stable **+0.58 us** phase. The boards and interrupt
+timestamps are exceptionally repeatable; software observation of USB, rather
+than USB frame delivery itself, was the dominant limitation on this topology.
+
 ## 1. The problem in printer terms
 
 Suppose the primary MCU begins an XY acceleration at machine time `T`, while
@@ -146,6 +158,34 @@ exact values and metadata are preserved in
 All plotted samples, including the Helix sessions and adverse controls, are in
 [`scope_comparison_edges.csv`](evidence/machine_time/scope_comparison_edges.csv).
 
+### 3.4 Realtime-kernel follow-up
+
+The same analyzer procedure was repeated after booting Ubuntu
+`6.8.1-1015-realtime` with `CONFIG_PREEMPT_RT=y`; Klipper remained
+`SCHED_RR` priority 20. Two Helix sessions and one original-Klipper comparator
+session were retained. This changes only the host scheduling environment. The
+USB controllers, boards, pins, firmware timing instrumentation, and 24 MHz
+analyzer remained the same.
+
+### 3.5 Direct sync-line experiment
+
+After the analyzer capture, Pico GPIO24 was connected directly to EBB36 PB8.
+GPIO24 was the sole output. PB8 was configured as a passive rising-edge EXTI
+input and could not fire `trsync` or stop motion. For every sample:
+
+1. the EBB36 observer was armed;
+2. the Pico scheduled one rising edge and reported its actual local clock;
+3. the EBB36 latched its local clock at ISR entry; and
+4. the host compared the captured tick with the firmware's current
+   machine-to-local USB map.
+
+PB8 is not routed to a TIM2 input-capture channel on this MCU implementation,
+so this is an ISR-entry timestamp rather than timer input capture. That makes
+the result conservative with respect to a future dedicated capture pin. An
+affine fit between the two raw clock streams removes constant propagation,
+phase, and oscillator-rate offset. Its residual measures physical pairing
+repeatability independently of the USB mapping.
+
 ## 4. Results
 
 ### 4.1 Restart and convergence behavior
@@ -201,6 +241,88 @@ This rules out a tempting but incorrect explanation: toggling the diagnostic
 GPIO inside the MCU path is not creating the observed multi-microsecond
 variance. The GPIO path contributes a nearly constant offset, which the paired
 firmware timestamps independently expose.
+
+### 4.4 What `PREEMPT_RT` changed
+
+| Dataset | Edges | Mean (us) | Population sigma (us) | Observed range (us) |
+| --- | ---: | ---: | ---: | ---: |
+| Helix `PREEMPT_RT` session 1 | 30 | +3.19 | 3.74 | -1.75 to +8.63 |
+| Helix `PREEMPT_RT` session 2 | 20 | -10.95 | 6.54 | -18.88 to +3.21 |
+| Original Klipper `PREEMPT_RT` comparator | 30 | -3.75 | 3.12 | -6.13 to +6.96 |
+
+The realtime kernel did not produce a single stable phase distribution. It
+helped the retained original-Klipper comparator's spread relative to its
+generic-kernel run, but the two Helix sessions still acquired different phase
+centers and one had a larger spread. This agrees with the expected boundary:
+`PREEMPT_RT` can reduce host scheduling delay and improve consistency, but it
+cannot reveal the unknown one-way delay of two independent USB exchanges.
+
+### 4.5 A shared edge separates clock quality from software observation
+
+![Direct sync-line residual and USB mapping error](img/machine_time_sync_line.svg)
+
+| Direct-wire run | Edges | Physical-fit sigma | Physical peak residual | USB-map mean | USB-map sigma | USB-map range |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `sync-line-rt-r1` | 30 | 0.0064 us | 0.0217 us | +2.4891 us | 1.0805 us | +0.2969 to +3.9375 us |
+| `sync-line-rt-r2` | 30 | 0.0053 us | 0.0086 us | +1.2917 us | 0.3710 us | +0.3125 to +1.6562 us |
+| `sync-line-rt-r3` | 30 | 0.0041 us | 0.0090 us | -3.8906 us | 0.6072 us | -4.5000 to -2.6250 us |
+
+The runs measured the EBB36 oscillator at **-25.15 to -25.19 ppm** relative to
+the Pico's nominal frequency ratio. After removing that real and stable rate
+difference, the physical residual was only 4–6 ns RMS—about 70 to 170 times
+smaller than the software-derived USB-map deviation. The Pico source ISR was
+also constant at seven ticks, or 0.583 us, in all 90 samples.
+
+The first run's map error rose from +0.30 to +3.94 us. The second rose more
+slowly and settled near +1.66 us as the feedback loop corrected phase. This is
+not crystal instability: the direct fit stayed at nanosecond-scale residuals
+through both runs. It is direct evidence that the remaining microsecond term
+belongs to USB-based phase acquisition and feedback.
+
+This direct wire is not yet a hard end-to-end bound. PB8 timestamps ISR entry,
+and the experiment reports observed residuals rather than a formally bounded
+interrupt latency. A timer input-capture pin would remove that last software
+term. Even so, the result decisively localizes the observed variability.
+
+### 4.6 USB Start-of-Frame closes the observation gap
+
+![Direct-wire-calibrated USB SOF phase and resulting disciplined mapping](img/machine_time_sof_discipline.svg)
+
+Both boards are full-speed USB devices on separate root-hub ports of the same
+xHCI controller. Firmware briefly enabled each device controller's SOF
+interrupt and retained local clock timestamps indexed by the USB 11-bit frame
+number. The host then paired only identical frame numbers. Because the pair is
+captured at the devices, later host wakeup and command-delivery latency cannot
+alter either timestamp.
+
+| SOF dataset | Samples | Mean | Population sigma | Observed range |
+| --- | ---: | ---: | ---: | ---: |
+| Matching-frame phase, direct-wire calibrated | 50 | -0.4622 us | 0.0242 us | -0.5013 to -0.4096 us |
+| SOF discipline acquisition | 50 | -0.0241 us | 0.2409 us | -0.5000 to +0.3281 us |
+| SOF discipline steady run | 50 | +0.5769 us | 0.0153 us | +0.5469 to +0.6094 us |
+
+The first row measures delivery of the same frame before using it to control
+the clock map: variation was 24 ns RMS with a stable -0.46 us port/peripheral
+phase. The second row crossed zero while the deliberately slow feedback loop
+converged. The final independent run held a +0.58 us phase with only 15 ns RMS
+variation. Its physical edge-pairing fit remained at 8 ns RMS, independently
+confirming that the direct-wire measurement itself had not become noisy.
+
+This improves repeatability by roughly 24 to 70 times relative to the two
+earlier 0.37–1.08 us software-map runs. It also changes the assurance claim:
+the remaining fixed phase is directly measured against the wire rather than
+inferred from symmetric USB message latency. It is a result for these two root
+ports and devices, not a universal promise that every USB topology delivers
+SOF with the same offset.
+
+Production mode is `[timesync] usb_sof: True`. It enables the 1 kHz SOF
+interrupt for only 10 ms at each approximately 1 Hz beacon, disables it after
+capture, and uses the established host estimate for that beacon if an exact
+frame pair is unavailable. The direct GPIO wire and commissioning sections are
+not required for normal operation. A subsequent Klipper service restart with
+the wire removed and both commissioning sections absent reacquired eight exact
+rate-consistent pairs, passed the host gate, and converged the firmware map to
+-7.03 us inside its configured +/-10 us ingest window.
 
 ## 5. Translation into a printed object
 
@@ -327,6 +449,14 @@ That gives Helix two assurance modes without weakening either claim: a measured
 USB operational profile for ordinary printing, and a hardware-bounded profile
 for coupled multi-MCU kinematics or metrology.
 
+On the present USB-connected boards, USB Start-of-Frame provides that
+intermediate reference without a permanent board wire. It has been qualified
+against the direct GPIO line: same-frame delivery varied by 0.024 us RMS, and
+the steady disciplined map varied by 0.015 us RMS around a measured +0.58 us
+phase. This is stronger than software message timing but remains a qualified
+property of this USB controller, root-port pair, and MCU peripheral
+implementation—not a universal equivalence between SOF and a shared clock.
+
 ## 8. Conclusions
 
 1. **The retained Helix implementation outperformed the original Klipper
@@ -346,6 +476,13 @@ for coupled multi-MCU kinematics or metrology.
    complementary.** The former is supported by the current measurements and
    successful printing; the latter is available when the actuator topology or
    application truly requires a hard phase claim.
+6. **A direct shared edge changes the attainable measurement quality.** Three
+   30-edge runs had only 0.0041–0.0064 us physical-fit sigma while the software
+   USB map retained 0.37–1.08 us sigma.
+7. **USB SOF materially increases precision on the tested topology.** Matching
+   frames varied by 0.024 us RMS, and the steady disciplined clock map varied
+   by 0.015 us RMS around a directly measured +0.58 us phase. This is roughly
+   24–70 times less variation than the preceding software-map runs.
 
 The remaining high-value experiment is a longer synchronized capture during a
 representative print, with concurrent trajectory and extrusion traffic, then a
@@ -364,6 +501,10 @@ python3 scripts/plot_machine_time_whitepaper.py
 Relevant artifacts:
 
 - [Raw comparison edges](evidence/machine_time/scope_comparison_edges.csv)
+- [Raw direct sync-line edges](evidence/machine_time/sync_line_edges.csv)
+- [Direct sync-line metadata and summaries](evidence/machine_time/sync_line_summary.json)
+- [Raw USB SOF and discipline samples](evidence/machine_time/usb_sof_edges.csv)
+- [USB SOF metadata and summaries](evidence/machine_time/usb_sof_summary.json)
 - [Original Klipper comparator metadata and exact samples](evidence/machine_time/klipper_legacy_r1_summary.json)
 - [Figure generator](../scripts/plot_machine_time_whitepaper.py)
 - [Machine-Time Qualification](Machine_Time_Qualification.md)

@@ -1,0 +1,55 @@
+{
+  "date": "2026-07-15",
+  "host_kernel": "6.8.1-1015-realtime",
+  "host_preemption": "PREEMPT_RT",
+  "klipper_policy": "SCHED_RR priority 20",
+  "source": {
+    "mcu": "RP2040 Pico",
+    "pin": "GPIO24",
+    "clock_hz": 12000000,
+    "mode": "scheduled digital output with actual ISR timestamp"
+  },
+  "capture": {
+    "mcu": "STM32G0B1 EBB36",
+    "pin": "PB8",
+    "clock_hz": 64000000,
+    "mode": "GPIO EXTI ISR-entry timestamp",
+    "timer_input_capture": false
+  },
+  "wiring": "Pico GPIO24 directly connected to EBB36 PB8 with common printer ground",
+  "runs": [
+    {
+      "dataset": "sync-line-rt-r1",
+      "samples": 30,
+      "physical_fit_residual_sigma_us": 0.0064,
+      "physical_fit_residual_peak_us": 0.0217,
+      "measured_secondary_to_primary_rate_offset_ppm": -25.19,
+      "usb_map_error_mean_us": 2.4891,
+      "usb_map_error_sigma_us": 1.0805,
+      "usb_map_error_min_us": 0.2969,
+      "usb_map_error_max_us": 3.9375
+    },
+    {
+      "dataset": "sync-line-rt-r2",
+      "samples": 30,
+      "physical_fit_residual_sigma_us": 0.0053,
+      "physical_fit_residual_peak_us": 0.0086,
+      "measured_secondary_to_primary_rate_offset_ppm": -25.19,
+      "usb_map_error_mean_us": 1.2917,
+      "usb_map_error_sigma_us": 0.3710,
+      "usb_map_error_min_us": 0.3125,
+      "usb_map_error_max_us": 1.6562
+    },
+    {
+      "dataset": "sync-line-rt-r3",
+      "samples": 30,
+      "physical_fit_residual_sigma_us": 0.0041,
+      "physical_fit_residual_peak_us": 0.0090,
+      "measured_secondary_to_primary_rate_offset_ppm": -25.15,
+      "usb_map_error_mean_us": -3.8906,
+      "usb_map_error_sigma_us": 0.6072,
+      "usb_map_error_min_us": -4.5000,
+      "usb_map_error_max_us": -2.6250
+    }
+  ]
+}
