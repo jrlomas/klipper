@@ -252,6 +252,12 @@ repeatability. See
 data, graph, direct method, and the distinction between physical and scheduler
 overrun.
 
+Final sign-off flashed the exact `02426d43` image. A polling-observer home
+emitted non-stopping type 9 records that Atlas rendered as informational
+`edge_observed` events, then a restored production ISR home repeated the
+23.1 us response. The printer ended ready with its original configuration
+restored byte-for-byte.
+
 ## Open questions
 
 * Whether qualification parameters (`qualify_ticks/count`) should have

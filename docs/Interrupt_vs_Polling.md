@@ -113,6 +113,15 @@ speed per mode. A temporary fixture removed an unrelated Z hop and released
 the switch to Z10 between homes. The exact pre-test configuration was restored
 on disk after the series. No heater command was issued by the test.
 
+After the measurement implementation was committed, the exact `02426d43`
+firmware image was flashed for final sign-off. One additional polling-observer
+home emitted type 9 `edge_observed` records and stopped after 73.17 us fast and
+91.58 us slow; Atlas stored both as informational observations rather than
+stops or incidents. After restoring production ISR mode, one additional home
+stopped after 23.17 us fast and 23.08 us slow. These four confirmation contacts
+are not included in the 64-row statistical dataset. Klipper ended ready and
+the production configuration matched its pre-test snapshot byte-for-byte.
+
 ## Results: timing and physical overrun
 
 | Pass | Stop owner | Contacts | Edge-to-stop mean | Timing SD | Minimum--maximum | Mean motion after edge | Maximum motion after edge |

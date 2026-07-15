@@ -570,7 +570,12 @@ a faster stop — test both the latency and the things polling could not do.
   clocks, a generated comparison graph, limitations, and the explicit
   distinction between detector timing, physical overrun, scheduler overrun,
   and whole-machine positional repeatability are in
-  [Why interrupt-driven endstops?](Interrupt_vs_Polling.md).
+  [Why interrupt-driven endstops?](Interrupt_vs_Polling.md). Final sign-off
+  then flashed exact firmware `02426d43`: a polling-observer home emitted
+  non-stopping type 9 records and Atlas labeled them `edge_observed`; the
+  restored production ISR home retained 23.17/23.08 us fast/slow response.
+  The printer ended ready with the production config byte-identical to the
+  pre-test snapshot.
 - [ ] **7.3 — Multi-MCU homing.** Endstop on one board, motor on another.
   Pass: coordinated stop within the time-model tolerance.
 - [ ] **7.4 — Comparator / analog trigger.** Where wired, arm an analog
