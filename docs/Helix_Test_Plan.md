@@ -246,7 +246,7 @@ Prove the wire before you trust it to carry motion.
   records and peaked at 257 records/s; execution logging simultaneously
   peaked at 258 records/s. The combined 515-response burst occurred in the
   same machine-time second that EBB36 discipline lost convergence.
-- [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
+- [~] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
   its stock v1 frames to v2 via the transport bridge
   (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
   Host loopware is already tested (`test/intentproto_transport_test.py`);
@@ -265,12 +265,27 @@ Prove the wire before you trust it to carry motion.
     the IRQ glue, not the transform.
   Pass: datagram mode clean and auth-enforced; console-BCH latches and runs
   (a failure implicates the silicon IRQ glue, not the proven transform).
-- [ ] **2.4 — Negotiation fallback.** A host that only speaks legacy still
+  The Lolin32 component and modem images have each carried identify/dictionary
+  and periodic stats over authenticated WiFi datagrams, and controlled loss of
+  the first packet in a protected pair recovered on the real component path.
+  At current host commit `ab307431`, the linuxprocess session responder again
+  passed authenticated traffic, tamper rejection, hostile-hello isolation,
+  and re-handshake; console-v2 again passed dual acceptance, latch, and
+  three-bit BCH correction. Datagram silicon is therefore proven. A UART MCU
+  using the real `serial_irq.c` console-v2 call sites remains the missing half.
+- [~] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
-  Pass: a legacy-only host session is clean.
-- [ ] **2.5 — Extension self-description.** `list_extensions` /
+  Pass: a legacy-only host session is clean. The live linuxprocess console-v2
+  test accepts a v1 identify without latching, and the live session responder
+  preserves authenticated static-envelope fallback before negotiation. The
+  corresponding physical UART IRQ path remains grouped with the open half of
+  2.3.
+- [~] **2.5 — Extension self-description.** `list_extensions` /
   `list_constants` paginate to `extension_done`.
-  Pass: the host can reconstruct the registry with no dictionary blob.
+  Pass: the host can reconstruct the registry with no dictionary blob. The
+  current standalone, C ABI, and CFFI suites paginate both registries to
+  `extension_done` and reconstruct the binding without a dictionary. An
+  on-silicon meta-command pagination capture remains.
 
 ---
 
@@ -691,18 +706,29 @@ Phases 3/7/8 over each real transport.
 
 ## Phase 10 — Security
 
-- [ ] **10.1 — PSK datagram auth floor.** Confirm every datagram carries a
+- [~] **10.1 — PSK datagram auth floor.** Confirm every datagram carries a
   truncated HMAC over the static PSK; a forged/altered datagram is
   dropped.
-  Pass: tampered frame rejected; counter increments.
-- [ ] **10.2 — DTLS-class session.** Bring up the 3-message PSK handshake;
+  Pass: tampered frame rejected; counter increments. The live linuxprocess
+  responder rejects altered traffic, and the Lolin32 has carried authenticated
+  traffic plus controlled-loss FEC on real WiFi. The adversarial forged-source
+  counter check on the physical ESP32 remains.
+- [~] **10.2 — DTLS-class session.** Bring up the 3-message PSK handshake;
   confirm HKDF-derived keys, epoch rotation, and the 64-entry replay
   window (auth-only).
   Pass: handshake completes; a replayed datagram is rejected; key rotation
-  survives a long session; RAM cost matches the ~264-byte budget.
-- [ ] **10.3 — Per-board identity.** Two boards have distinct identities;
+  survives a long session; RAM cost matches the ~264-byte budget. The C++/CFFI
+  suites cover replay windows and epoch rotation; the live responder covers
+  the complete handshake, authenticated traffic, tamper rejection, live-session
+  preservation, and legitimate re-handshake. Both Lolin32 architectures have
+  run rotating-key sessions, but the long-duration physical rotation/RAM soak
+  remains.
+- [~] **10.3 — Per-board identity.** Two boards have distinct identities;
   one cannot impersonate the other.
-  Pass: cross-identity frame rejected.
+  Pass: cross-identity frame rejected. Expected-identity enforcement and
+  mismatch rejection pass in the current bridge/live suite, and the Lolin32
+  presented its configured identity on hardware. A two-physical-board
+  cross-identity attempt remains.
 - [ ] **10.4 — Signed firmware images.** With `WANT_SIGNED_IMAGES`, the
   bootloader verifies an Ed25519 signature before running an image.
   Expect: a correctly signed image boots; an unsigned/mis-signed/altered
@@ -719,34 +745,46 @@ Phases 3/7/8 over each real transport.
 
 ## Phase 11 — ESP32 "IDF-as-modem" architecture
 
-**Runtime is explicitly unproven in 0.9 — this phase is where it gets
-proven.** Do it on an ESP32 devkit.
+Runtime console bring-up is proven on a classic dual-core Lolin32. Motion,
+peripheral timing, and cache-stall qualification remain in 11.6/11.7.
 
-- [ ] **11.1 — Build both architectures.** Confirm the Kconfig/CMake
+- [x] **11.1 — Build both architectures.** Confirm the Kconfig/CMake
   switch builds *both* the `component` (validated) fallback and the
   `modem` (bare core-1) architecture.
-  Pass: both link.
-- [ ] **11.2 — Component fallback runs.** Flash the `component` build.
-  Pass: ESP32 behaves as a normal networked MCU (regression safety net).
-- [ ] **11.3 — APP-CPU bare bringup.** Flash the `modem` build; core 0 owns
+  Pass: both link. Pinned ESP-IDF v5.3.2 and xtensa-esp-elf 13.2.0 build the
+  component, component-RMT, and unicore modem images.
+- [x] **11.2 — Component fallback runs.** Flash the `component` build.
+  Pass: ESP32 behaves as a normal networked MCU (regression safety net). A
+  Lolin32 component image loaded all 112 commands, verified board identity,
+  emitted continuous stats, and recovered a deliberately lost FEC packet.
+- [x] **11.3 — APP-CPU bare bringup.** Flash the `modem` build; core 0 owns
   IDF/WiFi, core 1 runs bare `sched_main()`.
   Expect: core 1 comes up, runs the scheduler, and **never calls an
   IDF/FreeRTOS symbol** after unstall.
-  Pass: board boots into bare core-1; console reachable.
-- [ ] **11.4 — Shared-memory ring console.** The SPSC ring backs the
+  Pass: board boots into bare core-1; console reachable. The Lolin32 booted the
+  private APP-CPU vectors and bare scheduler, then loaded the complete
+  dictionary through the shared ring using both static and rotating sessions.
+- [~] **11.4 — Shared-memory ring console.** The SPSC ring backs the
   console ops.
   Pass: bidirectional traffic across the ring with no lost/duplicated
-  bytes under load; memory barriers correct (no torn reads on core 1).
-- [ ] **11.5 — Modem task.** Core 0 moves only authenticated datagram bytes
+  bytes under load; memory barriers correct (no torn reads on core 1). The
+  ring passes TSan/ASan tests and carried real bidirectional identify/stats
+  traffic. A sustained high-load hardware run remains.
+- [x] **11.5 — Modem task.** Core 0 moves only sealed datagram bytes
   between the radio and the ring.
-  Pass: air ↔ ring path clean; HMAC enforced on the core-0 side.
-- [ ] **11.6 — IRAM discipline.** Confirm the hot path (scheduler dispatch,
+  Pass: air ↔ ring path clean; HMAC is enforced on the bare HELIX core so the
+  radio/IDF core never receives authentication keys or plaintext. Static and
+  rotating authenticated sessions both carried dictionary/stats traffic on
+  the Lolin32, and bridge restart established a fresh session.
+- [~] **11.6 — IRAM discipline.** Confirm the hot path (scheduler dispatch,
   timer ISR, gpio/step, trajq execute) is IRAM-resident so a flash-cache
   miss never stalls it.
   Expect: no timing glitch correlated with flash access; IRAM budget
   within the documented map.
   Pass: sustained step generation with zero cache-stall-induced jitter;
-  record the IRAM usage.
+  record the IRAM usage. The modem link map confirms private vectors and the
+  selected scheduler/motion hot objects are in IRAM and within budget. The
+  scoped sustained-step/cache-access jitter measurement remains.
 - [ ] **11.7 — ESP32 motion soak.** Run Phases 4/7/8 over the modem build.
   Pass: parity with the STM32 path.
 

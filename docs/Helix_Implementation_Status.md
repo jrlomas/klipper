@@ -355,9 +355,9 @@ and firmware-reset recovery. The Lolin32 evidence above separately establishes
 the authenticated WiFi component/modem console and controlled-loss pair FEC.
 
 The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
-remain material: trajectory drift/underrun/stress tests, trigger repeatability
-and forced-polled latency comparison, trace-off step timing, scoped cross-MCU
-action, PWM waveform quality, heater hold, fault injection, soak, real printing, V2.4 CAN,
+remain material: trajectory drift/underrun/stress tests, trace-off step timing,
+scoped cross-MCU action, PWM waveform quality, heater hold, fault injection,
+soak, real printing, V2.4 CAN,
 constrained F072 silicon, native RMII/W5500 PHYs, product-key provisioning,
 and Pi/Hailo deployment.
 USB success on the V0 is not implicit CAN sign-off for the V2.4.
