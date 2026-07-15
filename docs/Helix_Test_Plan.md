@@ -821,9 +821,17 @@ Now put it together on the **full printer**.
   generation cursor. A dedicated 40 ms pressure-advance regression, the full
   focused host suite, and a 100% two-layer replay of the failing cube pass.
   The replay emits 63,846 E edges with a 4,896-tick minimum and no interval at
-  or below 64 ticks. Klipper has been restarted with the correction and both
-  boards are ready with converged Class-0 time. Item 14.2 remains open pending
-  a clean supervised repeat.
+  or below 64 ticks. A supervised repeat progressed into physical extrusion,
+  then found a distinct scheduling bug at another disconnected E island. Its
+  forward-only rebase for local clock 3,214,869,210 reached the EBB36 at
+  3,214,903,493, already 34,283 ticks (535.7 us) late. The prior horizon had
+  been supplied as the command's `minclock`; serialqueue therefore withheld
+  the rebase until the old horizon rather than giving it the normal advance
+  delivery window. Per-joint command-queue order and both host/firmware
+  overlap checks already enforce the required ordering, so rebase transmission
+  now uses `minclock=0` while keeping its requested execution clock. Focused
+  trajectory, extrusion, and status regressions pass. Item 14.2 remains open
+  pending a clean supervised repeat.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

@@ -972,7 +972,7 @@ def test_g1_quintic_segments_use_higher_order_wire_command():
     assert record['execution_end_clock'] == 5_345_333
 
 
-def test_rebase_waits_for_previous_horizon():
+def test_rebase_validates_previous_horizon_without_late_release():
     class PhysicalStepper:
         def commanded_to_mcu_position_su(self, pos):
             return 777
@@ -1003,7 +1003,7 @@ def test_rebase_waits_for_previous_horizon():
     stepper._anchor(10.)
     assert stepper.rebase_cmd.sent == [[4, 10_000_000, 777, 12]]
     assert stepper.rebase_cmd.send_options == [{
-        'minclock': 9_000_000, 'reqclock': 10_000_000}]
+        'minclock': 0, 'reqclock': 10_000_000}]
     assert stepper.rebase_min_clock == 0
     assert stepper.ffi_lib.offset == 652.
 
@@ -1034,7 +1034,7 @@ def test_secondary_rebase_uses_immutable_local_horizon():
     assert stepper.local_rebase_cmd.sent == [[
         5, 13_200_000, 70_400_000, 123456, 42]]
     assert stepper.local_rebase_cmd.send_options == [{
-        'minclock': 66_000_000, 'reqclock': 70_400_000}]
+        'minclock': 0, 'reqclock': 70_400_000}]
     assert stepper.execution_clock == 70_400_000
     assert stepper.rebase_min_clock == 0
     assert stepper.rebase_min_execution_clock == 0
@@ -1078,7 +1078,7 @@ def test_active_path_is_held_before_rebase_boundary():
     assert stepper.hold_cmd.sent == [[4, 1000]]
     assert stepper.rebase_cmd.sent == [[4, 10_000_000, 777, 12]]
     assert stepper.rebase_cmd.send_options == [{
-        'minclock': 9_001_000, 'reqclock': 10_000_000}]
+        'minclock': 0, 'reqclock': 10_000_000}]
     assert not stepper.rebase_requires_hold
 
 
@@ -1172,8 +1172,8 @@ def main():
           " chained endpoints")
     test_g1_quintic_segments_use_higher_order_wire_command()
     print("PASS: normal G1 quintics bypass the quadratic wire command")
-    test_rebase_waits_for_previous_horizon()
-    print("PASS: a new rebase waits for the previous physical horizon")
+    test_rebase_validates_previous_horizon_without_late_release()
+    print("PASS: rebases validate the old horizon without a late host release")
     test_secondary_rebase_uses_immutable_local_horizon()
     print("PASS: secondary rebases preserve an immutable local horizon")
     test_active_path_is_held_before_rebase_boundary()

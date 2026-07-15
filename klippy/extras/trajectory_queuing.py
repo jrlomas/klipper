@@ -621,11 +621,18 @@ class TrajectoryStepper:
                 " horizon: rebase clock %d < horizon %d" % (
                     self.name, local_clock, min_local))
         wire_pos_su = _signed_i32(pos_su)
+        # minclock is a *transmission release* barrier, not merely command
+        # ordering metadata.  Reusing the previous execution horizon here
+        # held a valid queued rebase on the host until that horizon had
+        # already passed; disconnected pressure-advance islands only ~1ms
+        # apart then reached a 64MHz toolhead MCU hundreds of microseconds
+        # late and triggered "Timer too close".  All commands for this joint
+        # share one command queue, and the MCU validates the rebase clock
+        # against its queued horizon, so transmit the barrier ahead of time.
         if self.mcu is self._machine_mcu():
-            send_min_local = min_local or min_machine
             self.rebase_cmd.send(
                 [self.oid, clock & 0xffffffff, wire_pos_su, mcu_pos],
-                minclock=send_min_local, reqclock=local_clock)
+                minclock=0, reqclock=local_clock)
         else:
             if self.local_rebase_cmd is None:
                 raise self.mcu.error(
@@ -634,7 +641,7 @@ class TrajectoryStepper:
             self.local_rebase_cmd.send(
                 [self.oid, clock & 0xffffffff, local_clock & 0xffffffff,
                  wire_pos_su, mcu_pos],
-                minclock=min_local, reqclock=local_clock)
+                minclock=0, reqclock=local_clock)
         self._wire_rebase(clock, pos_su, mcu_pos,
                           execution_clock=local_clock)
         self.rebase_min_clock = 0

@@ -307,6 +307,33 @@ pass; the replay emits 63,846 E pulses, has a 4,896-tick minimum interval,
 and contains no interval at or below 64 ticks. The physical benchmark remains
 open until this host correction completes a new supervised print.
 
+### Experiment 1f: rebase transmission release deadline
+
+The next supervised repeat passed the historical-lookback case but stopped at
+a later disconnected pressure-advance island. The EBB36 completed its prior
+hold at local clock 3,214,788,125. The host emitted a valid later rebase for
+3,214,869,210, but firmware processed it at 3,214,903,493: 34,283 ticks, or
+535.7 us, too late. The activity boundary was forward-only and timesync was
+still valid, so this was not a recurrence of Experiment 1e.
+
+The host had used the prior local execution horizon as the rebase command's
+`minclock`. In Klipper serialqueue, `minclock` is a transmission-release gate:
+the message stays in the upcoming queue until the MCU acknowledgement clock
+passes that value. It is not merely an assertion that two commands execute in
+order. With only about 1.3 ms between the terminal hold and the next E island,
+that gate consumed the rebase's delivery lead and made `Timer too close`
+inevitable under normal USB scheduling jitter.
+
+Every trajectory command for one joint already uses the same serial command
+queue, preserving wire order. The host also rejects a rebase clock before its
+recorded machine/local horizon, and firmware independently rejects a barrier
+before its active queue horizon. The correction therefore keeps all three
+ordering/overlap protections but sends rebases with `minclock=0`, allowing
+serialqueue to release them at its normal requested-clock lead time. Regression
+coverage proves both primary and mixed-clock rebases retain their requested
+clock and horizon validation without the late transmission barrier. The next
+physical repeat remains the acceptance gate.
+
 ## Experiment 2: on-silicon deadline scaling
 
 `traj_stepper_test_quintic_deadline()` runs inside `HELIX_SELF_TEST`, so it

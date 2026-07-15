@@ -179,8 +179,18 @@ pass.
   cursor, matching stock itersolve's `last_flush_time` rule. The focused host
   suite and the same cube's 100% two-layer replay pass (63,846 E edges,
   4,896-tick minimum, no <=64-tick interval). Klipper is ready with converged
-  Class-0 time after restart; a supervised repeat remains required, so this is
-  not yet a repeatable full-print qualification.
+  Class-0 time after restart. The supervised repeat then exposed a second
+  deadline error at another disconnected extrusion island: the rebase for
+  local clock 3,214,869,210 was processed 34,283 ticks (535.7 us) late.
+  This time its boundary was correctly forward-only; the host had delayed
+  transmission by passing the preceding execution horizon as `minclock`.
+  Klipper serialqueue interprets `minclock` as a release gate, so the command
+  could not receive the normal 100 ms delivery lead. Rebases now retain the
+  explicit host and firmware horizon-overlap checks but use their shared
+  per-joint command queue for ordering and transmit with `minclock=0`. The
+  focused trajectory, extruder, and status regressions pass. A further
+  supervised repeat remains required, so this is not yet a repeatable
+  full-print qualification.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and
