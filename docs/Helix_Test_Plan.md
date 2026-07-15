@@ -291,9 +291,16 @@ Prove the wire before you trust it to carry motion.
 
 ## Phase 3 — Machine time (single-MCU, then multi-MCU)
 
-- [ ] **3.1 — Single-clock sanity.** With `[timesync]` loaded,
+- [x] **3.1 — Single-clock sanity.** With `[timesync]` loaded,
   `TIMESYNC_STATUS` on a lone MCU.
-  Pass: reports converged (trivially) with ~0 error.
+  Pass: the primary identifies as the machine-time authority, reports no
+  disciplined secondaries, and its exported `machine_time` advances at the
+  primary clock rate. On 2026-07-15 a no-heater/no-motor Pico-only config
+  reported `timesync: no disciplined secondary mcus`, an empty `mcus` map,
+  and machine-time samples 49.107387, 50.360247, and 51.612419 seconds across
+  consecutive approximately 1.253-second observations. “Converged to itself”
+  was removed from this criterion because convergence is a property of a
+  secondary disciplined to the primary, not of the authority clock.
 - [x] **3.2 — Beacon discipline (needs a 2nd MCU — revisit after Phase 9).**
   Two boards discipline to shared machine time.
   Expect: secondary converges; `TIMESYNC_STATUS` shows sync error settling
