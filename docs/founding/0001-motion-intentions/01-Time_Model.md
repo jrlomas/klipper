@@ -117,6 +117,11 @@ absolute-phase guarantee**. The host-relayed USB path remains an operational,
 statistically qualified scheduled-traffic mode; lack of a hard bound does not
 invalidate its demonstrated print behavior.
 
+The proposed two-step CAN broadcast, Ethernet/PTP, WiFi/TSF, and dedicated
+timer-capture profiles—together with STM32, RP2040, and ESP32 capability
+research—are specified in
+[Transport-Derived Machine-Time Synchronization](../../Transport_Time_Synchronization.md).
+
 ## Budgets
 
 * **Target inter-MCU sync error: ≤ ±10 µs.** Multi-MCU stepping tolerates the

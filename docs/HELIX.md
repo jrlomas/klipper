@@ -95,7 +95,10 @@ mainboard, on a CAN toolhead, and on a WiFi accessory — so coordinated
 motion and synchronized events survive being spread across a network
 instead of a shared backplane. The measured independent-USB comparison with
 original Klipper scheduling is documented in the
-[machine-time white paper](Machine_Time_White_Paper.md).
+[machine-time white paper](Machine_Time_White_Paper.md). The proposed CAN,
+Ethernet/PTP, WiFi/TSF, and dedicated-capture mechanisms—and their STM32,
+RP2040, and ESP32 implementation constraints—are recorded in the
+[transport synchronization design](Transport_Time_Synchronization.md).
 → [doc 01](founding/0001-motion-intentions/01-Time_Model.md)
 
 ## Pause, hold, resume — not shutdown

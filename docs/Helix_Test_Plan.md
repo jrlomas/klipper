@@ -397,6 +397,9 @@ Prove the wire before you trust it to carry motion.
   is an optional stronger assurance path. Internal `converged` state alone
   remains insufficient evidence for an absolute bound.
 
+  The transport-specific follow-on designs and per-MCU timestamp capabilities
+  are recorded in [Transport-Derived Machine-Time Synchronization](Transport_Time_Synchronization.md).
+
 ---
 
 ## Phase 4 — Motion intentions core (single trajectory joint)
