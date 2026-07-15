@@ -82,7 +82,8 @@ class FakeExecLog:
 
 class FakeTrajStepper:
     def __init__(self, name, oid, mcu, is_relative=False,
-                 homing_volatile=False, held=None, last_intention=None):
+                 homing_volatile=False, held=None, last_intention=None,
+                 held_commanded=None):
         self.name = name
         self.oid = oid
         self.mcu = mcu
@@ -90,6 +91,7 @@ class FakeTrajStepper:
         self.homing_volatile = homing_volatile
         self._held = held           # (clock, pos_su) or None / Exception
         self._last_intention = last_intention
+        self._held_commanded = held_commanded
         self.reconciled_with = None
         self.reanchored = False
 
@@ -104,19 +106,32 @@ class FakeTrajStepper:
     def last_intention(self):
         return self._last_intention
 
-    def resume_reconcile(self, clock, pos_su):
-        self.reconciled_with = (int(clock), int(pos_su))
+    def resume_reconcile(self, clock, pos_su, anchor_print_time):
+        self.reconciled_with = (
+            int(clock), int(pos_su), float(anchor_print_time))
+        return self._held_commanded
 
-    def note_resume_reanchor(self):
+    def note_resume_reanchor(self, anchor_print_time=None):
         self.reanchored = True
 
 
 class FakeTrajQueuing:
     def __init__(self, steppers):
         self._steppers = steppers
+        self.completed_recovery = False
 
     def get_trajectory_steppers(self):
         return list(self._steppers)
+
+    def get_recovery_anchor_time(self):
+        return 42.25
+
+    def complete_recovery_hold(self):
+        self.completed_recovery = True
+
+    def get_status(self, eventtime=None):
+        return {'recovery_active': not self.completed_recovery,
+                'recovery_trigger': None}
 
 
 class FakePauseResume:
@@ -125,6 +140,32 @@ class FakePauseResume:
 
     def get_status(self, eventtime):
         return {'is_paused': self._paused}
+
+
+class FakeToolhead:
+    class Kin:
+        def __init__(self, names):
+            self.steppers = [type('S', (), {'get_name': lambda self, n=n: n})()
+                             for n in names]
+        def get_steppers(self):
+            return self.steppers
+        def calc_position(self, positions):
+            return [0.5 * (positions['stepper_x']
+                           + positions['stepper_y']),
+                    0.5 * (positions['stepper_x']
+                           - positions['stepper_y']),
+                    positions['stepper_z']]
+    def __init__(self):
+        self.kin = self.Kin(['stepper_x', 'stepper_y', 'stepper_z'])
+        self.position = [90., 90., 90., 0.]
+        self.set_positions = []
+    def get_kinematics(self):
+        return self.kin
+    def get_position(self):
+        return list(self.position)
+    def set_position(self, position):
+        self.position = list(position)
+        self.set_positions.append(list(position))
 
 
 class FakePrinter:
@@ -290,8 +331,8 @@ def test_normal_resume():
         (0, EL_SEG_DONE, 1, 900, 320000, 0),
         (1, EL_SEG_DONE, 2, 900, 65536, 0)])]
     f._resume_motion(gcmd=None)
-    assert x.reconciled_with == (1000, 320000), x.reconciled_with
-    assert e.reconciled_with == (1000, 65536), e.reconciled_with
+    assert x.reconciled_with == (1000, 320000, 42.25), x.reconciled_with
+    assert e.reconciled_with == (1000, 65536, 42.25), e.reconciled_with
     assert printer.gcode.scripts == ["RESUME"], printer.gcode.scripts
     assert f.last_recovery['blocked'] is False
     assert len(f.last_recovery['reconciled']) == 2
@@ -316,12 +357,32 @@ def test_underrun_truncated():
     f._resume_motion(gcmd=None)
     # Reconciler must rebase at the board's held (ramp-end) position,
     # not at the host's unreached intention.
-    assert x.reconciled_with == (1200, 337000), x.reconciled_with
+    assert x.reconciled_with == (1200, 337000, 42.25), x.reconciled_with
     story = f.last_recovery['reconciled'][0][2]
     assert story['truncated'] is True, story
     assert story['gap'] == 400000 - 337000, story
     assert printer.gcode.scripts == ["RESUME"], printer.gcode.scripts
     print("PASS: underrun-truncated stream reconciles to the ramp-end pos")
+
+
+def test_held_joints_restore_cartesian_toolhead_position():
+    printer = FakePrinter()
+    printer.objects['pause_resume'] = FakePauseResume(paused=False)
+    printer.objects['toolhead'] = toolhead = FakeToolhead()
+    mcu = FakeMcu('mcu')
+    x = FakeTrajStepper('stepper_x', 1, mcu, held=(1000, 1),
+                        held_commanded=70.)
+    y = FakeTrajStepper('stepper_y', 2, mcu, held=(1000, 2),
+                        held_commanded=30.)
+    z = FakeTrajStepper('stepper_z', 3, mcu, held=(1000, 3),
+                        held_commanded=42.)
+    tq = printer.objects['trajectory_queuing'] = FakeTrajQueuing([x, y, z])
+    f = make_fr(printer)
+    f._resume_motion(gcmd=None)
+    assert toolhead.set_positions == [[50., 20., 42., 0.]], (
+        toolhead.set_positions)
+    assert tq.completed_recovery
+    print("PASS: held joint accumulators restore Cartesian coordinates")
 
 
 def test_board_reset():
@@ -374,6 +435,7 @@ def main():
     test_shutdown_drain_is_deferred_outside_no_pause_handler()
     test_normal_resume()
     test_underrun_truncated()
+    test_held_joints_restore_cartesian_toolhead_position()
     test_board_reset()
     print("ALL PASS")
 

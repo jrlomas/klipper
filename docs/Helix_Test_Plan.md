@@ -98,9 +98,11 @@ workstation, no amount of hardware poking will save you.
   Do: run the Python bench tests in `test/`:
   `asyncio_bridge_test.py`, `helix_status_test.py`,
   `failure_recovery_resume_test.py`, `traj_higher_order_test.py`,
-  `traj_pwm_map_test.py`, `endstop_hw_trigger_test.py`.
+  `traj_pwm_map_test.py`, `endstop_hw_trigger_test.py`, and
+  `pause_resume_recovery_test.py`.
   Expect: all pass against the mocked MCU.
-  Pass: 0 failures. All six named tests passed together on 2026-07-14.
+  Pass: 0 failures. The original six tests passed together on 2026-07-14;
+  the macro-free recovery pause/resume regression passed on 2026-07-15.
 
 - [x] **0.6 — Segment fitter fidelity.**
   Do: feed the host segment emitter (`chelper/segfit.c` +
@@ -321,10 +323,27 @@ Prove the wire before you trust it to carry motion.
   The run also exposed software-TMC-UART sampling contention at 40 kbaud and
   20 kbaud during acceleration-heavy trajectory solving. The trajectory-aware
   9 kbaud default completed the full corpus with clean X/Y/Z GSTAT reads.
-- [ ] **4.4 — Underrun ramp.** Deliberately starve the segment queue
+- [~] **4.4 — Underrun ramp.** Deliberately starve the segment queue
   (throttle the host) and confirm `motion_underrun_decel` ramps the joint
   to a controlled stop rather than a hard halt or overrun.
   Pass: decel observed; no lost steps on the resume.
+  On 2026-07-15, Klippy was stopped for 1.5 s during a cold 5 mm/s Z move.
+  The Pico completed its configured underrun ramp, retained the exact
+  sub-unit endpoint, and emitted `traj_underrun`; neither MCU shut down.
+  This exposed and fixed three host recovery defects: a historical trapq
+  flush sent a rebase in the past (`Timer too close`), held readback was
+  incorrectly applied through stale itersolve state, and macro-free resume
+  recursively entered the G-Code mutex. The final run latched a machine-wide
+  trajectory hold, emitted no post-underrun work, rebased all four joints at
+  one future machine time, and inverse-transformed the held CoreXY/Z joints
+  from the already-planned endpoint `[60,60,30]` to the actual controlled-stop
+  coordinate `[60,60,87.789057]`. Unit regressions cover group freeze, silent
+  flush, future-clock rebase, Cartesian restoration, and macro-free pause.
+  A post-recovery physical witness move or scope/encoder pulse count remains
+  before the "no lost steps" half of this item is fully checked. For a
+  virtual-SD print, reconstructing the unexecuted suffix of the interrupted
+  G0/G1 is also still required; the current safe resume continues at the next
+  command from the measured stop coordinate rather than inventing that path.
 - [~] **4.5 — Velocity/accel limits honored.** Compare commanded vs
   measured motion profile.
   Pass: within limits; no audible/visible step loss.
@@ -529,12 +548,20 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
 - [ ] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
   Pass: re-handshake succeeds; link re-established (datagram auth restored
   where the transport uses it).
-- [ ] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
+- [~] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
   Expect: each joint reconciles from its execution log to exactly where it
   stopped; the print continues; a joint marked
   `motion_homing_volatile: True` blocks for re-homing, others do not.
   Pass: geometry after resume matches before the fault (measure a witness
   feature); volatile joints correctly demand re-homing.
+  A live host-stall recovery on 2026-07-15 proved reliable execution-log
+  drain, exact held-position readback, one shared future rebase across Pico
+  and EBB36, and CoreXY/Z inverse-kinematic restoration. Klipper remained
+  ready and reported the measured ramp endpoint instead of the stale planned
+  endpoint. The link-loss/reconnect case, volatile-axis hardware case, and a
+  printed witness feature remain. The current virtual-SD resume restarts at
+  the next unconsumed G-Code command; replay/replanning of the interrupted
+  move suffix is not yet implemented, so this is not yet print-transparent.
 - [~] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
   Pass: retained MCU execution logs drain to the Klipper log even while the
   MCU is shut down, live `execution` records share Atlas machine time with
@@ -698,7 +725,11 @@ Type every new command once on a real machine and confirm it does what
   forms completed on the V0 Z joint on 2026-07-14, reported their automatic
   wire-segment counts and exact endpoints, and accepted the required
   `SET_KINEMATIC_POSITION` reconciliation.
-- [ ] **13.4** `FAILURE_RECOVERY_STATUS` — holds + paused MCUs.
+- [x] **13.4** `FAILURE_RECOVERY_STATUS` — holds + paused MCUs.
+  Pass: the live V0 reported both boards' per-joint recovery disposition,
+  zero configured heater holds, no paused links, and the active trajectory
+  recovery hold with its triggering MCU/joint/clock/position. After
+  `RESUME_MOTION` it exposed the reconciled joints and cleared the active hold.
 - [ ] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake.
 - [ ] **13.6** `RESUME_MOTION` — reconcile + resume.
 - [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.

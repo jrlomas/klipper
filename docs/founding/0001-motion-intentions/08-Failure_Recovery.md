@@ -1,7 +1,8 @@
 # FD-0001: Failure Recovery — Pause, Hold, Resume
 
-Status: Core implemented and workstation-tested in HELIX 0.9; hardware and
-live-printer recovery validation pending.
+Status: Core implemented and workstation-tested in HELIX 0.9; live
+host-stall/underrun recovery validated on RP2040 + STM32G0B1 USB hardware.
+Link-loss, heater-hold, and under-print witness validation remain.
 
 Klipper's failure philosophy today is binary: any error — a late
 timer, a lost message, a homing timeout — ends in `shutdown()`, which
@@ -199,6 +200,28 @@ on failure.
 4. `trajectory_rebase` every joint; restore heater ownership (policy
    hold → normal control); resume the print from the reconciled
    position.
+
+An underrun response latches a coordination-group recovery hold before any
+later motion flush can emit historical work. Every trajectory backend remains
+silent while the host drains logs and reads held accumulators. Those readback
+clocks describe a stop that has already happened; they must never be reused as
+new command deadlines. The host instead selects one common future Klipper
+print time, rebases every live board there, converts the held joint positions
+through the machine kinematics, and replaces the already-planned Cartesian
+endpoint with the actual controlled-stop coordinate. Virtual-SD ingestion is
+paused without invoking user park macros, because a park move before this
+reconciliation would itself use a stale coordinate frame.
+
+The cold V0 hardware test on 2026-07-15 stopped Klippy for 1.5 seconds during
+a Z trajectory. Pico ramped and held without shutdown; Pico and EBB36 then
+accepted a shared future recovery boundary. The host restored X/Y exactly and
+changed the stale planned Z endpoint to the MCU-derived ramp endpoint
+(87.789057 mm in the final run). The remaining qualification is an under-print
+witness feature plus the independent link-loss/heater-hold cases. The current
+virtual-SD implementation resumes at the next G-Code command; it does not yet
+reconstruct the unexecuted suffix of the command that was already consumed by
+lookahead when the queue starved. Until that host replanning step exists, the
+mechanism is safe and position-coherent but not print-transparent.
 
 **Print-quality honesty** (unchanged from
 [02-Intention_Protocol.md](02-Intention_Protocol.md)): v1 resume is

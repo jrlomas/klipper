@@ -113,8 +113,8 @@ See [doc 02](founding/0001-motion-intentions/02-Intention_Protocol.md).
   size report).
 * **Host units:** the standalone tests in `test/` (e.g.
   `traj_higher_order_test.py`, `failure_recovery_resume_test.py`,
-  `endstop_hw_trigger_test.py`, `helix_status_test.py`) run with plain
-  `python3` and stub what they need.
+  `pause_resume_recovery_test.py`, `endstop_hw_trigger_test.py`,
+  `helix_status_test.py`) run with plain `python3` and stub what they need.
 
 ## The constrained-board policy
 

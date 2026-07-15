@@ -13,6 +13,7 @@ class PauseResume:
         self.is_paused = False
         self.sd_paused = False
         self.pause_command_sent = False
+        self.recovery_pause = False
         self.printer.register_event_handler("klippy:connect",
                                             self.handle_connect)
         self.gcode.register_command("PAUSE", self.cmd_PAUSE,
@@ -65,6 +66,35 @@ class PauseResume:
         self.send_pause_command()
         self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=PAUSE_STATE")
         self.is_paused = True
+        self.recovery_pause = False
+
+    def pause_for_recovery(self):
+        # Stop virtual-SD ingestion and capture parser state without invoking
+        # a user PAUSE macro.  Such macros commonly park the toolhead, which
+        # is unsafe while trajectory coordinates await reconciliation.
+        if self.is_paused:
+            return False
+        self.send_pause_command()
+        self.gcode.run_script("SAVE_GCODE_STATE NAME=PAUSE_STATE")
+        self.is_paused = True
+        self.recovery_pause = True
+        return True
+
+    def resume_from_recovery(self):
+        # Reconciliation has already established the physical motion frame.
+        # Restore modal G-Code state without a positioning move, then restart
+        # the virtual-SD reader at the first command not yet consumed.
+        if not self.is_paused or not self.recovery_pause:
+            return False
+        # RESUME_MOTION invokes this from an active G-Code command callback;
+        # use the in-command path to avoid recursively waiting on the G-Code
+        # mutex held by that same command.
+        self.gcode.run_script_from_command(
+            "RESTORE_GCODE_STATE NAME=PAUSE_STATE MOVE=0")
+        self.send_resume_command()
+        self.is_paused = False
+        self.recovery_pause = False
+        return True
     def send_resume_command(self):
         if self.sd_paused:
             # Printing from virtual sd, run pause command
@@ -84,10 +114,12 @@ class PauseResume:
             % (velocity))
         self.send_resume_command()
         self.is_paused = False
+        self.recovery_pause = False
     cmd_CLEAR_PAUSE_help = (
         "Clears the current paused state without resuming the print")
     def cmd_CLEAR_PAUSE(self, gcmd):
         self.is_paused = self.pause_command_sent = False
+        self.recovery_pause = False
     cmd_CANCEL_PRINT_help = ("Cancel the current print")
     def cmd_CANCEL_PRINT(self, gcmd):
         if self.is_sd_active() or self.sd_paused:

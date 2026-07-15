@@ -323,6 +323,11 @@ class TrajectoryStepper:
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
+        # An MCU underrun is a coordination-group event, not merely a local
+        # queue condition.  Once latched, every trajectory emitter stays
+        # silent until failure_recovery has read the authoritative held
+        # positions and scheduled one coordinated future rebase.
+        self.recovery_hold = False
         self.rebase_requires_hold = False
         self.rebase_min_clock = 0
         self.rebase_min_execution_clock = 0
@@ -516,6 +521,7 @@ class TrajectoryStepper:
             'oid': self.oid,
             'anchored': bool(self.anchored),
             'need_rebase': bool(self.need_rebase),
+            'recovery_hold': bool(getattr(self, 'recovery_hold', False)),
             'su_per_mm': self.su_per_mm,
             'commanded_pos_su': self.commanded_pos_su(),
             'last_intention_pos_su': (li[2] if li else None),
@@ -735,6 +741,11 @@ class TrajectoryStepper:
         self.intentions.append((int(clock), int(clock), int(pos_su)))
 
     def flush(self, flush_time, step_gen_time):
+        # In particular, do not re-anchor from a historical trapq window
+        # after Klippy resumes from a host stall.  The MCU has already
+        # completed its underrun ramp and rejects that stale clock.
+        if getattr(self, 'recovery_hold', False):
+            return
         sk = self.mcu_stepper.get_stepper_kinematics()
         if sk is None:
             return
@@ -1037,7 +1048,7 @@ class TrajectoryStepper:
         # board never rebooted.  Returns (clock64, pos_subunits) or None.
         return self.mcu_stepper.read_traj_held_subunits()
 
-    def resume_reconcile(self, clock, pos_su):
+    def resume_reconcile(self, clock, pos_su, anchor_print_time):
         # Re-anchor the board's segment executor at its authoritative
         # held accumulator and bring the host fitter + mcu-position
         # offset back into agreement, so the firmware is in a valid
@@ -1045,28 +1056,43 @@ class TrajectoryStepper:
         # rather than teleporting to a stale commanded position.
         if self.rebase_cmd is None:
             return
-        local_clock = int(clock)
-        print_time = self.mcu.clock_to_print_time(local_clock)
+        held_clock = int(clock)
+        print_time = float(anchor_print_time)
         pos_su = int(pos_su)
+        # A live board underrun does not change the established physical to
+        # logical coordinate offset.  Convert the held accumulator through
+        # that existing frame before replacing the host wire twin.
+        held_commanded_su = self.mcu_stepper.mcu_to_commanded_position_su(
+            pos_su)
+        held_commanded_pos = held_commanded_su / self.su_per_mm
         mcu_pos = int(round(pos_su / SUBUNITS))
         wire_pos_su = _signed_i32(pos_su)
         clock = self._send_rebase(print_time, pos_su, mcu_pos)
         try:
-            pos_mm = self.ffi_lib.segfit_get_position(self.segfit, print_time)
             self.ffi_lib.segfit_set_position_offset(
-                self.segfit, pos_su - pos_mm * self.su_per_mm)
+                self.segfit,
+                pos_su - held_commanded_pos * self.su_per_mm)
             self.ffi_lib.segfit_set_anchor(self.segfit, print_time,
                                            wire_pos_su << 32)
             self.ffi_lib.segfit_set_anchor_position(self.segfit, pos_su)
             self.anchored = True
             self.need_rebase = False
+            # Ignore trapq history preceding the recovery boundary.  If the
+            # interrupted move still extends beyond it, the normal activity
+            # scan may fit that remaining suffix from the held position.
+            self.activity_cursor = max(
+                getattr(self, 'activity_cursor', 0.), print_time)
         except Exception:
             # Fall back to a lazy re-anchor on the next motion.
             self.note_rebase_needed()
-        self.mcu_stepper.sync_to_held_position(pos_su)
         self.intentions.append((clock, clock, pos_su))
+        logging.info(
+            "Trajectory recovery rebase for %s: held_clock=%d"
+            " future_clock=%d pos=%d",
+            self.name, held_clock, clock, pos_su)
+        return held_commanded_pos
 
-    def note_resume_reanchor(self):
+    def note_resume_reanchor(self, anchor_print_time=None):
         # Board RESET, homing retained: the board's volatile accumulator
         # is gone, but the host still knows where this joint was (its
         # last commanded position) and trusts the homing it had.  Re-anchor
@@ -1074,6 +1100,9 @@ class TrajectoryStepper:
         # continue.  Same mechanism for a relative axis (extruder re-prime)
         # and an absolute axis whose homing survived the reset.
         self.note_rebase_needed()
+        if anchor_print_time is not None:
+            self.activity_cursor = max(
+                getattr(self, 'activity_cursor', 0.), anchor_print_time)
 
     # Retained name for callers/tests predating the homing-retained model.
     note_reprime = note_resume_reanchor
@@ -1218,6 +1247,8 @@ class TrajectoryQueuing:
         self.steppers = []
         self.timesync = None
         self.atlas_trace = None
+        self.recovery_active = False
+        self.recovery_trigger = None
         # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
         # but trajectory steppers receive per-joint quintic intentions and
         # synthesize their own pulses on the MCU.  Quadratic remains an
@@ -1245,7 +1276,9 @@ class TrajectoryQueuing:
                                    desc=self.cmd_BEZIER_MOVE_help)
 
     def get_status(self, eventtime=None):
-        return {'trajectory_steppers': [ts.describe() for ts in self.steppers]}
+        return {'recovery_active': self.recovery_active,
+                'recovery_trigger': self.recovery_trigger,
+                'trajectory_steppers': [ts.describe() for ts in self.steppers]}
 
     cmd_TRAJECTORY_STATUS_help = ("Report the state of every actuator on the"
                                   " trajectory-intention motion path")
@@ -1257,9 +1290,11 @@ class TrajectoryQueuing:
         for ts in self.steppers:
             d = ts.describe()
             lines.append(
-                "%s: anchored=%d need_rebase=%d higher_order=%d"
+                "%s: anchored=%d need_rebase=%d recovery_hold=%d"
+                " higher_order=%d"
                 " g1_order=%s pos=%d su (%.4f mm) su/mm=%.1f%s"
                 % (d['name'], d['anchored'], d['need_rebase'],
+                   d['recovery_hold'],
                    d['higher_order'], d['g1_segment_order'],
                    d['commanded_pos_su'],
                    d['commanded_pos_su'] / d['su_per_mm'], d['su_per_mm'],
@@ -1323,7 +1358,7 @@ class TrajectoryQueuing:
         self.steppers.append(ts)
         mcu = mcu_stepper.get_mcu()
         mcu.register_serial_response(
-            self._handle_underrun,
+            lambda params, ts=ts: self._handle_underrun(ts, params),
             "traj_underrun oid=%c clock=%u pos=%i", mcu_stepper.get_oid())
         return ts
 
@@ -1335,6 +1370,21 @@ class TrajectoryQueuing:
         # Segment coefficients and durations use this one domain on every
         # link; secondary firmware converts them once at ingest.
         return self.printer.lookup_object('mcu')
+
+    def get_recovery_anchor_time(self):
+        # Klipper print_time is shared across clock domains.  Choose the
+        # latest live estimate and retain the normal Class-0 transmission
+        # margin, so every per-board rebase names one common future instant.
+        eventtime = self.printer.get_reactor().monotonic()
+        estimates = [ts.mcu.estimated_print_time(eventtime)
+                     for ts in self.steppers]
+        return max(estimates) + BEZIER_QUEUE_MARGIN
+
+    def complete_recovery_hold(self):
+        for ts in self.steppers:
+            ts.recovery_hold = False
+        self.recovery_active = False
+        self.recovery_trigger = None
 
     def is_mcu_synced(self, mcu):
         if self.timesync is None:
@@ -1425,15 +1475,28 @@ class TrajectoryQueuing:
         for ts in self.steppers:
             ts.flush(flush_time, step_gen_time)
 
-    def _handle_underrun(self, params):
-        oid = params['oid']
-        for ts in self.steppers:
-            if ts.oid == oid:
-                ts.note_rebase_needed(stopped=True)
-                logging.warning(
-                    "Trajectory underrun on %s: clock=%d pos=%d",
-                    ts.name, params['clock'], params['pos'])
-                break
+    def _handle_underrun(self, ts, params):
+        # OIDs are MCU-local, so the response handler is bound to its exact
+        # stepper at registration time.  Treat the stop as machine-wide:
+        # another board may still have queued motion, but the host must not
+        # extend any trajectory stream until their held positions agree at a
+        # coordinated recovery boundary.
+        ts.note_rebase_needed(stopped=True)
+        first = not self.recovery_active
+        if first:
+            self.recovery_active = True
+            self.recovery_trigger = {
+                'mcu': ts.mcu.get_name(), 'joint': ts.name,
+                'clock': int(params['clock']), 'pos': int(params['pos'])}
+            for peer in self.steppers:
+                peer.recovery_hold = True
+        logging.warning(
+            "Trajectory underrun on %s: clock=%d pos=%d; recovery hold %s",
+            ts.name, params['clock'], params['pos'],
+            "latched" if first else "already active")
+        if first:
+            self.printer.send_event(
+                "trajectory_queuing:recovery_hold", self.recovery_trigger)
 
     def record_wire_intention(self, ts, fields):
         if self.atlas_trace is not None:

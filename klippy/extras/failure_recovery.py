@@ -284,6 +284,9 @@ class FailureRecovery:
                                             self._handle_comm_pause)
         self.printer.register_event_handler("mcu:comm_resume",
                                             self._handle_comm_resume)
+        self.printer.register_event_handler(
+            "trajectory_queuing:recovery_hold",
+            self._handle_trajectory_recovery_hold)
         self.ping_timer = None
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command("FAILURE_RECOVERY_STATUS",
@@ -301,7 +304,8 @@ class FailureRecovery:
         gcode.register_command("RESUME_MOTION", self.cmd_RESUME_MOTION,
                                desc="Reconcile intentions-sent against the"
                                " execution log, rebase every joint at its"
-                               " held position, and resume the print")
+                               " held position, and resume at the next"
+                               " G-Code command boundary")
 
     def _handle_mcu_identify(self):
         # Configure execution logs on the mcus that support them
@@ -442,6 +446,39 @@ class FailureRecovery:
         except Exception:
             logging.exception("failure_recovery: error running PAUSE after"
                               " MCU link loss")
+
+    def _handle_trajectory_recovery_hold(self, trigger):
+        # Serial response handlers must remain short.  Stop print ingestion
+        # from a normal reactor callback, and deliberately bypass user PAUSE
+        # macros because their parking move would run before coordinates have
+        # been reconciled to the MCU-held accumulators.
+        self.printer.get_reactor().register_callback(
+            self._trajectory_recovery_pause_event)
+
+    def _trajectory_recovery_pause_event(self, eventtime):
+        pause_resume = self.printer.lookup_object('pause_resume', None)
+        if pause_resume is None:
+            logging.error("failure_recovery: [pause_resume] not configured -"
+                          " trajectory recovery hold cannot pause print"
+                          " ingestion")
+            return
+        if pause_resume.get_status(eventtime)['is_paused']:
+            return
+        idle_timeout = self.printer.lookup_object('idle_timeout', None)
+        if (idle_timeout is not None
+                and idle_timeout.get_status(eventtime)['state'] != "Printing"):
+            logging.info("failure_recovery: trajectory underrun occurred"
+                         " while not printing; recovery hold remains active")
+            return
+        try:
+            pause_resume.pause_for_recovery()
+            logging.error("failure_recovery: trajectory underrun paused"
+                          " print ingestion without running a park move;"
+                          " run RESUME_MOTION after inspection")
+        except Exception:
+            logging.exception("failure_recovery: unable to pause print"
+                              " ingestion after trajectory underrun")
+
     def _handle_comm_resume(self, mcu_name):
         # Deliberately do NOT auto-release the heater holds here:
         # handing a heater back to host control right after a reconnect
@@ -472,7 +509,8 @@ class FailureRecovery:
     # drain the board's execlog, read its authoritative held
     # accumulator, diff intentions-sent against executions-logged,
     # rebase every joint at its held position, restore heater ownership,
-    # and resume the print from the reconciled position.
+    # and resume ingestion from the reconciled position.  Reconstructing an
+    # unexecuted suffix of an already-consumed G0/G1 remains future work.
     def cmd_RESUME_MOTION(self, gcmd):
         self._resume_motion(gcmd)
 
@@ -533,6 +571,9 @@ class FailureRecovery:
                                   " during resume")
                 drained[el.mcu.get_name()] = []
         reconciled = []
+        pending_reconciles = []
+        pending_reanchors = []
+        held_joint_positions = {}
         reset = []
         blocking = False
         for ts in steppers:
@@ -548,9 +589,8 @@ class FailureRecovery:
                 if held is not None:
                     clock, pos_su = held
                     story = self._reconcile_oid(ts, recs, pos_su)
-                    # (c) rebase this joint at its held position
-                    ts.resume_reconcile(clock, pos_su)
-                    reconciled.append((ts.name, int(pos_su), story))
+                    pending_reconciles.append(
+                        (ts, int(clock), int(pos_su), story))
                     continue
                 # Unreadable board: fall through to reset handling.
                 state = 'reset'
@@ -564,9 +604,7 @@ class FailureRecovery:
                      'relative': ts.is_relative,
                      'last_intention': ts.last_intention(), 'action': ''}
             if retained:
-                # Re-anchor at the host's current commanded position on
-                # the next motion (the last coordinates the joint was in).
-                ts.note_resume_reanchor()
+                pending_reanchors.append(ts)
                 if ts.is_relative:
                     entry['action'] = ("relative axis - re-prime and"
                                        " continue at last position"
@@ -579,6 +617,39 @@ class FailureRecovery:
                 entry['action'] = ("homing lost (motion_homing_volatile) -"
                                    " re-home this axis, then RESUME_MOTION")
             reset.append(entry)
+        # (c) All live boards rebase at one future Klipper print_time.  The
+        # held query clocks are evidence of where execution stopped, but are
+        # necessarily in the past by the time their responses reach Klippy.
+        # Sending those clocks as new rebase deadlines caused the original
+        # physical underrun test to end in "Timer too close".
+        if pending_reconciles or pending_reanchors:
+            anchor_print_time = tq.get_recovery_anchor_time()
+            for ts, clock, pos_su, story in pending_reconciles:
+                held_joint_positions[ts.name] = ts.resume_reconcile(
+                    clock, pos_su, anchor_print_time)
+                reconciled.append((ts.name, pos_su, story))
+            for ts in pending_reanchors:
+                ts.note_resume_reanchor(anchor_print_time)
+        # Replace Klipper's already-planned endpoint with the Cartesian point
+        # the live boards actually reached.  Kinematics perform the inverse
+        # joint transform; toolhead.set_position then preserves each exact
+        # trajectory accumulator while resetting the trapq/G-Code frame.
+        if held_joint_positions:
+            toolhead = self.printer.lookup_object('toolhead', None)
+            if toolhead is not None:
+                kin = toolhead.get_kinematics()
+                kin_names = [s.get_name() for s in kin.get_steppers()]
+                if all(name in held_joint_positions for name in kin_names):
+                    actual = kin.calc_position(held_joint_positions)
+                    newpos = toolhead.get_position()
+                    newpos[:3] = actual[:3]
+                    toolhead.set_position(newpos)
+                    info("toolhead coordinates reconciled to held position"
+                         " X=%.6f Y=%.6f Z=%.6f" % tuple(newpos[:3]))
+                else:
+                    blocking = True
+                    info("resume BLOCKED: held positions are missing for"
+                         " one or more kinematic joints")
         self.last_recovery = {'reconciled': reconciled, 'reset': reset,
                               'blocked': blocking}
         # (d) restore heater ownership (release holds back to the host)
@@ -607,15 +678,16 @@ class FailureRecovery:
                     e['action'],
                     (" last intended pos=%d su" % (li[2],)) if li else ""))
         if reconciled:
-            # Doc 08 print-quality honesty - log it, do not try to solve
-            # blemish-free resume in v1.
-            info("v1 resume is mechanically exact but not cosmetically"
-                 " invisible - a blemish is likely (FD-0001 doc 08)")
+            info("resume is position-coherent, but the interrupted move"
+                 " suffix is not reconstructed; a geometry discontinuity"
+                 " or blemish is possible (FD-0001 doc 08)")
         if blocking:
             info("resume BLOCKED: joint(s) need re-qualification or operator"
                  " judgment; the print was NOT resumed")
             return
-        # (e) resume the print from the reconciled position
+        if tq is not None:
+            tq.complete_recovery_hold()
+        # (e) resume ingestion at the next command boundary
         self._do_resume(info)
 
     def _do_resume(self, info):
@@ -629,8 +701,14 @@ class FailureRecovery:
             info("print is not paused - motion reconciled, nothing to resume")
             return
         try:
+            resume_recovery = getattr(
+                pause_resume, 'resume_from_recovery', None)
+            if resume_recovery is not None and resume_recovery():
+                info("print resumed from trajectory recovery without a"
+                     " park/unpark move")
+                return
             self.printer.lookup_object('gcode').run_script("RESUME")
-            info("print resumed from the reconciled position")
+            info("print resumed at the next G-Code command boundary")
         except Exception:
             logging.exception("failure_recovery: error running RESUME after"
                               " motion reconciliation")
@@ -640,12 +718,16 @@ class FailureRecovery:
                      for name, h in self.holds.items())
         disposition = {}
         tq = self.printer.lookup_object('trajectory_queuing', None)
+        recovery_active = False
         if tq is not None:
+            recovery_active = tq.get_status(eventtime).get(
+                'recovery_active', False)
             disposition = dict(
                 (ts.name, 'retained' if ts.homing_retained() else 'volatile')
                 for ts in tq.get_trajectory_steppers())
         return {'paused_link_mcus': sorted(self.link_paused_mcus),
                 'heater_holds': holds,
+                'trajectory_recovery_active': recovery_active,
                 'recovery_disposition': disposition,
                 'last_recovery': self.last_recovery}
 
@@ -664,6 +746,14 @@ class FailureRecovery:
                          % (", ".join(sorted(self.link_paused_mcus)),))
         tq = self.printer.lookup_object('trajectory_queuing', None)
         if tq is not None:
+            tqs = tq.get_status(None)
+            if tqs.get('recovery_active'):
+                trigger = tqs.get('recovery_trigger') or {}
+                parts.append(
+                    "trajectory recovery HOLD active: %s/%s at clock=%s"
+                    " pos=%s (run RESUME_MOTION after inspection)"
+                    % (trigger.get('mcu', '?'), trigger.get('joint', '?'),
+                       trigger.get('clock', '?'), trigger.get('pos', '?')))
             for ts in tq.get_trajectory_steppers():
                 if ts.is_relative:
                     disp = "relative (auto re-prime)"

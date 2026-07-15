@@ -1171,6 +1171,97 @@ def test_confirmed_stop_does_not_queue_a_pre_rebase_hold():
     assert stepper.rebase_min_execution_clock == 0
 
 
+def test_underrun_latches_machine_wide_recovery_hold():
+    class Printer:
+        def __init__(self):
+            self.events = []
+        def send_event(self, name, *args):
+            self.events.append((name, args))
+    class Stepper:
+        def __init__(self, name, oid):
+            self.name = name
+            self.oid = oid
+            self.mcu = types.SimpleNamespace(get_name=lambda: 'mcu')
+            self.recovery_hold = False
+            self.stops = 0
+        def note_rebase_needed(self, stopped=False):
+            assert stopped
+            self.stops += 1
+
+    owner = trajectory_queuing.TrajectoryQueuing.__new__(
+        trajectory_queuing.TrajectoryQueuing)
+    owner.printer = Printer()
+    owner.recovery_active = False
+    owner.recovery_trigger = None
+    x, y = Stepper('stepper_x', 4), Stepper('stepper_y', 4)
+    owner.steppers = [x, y]
+    owner._handle_underrun(x, {'clock': 1000, 'pos': 2000})
+    assert owner.recovery_active
+    assert x.recovery_hold and y.recovery_hold
+    assert x.stops == 1 and y.stops == 0
+    assert owner.recovery_trigger['joint'] == 'stepper_x'
+    assert len(owner.printer.events) == 1
+    # A later peer underrun updates that peer's stopped state without
+    # scheduling a second pause/recovery workflow.
+    owner._handle_underrun(y, {'clock': 1100, 'pos': 2100})
+    assert y.stops == 1
+    assert len(owner.printer.events) == 1
+
+
+def test_recovery_hold_makes_flush_a_strict_noop():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.recovery_hold = True
+    stepper.mcu_stepper = types.SimpleNamespace(
+        get_stepper_kinematics=lambda: (_ for _ in ()).throw(
+            AssertionError("recovery flush touched kinematics")))
+    stepper.flush(10., 10.5)
+
+
+def test_resume_reconcile_uses_shared_future_anchor_not_held_clock():
+    class Owner:
+        def __init__(self, machine):
+            self.machine = machine
+        def get_machine_mcu(self):
+            return self.machine
+    class PhysicalStepper:
+        def mcu_to_commanded_position_su(self, pos_su):
+            return pos_su - 150
+    class RebaseFFI:
+        def segfit_get_position(self, segfit, print_time):
+            return 3.
+        def segfit_set_position_offset(self, segfit, offset):
+            self.offset = offset
+        def segfit_set_anchor(self, segfit, print_time, acc):
+            self.anchor = (print_time, acc)
+        def segfit_set_anchor_position(self, segfit, pos_su):
+            self.anchor_position = pos_su
+
+    mcu = FakeMCU()
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = Owner(mcu)
+    stepper.mcu = mcu
+    stepper.mcu_stepper = PhysicalStepper()
+    stepper.ffi_lib = RebaseFFI()
+    stepper.segfit = object()
+    stepper.name = 'stepper_z'
+    stepper.oid = 10
+    stepper.su_per_mm = 100.
+    stepper.rebase_cmd = FakeCommand()
+    stepper.local_rebase_cmd = None
+    stepper.rebase_min_clock = 0
+    stepper.rebase_min_execution_clock = 0
+    stepper.intentions = []
+    stepper.activity_cursor = 2.
+    stepper._record_wire = lambda fields: None
+    held_pos = stepper.resume_reconcile(1_000_000, 450, 10.)
+    assert stepper.rebase_cmd.sent == [[10, 10_000_000, 450, 0]]
+    assert stepper.intentions[-1] == (10_000_000, 10_000_000, 450)
+    assert stepper.activity_cursor == 10.
+    assert held_pos == 3.
+
+
 def test_value_trajectory_fails_before_fitter_advance():
     pwm = trajectory_pwm.TrajectoryPWM.__new__(trajectory_pwm.TrajectoryPWM)
     pwm.printer = FakePrinter()
@@ -1258,6 +1349,12 @@ def main():
     print("PASS: an active path gets an explicit hold before rebase")
     test_confirmed_stop_does_not_queue_a_pre_rebase_hold()
     print("PASS: a confirmed trigger stop rebases without a stale hold")
+    test_underrun_latches_machine_wide_recovery_hold()
+    print("PASS: an underrun freezes the complete trajectory group once")
+    test_recovery_hold_makes_flush_a_strict_noop()
+    print("PASS: recovery-held trajectory flushes emit no stale work")
+    test_resume_reconcile_uses_shared_future_anchor_not_held_clock()
+    print("PASS: recovery rebases at a shared future clock")
     test_value_trajectory_fails_before_fitter_advance()
     print("PASS: value fitting fails before unsynchronized send")
 
