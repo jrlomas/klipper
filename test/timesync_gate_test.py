@@ -373,6 +373,23 @@ class DisconnectedWindowsFFI(AnchorFFI):
         return 0
 
 
+class CappedWindowFFI(DisconnectedWindowsFFI):
+    def __init__(self, start_time, end_time):
+        super().__init__([(start_time, end_time)])
+        self.gen_time = start_time
+        self.mid_time = (start_time + end_time) * .5
+        self.calls = 0
+
+    def segfit_generate(self, segfit, flush_time):
+        self.generated_to.append(flush_time)
+        self.calls += 1
+        if self.calls == 1:
+            self.gen_time = self.mid_time
+            return trajectory_queuing.SEGFIT_BATCH_MAX
+        self.gen_time = flush_time
+        return 7
+
+
 class UnsyncedTimeSync:
     def is_mcu_synced(self, mcu_name):
         return False
@@ -451,7 +468,7 @@ def test_ordinary_axis_move_ends_with_hold_before_synchronous_wait():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper._queue_terminal_hold = lambda: holds.append(True)
+    stepper._queue_terminal_hold = lambda *args: holds.append(True)
     stepper._send_segs = lambda count: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     # Model one Z move followed by a long M190/M109 wait. The lookahead
@@ -532,7 +549,7 @@ def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper._queue_terminal_hold = lambda: holds.append(True)
+    stepper._queue_terminal_hold = lambda *args: holds.append(True)
     stepper._send_segs = lambda count: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     stepper.flush(11., 12.)
@@ -542,6 +559,35 @@ def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
     assert ffi_lib.checked_from == [0., 10.2, 10.7]
     assert ffi_lib.finalized == 2
     assert stepper.activity_cursor == 12.
+
+
+def test_trajectory_drains_capped_segment_batch_before_hold():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = CappedWindowFFI(10., 10.2)
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+    sent = []
+    holds = []
+
+    def anchor(print_time):
+        ffi_lib.gen_time = print_time
+        stepper.anchored = True
+
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = lambda *args: holds.append(True)
+    stepper._send_segs = lambda count: sent.append(count)
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    stepper.flush(11., 12.)
+    assert ffi_lib.generated_to == [10.2, 10.2]
+    assert sent[:2] == [trajectory_queuing.SEGFIT_BATCH_MAX, 7]
+    assert holds == [True]
+    assert not stepper.anchored
 
 
 def test_external_generator_delay_survives_scan_window_rescan():
@@ -581,6 +627,35 @@ def test_trajectory_end_always_queues_terminal_hold():
     assert stepper.hold_cmd.sent == [[4, 1000]]
     assert stepper.rebase_min_clock == 12_501_000
     assert not stepper.anchored
+
+
+def test_secondary_terminal_hold_respects_short_machine_gap():
+    class MixedClockOwner:
+        def __init__(self):
+            self.machine = FakeMCU(12_000_000.)
+        def get_machine_mcu(self):
+            return self.machine
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = MixedClockOwner()
+    stepper.mcu = FakeMCU(64_000_000.)
+    stepper.oid = 4
+    stepper.hold_cmd = FakeCommand()
+    stepper.terminal_hold_ticks = 64_000
+    stepper.wire_clock = 12_000_000
+    stepper.execution_clock = 64_000_000
+    stepper.wire_acc = 0
+    stepper.rebase_min_clock = 0
+    stepper._record_wire = lambda fields: None
+    # The failed full-speed print had only 1,637 primary-MCU ticks between
+    # extruder windows. The local hold must fit that gap instead of emitting
+    # a fixed 1ms machine-domain duration as if it were local ticks.
+    assert stepper._queue_terminal_hold(1_637)
+    assert stepper.hold_cmd.sent == [[4, 8_730]]
+    assert stepper.wire_clock == 12_001_637
+    assert stepper.execution_clock == 64_008_730
+    assert stepper.rebase_min_clock == 12_001_637
 
 
 def test_wire_record_preserves_exact_segment_coefficients():
@@ -812,11 +887,15 @@ def main():
     test_trajectory_drains_disconnected_windows_before_trapq_cleanup()
     print("PASS: one flush drains every disconnected shaped activity"
           " window before trapq cleanup")
+    test_trajectory_drains_capped_segment_batch_before_hold()
+    print("PASS: full fitter batches drain before the terminal hold")
     test_external_generator_delay_survives_scan_window_rescan()
     print("PASS: trajectory transport reserves its motion-generation lead")
     test_trajectory_end_always_queues_terminal_hold()
     print("PASS: every completed trajectory queues an explicit terminal"
           " hold")
+    test_secondary_terminal_hold_respects_short_machine_gap()
+    print("PASS: secondary-MCU holds fit short machine-time gaps")
     test_wire_record_preserves_exact_segment_coefficients()
     print("PASS: flight recording preserves exact wire coefficients and"
           " chained endpoints")

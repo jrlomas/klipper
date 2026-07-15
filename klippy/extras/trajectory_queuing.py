@@ -41,6 +41,10 @@ TERMINAL_HOLD_TIME = .001
 BEZIER_QUEUE_MARGIN = .250
 BEZIER_WAIT_MARGIN = .050
 BEZIER_MAX_SEGMENTS = 1024
+# segfit.c owns a fixed output array of this size.  A full return means the
+# requested time horizon may not have been reached yet; drain another batch
+# before finalizing the activity window.
+SEGFIT_BATCH_MAX = 256
 # The host may perform synchronous work (notably sensorless-homing TMC UART
 # setup/restore) between creating a drip trapq and the trajectory callback
 # that transmits its first rebase.  Reserve one motion-queue generation
@@ -409,9 +413,8 @@ class TrajectoryStepper:
         step_dist = self.mcu_stepper.get_step_dist()
         self.su_per_mm = SUBUNITS / step_dist
         local_freq = self.mcu.seconds_to_clock(1.)
-        machine_freq = self._machine_freq()
         self.terminal_hold_ticks = max(
-            1, int(round(TERMINAL_HOLD_TIME * machine_freq)))
+            1, int(round(TERMINAL_HOLD_TIME * local_freq)))
         # underrun_decel wire units: sub-units/tick^2 with 32
         # fractional bits
         decel_wire = int(self.underrun_decel * self.su_per_mm
@@ -728,12 +731,19 @@ class TrajectoryStepper:
         # nominal trapq interval (pressure-advance and input-shaper pre/post
         # roll). Fit its complete connected activity window rather than
         # converting the leading displacement into a rebase.
+        prefetched_from = None
+        prefetched_activity = False
         while True:
             activity_cursor = getattr(self, 'activity_cursor', 0.)
             from_time = (self.ffi_lib.segfit_get_gen_time(self.segfit)
                          if self.anchored else activity_cursor)
-            has_activity = self.ffi_lib.segfit_check_activity(
-                self.segfit, from_time, gen_time)
+            if (prefetched_from is not None
+                    and abs(from_time - prefetched_from) <= 1.e-12):
+                has_activity = prefetched_activity
+                prefetched_from = None
+            else:
+                has_activity = self.ffi_lib.segfit_check_activity(
+                    self.segfit, from_time, gen_time)
             if ((has_activity or self.anchored)
                     and not self.owner.is_mcu_synced(self.mcu)):
                 # Do not advance segfit or the persisted intention twin while
@@ -763,20 +773,28 @@ class TrajectoryStepper:
             activity_end = (self.ffi_lib.segfit_get_activity_end(self.segfit)
                             if has_activity else from_time)
             fit_end = min(gen_time, activity_end)
-            prev_acc = self._chained_acc()
-            prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
             # Never sample beyond the connected activity window. The tail
             # sentinel is a held coordinate, not a new destination; fitting
             # past it previously manufactured a one-sample return-to-zero
             # burst.
-            n = (self.ffi_lib.segfit_generate(self.segfit, fit_end)
-                 if has_activity and fit_end > prev_time else 0)
-            if n < 0:
-                raise self.mcu.error(
-                    "Trajectory for %s exceeds representable wire limits"
-                    % (self.name,))
-            self._send_segs(n)
-            self._record_intention(prev_acc, prev_time)
+            while True:
+                prev_acc = self._chained_acc()
+                prev_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+                n = (self.ffi_lib.segfit_generate(self.segfit, fit_end)
+                     if has_activity and fit_end > prev_time else 0)
+                if n < 0:
+                    raise self.mcu.error(
+                        "Trajectory for %s exceeds representable wire limits"
+                        % (self.name,))
+                self._send_segs(n)
+                self._record_intention(prev_acc, prev_time)
+                if n < SEGFIT_BATCH_MAX:
+                    break
+                next_time = self.ffi_lib.segfit_get_gen_time(self.segfit)
+                if next_time <= prev_time:
+                    raise self.mcu.error(
+                        "Trajectory fitter for %s made no progress while"
+                        " draining a full segment batch" % (self.name,))
             # Do not retain a valid candidate across host flush callbacks. A
             # long constant-velocity phase may keep fitting until the 4.096s
             # wire duration cap; if it is only emitted then, its declared
@@ -802,7 +820,25 @@ class TrajectoryStepper:
             # coefficient rounding to exactly zero.  Without this, one side
             # of a CoreXY pair can enter the MCU's emergency underrun ramp at
             # the end of an otherwise successful homing retract.
-            self._queue_terminal_hold()
+            # Never let that hold overlap a following disconnected activity
+            # window.  At high M220 factors an extruder retract/unretract gap
+            # can be shorter than the normal 1ms hold; fill only the known
+            # idle span, in the correct local and machine clock domains.
+            hold_until = gen_time
+            next_cursor = max(activity_cursor, activity_end, fit_end)
+            if next_cursor < gen_time - 1.e-12:
+                has_next = self.ffi_lib.segfit_check_activity(
+                    self.segfit, next_cursor, gen_time)
+                prefetched_from = next_cursor
+                prefetched_activity = has_next
+                if has_next:
+                    hold_until = min(
+                        hold_until,
+                        self.ffi_lib.segfit_get_activity_start(self.segfit))
+            wire_clock = getattr(self, 'wire_clock', None)
+            max_hold_ticks = (None if wire_clock is None else max(
+                0, self._machine_clock(hold_until) - wire_clock))
+            self._queue_terminal_hold(max_hold_ticks)
             # Drop the anchor (the next motion re-anchors with a fresh
             # rebase).
             self.anchored = False
@@ -816,15 +852,38 @@ class TrajectoryStepper:
             # callback may no longer have the pre-active context needed by
             # pressure advance or input shaping.
 
-    def _queue_terminal_hold(self):
-        self.hold_cmd.send([self.oid, self.terminal_hold_ticks])
-        self._wire_segment(1, self.terminal_hold_ticks, 0, 0)
+    def _queue_terminal_hold(self, max_machine_ticks=None):
+        local_duration = self.terminal_hold_ticks
+        machine_duration = self._machine_duration(local_duration)
+        if (max_machine_ticks is not None
+                and machine_duration > max_machine_ticks):
+            available = int(max_machine_ticks)
+            local_freq = self.mcu.seconds_to_clock(1.)
+            machine_freq = self._machine_freq()
+            local_duration = max(
+                1, int(math.floor(available * local_freq / machine_freq)))
+            machine_duration = self._machine_duration(local_duration)
+            while machine_duration > available and local_duration > 1:
+                local_duration -= 1
+                machine_duration = self._machine_duration(local_duration)
+            if available <= 0 or machine_duration > available:
+                # An immediately adjacent rebase itself terminates the old
+                # executor state. Preserve command ordering without emitting
+                # an unrepresentable positive-duration hold.
+                if self.wire_clock is not None:
+                    self.rebase_min_clock = max(
+                        self.rebase_min_clock, self.wire_clock)
+                return False
+        self.hold_cmd.send([self.oid, local_duration])
+        self._wire_segment(1, machine_duration, 0, 0,
+                           exec_duration=local_duration)
         # wire_clock is the exact machine-clock horizon after the hold.  A
         # following rebase must remain ordered after it even if both paths
         # are generated during the same host flush cycle.
         wire_clock = getattr(self, 'wire_clock', None)
         if wire_clock is not None:
             self.rebase_min_clock = max(self.rebase_min_clock, wire_clock)
+        return True
 
     def _record_intention(self, prev_acc, prev_time):
         # Append (start_clock, end_clock, end_pos_subunits) for the span
@@ -915,7 +974,7 @@ class TrajectoryStepper:
             machine_duration = self._machine_duration(s.duration)
             if (not s.velocity and not s.accel and not s.jerk
                     and not s.snap and not s.crackle):
-                self.hold_cmd.send([self.oid, machine_duration])
+                self.hold_cmd.send([self.oid, s.duration])
                 self._wire_segment(1, machine_duration, 0, 0,
                                    exec_duration=s.duration)
                 continue
