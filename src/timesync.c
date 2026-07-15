@@ -44,9 +44,6 @@
 // Beacons blended before the filter leaves the priming phase
 // (mirrors clocksync.py's 8-sample connect priming)
 #define PRIME_TARGET 8
-// Consecutive in-window beacons before convergence is declared
-#define CONVERGE_COUNT 3
-
 struct timesync_state {
     // Machine-time -> local-clock mapping (read at trajq ingest):
     //   local = local_ref + ((machine - machine_ref) * rate) >> 24
@@ -60,7 +57,7 @@ struct timesync_state {
     uint32_t freewheel_ticks; // stale budget in local ticks (0=none)
     uint32_t converge_window; // |err| bound in local ticks (0=priming only)
     int32_t last_err; // last offset error, local ticks
-    uint8_t flags, tx_seq, last_seq, prime_count, good_count;
+    uint8_t flags, tx_seq, last_seq, prime_count, good_count, bad_count;
 };
 
 enum {
@@ -197,7 +194,7 @@ command_sync_beacon_relay(uint32_t *args)
             // Stale beyond budget: ingest has been refused and any
             // motion has ramped out, so stepping is safe - re-prime.
             ts->flags &= ~(TS_PRIMED | TS_CONVERGED);
-            ts->prime_count = ts->good_count = 0;
+            ts->prime_count = ts->good_count = ts->bad_count = 0;
         }
     }
     ts->last_seq = seq;
@@ -254,19 +251,18 @@ command_sync_beacon_relay(uint32_t *args)
         timesync_set_mapping(ts, m, predicted
                              , clamp_rate((int64_t)ts->rate_base + slew));
         ts->last_err = err;
-        // Convergence: bounded offset error on consecutive beacons.
-        // A zero window (host never sent timesync_setup) accepts any
-        // post-priming beacon.
+        // Convergence: acquire on consecutive bounded samples.  Once
+        // established, tolerate isolated marginal timestamp jitter, but
+        // revoke on sustained drift or one gross excursion.  A zero window
+        // (host never sent timesync_setup) accepts every post-priming sample.
         uint32_t mag = err < 0 ? -(uint32_t)err : (uint32_t)err;
-        if (!ts->converge_window || mag <= ts->converge_window) {
-            if (ts->good_count < CONVERGE_COUNT)
-                ts->good_count++;
-            if (ts->good_count >= CONVERGE_COUNT)
-                ts->flags |= TS_CONVERGED;
-        } else {
-            ts->good_count = 0;
+        uint8_t converged = timesync_update_convergence(
+            !!(ts->flags & TS_CONVERGED), &ts->good_count, &ts->bad_count,
+            mag, ts->converge_window);
+        if (converged)
+            ts->flags |= TS_CONVERGED;
+        else
             ts->flags &= ~TS_CONVERGED;
-        }
         // Doc 08: discipline record in the execution log
         execlog_append(EL_DISCIPLINE, 0, now, err, ts->rate);
     }
@@ -290,7 +286,7 @@ command_timesync_setup(uint32_t *args)
     ts->prime_machine = ts->prime_local = 0;
     ts->beacon_rx_local = 0;
     ts->last_err = 0;
-    ts->last_seq = ts->prime_count = ts->good_count = 0;
+    ts->last_seq = ts->prime_count = ts->good_count = ts->bad_count = 0;
     ts->freewheel_ticks = args[0];
     ts->converge_window = args[1];
 }
