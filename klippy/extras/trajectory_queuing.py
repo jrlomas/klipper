@@ -1190,6 +1190,8 @@ class TrajectoryQueuing:
             'g1_segment_order', {'quadratic': 0, 'quintic': 2}, 'quintic')
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
+        self.printer.register_event_handler("toolhead:check_move",
+                                            self._handle_check_move)
         # Advanced single-joint Bezier move is opt-in and hazardous (it
         # bypasses the kinematic planner and desyncs the toolhead
         # position), exactly like [force_move] enable_force_move.
@@ -1302,6 +1304,26 @@ class TrajectoryQueuing:
         if self.timesync is None:
             return True
         return self.timesync.is_mcu_synced(mcu.get_name())
+
+    def _handle_check_move(self, move):
+        # Fail before toolhead.move() commits this move to lookahead.  The
+        # firmware Class-0 ingest gate remains authoritative, but reaching it
+        # from a background flush turns an ordinary early G1 into a global
+        # shutdown.  A relative trajectory joint participates only when its
+        # extra axis moves.  A secondary kinematic joint is conservatively
+        # treated as part of every Cartesian move because CoreXY/delta-style
+        # coupling is not expressible as one axis_d index here.
+        for ts in self.steppers:
+            if ts.mcu is self.get_machine_mcu():
+                continue
+            participates = (move.axes_d[3] if ts.is_relative
+                            else move.is_kinematic_move)
+            if participates and not self.is_mcu_synced(ts.mcu):
+                raise self.printer.command_error(
+                    "Machine-time discipline for %s is not converged;"
+                    " refusing move before lookahead (retry when"
+                    " TIMESYNC_STATUS reports converged)"
+                    % (ts.mcu.get_name(),))
 
     # Kinematics whose XY(Z) rails move together for ordinary motion, so
     # a paradigm split ACROSS rails is also a split coordination group.

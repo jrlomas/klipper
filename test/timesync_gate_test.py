@@ -267,6 +267,50 @@ class DripOwner(SyncedOwner):
     printer = DripPrinter()
 
 
+def test_move_preflight_rejects_unsynced_secondary_before_lookahead():
+    primary = object()
+
+    class Printer:
+        command_error = RuntimeError
+        def lookup_object(self, name, default=None):
+            return primary if name == 'mcu' else default
+
+    class Secondary:
+        def get_name(self):
+            return 'ebb36'
+
+    class Gate:
+        converged = False
+        def is_mcu_synced(self, name):
+            assert name == 'ebb36'
+            return self.converged
+
+    owner = trajectory_queuing.TrajectoryQueuing.__new__(
+        trajectory_queuing.TrajectoryQueuing)
+    owner.printer = Printer()
+    owner.timesync = Gate()
+    secondary = Secondary()
+    owner.steppers = [types.SimpleNamespace(
+        mcu=secondary, is_relative=True)]
+
+    e_move = types.SimpleNamespace(
+        axes_d=[0., 0., 0., 20.], is_kinematic_move=False)
+    try:
+        owner._handle_check_move(e_move)
+    except RuntimeError as exc:
+        assert 'refusing move before lookahead' in str(exc)
+    else:
+        raise AssertionError("unsynchronized E move reached lookahead")
+
+    # A relative E joint does not participate in an XY-only move, and a
+    # converged mapping permits its E traffic.
+    xy_move = types.SimpleNamespace(
+        axes_d=[5., 0., 0., 0.], is_kinematic_move=True)
+    owner._handle_check_move(xy_move)
+    owner.timesync.converged = True
+    owner._handle_check_move(e_move)
+
+
 class AnchorFFI:
     def __init__(self, active_time):
         self.active_time = active_time
@@ -925,6 +969,8 @@ def main():
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
     test_relay_regression_rejects_endpoint_jitter()
     print("PASS: relay regression suppresses noisy endpoint estimates")
+    test_move_preflight_rejects_unsynced_secondary_before_lookahead()
+    print("PASS: unconverged secondary moves fail before lookahead")
     test_trajectory_fails_before_fitter_advance()
     print("PASS: trajectory fitting fails before unsynchronized send")
     test_trajectory_anchor_starts_at_activity()

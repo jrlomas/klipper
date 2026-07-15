@@ -157,10 +157,13 @@ exposed printer object.
 #   Time (in seconds) a secondary micro-controller will freewheel on
 #   its last machine-time estimate after beacons stop arriving before
 #   flagging a loss. The default is 5.0.
-#converge_window: 0.000010
+#converge_window: 0.000020
 #   Inter-micro-controller synchronization error target (in seconds).
 #   A secondary reports "converged" once its discipline filter is
-#   within this window. The default is 0.000010 (10us).
+#   within this operational trust window. The discipline filter continues
+#   to target zero error. The default is 0.000020 (20us), which accommodates
+#   measured host-relay endpoint noise without allowing the Class-0 gate to
+#   flap during otherwise healthy multi-MCU motion.
 ```
 
 ### [asyncio_bridge]

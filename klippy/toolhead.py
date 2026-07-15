@@ -401,6 +401,13 @@ class ToolHead:
         for e_index, ea in enumerate(self.extra_axes):
             if move.axes_d[e_index + 3]:
                 ea.check_move(move, e_index + 3)
+        # Let transport backends reject a move synchronously before it
+        # mutates commanded_pos or enters lookahead.  In particular, a
+        # trajectory secondary whose machine-time mapping is not trusted
+        # must produce a normal command error here instead of discovering
+        # that state later in the background flush handler and shutting down
+        # the whole printer.
+        self.printer.send_event("toolhead:check_move", move)
         self.commanded_pos[:] = move.end_pos
         want_flush = self.lookahead.add_move(move)
         if want_flush:
@@ -480,6 +487,7 @@ class ToolHead:
         move = Move(self, self.commanded_pos, newpos, speed)
         if move.move_d:
             self.kin.check_move(move)
+        self.printer.send_event("toolhead:check_move", move)
         # Make sure stepper movement doesn't start before nominal start time
         kin_flush_delay = self.motion_queuing.get_kin_flush_delay()
         self.dwell(kin_flush_delay)

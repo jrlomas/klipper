@@ -237,8 +237,8 @@ command_sync_beacon_relay(uint32_t *args)
         int32_t err = l - predicted;
         int32_t adj = timesync_err_to_adj(err, dm);
         // Integral: absorb 1/32 of the implied rate error per beacon
-        // (gains validated against the +-10us budget with 5us-sigma
-        // beacon stamping noise and 70ppm crystal mismatch)
+        // (gains validated with 5us-sigma beacon stamping noise and 70ppm
+        // crystal mismatch; the host selects the Class-0 trust window)
         ts->rate_base = clamp_rate(
             (int64_t)ts->rate_base + (adj >> 5));
         // Proportional: slew out a quarter of the offset per interval

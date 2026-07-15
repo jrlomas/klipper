@@ -27,7 +27,11 @@ BEACON_INTERVAL = 0.9839    # matches clocksync.py's clock-query cadence
 PRIME_COUNT = 8             # startup priming burst (doc 01 startup step 2)
 PRIME_INTERVAL = 0.050
 FREEWHEEL_TIME = 5.0        # doc 01 freewheel budget on beacon loss
-CONVERGE_WINDOW = 0.000010  # +-10us inter-MCU sync error target
+# The discipline filter still targets zero offset.  This is the operational
+# Class-0 trust window, sized above the 10-13us endpoint-estimation noise
+# measured on independent USB links so a healthy mapping does not flap while
+# motion is active.
+CONVERGE_WINDOW = 0.000020  # +-20us Class-0 acceptance window
 RATE_SHIFT = 24             # firmware Q8.24 local/machine tick ratio
 RELAY_FIT_SAMPLES = 16      # smooth cross-link regression endpoint jitter
 
