@@ -147,6 +147,8 @@ class SecondaryLink:
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
+        self.sof_phase_error_ticks = None
+        self.converge_window = CONVERGE_WINDOW
     def reset_relay_history(self):
         # The firmware mapping is intentionally retained while a board
         # freewheels.  Host endpoint-fit samples straddling a USB outage are
@@ -175,8 +177,10 @@ class SecondaryLink:
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
+        self.sof_phase_error_ticks = None
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
+        self.converge_window = converge_window
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
                              int(converge_window * self.mcu_freq),
                              self.nominal_rate_raw])
@@ -305,9 +309,20 @@ class SecondaryLink:
                 # can permanently veto the hardware measurement.
                 reference = (_median(self.sof_rates)
                              if self.sof_rates else self.sample_rate)
+                predicted_local_clock = int(round(
+                    self.sof_rate_local_clock + reference * machine_delta))
+                self.sof_phase_error_ticks = (
+                    local_clock - predicted_local_clock)
                 self.host_rate_error_ppm = (
                     self.sample_rate / reference - 1.) * 1.e6
-                if abs(self.host_rate_error_ppm) <= HOST_RATE_TOLERANCE_PPM:
+                # Gate the exact pair on the configured cross-MCU phase
+                # budget, not its one-interval rate derivative. A 2us phase
+                # perturbation over one second appears as 2ppm even though it
+                # is safely inside the +-10us Class-0 budget. Conversely, a
+                # true rate divergence accumulates phase on every rejected
+                # sample and still fails closed after consecutive misses.
+                phase_limit = self.converge_window * self.mcu_freq
+                if abs(self.sof_phase_error_ticks) <= phase_limit:
                     self.sof_rates.append(self.sample_rate)
                     del self.sof_rates[:-HOST_STABLE_COUNT]
                     self.sof_bad_count = 0
@@ -322,9 +337,7 @@ class SecondaryLink:
                         # fabricated new evidence; bad_count still tracks the
                         # rejected physical observations and fails closed on
                         # sustained disagreement.
-                        filtered_local_clock = int(round(
-                            self.sof_rate_local_clock
-                            + reference * machine_delta))
+                        filtered_local_clock = predicted_local_clock
                         self.sof_filtered_count += 1
                     if (not self.host_model_stable
                             or self.sof_bad_count >= HOST_DIVERGE_COUNT):
@@ -747,6 +760,9 @@ class MachineTimeSync:
                 'host_rate_error_ppm': link.host_rate_error_ppm,
                 'sof_rate_bad_count': link.sof_bad_count,
                 'sof_filtered_count': link.sof_filtered_count,
+                'sof_phase_error_us': (
+                    None if link.sof_phase_error_ticks is None else
+                    link.sof_phase_error_ticks / link.mcu_freq * 1.e6),
                 'interval_supported': link.interval_supported,
                 'interval_samples': link.interval_samples,
                 'interval_diagnostics': link.interval_diagnostics,

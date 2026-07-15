@@ -612,17 +612,21 @@ The following information is available in the
 - `mcus.<mcu_name>.usb_sof`: True when this secondary supports and is using
   matched USB Start-of-Frame timestamps for discipline. A missed matching
   frame falls back to the host clock estimate for that beacon.
-- `mcus.<mcu_name>.sof_rate_bad_count`: Consecutive marginal exact-pair rate
-  intervals outside the 2 ppm stability band. Once lock is established, one
-  or two intervals are tolerated and three consecutive misses revoke the host
-  gate. A good interval clears the count. Outlier magnitude alone does not
-  revoke an established map because the exact-pair timestamp includes
-  load-dependent ISR-entry latency.
+- `mcus.<mcu_name>.sof_rate_bad_count`: Consecutive exact-pair observations
+  outside the configured cross-MCU `converge_window`. Once lock is
+  established, one or two observations are tolerated and three consecutive
+  misses revoke the host gate. A bounded observation clears the count.
+  Outlier magnitude alone does not revoke an established map because the
+  exact-pair timestamp includes load-dependent ISR-entry latency.
 - `mcus.<mcu_name>.sof_filtered_count`: Number of exact-pair observations
   rejected since connect because their interval rate was outside the qualified
   band. Once lock exists, firmware receives a one-beacon holdover prediction
   on the established SOF rate instead of the delayed ISR timestamp; sustained
   rejected observations still revoke the host gate.
+- `mcus.<mcu_name>.sof_phase_error_us`: Latest raw exact-pair phase residual
+  against the qualified SOF clock map, in microseconds. This is the quantity
+  compared with `converge_window`; `host_rate_error_ppm` remains a diagnostic
+  one-interval derivative and is not itself a Class-0 gate.
 
 ## trajectory_queuing
 

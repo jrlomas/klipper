@@ -1416,6 +1416,7 @@ def test_value_trajectory_fails_before_fitter_advance():
 
 def test_exact_sof_pairs_stabilize_without_host_endpoint_fit():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.mcu_freq = 64_000_000.
     link.nominal_rate = 64. / 12. * (1. - 25.e-6)
     link.last_machine_clock = None
     link.last_local_est = link.last_raw_local_est = None
@@ -1429,6 +1430,8 @@ def test_exact_sof_pairs_stabilize_without_host_endpoint_fit():
     link.sof_rate_machine_clock = None
     link.sof_rate_local_clock = None
     link.sof_filtered_count = 0
+    link.sof_phase_error_ticks = None
+    link.converge_window = timesync.CONVERGE_WINDOW
     link.sof_pending_beacon = (9, 10, 11.)
     link.sof_relay_cmd = FakeCommand()
     rate = link.nominal_rate
@@ -1446,6 +1449,7 @@ def test_exact_sof_pairs_stabilize_without_host_endpoint_fit():
 
 def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.mcu_freq = 64_000_000.
     actual_rate = 64. / 12. * (1. - 25.e-6)
     # Reproduce the live restart: the one-time software-derived seed was
     # outside the 2ppm stability gate, while exact SOF intervals agreed.
@@ -1462,6 +1466,8 @@ def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
     link.sof_rate_machine_clock = None
     link.sof_rate_local_clock = None
     link.sof_filtered_count = 0
+    link.sof_phase_error_ticks = None
+    link.converge_window = timesync.CONVERGE_WINDOW
     link.sof_pending_beacon = None
     link.sof_relay_cmd = FakeCommand()
     for index in range(timesync.HOST_STABLE_COUNT + 1):
@@ -1476,6 +1482,7 @@ def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
 
 def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.mcu_freq = 64_000_000.
     rate = 64. / 12. * (1. - 25.e-6)
     link.nominal_rate = rate
     link.last_machine_clock = None
@@ -1490,6 +1497,8 @@ def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
     link.sof_rate_machine_clock = None
     link.sof_rate_local_clock = None
     link.sof_filtered_count = 0
+    link.sof_phase_error_ticks = None
+    link.converge_window = timesync.CONVERGE_WINDOW
     link.sof_pending_beacon = None
     link.sof_relay_cmd = FakeCommand()
     for index in range(timesync.HOST_STABLE_COUNT + 1):
@@ -1523,10 +1532,25 @@ def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
     link.relay_sof(index, machine, local, 20. + index)
     assert link.host_model_stable
     assert link.sof_bad_count == 0
+    # Reproduce the fourth physical failure: three one-second observations
+    # differed by about -2.25ppm, but each was only a -2.25us phase change and
+    # the firmware remained within 0.11us. A rate-derivative gate rejected
+    # these; the actual +-10us Class-0 phase gate must accept them.
+    marginal_rate = rate * (1. - 2.25e-6)
+    filtered_before = link.sof_filtered_count
+    for _ in range(timesync.HOST_DIVERGE_COUNT):
+        index += 1
+        machine = 1_000_000 + index * 12_000_000
+        local += round(12_000_000 * marginal_rate)
+        link.relay_sof(index, machine, local, 20. + index)
+        assert link.host_model_stable
+        assert link.sof_bad_count == 0
+    assert link.sof_filtered_count == filtered_before
 
 
 def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.mcu_freq = 64_000_000.
     rate = 64. / 12. * (1. - 25.e-6)
     link.nominal_rate = rate
     link.last_machine_clock = None
@@ -1541,6 +1565,8 @@ def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
     link.sof_rate_machine_clock = None
     link.sof_rate_local_clock = None
     link.sof_filtered_count = 0
+    link.sof_phase_error_ticks = None
+    link.converge_window = timesync.CONVERGE_WINDOW
     link.sof_pending_beacon = None
     link.sof_relay_cmd = FakeCommand()
     machine = 1_000_000
