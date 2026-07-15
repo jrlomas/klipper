@@ -167,6 +167,33 @@ def test_qwen_cli_uses_native_non_thinking_framing():
     print("PASS: pinned Qwen CLI uses native bounded-latency framing")
 
 
+def test_cli_accelerator_explicitly_requests_full_gpu_offload():
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = os.path.join(tmp, "llama-completion")
+        model = os.path.join(tmp, "Qwen3-4B-Q4_K_M.gguf")
+        open(cli, "w").close()
+        open(model, "w").close()
+        os.chmod(cli, 0o700)
+        seen = {}
+
+        class Result:
+            stdout = "answer"
+
+        def runner(argv, **kwargs):
+            seen["argv"] = argv
+            return Result()
+
+        backend = LlamaCppBackend(
+            model_path=model, cli_path=cli, cli_runner=runner,
+            accelerator="rocm")
+        backend._binding_available = lambda: False
+        backend.generate("diagnose")
+        index = seen["argv"].index("--gpu-layers")
+        assert seen["argv"][index + 1] == "99"
+        assert "--device" not in seen["argv"]
+    print("PASS: GPU-labelled CLI backends explicitly offload all layers")
+
+
 def test_generate_strips_reasoning_wrapper():
     fake = FakeLlama(_msg(content=(
         "<think>\nprivate reasoning\n</think>\nvisible answer")))
@@ -297,6 +324,7 @@ def main():
     test_generate_tolerates_bad_tool_json()
     test_cli_fallback_keeps_prompts_out_of_argv_and_parses_tools()
     test_qwen_cli_uses_native_non_thinking_framing()
+    test_cli_accelerator_explicitly_requests_full_gpu_offload()
     test_generate_strips_reasoning_wrapper()
     test_propose_edit_returns_proposal()
     test_propose_edit_none_when_no_tool_call()

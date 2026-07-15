@@ -290,6 +290,11 @@ class LlamaCppBackend(ModelBackend):
             ]
             if self.accelerator == "cpu":
                 argv.extend(["--device", "none", "--gpu-layers", "0"])
+            elif self.accelerator in ("cuda", "rocm"):
+                # The CLI defaults are build/version dependent and may leave
+                # every layer on the CPU.  An accelerator-labelled Atlas
+                # backend must explicitly request full model offload.
+                argv.extend(["--gpu-layers", "99"])
             if effective_schema is not None:
                 argv.extend(["--json-schema", json.dumps(
                     effective_schema, sort_keys=True)])

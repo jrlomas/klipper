@@ -13,6 +13,10 @@ Hailo-10H validation remains pending.
 
 The backend keeps prompts in mode-private temporary files, uses Qwen's native
 chat framing in bounded non-thinking mode, and grammar-constrains tool output.
+The CLI transport explicitly requests full layer offload for CUDA/ROCm
+(`--gpu-layers 99`); the CPU profile explicitly disables devices and uses zero
+GPU layers. Accelerator labels therefore describe the executed command rather
+than relying on version-dependent llama.cpp defaults.
 
 ## Corpus v2
 
