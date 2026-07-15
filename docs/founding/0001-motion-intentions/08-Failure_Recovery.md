@@ -65,6 +65,12 @@ Live position queries pair that phase with the physical microstep counter; the
 host unwraps the pair before reconciliation, including across long-axis phase
 wraps.
 
+The shutdown path was exercised on the cold V0 on 2026-07-15: after a bounded
+Z trajectory, deliberate `M112` put both boards in shutdown, and the deferred
+callback still pulled and persisted 42 Pico and 22 EBB36 records (including
+the completed Z boundaries) before firmware restart. This closes the gap
+between the unit-tested callback scheduling and a real post-failure dump.
+
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped
 and what was already printed, and re-plans from ground truth.

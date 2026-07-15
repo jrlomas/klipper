@@ -148,30 +148,42 @@ the toolchain and flashing before touching new features.
 Repeat this whole phase per target: **STM32 mainboard**, **CAN
 toolhead**, **ESP32**, **OAMS mainboard (F072)**.
 
-- [ ] **1.1 — Configure.** `make menuconfig` selects the target and the
+- [~] **1.1 — Configure.** `make menuconfig` selects the target and the
   HELIX capability flags appropriate to it (`WANT_TRAJECTORY`,
   `WANT_TRAJECTORY_HIGHER_ORDER`, `WANT_TRAJECTORY_PWM`,
   `WANT_TRIGGER_SOURCE`, `WANT_HEATER_HOLD`, `WANT_SYSCALL_API`,
   `WANT_SIGNED_IMAGES`). On the F072, confirm `HAVE_LIMITED_CODE_SIZE`
   drops the features that don't fit — and that this is *by design*, not a
   build error.
-  Pass: `.config` reflects the intended feature set.
+  Pass: `.config` reflects the intended feature set. The RP2040 Pico,
+  STM32G0B1 EBB36, and computation-only STM32H723 configurations have built
+  and run with their intended capability sets. The CAN, ESP32, and OAMS/F072
+  certification configurations remain.
 
-- [ ] **1.2 — Build.** `make` completes.
+- [~] **1.2 — Build.** `make` completes.
   Expect: image links; flash/RAM usage is reported.
   Pass: on the F072, the image fits 128 KB flash / 16 KB RAM with margin.
-  Record the numbers.
+  Record the numbers. Pico, EBB36, and H723 images link; the workstation
+  regression also links linuxprocess, STM32F407, and STM32G0B1. The complete
+  certification matrix—especially the OAMS F072 size result—remains.
 
-- [ ] **1.3 — Flash.** Flash by the board's normal path (DFU / SD /
+- [~] **1.3 — Flash.** Flash by the board's normal path (DFU / SD /
   CAN-flash / serial).
-  Pass: board boots, LED/heartbeat as expected.
+  Pass: board boots, LED/heartbeat as expected. Signed HELIX images were
+  flashed to the Pico and EBB36 and exercised through homing and complete
+  prints; the H723 was flashed through ROM DFU and served its dictionary and
+  self-tests. CAN, ESP32, and OAMS targets remain.
 
-- [ ] **1.4 — Capability advertisement.** Connect klippy; run
+- [~] **1.4 — Capability advertisement.** Connect klippy; run
   **`HELIX_STATUS`**.
   Expect: the board reports exactly the flags built in 1.1, plus
   `BOARD_SYSCALL_ABI` / `CAPS` if `WANT_SYSCALL_API` is set.
   Pass: advertised set == intended set. **This is the ground truth every
-  later phase reads.**
+  later phase reads.** On 2026-07-15 the live Pico and EBB36 again advertised
+  ABI `27141a58f61f9fbc`, fleet lockstep, trajectory/quintic/PWM/heater-hold/
+  execlog/syscall capabilities, with hardware trigger sources additionally
+  present on EBB36; both passed all five onboard tests. Remaining targets must
+  repeat this comparison.
 
 ---
 
@@ -573,14 +585,17 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   feature remain. The current virtual-SD resume restarts at
   the next unconsumed G-Code command; replay/replanning of the interrupted
   move suffix is not yet implemented, so this is not yet print-transparent.
-- [~] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
+- [x] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
   Pass: retained MCU execution logs drain to the Klipper log even while the
   MCU is shut down, live `execution` records share Atlas machine time with
   exact host `intention` coefficients, and the records explain the
   interruption.
   Live streaming, reliable repeated pulls, host/MCU reconciliation, and the
-  1,071-segment coupled audit passed on 2026-07-14. A deliberate shutdown and
-  post-shutdown pull remain before this item is complete.
+  1,071-segment coupled audit passed on 2026-07-14. On 2026-07-15, a bounded
+  cold Z move was followed by a deliberate `M112`; the deferred shutdown
+  handler queried the still-connected shutdown boards and persisted 42 Pico
+  plus 22 EBB36 records, including the Z segment completions, before firmware
+  restart. Both heater targets were zero throughout.
 - [ ] **8.7 — Full replug cycle under print.** Combine 8.3–8.5 during an
   actual short print; reseat a toolhead cable.
   Pass: the part survives; no cold-bed detach; layers align across the
@@ -749,7 +764,9 @@ Type every new command once on a real machine and confirm it does what
   while both MCUs remained ready.
 - [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
 - [x] **13.9** `EXECLOG_DUMP` — reliable flight-recorder pulls completed after
-  every bounded motion batch and after the final run on 2026-07-14.
+  every bounded motion batch and after the final run on 2026-07-14; a deferred
+  pull also persisted both boards' retained records after deliberate `M112`
+  on 2026-07-15.
 - [x] **13.10** `TIMESYNC_STATUS` — per-secondary discipline state. The
   EBB36 reported `CONVERGED` against the Pico after cold connect and after
   `FIRMWARE_RESTART`.
