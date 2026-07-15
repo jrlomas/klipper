@@ -322,7 +322,8 @@ frame pair is unavailable. The direct GPIO wire and commissioning sections are
 not required for normal operation. A subsequent Klipper service restart with
 the wire removed and both commissioning sections absent reacquired eight exact
 rate-consistent pairs, passed the host gate, and converged the firmware map to
--7.03 us inside its configured +/-10 us ingest window.
++3.84 us inside its configured +/-10 us ingest window. Both live MCUs reported
+the pushed `fc944686` firmware build during this final check.
 
 ## 5. Translation into a printed object
 

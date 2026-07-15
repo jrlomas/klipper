@@ -42,16 +42,17 @@
     "fallback": "existing host clock estimate for an unmatched frame"
   },
   "wire_free_restart_validation": {
+    "firmware_version": "fc944686",
     "direct_sync_wire": false,
     "commissioning_sections_loaded": false,
     "printer_state": "ready",
     "usb_sof": true,
     "host_model_stable": true,
     "host_stable_count": 8,
-    "exact_pair_rate_error_ppm": 0.0414,
+    "exact_pair_rate_error_ppm": -0.0665,
     "firmware_converged": true,
-    "firmware_last_error_ticks": -450,
-    "firmware_last_error_us": -7.0313,
+    "firmware_last_error_ticks": 246,
+    "firmware_last_error_us": 3.8438,
     "heater_targets_c": {
       "bed": 0.0,
       "extruder": 0.0
