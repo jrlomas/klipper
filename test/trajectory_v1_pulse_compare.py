@@ -68,6 +68,14 @@ def build_mcu_solver():
         ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
         ctypes.POINTER(ctypes.c_uint32)]
     solver.helix_test_solve_step_ho.restype = ctypes.c_int
+    solver.helix_test_expand_segment.argtypes = [
+        ctypes.c_uint8, ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32,
+        ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int64,
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_uint32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_uint32]
+    solver.helix_test_expand_segment.restype = ctypes.c_int
+    solver.helix_test_last_shutdown.restype = ctypes.c_char_p
     return solver
 
 
@@ -405,6 +413,58 @@ def check_deadline_multiply(math):
     print("PASS: native coefficient scaling preserves signed products")
 
 
+def check_real_gcode_solver_vectors(solver):
+    # Captured from the failed V0 first-layer print.  These four fitted
+    # quintics exposed two solver assumptions that the synthetic profiles did
+    # not: an interval reciprocal may become stale during a sharp ramp, and a
+    # segment-boundary interval is only a seed (not a crossing proof).  The
+    # old solver missed up to 571 physical steps and later emitted long
+    # one-tick catch-up bursts.
+    vectors = [
+        # name, duration, v/a/j/s/c, acc, mpos, prior interval/direction,
+        # expected pulse count and endpoint mpos
+        ('real E retract', 1600000,
+         (-104268, -5157, -5856, 908, -54), -1292701270016000,
+         -5, 78596, -1, 133, -138),
+        ('real corexy X', 300000,
+         (-686379, -388574, 557700, -476084, 186653),
+         219719309628936448, 781, 25830, -1, 60, 721),
+        ('real corexy Y', 540000,
+         (519999, 107683, -86834, 41428, -9068),
+         -191156305072186496, -679, 23717, 1, 75, -604),
+        ('real Z ramp', 420000,
+         (503671, 60266, 693003, -614199, 195851),
+         -1974369026804741760, -7014, 34734, 1, 142, -6872),
+        # This long negative segment contains a fixed-point Horner
+        # discontinuity where adjacent timer ticks straddle a crossing and
+        # neither is within 1/8 step. The bounded sign-bracket path must pick
+        # the nearest tick (inside 1/4 step) without losing any later edges.
+        ('real quantized crossing', 2736000,
+         (-615692, 2327, -327, 27, -1), -12597753415094528,
+         -45, 7091, -1, 385, -430),
+    ]
+    flags = (2 << 6) | 2  # quintic | local-time
+    pulse_data = (ctypes.c_uint32 * 2048)()
+    for (name, duration, coeffs, acc, start_mpos, prior_interval,
+         prior_direction, expected_count, expected_mpos) in vectors:
+        mpos = ctypes.c_int32(start_mpos)
+        interval = ctypes.c_uint32(prior_interval)
+        direction = ctypes.c_int32(prior_direction)
+        count = solver.helix_test_expand_segment(
+            flags, duration, *coeffs, acc, ctypes.byref(mpos),
+            ctypes.byref(interval), ctypes.byref(direction), pulse_data,
+            len(pulse_data))
+        assert count == expected_count, (name, count, expected_count)
+        assert mpos.value == expected_mpos, (name, mpos.value, expected_mpos)
+        intervals = [
+            pulse_data[index] - pulse_data[index - 1]
+            for index in range(1, count)
+        ]
+        assert min(intervals) > 500, (name, min(intervals))
+    print("PASS: real first-layer quintics preserve every endpoint without"
+          " catch-up bursts")
+
+
 def compare_case(solver, name, start_z, distance, speed, accel,
                  trigger_after=None):
     legacy, end_time = legacy_pulses(start_z, distance, speed, accel)
@@ -461,6 +521,7 @@ def main():
     check_shifted_s32_multiply(solver)
     check_deadline_constant_division(math)
     check_deadline_multiply(math)
+    check_real_gcode_solver_vectors(solver)
     compare_case(solver, 'homing profile', 0., 5., 20., 300.)
     compare_case(solver, 'trigger prefix', 0., 5., 20., 300., .035)
     compare_case(solver, 'reverse retract', .180, -3., 10., 300.)

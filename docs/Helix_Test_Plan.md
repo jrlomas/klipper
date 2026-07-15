@@ -735,7 +735,31 @@ Now put it together on the **full printer**.
   by a long synchronous wait and preserve drip streaming. The trajectory,
   pressure-advance, fitting, motion-audit, and V1 pulse-equivalence suites all
   pass. Restart Klippy to load this correction before the next supervised
-  real-print retry; item 14.2 remains open until that retry completes cleanly.
+  real-print retry.
+
+  That retry crossed the heater waits without another Z underrun or host
+  exception, but the physical motion became jerky and skipped near seams. It
+  was canceled around G-code byte 83,734, before the layer-two solid infill.
+  The prior blackbox audit had reconstructed ideal polynomial endpoint
+  crossings; it did not execute the production interval-predictor state
+  machine. Exact replay of the captured intentions found the firmware solver
+  falling behind by up to 571 X, 206 Y, 122 E, and 121 Z steps, followed by
+  near-one-tick catch-up bursts. Boundary interval guesses are now validated
+  against the new segment, residuals outside 1/8 step invoke bounded exact
+  refinement and sign-bracket selection, and errors beyond the 1/4-step
+  representable-tick limit fail closed.
+
+  `scripts/helix_gcode_pulse_compare.py` now runs real sliced G-code offline
+  through both stock V1 `queue_step` output and the HELIX fitter plus exact
+  production MCU solver. A two-layer run including solid infill produced
+  148,298 X, 145,040 Y, 960 Z, and 34,709 E HELIX edges with minimum intervals
+  of 692, 694, 1,346, and 6,761 respective MCU ticks; there were no catch-up
+  bursts. The corresponding V1 counts were 148,192, 144,955, 960, and 34,673.
+  Captured-session replay now has zero intention endpoint mismatches on every
+  actuator. Workstation tests, both target builds, and Linuxprocess live
+  self-tests pass. Item 14.2 remains open until the corrected images pass the
+  new STM32G0B1 sharp-retract self-test and a supervised print completes
+  cleanly.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

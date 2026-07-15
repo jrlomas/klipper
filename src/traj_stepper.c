@@ -435,18 +435,13 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
         return 1;
     }
 #if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
-    // At a continuous same-direction segment boundary, preserve the prior
-    // full-step interval and scale it by the remaining microstep phase.  The
-    // fitter's bounded derivatives make this first estimate substantially
-    // tighter than the 1/8-step execution tolerance, so scheduling it
-    // directly avoids paying a complete Horner evaluation in the boundary
-    // IRQ.  The following pulse resumes the corrected interval recurrence.
-    if ((tq->seg_flags & TSEG_POLY_MASK) && s->step_interval
-        && !s->last_step_t && s->first_step_guess > s->t_prev
-        && s->first_step_guess <= tq->duration) {
-        *step_t = s->first_step_guess;
-        return 1;
-    }
+    // At a continuous same-direction segment boundary, the prior interval
+    // remains a useful seed, but it is not itself a spatial proof.  Real
+    // sliced G-code can change acceleration sharply at a short segment
+    // boundary; scheduling the uncorrected seed let the polynomial cross
+    // multiple steps first and the following calls emitted one-tick catch-up
+    // bursts.  The generic path below starts at first_step_guess and performs
+    // the same 1/8-step checked correction used for recurring crossings.
 #endif
     uint32_t t = s->t_prev;
     uint32_t tmax = tq->duration;
@@ -534,6 +529,127 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
                     if (magnitude <= STEP_Q * 15)
                         break;
                 }
+                // A position-only host fit may legitimately place a sharp
+                // acceleration change in one segment.  In that case the
+                // preceding full-step interval can be a poor reciprocal of
+                // the velocity later in this crossing, and four cheap
+                // interval refinements are not a correctness proof.  The
+                // former unconditional break silently left the physical
+                // counter tens or hundreds of steps behind on real sliced
+                // G-code; a later segment then emitted one-tick catch-up
+                // bursts.  Pay the exact bounded quotient only on this rare
+                // residual path and retain the 1/8-step spatial contract.
+                uint32_t before_root = 0, after_root = 0;
+                if (dir > 0 ? err < 0 : err > 0)
+                    before_root = t;
+                else
+                    after_root = t;
+                uint8_t exact_refine;
+                for (exact_refine = 0; exact_refine < 8; exact_refine++) {
+                    uint64_t magnitude = err < 0
+                        ? -(uint64_t)err : (uint64_t)err;
+                    if (magnitude <= STEP_Q * 15)
+                        break;
+                    int64_t v120 = trajq_velocity24_at_seg_fast(tq, t) * 5;
+                    uint64_t speed120 = v120 < 0
+                        ? -(uint64_t)v120 : (uint64_t)v120;
+                    uint8_t scale_shift = 0;
+                    while (speed120 > 131071) {
+                        speed120 >>= 1;
+                        scale_shift++;
+                    }
+                    int32_t v_exact = (int32_t)traj_signed_shr(
+                        v120, scale_shift);
+                    int64_t err_exact = traj_signed_shr(err, scale_shift);
+                    if (dir > 0 ? v_exact <= 0 : v_exact >= 0)
+                        break;
+                    int64_t dt = traj_divide_residual(
+                        err_exact, v_exact, tmax);
+                    int64_t nt = (int64_t)t + dt;
+                    if (nt < 0)
+                        nt = 0;
+                    else if (nt > (int64_t)tmax)
+                        nt = tmax;
+                    t = nt;
+                    if (!traj_poly_pos120(s, t, &position120))
+                        position120 = trajq_pos120_at_seg_fast(tq, t);
+                    err = position120 - s->target16 * 120;
+                    if (dir > 0 ? err < 0 : err > 0) {
+                        if (!before_root || t > before_root)
+                            before_root = t;
+                    } else if (!after_root || t < after_root) {
+                        after_root = t;
+                    }
+                }
+                uint64_t final_magnitude = err < 0
+                    ? -(uint64_t)err : (uint64_t)err;
+                // The deadline Horner evaluator is fixed-point and can have
+                // a one-tick quantization discontinuity near a crossing.
+                // Newton uses the smooth analytic derivative, so it may
+                // oscillate across that discontinuity without selecting the
+                // closer timer tick. Retain the sign bracket formed by those
+                // iterations and bisect it only on this rare residual path.
+                uint8_t bisect;
+                for (bisect = 0;
+                     final_magnitude > STEP_Q * 15
+                     && before_root && after_root
+                     && after_root > before_root + 1 && bisect < 16;
+                     bisect++) {
+                    uint32_t mid = before_root
+                        + (after_root - before_root) / 2;
+                    int64_t mid_position120;
+                    if (!traj_poly_pos120(s, mid, &mid_position120))
+                        mid_position120 = trajq_pos120_at_seg_fast(tq, mid);
+                    int64_t mid_err = mid_position120 - s->target16 * 120;
+                    uint64_t mid_magnitude = mid_err < 0
+                        ? -(uint64_t)mid_err : (uint64_t)mid_err;
+                    if (mid_magnitude < final_magnitude) {
+                        t = mid;
+                        err = mid_err;
+                        final_magnitude = mid_magnitude;
+                    }
+                    if (dir > 0 ? mid_err < 0 : mid_err > 0)
+                        before_root = mid;
+                    else
+                        after_root = mid;
+                }
+                // The scaled exact quotient truncates toward zero.  At the
+                // final timer tick it can therefore stop on the farther side
+                // of a crossing even though the adjacent tick satisfies the
+                // spatial bound (the two samples straddle the root).  Compare
+                // those immediate neighbours before declaring divergence.
+                uint32_t candidate_base = t;
+                int8_t neighbour;
+                for (neighbour = -1; neighbour <= 1; neighbour += 2) {
+                    int64_t nt = (int64_t)candidate_base + neighbour;
+                    if (nt <= s->t_prev || nt > tmax)
+                        continue;
+                    int64_t neighbour_position120;
+                    if (!traj_poly_pos120(
+                            s, nt, &neighbour_position120))
+                        neighbour_position120 = trajq_pos120_at_seg_fast(
+                            tq, nt);
+                    int64_t neighbour_err = neighbour_position120
+                        - s->target16 * 120;
+                    uint64_t neighbour_magnitude = neighbour_err < 0
+                        ? -(uint64_t)neighbour_err
+                        : (uint64_t)neighbour_err;
+                    if (neighbour_magnitude < final_magnitude) {
+                        t = nt;
+                        err = neighbour_err;
+                        final_magnitude = neighbour_magnitude;
+                    }
+                }
+                if (final_magnitude > STEP_Q * 30)
+                    // Never turn a solver convergence failure into physical
+                    // catch-up pulses. Refinement targets 1/8 step above; the
+                    // 1/4-step final limit accommodates a fixed-point Horner
+                    // discontinuity where adjacent timer ticks straddle the
+                    // root and neither can represent 1/8 step. This remains
+                    // inside the half-step physical quantizer. A corrupt or
+                    // out-of-envelope segment fails closed instead of
+                    // silently losing position.
+                    shutdown("traj solver divergence");
                 break;
             }
             int64_t v120 = trajq_velocity24_at_seg_fast(tq, t) * 5;
@@ -739,6 +855,81 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
         }
         if (max_elapsed > overall_max)
             overall_max = max_elapsed;
+    }
+
+    // A real pressure-advance retract from the failed V0 first-layer print.
+    // Unlike the throughput vector above, this sharply changes velocity
+    // inside one segment and intentionally exercises the bounded exact
+    // fallback after the cheap interval-reciprocal refinements.  Qualify it
+    // on silicon because this rare correctness path still has to finish
+    // before its physical step deadline on the 64MHz STM32G0B1.
+    struct traj_stepper sharp = { };
+    sharp.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+    sharp.tq.duration = 1600000;
+    sharp.tq.velocity = -104268;
+    sharp.tq.accel = -5157;
+    sharp.tq.jerk = -5856;
+    sharp.tq.snap = 908;
+    sharp.tq.crackle = -54;
+    sharp.tq.acc = -1292701270016000LL;
+    sharp.mpos = -5;
+    sharp.dir = -1;
+    sharp.step_interval = 78596;
+    sharp.q16_end = trajq_end_delta_seg(&sharp.tq) >> 16;
+    sharp.target16 = traj_stepper_calc_target16(
+        sharp.tq.acc, sharp.mpos, sharp.dir);
+    uint64_t first_magnitude = sharp.target16 < 0
+        ? -(uint64_t)sharp.target16 : (uint64_t)sharp.target16;
+    if (first_magnitude > STEP_Q)
+        first_magnitude = STEP_Q;
+    sharp.first_step_guess = (
+        first_magnitude * sharp.step_interval) >> 32;
+    if (!sharp.first_step_guess)
+        sharp.first_step_guess = 1;
+    traj_poly_fast_setup(&sharp);
+    uint32_t sharp_count = 0;
+    for (;;) {
+        uint32_t step_t, before = timer_read_time();
+        int result = traj_solve_step(&sharp, &step_t);
+        uint32_t elapsed = timer_read_time() - before;
+        if (elapsed > overall_max)
+            overall_max = elapsed;
+        if (!result)
+            break;
+        if (result != 1 || step_t <= sharp.t_prev
+            || step_t > sharp.tq.duration) {
+            *max_elapsed_out = 0x00b00000 | (sharp_count & 0xffff);
+            return 0;
+        }
+        int64_t error120 = trajq_pos120_at_seg_fast(
+            &sharp.tq, step_t) - sharp.target16 * 120;
+        uint64_t magnitude120 = error120 < 0
+            ? -(uint64_t)error120 : (uint64_t)error120;
+        if (magnitude120 > STEP_Q * 15) {
+            *max_elapsed_out = 0x00c00000 | (sharp_count & 0xffff);
+            return 0;
+        }
+        uint32_t available = sharp.last_step_t
+            ? step_t - sharp.last_step_t : step_t;
+        if (elapsed >= available - available / 4) {
+            *max_elapsed_out = 0x00d00000 | (elapsed & 0x000fffff);
+            return 0;
+        }
+        if (sharp.last_step_t)
+            sharp.step_interval = step_t - sharp.last_step_t;
+        sharp.last_step_t = step_t;
+        sharp.t_prev = step_t;
+        sharp.target16 -= STEP_Q;
+        sharp.mpos--;
+        sharp_count++;
+        if (sharp_count > 256) {
+            *max_elapsed_out = 0x00e00000 | sharp_count;
+            return 0;
+        }
+    }
+    if (sharp_count != 133 || sharp.mpos != -138) {
+        *max_elapsed_out = 0x00f00000 | (sharp_count & 0xffff);
+        return 0;
     }
     *max_elapsed_out = overall_max;
     return 1;

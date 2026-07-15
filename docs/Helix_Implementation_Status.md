@@ -116,6 +116,19 @@ pass.
   passed all five self-tests (`traj_kernel=PASS`): EBB36 RTT 0.26 ms and Pico
   RTT 0.18 ms. The rationale, graphs, negative result, and reproduction steps
   are in [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md).
+* A real sliced-G-code V1/HELIX differential now exercises the complete Klippy
+  planner and retains the production MCU solver state across every crossing.
+  It exposed a defect hidden by the earlier mathematical endpoint replay: on
+  the failed benchmark session the solver fell behind by up to 571 X steps and
+  later generated compressed catch-up pulses. Boundary predictions are now
+  spatially validated, the cheap recurrence has a bounded exact fallback with
+  nearest-tick selection, and errors beyond 1/4 step fail closed. Full
+  captured-session replay has zero
+  endpoint mismatches or <=64-tick bursts; a two-layer offline run through
+  solid infill has continuous edge streams on X/Y/Z/E. Workstation tests and
+  both target builds pass. The new sharp-retract on-silicon self-test and a
+  supervised physical print remain open, so benchmark item 14.2 is not yet a
+  hardware pass.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and

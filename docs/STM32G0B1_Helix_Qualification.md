@@ -75,9 +75,15 @@ The deadline path is specialized for a division-poor Cortex-M0+:
 - four multiply-shift stages evaluate the quintic position;
 - pure cruise uses a quotient/remainder recurrence rather than Newton;
 - recurring curved motion predicts the next crossing from the previous
-  interval and refines only until the spatial error is at most 1/8 step;
+  interval, performs four cheap reciprocal refinements, and uses a bounded
+  exact quotient fallback if the residual is still outside 1/8 step;
+- a prior interval at a segment boundary is only a prediction seed: every
+  proposed crossing is checked against the new polynomial before it can be
+  scheduled;
 - the first two edges of a zero-speed start use full convergence, after which
   the recurring interval fast path takes over;
+- a segment that cannot converge inside the bounded refinements fails closed
+  instead of emitting delayed catch-up pulses;
 - an explicit 25% timer reserve protects other precision clients rather than
   treating “finished one tick before the pulse” as success.
 
@@ -125,17 +131,70 @@ inside the segment, fully converges the first two crossings, and then switches
 to the recurring predictor. The corpus would fail with 4,001 HELIX edges
 against 4,000 V1 edges before the fix; all five cases above now match.
 
+### Experiment 1b: real sliced G-code differential
+
+The synthetic corpus is necessary but was not sufficient. The first
+supervised benchmark print became jerky and skipped near seams, even though a
+post-run endpoint audit reported matching intended pulse totals. That audit
+evaluated the polynomial crossings mathematically; it did not retain the
+production solver's interval predictor and reciprocal state across every
+physical edge.
+
+`scripts/helix_gcode_pulse_compare.py` now runs an ordinary sliced G-code file
+through two real Klippy file-output passes without moving a printer:
+
+1. stock `itersolve -> stepcompress -> queue_step`, expanded into individual
+   V1 edges; and
+2. the production HELIX G-code/planner/fitter path, decoded into intentions
+   and replayed through the exact `src/traj_stepper.c` state machine.
+
+On the captured failed-print intentions, the old firmware solver fell behind
+by as many as 571 X steps, 206 Y steps, 122 extruder steps, and 121 Z steps.
+It subsequently emitted runs of near-one-tick catch-up pulses. Two assumptions
+were invalid: four inexpensive interval corrections were treated as success
+even with a large spatial residual, and an interval inherited at a segment
+boundary was scheduled without validating it against the new polynomial.
+
+The corrected solver validates boundary predictions and invokes an exact
+bounded Newton quotient when the cheap recurrence remains outside 1/8 step.
+If fixed-point timer quantization makes 1/8 step unrepresentable, it selects
+the nearest bracketed tick up to a hard 1/4-step limit; anything beyond that
+fails closed. Exact replay of the entire captured session now has zero
+endpoint mismatches and no intervals at or below 64 MCU ticks on X, Y, Z, or
+E.
+
+The offline two-layer run used the real benchmark G-code through the end of
+layer-two solid infill:
+
+| Actuator | V1 edges | HELIX edges | V1 minimum interval | HELIX minimum interval |
+|---|---:|---:|---:|---:|
+| CoreXY X | 148,192 | 148,298 | 690 ticks | 692 ticks |
+| CoreXY Y | 144,955 | 145,040 | 689 ticks | 694 ticks |
+| Z | 960 | 960 | 1,323 ticks | 1,346 ticks |
+| Extruder | 34,673 | 34,709 | 7,119 ticks | 6,761 ticks |
+
+The small edge-count differences are expected from the bounded quintic fit;
+the decisive properties are continuous direction-consistent edge timing,
+endpoint fidelity for every intention, and the absence of catch-up bursts.
+Nearest same-direction edge-time p95 differences were 299 us (X), 296 us
+(Y), 58 us (Z), and 319 us (E). This test is now the print-scale regression
+between synthetic unit vectors and a supervised physical print.
+
 ## Experiment 2: on-silicon deadline scaling
 
 `traj_stepper_test_quintic_deadline()` runs inside `HELIX_SELF_TEST`, so it
 measures the production firmware on the target rather than a workstation
-simulation. It contains two gates:
+simulation. It contains three gates:
 
 - a zero-velocity acceleration vector verifies the two cold crossings before
   a recurring interval exists; and
 - a captured EBB36 hot-extrusion quintic is time-compressed while its nth
   derivative is multiplied by the nth power of the rate scale. Geometry and
-  pulse count remain the same while the available time between edges shrinks.
+  pulse count remain the same while the available time between edges shrinks;
+  and
+- the sharp real pressure-advance retract that exposed the print defect must
+  execute exactly 133 crossings, remain inside 1/8 step, and keep each exact
+  fallback below 75% of its physical interval.
 
 | Geometric scale | Approximate edge rate | Spatial gate | Deadline gate | Result |
 |---:|---:|---|---|---|
@@ -163,6 +222,10 @@ live self-tests:
 
 The `-dirty` suffix records that this qualification preceded the checkpoint
 commit. The source content is the content committed with this document.
+Those results qualify the first two gates above. The sharp-retract gate was
+added after the failed benchmark print and passes the Linuxprocess live
+self-test; a newly flashed STM32G0B1 run remains required before it is marked
+on-silicon pass.
 
 ## Experiment 3: hot ABS extrusion through the full path
 
@@ -312,6 +375,16 @@ Host fidelity and pulse comparison:
 ~/klippy-env/bin/python test/trajectory_v1_pulse_compare.py
 ~/klippy-env/bin/python test/segfit_fidelity_test.py
 ~/klippy-env/bin/python test/extruder_trajectory_test.py
+```
+
+Real sliced-G-code file-output comparison (no printer is opened or moved):
+
+```shell
+~/klippy-env/bin/python scripts/helix_gcode_pulse_compare.py model.gcode \
+  --config ~/printer_data/config/printer.cfg \
+  --main-dict path/to/main/klipper.dict \
+  --mcu-dict ebb36=path/to/ebb36/klipper.dict \
+  --layers 2 --speed-percent 25
 ```
 
 Focused audit of the captured hot path:
