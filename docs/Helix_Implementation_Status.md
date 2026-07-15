@@ -270,6 +270,22 @@ pass.
   case for the knowledge base. Its real-machine GitHub-issue bundle passed
   manual review under the numeric-only policy with no hostname, key, USB
   serial, or filesystem path exposed.
+* Atlas now captures failures automatically as deterministic physical
+  occurrences instead of incrementing history once per severe polling batch.
+  Related traceback/shutdown events are grouped through a bounded quiet tail;
+  replaying the same log is idempotent, while a later structurally identical
+  failure increments the aggregate observation count. Each local occurrence
+  is stored under `0700`/`0600` modes with bounded structured pre/post events,
+  before/after stats, MCU/software identity, config/G-code hashes, and at most
+  64 normalized numeric G/M/T lines around the SD position. Raw logs, config
+  contents, filenames, comments, free-form macros, secrets, and full G-code
+  are excluded. Active diagnosis is scoped to the latest Klipper session, and
+  a healthy timeline now has `case: null`; this removes the erroneous Atlas
+  panel `Case captured` state when no error exists while preserving old
+  failures in durable history. The incident-capture, daemon, decoder,
+  diagnosis, memory/RAG, Moonraker, and installer regressions pass offline;
+  newly inserted occurrences update frequency-aware machine memory while log
+  replay cannot inflate its count.
 * The full deterministic Atlas workstation suite passes. The Mainsail Atlas
   and OpenAMS panels pass 50 unit tests across 8 test files, lint, formatting,
   and a production build after merging the current upstream `develop` branch.

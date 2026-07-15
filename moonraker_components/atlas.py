@@ -54,6 +54,9 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
         raise ValueError("service.generation must be an integer")
     if not isinstance(service.get("updated_at"), (int, float)):
         raise ValueError("service.updated_at must be numeric")
+    for name in ("incidents", "occurrences"):
+        if name in value and not isinstance(value[name], list):
+            raise ValueError("%s must be an array" % name)
     assistant = value.get("assistant")
     if assistant is not None and not isinstance(assistant, dict):
         raise ValueError("assistant must be an object")
@@ -253,10 +256,20 @@ class Atlas:
     async def _handle_incidents(self, web_request: "WebRequest"
                                 ) -> Dict[str, Any]:
         diagnosis = None
+        incidents = []
+        occurrences = []
         if self.reader.state is not None:
             diagnosis = self.reader.state.get("diagnosis")
+            value = self.reader.state.get("incidents", [])
+            if isinstance(value, list):
+                incidents = value
+            value = self.reader.state.get("occurrences", [])
+            if isinstance(value, list):
+                occurrences = value
         return {
             "diagnosis": diagnosis,
+            "incidents": incidents,
+            "occurrences": occurrences,
             "bridge": self.reader.health(self.stale_after),
         }
 

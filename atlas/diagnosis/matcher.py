@@ -1,11 +1,10 @@
 # A5 diagnosis matcher — run patterns against a Timeline and, when
-# nothing matches, capture the case (FD-0002 §4).
+# an actual failure matches nothing, capture the case (FD-0002 §4).
 #
 # The load-bearing behaviour here is the *empty catalog* path: with zero
-# patterns the matcher does not fail or fall silent — it says "no known
-# pattern matched" plainly and emits a Case, the deterministic seed of a
-# blackbox bundle (A8 will add redaction and the GitHub intake).  An
-# empty knowledge base is a starting condition, not a blocker.
+# patterns the matcher does not fail or fall silent on an incident — it says
+# "no known pattern matched" plainly and emits a Case, the deterministic seed
+# of a blackbox bundle.  Healthy timelines remain healthy and carry no Case.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -97,19 +96,16 @@ class Matcher:
         matches.sort(key=lambda m: (-m.confidence, m.pattern_id))
 
         diag = Diagnosis(matches=matches, notes=list(timeline.notes))
-        if not matches:
+        if not matches and any(event.sev_rank() >= 4 for event in events):
             diag.case = self._capture_case(timeline, events)
         return diag
 
     def _capture_case(self, timeline: Timeline,
                       events: list[Event]) -> Case:
-        # Salient = the errors/criticals that make this an incident; if the
-        # log is clean, capture the highest-severity events we saw so the
-        # case is never empty.
+        # Salient = the errors/criticals that make this an incident. Healthy
+        # informational timelines never call this method and therefore never
+        # manufacture a misleading "case captured" state.
         salient = [e for e in events if e.sev_rank() >= 4]  # >= error
-        if not salient and events:
-            top = max(e.sev_rank() for e in events)
-            salient = [e for e in events if e.sev_rank() == top][:5]
         if salient:
             headline = salient[0].summary
         else:

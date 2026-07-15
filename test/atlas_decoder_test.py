@@ -140,6 +140,24 @@ def test_traceback_capture():
     print("PASS: host traceback captured with exception type/message")
 
 
+def test_print_lifecycle_and_mcu_identity():
+    log = ("Start printer at X (100.0 5.0)\n"
+           "Loaded MCU 'ebb36' 145 commands (v0.13.0-helix / gcc)\n"
+           "Received 6.0: b'{\"script\":\"SDCARD_PRINT_FILE "
+           "FILENAME=\\\"cube.gcode\\\"\"}'\n"
+           "Starting SD card print (position 123)\n"
+           "Exiting SD card print (position 456)\n"
+           "Finished SD card print\n")
+    tl = decode_klippy_log(log)
+    assert tl.versions["mcu:ebb36"] == "v0.13.0-helix"
+    assert tl.of_kind("mcu_identified")[0].fields["command_count"] == 145
+    assert tl.of_kind("print_request")[0].fields["filename"] == "cube.gcode"
+    assert tl.of_kind("print_start")[0].fields["position"] == 123
+    assert tl.of_kind("print_exit")[0].fields["position"] == 456
+    assert len(tl.of_kind("print_finish")) == 1
+    print("PASS: print lifecycle and MCU identity become typed evidence")
+
+
 def test_clean_log_no_false_faults():
     clean = ("Start printer at Sat Jul 12 10:00:00 2026 (1752314400.0 6.7)\n"
              "Stats 7.0: gcodein=0 mcu: bytes_retransmit=0\n")
@@ -158,6 +176,7 @@ def main():
     test_machine_time_ordering()
     test_time_basis_honesty()
     test_traceback_capture()
+    test_print_lifecycle_and_mcu_identity()
     test_clean_log_no_false_faults()
     print("ALL PASS")
 

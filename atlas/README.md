@@ -27,11 +27,11 @@ honesty; Atlas gives it a mind.
 | `assistant.py` / `ipc.py` | serialized, size-bounded assistant service over a mode-private Unix socket; grounded chat, interpretation, and expiring deterministic config previews | ✅ workstation |
 | `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health and assistant relay endpoints, stale detection, and websocket updates | ✅ |
 | `observe.py` | rotation-safe JSONL ingestion for trace, execution, link-stat, and timesync events on exact machine time | ✅ |
-| `history.py` / `monitor.py` | bounded SQLite incident history plus persistent per-machine drift baselines | ✅ |
+| `incidents.py` / `history.py` / `monitor.py` | deterministic one-occurrence-per-failure capture, private bounded evidence archive, aggregate SQLite history, and persistent per-machine drift baselines | ✅ |
 | `../klippy/extras/atlas_trace.py` / `decode/trace.py` | **A2** live MCU collector plus offline decoder — dictionary rendering onto the merged timeline | ✅ software; hardware pending¹ |
 | `view.py` | **A3** trace viewer — filter by subsystem/severity/board + live tail | ✅ |
 | `decode/klippy_log.py` | **A4** blackbox decoder — useful on a *stock* `klippy.log` today | ✅ |
-| `diagnosis/` | **A5** failure-pattern schema + matcher + **"no match → case captured"** (catalog ships empty) | ✅ |
+| `diagnosis/` | **A5** failure-pattern schema + matcher + **"unmatched failure → case captured"**; healthy timelines have no active case | ✅ |
 | `provision/` | **A6** board catalog (54 boards), confidence-bounded USB/CAN detection (including running Klipper peers), planner, and non-shell confirmed job runner with Ed25519 verification, build/artifact identity, exact-path flashing, and private audit | ✅ detection hardware-exercised; flash pending |
 | `fleet/` | **A7** protocol/ABI hash generated into every firmware dictionary + live `HELIX_STATUS` lockstep verdict; remediation reuses the signed provisioning runner | ✅ software; hardware transition pending |
 | `kb/` | **A8** blackbox bundle/redaction, consent-bound outbox, structured feedback, GitHub intake, and signed atomic catalog activation/rollback | ✅ |
@@ -80,7 +80,7 @@ The pinned corpus-v2 run passed every separately reported category on both
 CUDA and ROCm on 2026-07-14; this remains "authored on GPU, Hailo validation
 pending," not deploy-target sign-off.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,moonraker,install,observe,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,moonraker,install,observe,incident_capture,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
 — the complete deterministic Atlas workstation suite, all green. Exact check
 counts are intentionally left to the test runner so this status line cannot
 go stale when coverage grows.
@@ -115,6 +115,27 @@ plumbing consumes. Its `timeline` and `diagnosis` objects are the exact contract
 rendered by the Mainsail Atlas panel. An idle heartbeat lets consumers tell a
 quiet service from a stopped one. The component in `moonraker_components/`
 validates and exposes this state without recomputing Atlas facts.
+
+Atlas automatically groups error and critical events into physical failure
+occurrences and closes an occurrence after a short quiet tail. A healthy
+current Klipper session publishes `case: null`; restarting after an old fault
+therefore clears the panel's active diagnosis without deleting the durable
+history. Each occurrence is aggregated by pattern/case identity in
+`incidents.sqlite3` and has one mode-`0600` JSON evidence record under the
+mode-`0700` `incidents/` directory. Retention is bounded by age and count.
+Detection, grouping, capture, redaction, and retention are deterministic and
+do not invoke the model. Newly inserted occurrences also update the private
+machine-memory observation count, so repeated failures become frequency-aware
+RAG grounding without letting log replay inflate the count.
+
+Occurrence evidence contains only structured redacted events, before/after
+stats, MCU/software identities, hashes of the active config and G-code, and at
+most 64 normalized numeric G/M/T commands around the reported SD byte
+position. It never archives the raw log, config contents, filename, comments,
+free-form macro commands, or the full G-code. The Moonraker incidents endpoint
+returns the bounded aggregate list and recent occurrence metadata alongside
+the current diagnosis; the private evidence files are not exposed through
+that API.
 
 To enable the local assistant, set `ATLAS_MODEL` and `ATLAS_LLAMA_CLI` in
 the mode-private `atlas.env` written by the installer. For a direct run:
@@ -160,6 +181,7 @@ $ python3 test/atlas_daemon_test.py
 $ python3 test/atlas_moonraker_test.py
 $ python3 test/atlas_install_test.py
 $ python3 test/atlas_observe_test.py
+$ python3 test/atlas_incident_capture_test.py
 $ python3 test/atlas_assistant_test.py
 ```
 

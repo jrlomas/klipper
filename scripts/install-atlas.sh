@@ -114,10 +114,22 @@ if [ ! -f "${ENV_DEST}" ]; then
         printf 'ATLAS_ACCELERATOR=cpu\n'
         printf 'ATLAS_ASSISTANT_SOCKET=%s\n' "${STATE_DIR}/assistant.sock"
         printf 'ATLAS_MEMORY_FILE=%s\n' "${STATE_DIR}/memory.json"
+        printf 'ATLAS_INCIDENT_DIR=%s\n' "${STATE_DIR}/incidents"
         printf 'ATLAS_PRINTER_CONFIG=%s\n' \
             "${ATLAS_DATA}/config/printer.cfg"
+        printf 'ATLAS_GCODE_DIR=%s\n' "${ATLAS_DATA}/gcodes"
     } > "${ENV_DEST}"
 fi
+
+ensure_env() {
+    local name="$1"
+    local value="$2"
+    if ! grep -q "^${name}=" "${ENV_DEST}"; then
+        printf '%s=%s\n' "${name}" "${value}" >> "${ENV_DEST}"
+    fi
+}
+ensure_env ATLAS_INCIDENT_DIR "${STATE_DIR}/incidents"
+ensure_env ATLAS_GCODE_DIR "${ATLAS_DATA}/gcodes"
 
 UNIT_DEST="$(stage_path "${UNIT_FILE}")"
 sed -e "s|@ATLAS_USER@|${ATLAS_USER}|g" \

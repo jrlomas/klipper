@@ -58,6 +58,8 @@ def test_staged_install_is_complete_and_idempotent():
         assert "ATLAS_MODEL=" in env_file.read_text()
         assert "ATLAS_ASSISTANT_SOCKET=" in env_file.read_text()
         assert "ATLAS_PRINTER_CONFIG=" in env_file.read_text()
+        assert env_file.read_text().count("ATLAS_INCIDENT_DIR=") == 1
+        assert env_file.read_text().count("ATLAS_GCODE_DIR=") == 1
         udev_text = udev.read_text()
         assert udev_text.count('GROUP="atlas-test"') == 5
         assert 'SUBSYSTEM=="tty"' in udev_text

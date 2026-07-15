@@ -50,8 +50,9 @@ class TimelineFilter:
 def format_event(timeline: Timeline, e: Event, wall: bool = False) -> str:
     if e.mtime is None:
         stamp = "        ?   "
-    elif wall and timeline.wall_time_of(e.mtime) is not None:
-        lt = time.localtime(timeline.wall_time_of(e.mtime))
+    elif wall and timeline.wall_time_of_event(e) is not None:
+        wall_time = timeline.wall_time_of_event(e)
+        lt = time.localtime(wall_time)
         stamp = time.strftime("%H:%M:%S", lt) + ("" if e.t_exact else "~")
     else:
         stamp = ("%s%10.3f" % (" " if e.t_exact else "~", e.mtime))

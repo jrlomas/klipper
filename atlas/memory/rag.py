@@ -156,11 +156,15 @@ def kb_documents(patterns=None, memory=None) -> list:
             docs.append(RagDocument(
                 id="quirk:%d" % len(docs), source="memory", text=q))
         for d in memory.diagnoses:
+            observations = int(d.get("observations", 1))
             docs.append(RagDocument(
                 id="diag:%s" % d.get("case_hash", len(docs)),
                 source="memory",
-                text="past incident: %s" % d.get("summary", ""),
-                metadata={"case_hash": d.get("case_hash", "")}))
+                text="past incident observed %d time%s: %s" % (
+                    observations, "" if observations == 1 else "s",
+                    d.get("summary", "")),
+                metadata={"case_hash": d.get("case_hash", ""),
+                          "observations": observations}))
         for name, baseline in sorted(memory.baselines.items()):
             docs.append(RagDocument(
                 id="baseline:%s" % name, source="memory",

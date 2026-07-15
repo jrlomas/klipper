@@ -48,8 +48,8 @@ and gates every commit. No hardware, no GPU, no model.
   *Expect:* a stock `klippy.log` decodes into a machine-time-ordered
   timeline with honest time-basis flags. *Pass:* ALL PASS.
 - [x] **Diagnosis (A5).** *Do:* `python3 test/atlas_diagnosis_test.py`.
-  *Expect:* the empty catalog still runs and captures a case. *Pass:*
-  ALL PASS.
+  *Expect:* the empty catalog captures real failures while a clean session
+  carries no active case. *Pass:* ALL PASS.
 - [x] **Trace collector (A2).** *Do:* `python3 test/atlas_trace_test.py`.
   *Expect:* trace records render via the dictionary and merge onto the
   timeline. *Pass:* ALL PASS.
@@ -72,6 +72,15 @@ and gates every commit. No hardware, no GPU, no model.
   JSONL merges on exact machine time; partial lines and rotation recover;
   incidents deduplicate and retain across restart; learned baselines persist
   and flag drift. *Pass:* ALL PASS.
+- [x] **Automatic incident occurrences.** *Do:*
+  `python3 test/atlas_incident_capture_test.py`. *Expect:* related error and
+  critical lines settle into one occurrence; repeated physical failures
+  aggregate without log-replay duplication; a healthy session clears the
+  active panel diagnosis; mode-private evidence is bounded and excludes raw
+  logs, config contents, filenames, comments, secrets, and full G-code.
+  *Pass:* ALL PASS, including config/G-code hashes, bounded normalized
+  G/M/T context, MCU/software identity, `0700` archive / `0600` records, and
+  replay idempotence.
 - [x] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.

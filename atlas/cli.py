@@ -26,6 +26,7 @@ from .model import LlamaCppBackend
 from .view import LiveTail, TimelineFilter, render
 
 _CATALOG = os.path.join(os.path.dirname(__file__), "diagnosis", "patterns")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _fmt_time(tl, e):
@@ -66,12 +67,15 @@ def _cmd_diagnose(args) -> int:
             print("  fix:   %s" % m.fix)
     else:
         c = diag.case
-        print("\nNo known pattern matched — CASE CAPTURED")
-        print("  case: %s" % c.case_hash)
-        print("  headline: %s" % c.summary)
-        for line in c.signature_lines():
-            print("    · %s" % line)
-        print("  (a candidate for the knowledge base; see FD-0002 §6a)")
+        if c is None:
+            print("\nNo active incident — no error or critical event found")
+        else:
+            print("\nNo known pattern matched — CASE CAPTURED")
+            print("  case: %s" % c.case_hash)
+            print("  headline: %s" % c.summary)
+            for line in c.signature_lines():
+                print("    · %s" % line)
+            print("  (a candidate for the knowledge base; see FD-0002 §6a)")
     for n in diag.notes:
         print("note: %s" % n)
     return 0
@@ -140,14 +144,20 @@ def _cmd_serve(args) -> int:
         telemetry_paths=args.telemetry,
         history_path=args.history_file or os.path.join(
             state_dir, "incidents.sqlite3"),
+        incident_dir=args.incident_dir or os.path.join(
+            state_dir, "incidents"), incident_settle=args.incident_settle,
         baseline_path=args.baseline_file or os.path.join(
             state_dir, "baselines.json"), assistant=assistant,
         assistant_socket=(args.assistant_socket or os.path.join(
             state_dir, "assistant.sock")) if assistant else None,
-        memory_store=memory_store)
+        memory_store=memory_store, printer_config=args.printer_config,
+        gcode_dir=args.gcode_dir, repo_root=args.repo_root)
     if args.once:
-        state = daemon.poll_once(force=True)
-        print(json.dumps(state, indent=2, sort_keys=True))
+        try:
+            state = daemon.poll_once(force=True)
+            print(json.dumps(state, indent=2, sort_keys=True))
+        finally:
+            daemon.close()
         return 0
     try:
         try:
@@ -237,8 +247,18 @@ def main(argv=None) -> int:
                    help="newline-delimited structured telemetry (repeatable)")
     s.add_argument("--history-file",
                    help="SQLite incident history (default: beside state file)")
+    s.add_argument("--incident-dir",
+                   default=os.environ.get("ATLAS_INCIDENT_DIR") or None,
+                   help="mode-private occurrence bundles")
+    s.add_argument("--incident-settle", type=float, default=2.0,
+                   help="quiet seconds used to group one failure occurrence")
     s.add_argument("--baseline-file",
                    help="machine baseline JSON (default: beside state file)")
+    s.add_argument("--gcode-dir",
+                   default=os.environ.get("ATLAS_GCODE_DIR") or None,
+                   help="optional G-code root for hash and bounded context")
+    s.add_argument("--repo-root", default=_REPO_ROOT,
+                   help="repository root used only for revision identity")
     s.add_argument("--once", action="store_true",
                    help="publish one snapshot and exit")
     s.add_argument("--model", default=os.environ.get("ATLAS_MODEL", ""),

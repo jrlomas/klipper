@@ -27,6 +27,7 @@ def _record(kind, t, fields, **extra):
 
 def test_structured_kinds_merge_on_machine_time():
     timeline = Timeline()
+    timeline.anchor = {"systime": 100.0, "monotime": 5.0}
     collector = StructuredCollector(timeline)
     records = [
         _record("execution", 3, {"command": "queue_step"}),
@@ -39,6 +40,8 @@ def test_structured_kinds_merge_on_machine_time():
     assert [event.kind for event in timeline.ordered()] == [
         "trace", "link_stats", "execution", "timesync"]
     assert all(event.time_basis == "machine" and event.t_exact
+               for event in timeline.events)
+    assert all(timeline.wall_time_of_event(event) is None
                for event in timeline.events)
     assert timeline.of_kind("link_stats")[0].severity == "warning"
     print("PASS: structured sources merge exactly on machine time")
@@ -112,6 +115,7 @@ def test_monitor_learns_persists_and_flags_drift():
 
 def test_daemon_unifies_structured_monitor_and_history():
     with tempfile.TemporaryDirectory() as tmp:
+        now = [100.0]
         log = os.path.join(tmp, "klippy.log")
         telemetry = os.path.join(tmp, "telemetry.jsonl")
         pathlib.Path(log).write_text("Start printer at X (100.0 5.0)\n")
@@ -130,13 +134,18 @@ def test_daemon_unifies_structured_monitor_and_history():
             telemetry_paths=[telemetry],
             history_path=os.path.join(tmp, "incidents.sqlite3"),
             baseline_path=os.path.join(tmp, "baselines.json"),
+            wall_clock=lambda: now[0],
             memory_store=MachineMemoryStore(
                 os.path.join(tmp, "memory.json")))
-        state = daemon.poll_once()
-        kinds = {event["kind"] for event in state["timeline"]["events"]}
+        pending = daemon.poll_once()
+        kinds = {event["kind"] for event in pending["timeline"]["events"]}
         assert {"link_stats", "trace", "anomaly"}.issubset(kinds)
-        assert state["monitor"]["alerts"]
+        assert pending["monitor"]["alerts"]
+        assert pending["service"]["incident_pending"] is True
+        now[0] += 3.0
+        state = daemon.poll_once()
         assert state["service"]["incident_count"] == 1
+        assert state["service"]["incident_occurrences"] == 1
         assert state["incidents"][0]["incident_key"].startswith("case:")
         memory = MachineMemoryStore(os.path.join(tmp, "memory.json")).memory
         assert memory.diagnoses

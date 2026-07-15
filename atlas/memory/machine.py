@@ -167,6 +167,42 @@ class MachineMemoryStore:
             self.save()
         return changed
 
+    def record_incident_occurrence(self, diagnosis, occurrence_id,
+                                   occurred_at):
+        """Record frequency metadata for a newly inserted occurrence."""
+        best = diagnosis.best
+        if best is not None:
+            case_hash = "pattern:%s" % best.pattern_id
+            summary = best.cause
+            matched = best.pattern_id
+        elif diagnosis.case is not None:
+            case_hash = diagnosis.case.case_hash
+            summary = diagnosis.case.summary
+            matched = ""
+        else:
+            return False
+        for existing in self.memory.diagnoses:
+            if (existing.get("case_hash") == case_hash
+                    and existing.get("matched", "") == matched):
+                if existing.get("last_occurrence_id") == occurrence_id:
+                    return False
+                existing["summary"] = summary
+                existing["observations"] = int(
+                    existing.get("observations", 1)) + 1
+                existing.setdefault("first_seen", occurred_at)
+                existing["last_seen"] = occurred_at
+                existing["last_occurrence_id"] = occurrence_id
+                self.save()
+                return True
+        self.memory.diagnoses.append({
+            "case_hash": case_hash, "summary": summary, "matched": matched,
+            "observations": 1, "first_seen": occurred_at,
+            "last_seen": occurred_at,
+            "last_occurrence_id": occurrence_id,
+        })
+        self.save()
+        return True
+
     def sync_baselines(self, baselines):
         value = json.loads(json.dumps(baselines, sort_keys=True))
         if self.memory.baselines.get("monitor") == value:

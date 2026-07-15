@@ -15,6 +15,7 @@ import time
 
 from .diagnosis import Matcher, load_catalog
 from .history import IncidentStore
+from .incidents import IncidentCapture, DEFAULT_SETTLE_SECONDS
 from .ipc import AssistantUnixServer
 from .monitor import BaselineMonitor
 from .observe import StructuredTail
@@ -27,10 +28,29 @@ DEFAULT_MAX_EVENTS = 2000
 DEFAULT_HEARTBEAT = 5.0
 
 
+def _current_session(timeline):
+    """Return the current printer session for active diagnosis.
+
+    Historical failures remain in the durable incident archive, but a
+    successful Klipper restart must clear the panel's active diagnosis.
+    """
+    events = list(timeline.events)
+    start = 0
+    for index, event in enumerate(events):
+        if event.kind == "session_start":
+            start = index
+    current = Timeline()
+    current.anchor = dict(timeline.anchor) if timeline.anchor else None
+    current.notes = list(timeline.notes)
+    current.versions = dict(timeline.versions)
+    for event in events[start:]:
+        current.add(event)
+    return current
+
+
 def _event_dict(timeline, event) -> dict:
     """The public event shape consumed by the Mainsail Atlas adapter."""
-    wall_time = (event.mtime if event.time_basis == "wall"
-                 else timeline.wall_time_of(event.mtime))
+    wall_time = timeline.wall_time_of_event(event)
     return {
         "seq": event.seq,
         "kind": event.kind,
@@ -68,7 +88,7 @@ def _diagnosis_dict(diagnosis) -> dict:
 
 
 def build_status(timeline, diagnosis, service: dict, incidents=None,
-                 monitor=None, assistant=None) -> dict:
+                 monitor=None, assistant=None, occurrences=None) -> dict:
     """Build the stable daemon -> Moonraker -> Mainsail contract."""
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
@@ -81,6 +101,7 @@ def build_status(timeline, diagnosis, service: dict, incidents=None,
         "diagnosis": _diagnosis_dict(diagnosis),
         "service": dict(service),
         "incidents": list(incidents or []),
+        "occurrences": list(occurrences or []),
         "monitor": dict(monitor or {}),
         "assistant": dict(assistant or {"enabled": False}),
     }
@@ -120,7 +141,9 @@ class AtlasDaemon:
                  heartbeat: float = DEFAULT_HEARTBEAT, patterns=None,
                  wall_clock=None, telemetry_paths=None, history_path=None,
                  baseline_path=None, assistant=None, assistant_socket=None,
-                 memory_store=None):
+                 memory_store=None, incident_dir=None,
+                 incident_settle=DEFAULT_SETTLE_SECONDS,
+                 printer_config=None, gcode_dir=None, repo_root=None):
         if interval <= 0:
             raise ValueError("interval must be positive")
         if heartbeat <= 0:
@@ -135,8 +158,14 @@ class AtlasDaemon:
         self.telemetry = [StructuredTail(path, self.follower.timeline)
                           for path in (telemetry_paths or [])]
         self.history = (IncidentStore(
-            history_path, wall_clock=wall_clock or time.time)
+            history_path, wall_clock=wall_clock or time.time,
+            archive_dir=incident_dir)
                         if history_path else None)
+        self.capture = (IncidentCapture(
+            self.history, settle_seconds=incident_settle,
+            wall_clock=wall_clock or time.time,
+            config_path=printer_config, gcode_dir=gcode_dir,
+            repo_root=repo_root) if self.history is not None else None)
         self.monitor = BaselineMonitor(baseline_path) if baseline_path else None
         self.memory_store = memory_store
         self.assistant = assistant
@@ -215,9 +244,34 @@ class AtlasDaemon:
             "pattern_count": len(self.patterns),
             "rotations": (self.follower.rotations
                           + sum(t.rotations for t in self.telemetry)),
-            "incident_count": len(self.history) if self.history else 0,
+            "incident_count": (len(self.history)
+                               if self.history is not None else 0),
+            "incident_occurrences": (
+                self.history.occurrence_count()
+                if self.history is not None else 0),
+            "incident_pending": bool(
+                self.capture and self.capture.pending is not None),
             "last_error": error,
         }
+
+    def _record_captures_in_memory(self, captured) -> bool:
+        if self.memory_store is None:
+            return False
+        changed = False
+        for item in captured:
+            if not item or not item.get("inserted", True):
+                continue
+            record_occurrence = getattr(
+                self.memory_store, "record_incident_occurrence", None)
+            if record_occurrence is None:
+                item_changed = self.memory_store.record_diagnosis(
+                    item["diagnosis"])
+            else:
+                item_changed = record_occurrence(
+                    item["diagnosis"], item["occurrence_id"],
+                    item["bundle"]["occurred_at"])
+            changed = item_changed or changed
+        return changed
 
     def poll_once(self, force=False) -> dict:
         catalog_changed = (False if self._fixed_patterns
@@ -269,10 +323,13 @@ class AtlasDaemon:
         rotated = rotations != self._last_rotations
         source_changed = source_available != self._last_source_available
         now = self._clock()
+        captured = (self.capture.observe(
+            new_events, self.follower.timeline, self.patterns)
+                    if self.capture is not None else [])
         heartbeat_due = (self._last_publish_at is not None
                          and now - self._last_publish_at >= self.heartbeat)
         changed = (force or self._last_state is None or bool(new_events)
-                   or heartbeat_due)
+                   or heartbeat_due or bool(captured))
         changed = (changed or catalog_changed or rotated or source_changed
                    or error_changed)
         if not changed:
@@ -281,16 +338,11 @@ class AtlasDaemon:
         self._last_rotations = rotations
         self._last_source_available = source_available
         self._generation += 1
-        diagnosis = Matcher(self.patterns).diagnose(self.follower.timeline)
-        incident = any(event.sev_rank() >= 4 for event in new_events)
-        if self.history is not None and incident:
-            self.history.record(diagnosis)
-        if self.memory_store is not None and new_events:
+        diagnosis = Matcher(self.patterns).diagnose(
+            _current_session(self.follower.timeline))
+        if self.memory_store is not None and (new_events or captured):
             try:
-                memory_changed = False
-                if incident:
-                    memory_changed = self.memory_store.record_diagnosis(
-                        diagnosis)
+                memory_changed = self._record_captures_in_memory(captured)
                 if self.monitor is not None:
                     memory_changed = self.memory_store.sync_baselines(
                         self.monitor.stats) or memory_changed
@@ -300,7 +352,10 @@ class AtlasDaemon:
                 self._memory_error = ""
             except Exception as exc:
                 self._memory_error = "machine memory update failed: %s" % exc
-        incidents = self.history.recent() if self.history else []
+        incidents = (self.history.recent()
+                     if self.history is not None else [])
+        occurrences = (self.history.recent_occurrences()
+                       if self.history is not None else [])
         monitor_state = {
             "enabled": self.monitor is not None,
             "metric_count": len(self.monitor.stats) if self.monitor else 0,
@@ -311,7 +366,7 @@ class AtlasDaemon:
                            else {"enabled": False})
         state = build_status(self.follower.timeline, diagnosis,
                              self._service_status(), incidents, monitor_state,
-                             assistant_state)
+                             assistant_state, occurrences=occurrences)
         self.publisher.publish(state)
         self._last_state = state
         self._last_publish_at = now
@@ -348,5 +403,14 @@ class AtlasDaemon:
                 self._assistant_server = None
 
     def close(self) -> None:
+        if self.capture is not None:
+            item = self.capture.flush(self.follower.timeline, self.patterns)
+            try:
+                self._record_captures_in_memory([item])
+            except Exception as exc:
+                # The occurrence archive is authoritative. A memory refresh
+                # failure during process teardown must not skip closing it.
+                self._memory_error = (
+                    "machine memory update failed during close: %s" % exc)
         if self.history is not None:
             self.history.close()

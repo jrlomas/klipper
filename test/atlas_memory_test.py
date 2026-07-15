@@ -70,11 +70,20 @@ def test_private_atomic_memory_store():
             case=None)
         assert store.record_diagnosis(diagnosis) is True
         assert store.record_diagnosis(diagnosis) is False
+        assert store.record_incident_occurrence(
+            diagnosis, "occ-1", 101.0) is True
+        assert store.record_incident_occurrence(
+            diagnosis, "occ-1", 101.0) is False
+        assert store.record_incident_occurrence(
+            diagnosis, "occ-2", 102.0) is True
         assert store.sync_baselines({"mcu.error_us": {
             "count": 5, "mean": 2.0, "m2": 0.5}}) is True
         reopened = MachineMemoryStore(path)
         assert reopened.memory.machine_id == machine_id
         assert len(reopened.memory.diagnoses) == 1
+        assert reopened.memory.diagnoses[0]["observations"] == 3
+        docs = kb_documents(memory=reopened.memory)
+        assert "observed 3 times" in docs[0].text
         assert reopened.memory.baselines["monitor"][
             "mcu.error_us"]["count"] == 5
         assert not [name for name in os.listdir(tmp) if name.endswith(".tmp")]

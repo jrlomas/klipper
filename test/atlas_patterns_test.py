@@ -96,8 +96,8 @@ def test_clean_log_matches_nothing():
     diag = Matcher(_catalog()).diagnose(decode_klippy_log(_CLEAN))
     assert not diag.matched(), "a seed pattern fired on a clean log: %s" % (
         [m.pattern_id for m in diag.matches])
-    assert diag.case is not None
-    print("PASS: no seed pattern fires on a clean log (case captured)")
+    assert diag.case is None
+    print("PASS: no seed pattern or case appears on a clean log")
 
 
 def test_no_cross_firing():

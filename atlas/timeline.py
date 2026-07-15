@@ -42,6 +42,7 @@ class Event:
     #                                timestamp (an honest "approximately here")
     fields: dict = field(default_factory=dict)  # parsed structured payload
     raw: str = ""                  # original text, kept for provenance
+    wall_time: Optional[float] = None  # immutable session-local wall mapping
 
     def sev_rank(self) -> int:
         return SEVERITY_ORDER.get(self.severity, 1)
@@ -114,6 +115,16 @@ class Timeline:
         if "systime" not in a or "monotime" not in a:
             return None
         return a["systime"] + (mtime - a["monotime"])
+
+    def wall_time_of_event(self, event: Event) -> Optional[float]:
+        """Return wall time only when the event's clock supports that map."""
+        if event.wall_time is not None:
+            return event.wall_time
+        if event.time_basis == "wall":
+            return event.mtime
+        if event.time_basis == "host_monotonic":
+            return self.wall_time_of(event.mtime)
+        return None
 
     def __len__(self) -> int:
         return len(self.events)

@@ -36,6 +36,16 @@ _RE_HEATER = re.compile(
     r"^Heater (?P<heater>\S+) not heating at expected rate")
 _RE_PROTOCOL = re.compile(r"^(MCU )?Protocol error")
 _RE_TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
+_RE_MCU_LOADED = re.compile(
+    r"^Loaded MCU '(?P<mcu>[^']+)' (?P<commands>\d+) commands "
+    r"\((?P<version>[^ /()]+) /.*\)$")
+_RE_PRINT_REQUEST = re.compile(
+    r"SDCARD_PRINT_FILE\s+FILENAME=\\?\"(?P<filename>[^\"\\]+)\\?\"")
+_RE_PRINT_START = re.compile(
+    r"^Starting SD card print \(position (?P<position>\d+)\)$")
+_RE_PRINT_FINISH = re.compile(r"^Finished SD card print$")
+_RE_PRINT_EXIT = re.compile(
+    r"^Exiting SD card print \(position (?P<position>\d+)\)$")
 # A Python traceback ends with a non-indented "Type: message" line, where
 # Type is a (possibly dotted) identifier — including lowercase ones like
 # Klipper's own 'mcu.error'.  Message is optional.
@@ -129,7 +139,8 @@ class KlippyLogDecoder:
             severity=severity,
             summary=summary, mtime=mtime,
             time_basis=self._basis if mtime is not None else "none",
-            t_exact=t_exact, fields=fields, raw=fields.pop("_raw", ""))
+            t_exact=t_exact, fields=fields, raw=fields.pop("_raw", ""),
+            wall_time=self.timeline.wall_time_of(mtime))
         return self.timeline.add(ev)
 
     # -- driver -----------------------------------------------------------
@@ -215,6 +226,45 @@ class KlippyLogDecoder:
             self._emit("stats", "host", "info",
                        "periodic stats", t_exact=True, sections=sections,
                        _raw=line)
+            return
+
+        m = _RE_MCU_LOADED.match(line)
+        if m:
+            mcu_name = m.group("mcu")
+            version = m.group("version")
+            self.timeline.versions["mcu:%s" % mcu_name] = version
+            self._emit(
+                "mcu_identified", "mcu %s" % mcu_name, "info",
+                "MCU '%s' identified" % mcu_name, mcu=mcu_name,
+                command_count=int(m.group("commands")), version=version,
+                _raw=line)
+            return
+
+        m = _RE_PRINT_REQUEST.search(line)
+        if m:
+            filename = m.group("filename")
+            self._emit(
+                "print_request", "host", "info", "SD print requested",
+                filename=filename, _raw=line)
+            return
+
+        m = _RE_PRINT_START.match(line)
+        if m:
+            self._emit(
+                "print_start", "host", "notice", "SD print started",
+                position=int(m.group("position")), _raw=line)
+            return
+
+        if _RE_PRINT_FINISH.match(line):
+            self._emit("print_finish", "host", "notice",
+                       "SD print finished", _raw=line)
+            return
+
+        m = _RE_PRINT_EXIT.match(line)
+        if m:
+            self._emit(
+                "print_exit", "host", "notice", "SD print exited",
+                position=int(m.group("position")), _raw=line)
             return
 
         m = _RE_SHUTDOWN.match(line)

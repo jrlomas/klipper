@@ -68,6 +68,28 @@ def test_daemon_publishes_incrementally():
               "state")
 
 
+def test_restart_clears_active_diagnosis_without_erasing_timeline():
+    with tempfile.TemporaryDirectory() as tmp:
+        log = os.path.join(tmp, "klippy.log")
+        with open(log, "w") as fh:
+            fh.write(START + FAULT)
+        daemon = AtlasDaemon(log, os.path.join(tmp, "state.json"), tmp,
+                             patterns=[PATTERN])
+        failed = daemon.poll_once()
+        assert failed["diagnosis"]["matched"] is True
+        with open(log, "a") as fh:
+            fh.write("Start printer at Y (200.0 20.0)\n"
+                     "Stats 21.0: gcodein=0\n")
+        healthy = daemon.poll_once()
+        assert healthy["diagnosis"]["matched"] is False
+        assert healthy["diagnosis"]["case"] is None
+        prior = [event for event in healthy["timeline"]["events"]
+                 if event["kind"] == "mcu_shutdown"][0]
+        assert prior["wall_time"] == 101.0
+        print("PASS: a new healthy session clears active diagnosis while "
+              "retaining the prior narrative")
+
+
 def test_waits_for_log_to_appear():
     with tempfile.TemporaryDirectory() as tmp:
         log = os.path.join(tmp, "missing.log")
@@ -191,6 +213,7 @@ def test_async_service_stops_cleanly():
 def main():
     test_status_contract()
     test_daemon_publishes_incrementally()
+    test_restart_clears_active_diagnosis_without_erasing_timeline()
     test_waits_for_log_to_appear()
     test_rotation_and_bounded_timeline()
     test_idle_poll_does_not_republish()

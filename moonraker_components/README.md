@@ -27,6 +27,9 @@ assistant_timeout: 300
 
 The Atlas service heartbeat defaults to five seconds, so a 15-second stale
 threshold tolerates two missed heartbeats without masking a stopped daemon.
+The incidents response contains the current diagnosis, Atlas's bounded
+aggregate incident list, and recent occurrence metadata. Private occurrence
+evidence remains daemon-local and is deliberately not served by Moonraker.
 The assistant endpoints are bounded relays to the daemon's mode-private Unix
 socket. Moonraker does not load weights, construct prompts, diagnose a second
 time, or decide the risk of a proposed edit.

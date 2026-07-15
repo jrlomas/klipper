@@ -52,6 +52,8 @@ def _state(generation=1, updated_at=100.0):
         "service": {
             "state": "running", "generation": generation,
             "updated_at": updated_at},
+        "incidents": [{"incident_key": "case:123", "observations": 1}],
+        "occurrences": [{"occurrence_id": "occ-123"}],
     }
 
 
@@ -221,6 +223,8 @@ def test_component_api_and_notifications():
             incidents = await server.endpoints[
                 "/server/atlas/incidents"][1](None)
             assert incidents["diagnosis"]["matched"] is False
+            assert incidents["incidents"][0]["incident_key"] == "case:123"
+            assert incidents["occurrences"][0]["occurrence_id"] == "occ-123"
             await component.close()
             assert server.loop.timer.stopped is True
     asyncio.run(exercise())

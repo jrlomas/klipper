@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Standalone unit test for the Atlas A5 diagnosis engine (FD-0002 §4).
 # Exercises the pattern schema/validation, the matcher across every
-# predicate type, and — critically — the empty-catalog "no match -> case
-# captured" path that must be a first-class, useful output.
+# predicate type, and the empty-catalog paths: failures become cases while a
+# healthy timeline remains explicitly incident-free.
 #
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -152,11 +152,11 @@ def test_case_hash_is_stable_and_content_addressed():
     print("PASS: case hash is content-addressed and volatile-insensitive")
 
 
-def test_clean_log_still_captures_gracefully():
+def test_clean_log_has_no_active_case():
     diag = Matcher([]).diagnose(decode_klippy_log(CLEAN_LOG))
     assert not diag.matched()
-    assert diag.case is not None  # never crashes on a clean log
-    print("PASS: clean log yields a graceful (empty-incident) case")
+    assert diag.case is None
+    print("PASS: clean log does not manufacture an active incident case")
 
 
 def main():
@@ -168,7 +168,7 @@ def main():
     test_confidence_ordering()
     test_empty_catalog_captures_case()
     test_case_hash_is_stable_and_content_addressed()
-    test_clean_log_still_captures_gracefully()
+    test_clean_log_has_no_active_case()
     print("ALL PASS")
 
 

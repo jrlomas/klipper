@@ -52,9 +52,11 @@ def render_issue(bundle, title=None) -> dict:
             lines.append("- matched `%s` (confidence %.2f, %s)"
                          % (p["id"], p["confidence"], p["provenance"]))
     else:
-        lines.append("- **no known pattern matched** — case captured")
         if diag.get("case_hash"):
+            lines.append("- **no known pattern matched** — case captured")
             lines.append("- case hash: `%s`" % diag["case_hash"])
+        else:
+            lines.append("- no active incident")
     lines.append("")
 
     lines.append("## Merged timeline (redacted)")

@@ -75,7 +75,7 @@ def _diagnosis_dict(diagnosis, red_events=None) -> tuple:
                 else "no significant events")
     return ({
         "matched": False,
-        "note": case.note if case else "no known pattern matched",
+        "note": case.note if case else "no active incident",
         "case_hash": case.case_hash if case else "",
     }, headline)
 
