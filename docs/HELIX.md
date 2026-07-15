@@ -93,7 +93,10 @@ disciplines a computer to a reference.
 **What it buys you.** "Do this at time T" means the same instant on the
 mainboard, on a CAN toolhead, and on a WiFi accessory — so coordinated
 motion and synchronized events survive being spread across a network
-instead of a shared backplane. → [doc 01](founding/0001-motion-intentions/01-Time_Model.md)
+instead of a shared backplane. The measured independent-USB comparison with
+original Klipper scheduling is documented in the
+[machine-time white paper](Machine_Time_White_Paper.md).
+→ [doc 01](founding/0001-motion-intentions/01-Time_Model.md)
 
 ## Pause, hold, resume — not shutdown
 

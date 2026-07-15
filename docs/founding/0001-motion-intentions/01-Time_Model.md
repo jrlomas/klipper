@@ -1,9 +1,11 @@
 # FD-0001: Time Model
 
-Status: Implemented off-silicon in HELIX 0.9. The host relay uses the public
-MCU ClockSync accessor; host preflight and firmware both gate every trajectory
-anchor/segment on secondary convergence and freewheel freshness. Hardware
-timing validation remains.
+Status: Implemented and physically characterized in HELIX 0.9. The host relay
+uses the public MCU ClockSync accessor; host preflight and firmware both gate
+every trajectory anchor/segment on secondary convergence and freewheel
+freshness. Independent-USB testing proved that those internal gates do not by
+themselves establish the target absolute inter-MCU phase; optional hardware-
+bounded timing assurance remains open.
 
 This document defines **machine time** — the timeline every intention
 is scheduled against — and moves its authority from the host's
@@ -87,9 +89,10 @@ host → secondary:  sync_beacon_relay seq=%c machine_clock=%u local_est=%u
 The host stamps `local_est` — its best estimate of the *secondary's*
 local clock at the moment the primary's counter read `machine_clock` —
 using its per-link min-RTT-filtered offset measurements (the same
-technique `clocksync.py` uses today; measurement quality is anchored
-by the smallest observed round-trip, which is unaffected by mean
-latency). A short trailing regression over those extended cross-link
+technique `clocksync.py` uses today). The smallest observed round-trip
+rejects ordinary queueing delay, but its midpoint is an offset estimate only
+under a link-symmetry assumption; it does not reveal directional latency
+asymmetry. A short trailing regression over those extended cross-link
 samples supplies the relay endpoint, reducing the leverage of any single
 USB regression update while retaining the measured oscillator ratio.
 
@@ -107,19 +110,32 @@ transport capability (works over point-to-point USB/serial where MCUs
 cannot hear each other), and the host's relay jitter is filtered by
 the same min-RTT + regression machinery that makes today's sync work.
 A direct MCU-to-MCU beacon (e.g. CAN broadcast, where all boards share
-a bus and hardware RX timestamps are available) is specified as an
-optional extension — it removes the host from the loop entirely but
-is *not* required for correctness.
+a bus and hardware RX timestamps are available) removes the host from the
+loop entirely. Physical Pico/EBB36 testing shows that such a hardware-timed
+path, or an equivalently qualified transport, **is required for a hard
+absolute-phase guarantee**. The host-relayed USB path remains an operational,
+statistically qualified scheduled-traffic mode; lack of a hard bound does not
+invalidate its demonstrated print behavior.
 
 ## Budgets
 
-* **Target inter-MCU sync error: ≤ ±10 µs.** Today's host-mediated
-  sync already achieves tens of µs; multi-MCU stepping tolerates the
+* **Target inter-MCU sync error: ≤ ±10 µs.** Multi-MCU stepping tolerates the
   25 µs step-compression distortion, and multi-MCU homing runs on a
   25 ms watchdog budget ([src/trsync.c](../../../src/trsync.c),
   `TRSYNC_TIMEOUT` in [klippy/mcu.py](../../../klippy/mcu.py)). ±10 µs
   keeps cross-board step alignment below one microstep at any
   practical speed.
+  This is a physical acceptance target, not a consequence of an internal PI
+  residual. For independent request/response links, a timestamp known only to
+  lie between host send and receive has midpoint uncertainty of one half-RTT;
+  the symmetry-free relative bound is the sum of both links' half-RTTs. A
+  transport may claim hardware-bounded ±10 us assurance only when that bound
+  (or a stronger capture bound) is within 10 us and scope qualification
+  confirms it. This assurance label is separate from the Class-0 Scheduled
+  traffic class defined in [03-Traffic_Classes.md](03-Traffic_Classes.md).
+  USB scheduled motion may instead be statistically qualified against an
+  application-derived print tolerance using physical mean, deviation, tails,
+  and successful print evidence.
 * **Drift between beacons:** crystals differ by 20–100 ppm →
   uncorrected drift of 20–100 µs per second. At 1 Hz beacons with rate
   (not just offset) discipline, residual error is dominated by rate

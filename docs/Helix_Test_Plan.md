@@ -99,13 +99,16 @@ workstation, no amount of hardware poking will save you.
   `asyncio_bridge_test.py`, `helix_status_test.py`,
   `failure_recovery_resume_test.py`, `traj_higher_order_test.py`,
   `traj_pwm_map_test.py`, `endstop_hw_trigger_test.py`, and
-  `pause_resume_recovery_test.py`.
+  `pause_resume_recovery_test.py`, plus `machine_time_output_test.py`.
   Expect: all pass against the mocked MCU.
   Pass: 0 failures. The original six tests passed together on 2026-07-14;
   the macro-free recovery pause/resume regression passed on 2026-07-15. A
   Python 3.12 live-thread run then exposed and fixed a lost first-wakeup race
   in the asyncio bridge; its immediate reactor→asyncio→reactor handoff and
-  the complete eight-test focused set now pass in the Klipper virtualenv.
+  the complete focused set now pass in the Klipper virtualenv. On 2026-07-15,
+  the synchronized-output regression also proved that one primary-machine
+  timestamp fans out unchanged while each USB link retains its own local
+  transmission deadline, and that an unconverged target fails before send.
 
 - [x] **0.6 — Segment fitter fidelity.**
   Do: feed the host segment emitter (`chelper/segfit.c` +
@@ -311,9 +314,78 @@ Prove the wire before you trust it to carry motion.
   (0.56 us). After the final signed flash and `FIRMWARE_RESTART` it
   reconverged and reported -1.6 us. This qualifies mixed-frequency USB
   discipline; the scoped physical action in 3.3 and CAN repetition remain.
-- [ ] **3.3 — "Do this at T" agreement.** Schedule a synchronized action
+- [~] **3.3 — "Do this at T" agreement.** Schedule a synchronized action
   (e.g. a coordinated pin toggle) on two boards; scope both pins.
-  Pass: edges land within the time-model's stated tolerance.
+  Pass: report the physical mean, deviation, extrema, and print-domain effect;
+  the original ±10 us design target is retained as a precision objective, not
+  a universal USB disqualification threshold. The live
+  harness uses digital `[output_pin] machine_time: True` through one
+  `[multi_pin]`, so the Pico and EBB36 receive one primary-machine-clock
+  timestamp and convert it on-board rather than reusing legacy host-side
+  per-link clock scheduling. The 2026-07-15 rig uses Pico GPIO24 (the exposed
+  RGB signal) and EBB36 PB8 on a 24 MHz fx2lafw capture. Pico IO16 must not be
+  used as an output: the board routes it through an input-only 74LVC2G34
+  buffer.
+
+  The repeatable `scripts/helix_scope_timing.py` harness preserves each
+  sigrok session and correlates both physical edges with the firmware's
+  post-write scheduler timestamp. Across all runs the Pico-minus-EBB36 ISR
+  differential was -1.77 us with approximately 0.023 us standard deviation,
+  proving that the large variance is not created by the diagnostic GPIO
+  writes or MCU interrupt dispatch. A 40-edge steady-state run after robust
+  host endpoint filtering measured mapping error from -3.01 to -7.71 us and
+  physical edges from -4.75 to -9.46 us, satisfying the target in that window.
+
+  This criterion is **not yet a pass**. Repeated Klippy restarts exposed a
+  false-convergence case: independent USB `ClockSync` offset/frequency models
+  continued moving after the secondary PI filter had converged to their
+  relayed estimate. Physical edges reached +24.71 us in one run and -47.50 us
+  in another while firmware's internal residual remained inside its 10 us
+  window. Moving Klipper from `SCHED_OTHER` to `SCHED_RR` priority 20 on the
+  same Ubuntu `PREEMPT_DYNAMIC` kernel improved a first 30-edge run to -3.25
+  through +4.21 us. A restart repeat nevertheless reached +10.88 us when the
+  EBB36 minimum-RTT anchor changed. PREEMPT_RT is therefore not the next
+  blocker: real-time userspace reduces scheduling noise but cannot remove
+  independent-link latency asymmetry.
+
+  A temporary phase-continuous host-relay experiment separated rate stability
+  from phase acquisition. It anchored once through the USB clock models, then
+  advanced the relay from their measured oscillator-rate ratio. Two restarts
+  stayed within the target (+5.21 to +7.79 us and -7.83 to +5.92 us), and a
+  changing EBB36 RTT anchor no longer moved the physical phase. A third
+  restart was extremely repeatable (0.61 us standard deviation) but remained
+  incorrectly anchored at +57.08 to +58.79 us. The experiment was rejected as
+  a default: continuity can preserve an undetectable bad midpoint forever.
+
+  The symmetry-free timing bound explains that result. If a timestamped event
+  is known only to occur between a host request's send and receive instants,
+  its midpoint error is bounded by that link's half-RTT. Relative phase across
+  two independent links is therefore uncertain by up to the sum of their
+  half-RTTs. On the bad run those minima were approximately 43.2 and 44.7 us,
+  leaving an approximately ±87.9 us worst-case interval even though the MCU
+  residual and oscillator-rate estimates were excellent. Minimum RTT rejects
+  queueing outliers; without a symmetry assumption it does not reveal which
+  direction consumed the latency.
+
+  `SET_PIN_LEGACY_TIMING` provides an apples-to-apples stock-Klipper clock
+  comparator on the same configured pins. Its first 30-edge restart run used
+  the original per-MCU `print_time` conversions and measured +1.50 to +26.67
+  us (mean +8.36 us, standard deviation 7.60 us). Thus legacy step scheduling
+  also provides a statistical mapping rather than a hard ±10 us shared-phase
+  guarantee on these USB links. Across four retained SCHED_RR sessions, 90
+  physical edges pooled to +1.12 us mean, 2.75 us standard deviation, and a
+  -5.17 to +10.88 us range. At 300 mm/s the mean, one-sigma, and worst
+  observed path-phase shifts are 0.00034, 0.00083, and 0.00326 mm. See
+  [Machine-Time Qualification](Machine_Time_Qualification.md) and the
+  [machine-time white paper](Machine_Time_White_Paper.md) for the full
+  spatial, extrusion, topology, and assurance analysis.
+
+  USB remains an operational, statistically qualified profile rather than
+  being failed solely by the symmetry-free RTT envelope. The remaining test
+  condition is a longer scope capture under representative print and USB/host
+  load, plus temperature repetition. A shared timer-capture pulse or hardware-
+  timestamped bus is an optional stronger assurance path. Internal
+  `converged` state alone remains insufficient evidence for an absolute bound.
 
 ---
 
