@@ -214,6 +214,16 @@ Prove the wire before you trust it to carry motion.
   ten-minute machine-time run with zero invalid bytes and no loss of lock;
   both remained ready. This is the stock USB/serial carrier, not datagram or
   console-v2.
+- [x] **2.2a — Disabled trace is silent.** Configure every `[atlas_trace]`
+  subsystem level as `off`, issue `ATLAS_TRACE_TEST MCU=<name> COUNT=1024`
+  to each board, and confirm `ATLAS_TRACE_STATUS` still reports zero records
+  and `next_seq=0`.
+  Pass: on 2026-07-14, firmware `5f652c6e` on the Pico and EBB36 rejected all
+  2,048 probe attempts, Atlas recorded zero trace events, both links retained
+  zero invalid bytes, and EBB36 machine time converged normally. This is a
+  regression for the former `TRACE_LVL_OFF=255` sentinel bug: comparing the
+  sentinel as an ordinary numeric severity threshold accidentally enabled
+  every level and flooded production prints with queue-refill telemetry.
 - [ ] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
   its stock v1 frames to v2 via the transport bridge
   (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.

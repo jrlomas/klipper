@@ -158,8 +158,22 @@ board that won't converge or won't accept motion.
 **What to check / do.** `TIMESYNC_STATUS` reports, per secondary, whether it is
 converged, the current sync error (µs), and the clock-rate correction (ppm =
 parts per million). A board stuck far from convergence usually points at the
-link carrying its beacons — check link health as for an underrun. The beacon
-protocol, the convergence gate, and the freewheel budget are specified in
+link carrying its beacons — check link health as for an underrun. Also inspect
+`atlas_trace` and execution-log streaming before blaming the cable. A trace
+level set to `info` can intentionally generate one record per queue refill,
+and a nonzero `execlog_stream_max` can generate one record per completed
+segment. Those modes are useful for a bounded audit, but enabling both during
+a segment-dense print adds response-queue latency to the same link that carries
+clock queries and beacon replies. Keep trace subsystems `off` unless collecting
+a specific diagnostic window; the retained execution-log ring remains
+available through `EXECLOG_DUMP` after a fault.
+
+Firmware `5f652c6e` also fixes an older sentinel bug in which a configured
+trace level of `off` (wire value 255) was mistakenly treated as the most
+permissive numeric threshold. If `ATLAS_TRACE_STATUS` advances while every
+level is off, update the MCU firmware before investigating timesync or USB
+wiring. The beacon protocol, the convergence gate, and the freewheel budget
+are specified in
 [FD-0001 doc 01](founding/0001-motion-intentions/01-Time_Model.md).
 
 ### Authenticated transport rejects a board
