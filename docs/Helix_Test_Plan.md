@@ -339,7 +339,15 @@ Prove the wire before you trust it to carry motion.
   from the already-planned endpoint `[60,60,30]` to the actual controlled-stop
   coordinate `[60,60,87.789057]`. Unit regressions cover group freeze, silent
   flush, future-clock rebase, Cartesian restoration, and macro-free pause.
-  A post-recovery physical witness move or scope/encoder pulse count remains
+  A second physical run exposed one more boundary: the recovery rebases had
+  no segment attached, so appending work after an operator delay tried to
+  start from their now-historical clocks (`Trajectory anchor in past`). A
+  recovery rebase is now treated as a coordinated position snapshot, and all
+  stopped executors require a fresh future rebase for their first subsequent
+  move. With the corrected host loaded, all four joints (including the EBB36
+  extruder) reported `anchored=0 need_rebase=1`; after a deliberate delay, a
+  cold Z witness completed exactly from 32.210946 to 37.210946 mm and both
+  MCUs remained ready. An independent scope/encoder pulse count remains
   before the "no lost steps" half of this item is fully checked. For a
   virtual-SD print, reconstructing the unexecuted suffix of the interrupted
   G0/G1 is also still required; the current safe resume continues at the next
@@ -556,10 +564,13 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   feature); volatile joints correctly demand re-homing.
   A live host-stall recovery on 2026-07-15 proved reliable execution-log
   drain, exact held-position readback, one shared future rebase across Pico
-  and EBB36, and CoreXY/Z inverse-kinematic restoration. Klipper remained
-  ready and reported the measured ramp endpoint instead of the stale planned
-  endpoint. The link-loss/reconnect case, volatile-axis hardware case, and a
-  printed witness feature remain. The current virtual-SD resume restarts at
+  and EBB36, CoreXY/Z inverse-kinematic restoration, and a delayed first move
+  from a fresh future anchor. Klipper remained ready, reported the measured
+  ramp endpoint instead of the stale planned endpoint, and completed the
+  5 mm post-recovery witness at its exact reported endpoint without shutting
+  down either board. The link-loss/reconnect case, volatile-axis hardware
+  case, independent physical position measurement, and a printed witness
+  feature remain. The current virtual-SD resume restarts at
   the next unconsumed G-Code command; replay/replanning of the interrupted
   move suffix is not yet implemented, so this is not yet print-transparent.
 - [~] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
@@ -731,7 +742,11 @@ Type every new command once on a real machine and confirm it does what
   recovery hold with its triggering MCU/joint/clock/position. After
   `RESUME_MOTION` it exposed the reconciled joints and cleared the active hold.
 - [ ] **13.5** `RECONNECT_MCU MCU=<n>` — re-handshake.
-- [ ] **13.6** `RESUME_MOTION` — reconcile + resume.
+- [x] **13.6** `RESUME_MOTION` — reconcile + resume. A cold live underrun on
+  2026-07-15 reconciled four held joint accumulators at one future boundary,
+  inverse-transformed the actual CoreXY/Z stop position, cleared the recovery
+  pause without a park/unpark macro, and completed a delayed 5 mm witness move
+  while both MCUs remained ready.
 - [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
 - [x] **13.9** `EXECLOG_DUMP` — reliable flight-recorder pulls completed after
   every bounded motion batch and after the final run on 2026-07-14.

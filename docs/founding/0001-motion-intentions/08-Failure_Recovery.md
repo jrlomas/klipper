@@ -212,12 +212,23 @@ endpoint with the actual controlled-stop coordinate. Virtual-SD ingestion is
 paused without invoking user park macros, because a park move before this
 reconciliation would itself use a stale coordinate frame.
 
+That shared rebase is a coordinated recovery snapshot, not an indefinitely
+live motion anchor. It deliberately has no segment attached: after an
+arbitrary operator inspection delay its clock is historical. Each stopped
+executor therefore retains the reconciled accumulator but returns to
+`need_rebase`; the first later motion receives a new future anchor instead of
+appending a hold or segment to the recovery clock.
+
 The cold V0 hardware test on 2026-07-15 stopped Klippy for 1.5 seconds during
 a Z trajectory. Pico ramped and held without shutdown; Pico and EBB36 then
 accepted a shared future recovery boundary. The host restored X/Y exactly and
 changed the stale planned Z endpoint to the MCU-derived ramp endpoint
-(87.789057 mm in the final run). The remaining qualification is an under-print
-witness feature plus the independent link-loss/heater-hold cases. The current
+(87.789057 mm in the first complete reconciliation). A follow-up run exposed
+and fixed the idle-snapshot rule above; after a deliberate delay, a cold Z
+witness moved exactly from 32.210946 to 37.210946 mm while both boards remained
+ready. The remaining qualification is an independent physical position/pulse
+measurement and an under-print witness feature plus the independent
+link-loss/heater-hold cases. The current
 virtual-SD implementation resumes at the next G-Code command; it does not yet
 reconstruct the unexecuted suffix of the command that was already consumed by
 lookahead when the queue starved. Until that host replanning step exists, the

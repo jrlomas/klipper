@@ -1049,11 +1049,14 @@ class TrajectoryStepper:
         return self.mcu_stepper.read_traj_held_subunits()
 
     def resume_reconcile(self, clock, pos_su, anchor_print_time):
-        # Re-anchor the board's segment executor at its authoritative
-        # held accumulator and bring the host fitter + mcu-position
-        # offset back into agreement, so the firmware is in a valid
-        # anchored state and the next flush generates from ground truth
-        # rather than teleporting to a stale commanded position.
+        # Snapshot the board's segment executor at its authoritative held
+        # accumulator and bring the host fitter + mcu-position offset back
+        # into agreement.  The common future rebase is a recovery barrier,
+        # not a durable idle anchor: it has no segment attached to keep its
+        # start clock meaningful after an arbitrary operator inspection
+        # delay.  Leave the stopped executor requiring a fresh rebase so the
+        # first subsequent move receives an anchor that is future at the time
+        # that move is actually queued.
         if self.rebase_cmd is None:
             return
         held_clock = int(clock)
@@ -1082,9 +1085,10 @@ class TrajectoryStepper:
             # scan may fit that remaining suffix from the held position.
             self.activity_cursor = max(
                 getattr(self, 'activity_cursor', 0.), print_time)
+            self.note_rebase_needed(stopped=True)
         except Exception:
             # Fall back to a lazy re-anchor on the next motion.
-            self.note_rebase_needed()
+            self.note_rebase_needed(stopped=True)
         self.intentions.append((clock, clock, pos_su))
         logging.info(
             "Trajectory recovery rebase for %s: held_clock=%d"

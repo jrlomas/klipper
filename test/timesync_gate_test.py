@@ -1260,6 +1260,12 @@ def test_resume_reconcile_uses_shared_future_anchor_not_held_clock():
     assert stepper.intentions[-1] == (10_000_000, 10_000_000, 450)
     assert stepper.activity_cursor == 10.
     assert held_pos == 3.
+    # A recovery snapshot may sit idle while an operator inspects the
+    # machine.  It must not remain an active host anchor: appending a hold or
+    # segment to that clock later would make firmware reject it as past.
+    assert not stepper.anchored
+    assert stepper.need_rebase
+    assert not stepper.rebase_requires_hold
 
 
 def test_value_trajectory_fails_before_fitter_advance():
