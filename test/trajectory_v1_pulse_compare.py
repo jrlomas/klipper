@@ -442,6 +442,14 @@ def check_real_gcode_solver_vectors(solver):
         ('real quantized crossing', 2736000,
          (-615692, 2327, -327, 27, -1), -12597753415094528,
          -45, 7091, -1, 385, -430),
+        # Captured verbatim from the EBB36 shutdown at local clock
+        # 3855980693.  With all Q16 shifts applied early, crackle=1 became
+        # floor(t/65536) before four remaining time multiplies.  Crossing
+        # 51*65536 ticks jumped the polynomial by ~0.8 microstep and made the
+        # safety bracket report "traj solver divergence" after 139 pulses.
+        ('cube E crackle precision', 3520000,
+         (188264, -2302, 343, -28, 1), -4927265779052008791,
+         1620895, 24595, 1, 147, 1621042),
         # These direction-reversing segments were captured from the 100%
         # calibration-cube replay.  Clearing the stale interval is correct,
         # but the old cold Newton solve then emitted its first two pulses at
@@ -471,7 +479,11 @@ def check_real_gcode_solver_vectors(solver):
             flags, duration, *coeffs, acc, ctypes.byref(mpos),
             ctypes.byref(interval), ctypes.byref(direction), pulse_data,
             len(pulse_data))
-        assert count == expected_count, (name, count, expected_count)
+        shutdown_reason = (solver.helix_test_last_shutdown().decode()
+                           if count == -2 else None)
+        assert count == expected_count, (name, count, expected_count,
+                                         shutdown_reason,
+                                         pulse_data[len(pulse_data) - 1])
         assert mpos.value == expected_mpos, (name, mpos.value, expected_mpos)
         intervals = [
             pulse_data[index] - pulse_data[index - 1]
@@ -480,6 +492,21 @@ def check_real_gcode_solver_vectors(solver):
         assert min(intervals) > 500, (name, min(intervals))
     print("PASS: real first-layer quintics preserve every endpoint without"
           " catch-up bursts")
+
+    # Doubling the captured crackle makes the same Q16 boundary jump span
+    # more than one complete microstep.  That is no longer an unambiguous
+    # choice of one adjacent timer tick, so the production guard must retain
+    # its shutdown instead of silently masking a malformed trajectory.
+    mpos = ctypes.c_int32(1620895)
+    interval = ctypes.c_uint32(24595)
+    direction = ctypes.c_int32(1)
+    count = solver.helix_test_expand_segment(
+        flags, 3520000, 188264, -2302, 343, -28, 2,
+        -4927265779052008791, ctypes.byref(mpos), ctypes.byref(interval),
+        ctypes.byref(direction), pulse_data, len(pulse_data))
+    assert count == -2, count
+    assert solver.helix_test_last_shutdown() == b'traj solver divergence'
+    print("PASS: multi-step fixed-point jumps retain the divergence guard")
 
 
 def compare_case(solver, name, start_z, distance, speed, accel,

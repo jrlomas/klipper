@@ -156,7 +156,19 @@ helix_test_expand_segment(uint8_t flags, uint32_t duration, int32_t velocity,
         : (accel ? (accel > 0 ? 1 : -1) : (vend > 0 ? 1 : -1));
     if (direction > 0)
         s.flags |= TSF_DIR_HIGH;
+    // Segment validation and endpoint setup can also reject an overflowing
+    // polynomial.  Keep that production shutdown inside the adapter boundary
+    // so a bad named vector is reported to Python instead of aborting the
+    // entire test process.
+    if (setjmp(helix_test_shutdown_jmp)) {
+        helix_test_shutdown_active = 0;
+        pulses[max_pulses - 1] = helix_test_shutdown_crossing;
+        return -2;
+    }
+    helix_test_shutdown_crossing = 0;
+    helix_test_shutdown_active = 1;
     traj_stepper_load(&s);
+    helix_test_shutdown_active = 0;
 
     uint32_t count = 0;
     for (;;) {

@@ -484,7 +484,19 @@ traj_stepper_bracket_crossing(struct traj_stepper *s, uint32_t guess,
         best_t = hi;
         best_magnitude = hi_magnitude;
     }
-    if (best_t <= s->t_prev || best_magnitude > STEP_Q * 30)
+    // The fixed-point Horner polynomial is monotonic here, but a small wire
+    // coefficient can quantize one of its inner Q16 products.  At that timer
+    // boundary the represented position may jump across the half-step with
+    // neither adjacent tick inside the usual quarter-step tolerance.  One
+    // physical edge is still unambiguous when the complete jump spans no
+    // more than one microstep: select the nearer adjacent tick, whose error
+    // is then necessarily at most half a microstep.  Reject a larger jump so
+    // an actual solver/trajectory divergence cannot be hidden by this path.
+    uint64_t crossing_jump = dir > 0
+        ? (uint64_t)hi_err - (uint64_t)lo_err
+        : (uint64_t)lo_err - (uint64_t)hi_err;
+    if (best_t <= s->t_prev || crossing_jump > STEP_Q * 120
+        || best_magnitude > STEP_Q * 60)
         shutdown("traj solver divergence");
     return best_t;
 }
