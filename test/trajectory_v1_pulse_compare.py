@@ -442,6 +442,23 @@ def check_real_gcode_solver_vectors(solver):
         ('real quantized crossing', 2736000,
          (-615692, 2327, -327, 27, -1), -12597753415094528,
          -45, 7091, -1, 385, -430),
+        # These direction-reversing segments were captured from the 100%
+        # calibration-cube replay.  Clearing the stale interval is correct,
+        # but the old cold Newton solve then emitted its first two pulses at
+        # ticks one and two.  The bounded sign bracket must instead locate the
+        # first physical half-step crossing.
+        ('cube X cold reverse', 192000,
+         (-12034, -2930916, 857790, 1517039, -1088799),
+         246618274371134520, 876, 13742, 1, 96, 780),
+        ('cube Y cold reverse', 204000,
+         (2816, 2812092, -1682532, 326902, -258987),
+         -321277030659127296, -1141, 5492, -1, 88, -1053),
+        ('cube E cold reverse', 1536000,
+         (-1293, -19219, 2237, -50, -5),
+         -7572774957387863383, 38632, 85489, 1, 22, 38610),
+        ('cube E cold reverse 2', 1472000,
+         (-471, -18647, 798, 286, -34),
+         -3369584647644588719, 53565, 99368, 1, 28, 53537),
     ]
     flags = (2 << 6) | 2  # quintic | local-time
     pulse_data = (ctypes.c_uint32 * 2048)()

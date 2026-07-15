@@ -174,12 +174,46 @@ def corner(lib, trapq, start_time):
     return final, {b'x': (start_time, end), b'y': (end, final)}
 
 
+def check_corexy_cancellation():
+    # A real calibration-cube diagonal keeps the CoreXY minus motor exactly
+    # stationary. Rounding the non-zero x-y anchor to a physical sub-unit
+    # leaves a tiny signed residual (-0.08 su for these coordinates). The
+    # quintic fitter must encode that as a zero segment instead of rejecting
+    # its arbitrary fallback direction as a wire-limit failure.
+    import chelper
+    ffi, lib = chelper.get_ffi()
+    trapq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    start_time = 10.
+    x, y = 68.91, 53.318
+    dx = dy = -2.228
+    distance = math.hypot(dx, dy)
+    speed = 100.
+    duration = distance / speed
+    lib.trapq_append(
+        trapq, start_time, 0., duration, 0., x, y, 0.,
+        dx / distance, dy / distance, 0., speed, speed, 0.)
+    sk = ffi.gc(lib.corexy_stepper_alloc(b'-'), lib.free)
+    lib.itersolve_set_trapq(sk, trapq, STEP_DIST)
+    sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(sf, sk, MCU_FREQ, SU_PER_MM, TOLERANCE_SU,
+                     SAMPLE_TIME)
+    lib.segfit_set_order(sf, 2)
+    anchor = round(lib.segfit_get_position(sf, start_time) * SU_PER_MM)
+    lib.segfit_set_anchor(sf, start_time, anchor << 32)
+    lib.segfit_set_anchor_position(sf, anchor)
+    segments = collect_segments(lib, sf, start_time + duration)
+    assert segments
+    assert all(not any(segment[1:6]) for segment in segments), segments
+    print("PASS: CoreXY diagonal cancellation encodes as a zero quintic")
+
+
 def main():
     for order in (0, 2):
         check_path("straight trapezoid", straight, (b'x',), order)
         check_path("48-chord quarter arc", arc, (b'x', b'y'), order)
         check_path("finite-junction-speed corner", corner,
                    (b'x', b'y'), order)
+    check_corexy_cancellation()
     print("segfit_fidelity_test: all paths within motion_tolerance")
     return 0
 

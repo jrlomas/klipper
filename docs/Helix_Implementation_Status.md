@@ -126,9 +126,18 @@ pass.
   captured-session replay has zero
   endpoint mismatches or <=64-tick bursts; a two-layer offline run through
   solid infill has continuous edge streams on X/Y/Z/E. Workstation tests and
-  both target builds pass. The new sharp-retract on-silicon self-test and a
-  supervised physical print remain open, so benchmark item 14.2 is not yet a
-  hardware pass.
+  both target builds pass. A subsequent 100% physical retry exposed two more
+  edge cases before completion: the host direction check rejected an all-zero
+  CoreXY cancellation segment, and a cold solve after a direction reversal
+  could fall through to a one-tick interval. Zero polynomials now have no
+  manufactured direction, and invalid cold higher-order solves use the same
+  bounded nearest-tick sign bracket. Exact cube X/Y/E reversal regressions are
+  committed. The corrected 100% two-layer replay expands 317,607 X, 323,300
+  Y, 1,280 Z, and 63,842 E edges with respective minimum intervals of 260,
+  256, 1,353, and 4,755 ticks and zero intervals at or below 64 ticks. Pico,
+  EBB36, and Linux builds plus Linuxprocess live self-tests pass. Flashing the
+  new images and a supervised physical print remain open, so benchmark item
+  14.2 is not yet a hardware pass.
 * Hot ABS extrusion at 260 C completed through the EBB36: +10 mm at 2 mm/s,
   +5 mm at 10 mm/s, and a bounded -2/+2 mm retract cycle, staged at
   X=60/Y=60/Z=100. The focused +5 mm audit reconciled 3,529 intended and

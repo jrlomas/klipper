@@ -315,6 +315,11 @@ def pulse_summary(pulses, frequency):
         result[str(oid)] = {
             "pulses": len(edges),
             "min_interval_ticks": min(intervals) if intervals else None,
+            # A tiny same-direction interval is the signature of a solver
+            # catch-up burst.  Report it explicitly so a full-file replay
+            # cannot hide one behind an otherwise plausible minimum rate.
+            "intervals_at_or_below_64_ticks": sum(
+                interval <= 64 for interval in intervals),
             "max_step_rate": (
                 frequency / min(intervals) if intervals else None),
         }

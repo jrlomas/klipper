@@ -536,6 +536,14 @@ check_dir_quintic(const int32_t coeffs[5], uint32_t T, double endpoint)
             if (d[i] > eps)
                 return 0;
     }
+    // A stationary actuator has no direction invariant to enforce. CoreXY
+    // cancellation can leave a tiny signed floating-point residual after the
+    // physical anchor is rounded to a sub-unit (for example -0.08 sub-units
+    // on a diagonal infill stroke). Quantization correctly selects the all-
+    // zero polynomial and check_fit_quintic() proves it is within tolerance;
+    // do not manufacture a direction from vend>=0 and reject that valid hold.
+    if (!(coeffs[0] | coeffs[1] | coeffs[2] | coeffs[3] | coeffs[4]))
+        return 1;
     // Match traj_stepper_load()'s initial direction selection exactly.
     int32_t vend = coeffs[0]
         + (int32_t)(((int64_t)coeffs[1] * T) >> 16);

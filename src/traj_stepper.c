@@ -381,6 +381,75 @@ traj_divide_residual(int64_t numerator, int32_t denominator, uint32_t limit)
     return negative ? -(int64_t)quotient : (int64_t)quotient;
 }
 
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+static int64_t
+traj_stepper_error120(struct traj_stepper *s, uint32_t tick)
+{
+    int64_t position120;
+    if (!traj_poly_pos120(s, tick, &position120))
+        position120 = trajq_pos120_at_seg_fast(&s->tq, tick);
+    return position120 - s->target16 * 120;
+}
+
+// Select the closest representable timer tick around a monotonic crossing.
+// This is the bounded correctness fallback for the first two pulses after a
+// direction change, where no prior full-step interval exists and Newton may
+// start at nearly zero velocity.  It is intentionally not the recurring hot
+// path: the sign bracket costs at most 26 fixed-point Horner evaluations for
+// the fitter's <=2^26-tick segments.
+static uint32_t
+traj_stepper_bracket_crossing(struct traj_stepper *s)
+{
+    uint32_t lo = s->t_prev, hi = s->tq.duration;
+    int32_t dir = s->dir;
+    int64_t lo_err = traj_stepper_error120(s, lo);
+    int64_t hi_err = traj_stepper_error120(s, hi);
+    uint8_t lo_before = dir > 0 ? lo_err < 0 : lo_err > 0;
+    uint8_t hi_before = dir > 0 ? hi_err < 0 : hi_err > 0;
+    if (!lo_before || hi_before)
+        shutdown("traj solver divergence");
+
+    uint32_t best_t = hi;
+    uint64_t best_magnitude = hi_err < 0
+        ? -(uint64_t)hi_err : (uint64_t)hi_err;
+    uint8_t i;
+    for (i = 0; hi > lo + 1 && i < 26; i++) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        int64_t mid_err = traj_stepper_error120(s, mid);
+        uint64_t mid_magnitude = mid_err < 0
+            ? -(uint64_t)mid_err : (uint64_t)mid_err;
+        if (mid_magnitude < best_magnitude) {
+            best_t = mid;
+            best_magnitude = mid_magnitude;
+        }
+        if (dir > 0 ? mid_err < 0 : mid_err > 0) {
+            lo = mid;
+            lo_err = mid_err;
+        } else {
+            hi = mid;
+            hi_err = mid_err;
+        }
+    }
+    if (lo > s->t_prev) {
+        uint64_t magnitude = lo_err < 0
+            ? -(uint64_t)lo_err : (uint64_t)lo_err;
+        if (magnitude < best_magnitude) {
+            best_t = lo;
+            best_magnitude = magnitude;
+        }
+    }
+    uint64_t hi_magnitude = hi_err < 0
+        ? -(uint64_t)hi_err : (uint64_t)hi_err;
+    if (hi_magnitude < best_magnitude) {
+        best_t = hi;
+        best_magnitude = hi_magnitude;
+    }
+    if (best_t <= s->t_prev || best_magnitude > STEP_Q * 30)
+        shutdown("traj solver divergence");
+    return best_t;
+}
+#endif
+
 // Solve for the tick (relative to segment start) where the active
 // segment next crosses s->target16, strictly after s->t_prev.
 // Returns 1 with *step_t set, 0 if no crossing before segment end.
@@ -698,9 +767,22 @@ traj_solve_step(struct traj_stepper *s, uint32_t *step_t)
         if (t == prev || (t > prev ? t - prev : prev - t) <= 1)
             break;
     }
-    // Ensure monotonic progress.  The fitter supplies smooth bounded curves;
-    // the on-silicon deadline regression independently checks that the
-    // one-correction approximation remains within 1/8 microstep spatially.
+    // A cold solve after a direction change has no interval predictor.  A
+    // near-zero initial velocity can make Newton jump between the segment
+    // endpoints and formerly fall through to t_prev+1, producing two one-
+    // tick pulses at the start of an otherwise ordinary G-code segment.
+    // Validate its result and use a bounded monotonic bracket when necessary.
+#if CONFIG_WANT_TRAJECTORY_HIGHER_ORDER
+    if (tq->seg_flags & TSEG_POLY_MASK) {
+        int64_t error120 = traj_stepper_error120(s, t);
+        uint64_t magnitude120 = error120 < 0
+            ? -(uint64_t)error120 : (uint64_t)error120;
+        if (t <= s->t_prev || magnitude120 > STEP_Q * 30)
+            t = traj_stepper_bracket_crossing(s);
+    }
+#endif
+    // Ensure monotonic progress.  The spatial validation above proves this
+    // clamp is only a final timer-order guard for higher-order motion.
     if (t <= s->t_prev)
         t = s->t_prev + 1;
     if (t > tmax)

@@ -760,6 +760,33 @@ Now put it together on the **full printer**.
   self-tests pass. Item 14.2 remains open until the corrected images pass the
   new STM32G0B1 sharp-retract self-test and a supervised print completes
   cleanly.
+
+  The next 100% supervised retry reached 14.29% (G-code byte 59,970, first-
+  layer solid infill) before the host rejected a stationary CoreXY actuator
+  segment as exceeding the wire limits. A diagonal X/Y stroke had canceled
+  exactly for one motor; rounding its non-zero anchor left a -0.08-sub-unit
+  floating residual, while coefficient quantization correctly produced an
+  all-zero quintic. The direction validator incorrectly assigned that hold a
+  positive direction and rejected it. Zero polynomials now bypass the
+  inapplicable direction check, with the exact cube diagonal committed as a
+  fitter regression.
+
+  Replaying that cube at 100% then found isolated one-tick intervals on X, Y,
+  and E. They occurred on the first solve after a direction reversal, when
+  clearing the stale prior interval left cold Newton iteration near zero
+  velocity. Its invalid result previously fell through to `t_prev + 1`. Cold
+  or spatially invalid higher-order solves now use a bounded monotonic sign
+  bracket and select the nearest representable timer tick within the existing
+  1/4-step fail-closed limit. Captured X, Y, and E reversal vectors are
+  permanent regressions.
+
+  The corrected 100% two-layer replay completes with 317,607 X, 323,300 Y,
+  1,280 Z, and 63,842 E HELIX edges. Minimum intervals are 260, 256, 1,353,
+  and 4,755 target-MCU ticks respectively, with zero intervals at or below 64
+  ticks. The corresponding V1 counts are 317,247, 321,270, 1,280, and 63,758.
+  Pico, EBB36, and Linux firmware builds, focused motion/fitter suites, and
+  Linuxprocess live self-tests pass. Item 14.2 remains open until these new
+  MCU images are flashed and the supervised physical print completes.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.

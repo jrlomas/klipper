@@ -82,6 +82,9 @@ The deadline path is specialized for a division-poor Cortex-M0+:
   scheduled;
 - the first two edges of a zero-speed start use full convergence, after which
   the recurring interval fast path takes over;
+- a cold solve after a direction reversal has no stale interval predictor;
+  if Newton does not land within 1/4 step, a bounded monotonic sign bracket
+  selects the nearest physical crossing instead of emitting `t_prev + 1`;
 - a segment that cannot converge inside the bounded refinements fails closed
   instead of emitting delayed catch-up pulses;
 - an explicit 25% timer reserve protects other precision clients rather than
@@ -179,6 +182,32 @@ endpoint fidelity for every intention, and the absence of catch-up bursts.
 Nearest same-direction edge-time p95 differences were 299 us (X), 296 us
 (Y), 58 us (Z), and 319 us (E). This test is now the print-scale regression
 between synthetic unit vectors and a supervised physical print.
+
+A later 100% retry exposed two cases not reached by the 25% replay. First, a
+diagonal cube stroke made one CoreXY motor stationary; its -0.08-sub-unit
+rounded residual quantized to a valid all-zero polynomial, but the host
+direction validator assigned that hold an arbitrary positive direction and
+rejected it. Second, after that host fix, exact replay found isolated one-tick
+intervals at cold X, Y, and E direction reversals. Clearing the stale interval
+was correct, but Newton's near-zero-velocity initial estimate was not; the old
+final timer-order clamp converted failure into `t_prev + 1`.
+
+All-zero polynomials now bypass the inapplicable direction invariant. A cold
+or spatially invalid higher-order solve now invokes the bounded sign bracket
+before the timer-order guard. The exact CoreXY cancellation and captured X,
+Y, and E reversal segments are committed regressions. The corrected 100%
+two-layer result is:
+
+| Actuator | V1 edges | HELIX edges | V1 minimum interval | HELIX minimum interval | HELIX intervals <=64 ticks |
+|---|---:|---:|---:|---:|---:|
+| CoreXY X | 317,247 | 317,607 | 265 ticks | 260 ticks | 0 |
+| CoreXY Y | 321,270 | 323,300 | 265 ticks | 256 ticks | 0 |
+| Z | 1,280 | 1,280 | 1,334 ticks | 1,353 ticks | 0 |
+| Extruder | 63,758 | 63,842 | 4,821 ticks | 4,755 ticks | 0 |
+
+This workstation result and the Pico, EBB36, and Linux target builds pass. It
+does not replace the required on-silicon self-test and supervised print after
+flashing the corrected firmware.
 
 ## Experiment 2: on-silicon deadline scaling
 
