@@ -297,6 +297,15 @@ class AnchorFFI:
     def segfit_get_anchor(self, segfit):
         return 0
 
+    def segfit_set_anchor(self, segfit, print_time, acc):
+        if hasattr(self, 'gen_time'):
+            self.gen_time = print_time
+        if hasattr(self, 'end_time'):
+            self.end_time = print_time
+
+    def segfit_set_anchor_position(self, segfit, position_su):
+        pass
+
     def segfit_get_gen_time(self, segfit):
         return self.active_time
 
@@ -468,7 +477,7 @@ def test_ordinary_axis_move_ends_with_hold_before_synchronous_wait():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper._queue_terminal_hold = lambda *args: holds.append(True)
+    stepper._queue_terminal_hold = lambda *args: holds.append(True) or True
     stepper._send_segs = lambda count: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     # Model one Z move followed by a long M190/M109 wait. The lookahead
@@ -549,7 +558,7 @@ def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper._queue_terminal_hold = lambda *args: holds.append(True)
+    stepper._queue_terminal_hold = lambda *args: holds.append(True) or True
     stepper._send_segs = lambda count: None
     stepper._record_intention = lambda prev_acc, prev_time: None
     stepper.flush(11., 12.)
@@ -559,6 +568,51 @@ def test_trajectory_drains_disconnected_windows_before_trapq_cleanup():
     assert ffi_lib.checked_from == [0., 10.2, 10.7]
     assert ffi_lib.finalized == 2
     assert stepper.activity_cursor == 12.
+
+
+def test_held_stream_survives_close_windows_across_flush_callbacks():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.owner = SyncedOwner()
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = FakeMCUStepper()
+    ffi_lib = stepper.ffi_lib = DisconnectedWindowsFFI([(10., 10.2)])
+    stepper.segfit = object()
+    stepper.anchored = False
+    stepper.is_relative = True
+    stepper.stream_held = False
+    stepper.activity_cursor = 0.
+    stepper.intentions = []
+    anchors = []
+    holds = []
+
+    def anchor(print_time):
+        anchors.append(print_time)
+        ffi_lib.gen_time = print_time
+        stepper.anchored = True
+        stepper.stream_held = False
+
+    def hold(*args):
+        holds.append(True)
+        stepper.stream_held = True
+        return True
+
+    stepper._anchor = anchor
+    stepper._queue_terminal_hold = hold
+    stepper._send_segs = lambda count: None
+    stepper._record_intention = lambda prev_acc, prev_time: None
+    stepper.flush(10.2, 10.3)
+
+    # Reproduce the physical-print shape: the next pressure-advanced E
+    # island becomes visible only on a later callback, four milliseconds
+    # after the first one. It must append after the held accumulator rather
+    # than transmit a second absolute rebase into the still-queued window.
+    ffi_lib.windows.append((10.204, 10.5))
+    stepper.flush(10.5, 10.6)
+    assert anchors == [10.]
+    assert holds == [True, True]
+    assert ffi_lib.generated_to == [10.2, 10.5]
+    assert stepper.anchored and stepper.stream_held
 
 
 def test_trajectory_drains_capped_segment_batch_before_hold():
@@ -580,7 +634,7 @@ def test_trajectory_drains_capped_segment_batch_before_hold():
         stepper.anchored = True
 
     stepper._anchor = anchor
-    stepper._queue_terminal_hold = lambda *args: holds.append(True)
+    stepper._queue_terminal_hold = lambda *args: holds.append(True) or True
     stepper._send_segs = lambda count: sent.append(count)
     stepper._record_intention = lambda prev_acc, prev_time: None
     stepper.flush(11., 12.)
@@ -887,6 +941,8 @@ def main():
     test_trajectory_drains_disconnected_windows_before_trapq_cleanup()
     print("PASS: one flush drains every disconnected shaped activity"
           " window before trapq cleanup")
+    test_held_stream_survives_close_windows_across_flush_callbacks()
+    print("PASS: held streams bridge close activity windows across flushes")
     test_trajectory_drains_capped_segment_batch_before_hold()
     print("PASS: full fitter batches drain before the terminal hold")
     test_external_generator_delay_survives_scan_window_rescan()
