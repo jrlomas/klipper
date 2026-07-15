@@ -35,6 +35,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 
 
@@ -58,42 +59,80 @@ class AsyncioBridge:
         self._thread = None
         self._running = False
         self._ready = threading.Event()
+        self._wakeup_confirmed = threading.Event()
+        self._wake_r = self._wake_w = None
 
     # ---- lifecycle ----
     def start(self):
         if self._running:
             return
-        # Create the loop in this (reactor/main) thread but run it only
-        # in the worker thread - a loop may be created anywhere and run
-        # in exactly one thread.
-        self.loop = asyncio.new_event_loop()
+        # The worker creates as well as runs the loop.  In particular, the
+        # selector loop's cross-thread wakeup pipe must belong to the thread
+        # that dispatches it; creating the loop here and moving it to the
+        # worker can leave call_soon_threadsafe() unable to wake Python 3.12.
+        self.loop = None
         self._ready.clear()
+        self._wakeup_confirmed.clear()
         self._running = True
         self._thread = threading.Thread(target=self._thread_main,
                                         name=self._name, daemon=True)
         self._thread.start()
         if not self._ready.wait(self._start_timeout):
             raise BridgeError("asyncio bridge failed to start")
+        # Prove that the loop has processed a callback submitted through its
+        # cross-thread wakeup path before exposing it to callers.
+        self.loop.call_soon_threadsafe(self._wakeup_confirmed.set)
+        self._wake_loop()
+        if not self._wakeup_confirmed.wait(self._start_timeout):
+            raise BridgeError("asyncio bridge wakeup path failed to start")
         logging.info("asyncio_bridge: event loop thread '%s' started",
                      self._name)
 
     def _thread_main(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.call_soon(self._ready.set)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self.loop = loop
+        self._wake_r, self._wake_w = os.pipe()
+        os.set_blocking(self._wake_r, False)
+        os.set_blocking(self._wake_w, False)
+        loop.add_reader(self._wake_r, self._drain_loop_wake)
+        loop.call_soon(self._ready.set)
         try:
-            self.loop.run_forever()
+            loop.run_forever()
         finally:
             # Cancel anything still pending, then close cleanly.
             try:
-                pending = asyncio.all_tasks(self.loop)
+                pending = asyncio.all_tasks(loop)
             except RuntimeError:
                 pending = set()
             for task in pending:
                 task.cancel()
             if pending:
-                self.loop.run_until_complete(
+                loop.run_until_complete(
                     asyncio.gather(*pending, return_exceptions=True))
-            self.loop.close()
+            loop.remove_reader(self._wake_r)
+            os.close(self._wake_r)
+            os.close(self._wake_w)
+            self._wake_r = self._wake_w = None
+            loop.close()
+
+    def _wake_loop(self):
+        # Do not rely solely on BaseEventLoop's private socketpair.  An
+        # explicit selector fd makes every cross-thread submission visible
+        # even when Python loses an immediate startup wakeup.
+        wake_w = self._wake_w
+        if wake_w is None:
+            return
+        try:
+            os.write(wake_w, b'.')
+        except (BlockingIOError, OSError):
+            pass
+
+    def _drain_loop_wake(self):
+        try:
+            os.read(self._wake_r, 4096)
+        except (BlockingIOError, OSError):
+            pass
 
     def stop(self):
         if not self._running:
@@ -102,6 +141,7 @@ class AsyncioBridge:
         loop, thread = self.loop, self._thread
         if loop is not None:
             loop.call_soon_threadsafe(loop.stop)
+            self._wake_loop()
         if thread is not None:
             thread.join(self._stop_timeout)
             if thread.is_alive():
@@ -133,6 +173,7 @@ class AsyncioBridge:
                 self.reactor.async_complete(completion, (False, e))
         try:
             cfut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+            self._wake_loop()
         except RuntimeError as e:
             completion.complete((False, BridgeError(str(e))))
             return completion
@@ -177,8 +218,10 @@ class AsyncioBridge:
             try:
                 res = fn(eventtime)
                 loop.call_soon_threadsafe(_set, True, res)
+                self._wake_loop()
             except BaseException as e:
                 loop.call_soon_threadsafe(_set, False, e)
+                self._wake_loop()
             # This runs inside a one-shot ReactorCallback; its return
             # value feeds an internal completion nobody waits on.
             return self.reactor.NEVER

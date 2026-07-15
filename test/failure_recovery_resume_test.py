@@ -239,17 +239,18 @@ def test_execlog_drain_uses_response_barrier_and_deduplicates():
             self.calls = 0
         def send(self, args):
             self.calls += 1
-            return {'oldest_seq': 10, 'next_seq': 12, 'dropped': 0}
+            return {'oldest_seq': 10, 'next_seq': 20, 'dropped': 0}
     class Dump:
         def __init__(self, el):
             self.el = el
+            self.calls = []
         def send(self, args):
-            # Model one record already seen on the live stream and both
-            # records arriving before the final query response barrier.
-            self.el._handle_data({'seq': 10, 'type': 1, 'src': 4,
-                                  'clock': 100, 'pos': 200, 'aux': 0})
-            self.el._handle_data({'seq': 11, 'type': 4, 'src': 4,
-                                  'clock': 110, 'pos': 200, 'aux': 0})
+            oid, first, count = args
+            self.calls.append((first, count))
+            for seq in range(first, first + count):
+                self.el._handle_data(
+                    {'seq': seq, 'type': 1, 'src': 4,
+                     'clock': 10 * seq, 'pos': 200, 'aux': 0})
 
     el = fr.McuExecLog.__new__(fr.McuExecLog)
     el.fr = Recorder()
@@ -265,10 +266,11 @@ def test_execlog_drain_uses_response_barrier_and_deduplicates():
     el._handle_data({'seq': 10, 'type': 1, 'src': 4,
                      'clock': 100, 'pos': 200, 'aux': 0})
     records = el.drain()
-    assert el.query_cmd.calls == 2
-    assert [r[0] for r in records] == [10, 11]
-    assert len(el.fr.persisted) == 2
-    print("PASS: execlog drain waits on a response barrier and deduplicates")
+    assert el.dump_cmd.calls == [(10, 4), (14, 4), (18, 2)]
+    assert el.query_cmd.calls == 4
+    assert [r[0] for r in records] == list(range(10, 20))
+    assert len(el.fr.persisted) == 10
+    print("PASS: execlog drain paces chunks, barriers, and deduplicates")
 
 
 def test_execlog_normalizes_negative_position():

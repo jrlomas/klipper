@@ -44,6 +44,7 @@ import collections, logging
 
 PIN_MIN_TIME = 0.100
 EXECLOG_DEFAULT_SIZE = 256
+EXECLOG_DRAIN_CHUNK = 4
 PING_INTERVAL = 1.0
 HOLD_SAMPLE_TIME = 0.25
 
@@ -224,13 +225,18 @@ class McuExecLog:
         seq = status['oldest_seq']
         end = status['next_seq']
         while seq < end:
-            count = min(16, end - seq)
+            # Bound both the firmware response burst and the host serial
+            # receive burst.  A full 16-record firmware chunk can overrun a
+            # USB CDC receive window on otherwise healthy boards; waiting on
+            # the same-queue status response after every small chunk provides
+            # flow control as well as a response barrier.
+            count = min(EXECLOG_DRAIN_CHUNK, end - seq)
             self.dump_cmd.send([self.oid, seq, count])
             seq += count
-        # A query on the same command queue is a response barrier: its reply
-        # cannot arrive until every preceding dump command and execlog_data
-        # response has been processed by the board and serial thread.
-        self.query_cmd.send([self.oid])
+            # This reply cannot arrive until the preceding dump command and
+            # all of its execlog_data responses have been processed by the
+            # board and serial thread.
+            self.query_cmd.send([self.oid])
         records = self._drain_records
         self._drain_records = None
         # The live stream and reliable dump may overlap.  Preserve sequence

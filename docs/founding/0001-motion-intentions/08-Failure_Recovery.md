@@ -49,10 +49,13 @@ Delivery has two modes:
 * **Post-failure dump** (after any pause/fault): the ring buffer is
   retained and drained *reliably* via Class-1 pull commands
   (`execlog_dump oid=%c seq=%u count=%c`). The read-only query and dump
-  commands remain permitted while the MCU is in shutdown, and a final query on
-the same command queue is the response barrier proving all dump records have
-arrived. Recovery must never depend on records that were droppable while
-things were going wrong.
+  commands remain permitted while the MCU is in shutdown. The host requests
+  at most four records and then waits for a query reply on the same command
+  queue before requesting the next chunk. That reply is both the response
+  barrier proving the chunk arrived and receive-side flow control; queuing
+  sixteen-record bursts was physically observed to increase `bytes_invalid`
+  on otherwise healthy Pico and EBB36 USB links. Recovery must never depend on
+  records that were droppable while things were going wrong.
 
 Klippy invokes shutdown handlers inside a reactor no-pause critical section,
 while a reliable query must wait for its response. The shutdown handler
@@ -68,8 +71,10 @@ wraps.
 The shutdown path was exercised on the cold V0 on 2026-07-15: after a bounded
 Z trajectory, deliberate `M112` put both boards in shutdown, and the deferred
 callback still pulled and persisted 42 Pico and 22 EBB36 records (including
-the completed Z boundaries) before firmware restart. This closes the gap
-between the unit-tested callback scheduling and a real post-failure dump.
+the completed Z segments) before firmware restart. After adding per-chunk
+flow control, two further physical pulls transferred 1,475 and 1,500 retained
+records while both USB links held `bytes_invalid=0`; the printer remained
+ready and both heater targets remained zero.
 
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped

@@ -245,7 +245,11 @@ That single documented seam now exists as
 It runs **one asyncio event loop in a dedicated daemon thread**
 alongside the greenlet reactor and exposes a small, thread-safe,
 two-way handoff — nothing in `reactor.py` is modified; the reactor is
-used exactly as a well-behaved external caller would:
+used exactly as a well-behaved external caller would. The worker creates and
+runs its own event loop, and an explicit nonblocking pipe is registered with
+that loop's selector. Every cross-thread submission also pokes this pipe; this
+closes the Python 3.12 startup race in which an immediate first
+`call_soon_threadsafe()` wake could be lost before the selector slept:
 
 * **reactor → asyncio**: `bridge.run_coro(coro)` schedules a
   coroutine on the loop with `asyncio.run_coroutine_threadsafe()` and
@@ -257,7 +261,8 @@ used exactly as a well-behaved external caller would:
 * **asyncio → reactor**: `bridge.call_reactor(fn)` runs `fn(eventtime)`
   in reactor context via `reactor.register_async_callback()` (klippy's
   existing pipe + async-queue cross-thread wake) and resolves an
-  `asyncio.Future` with the result through `loop.call_soon_threadsafe()`.
+  `asyncio.Future` with the result through `loop.call_soon_threadsafe()`;
+  the bridge pipe makes that return wake explicit too.
 
 Lifecycle is tied to `klippy:connect` / `klippy:disconnect`. The core
 `AsyncioBridge` takes only a reactor, so the handoff is unit-tested

@@ -221,7 +221,13 @@ hardware-source flight-recorder records preceded their actuator stop records
 by 261–300 ticks at the 12 MHz scheduler timebase (21.8–25.0 us), matching a
 20 us qualify-after-event window plus dispatch. This validates interrupt
 detection and coordinated stop; it is not a physical-edge latency benchmark
-or timer-input-capture claim.
+or timer-input-capture claim. On 2026-07-15 the current clean `915760f5`
+trigger-enabled image was flashed to the Pico and repeated the result: the
+live capability report included hardware trigger sources, all five board
+self-tests passed, and cold homing retained OID 19/21/23 hardware-source
+records. The first corresponding actuator stops followed by 264, 262, and
+277 scheduler ticks, respectively. Thus the current candidate preserves the
+interrupt path; the separate polling comparison remains a qualification item.
 
 ## Open questions
 

@@ -102,7 +102,10 @@ workstation, no amount of hardware poking will save you.
   `pause_resume_recovery_test.py`.
   Expect: all pass against the mocked MCU.
   Pass: 0 failures. The original six tests passed together on 2026-07-14;
-  the macro-free recovery pause/resume regression passed on 2026-07-15.
+  the macro-free recovery pause/resume regression passed on 2026-07-15. A
+  Python 3.12 live-thread run then exposed and fixed a lost first-wakeup race
+  in the asyncio bridge; its immediate reactor→asyncio→reactor handoff and
+  the complete eight-test focused set now pass in the Klipper virtualenv.
 
 - [x] **0.6 — Segment fitter fidelity.**
   Do: feed the host segment emitter (`chelper/segfit.c` +
@@ -181,9 +184,10 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
   Pass: advertised set == intended set. **This is the ground truth every
   later phase reads.** On 2026-07-15 the live Pico and EBB36 again advertised
   ABI `27141a58f61f9fbc`, fleet lockstep, trajectory/quintic/PWM/heater-hold/
-  execlog/syscall capabilities, with hardware trigger sources additionally
-  present on EBB36; both passed all five onboard tests. Remaining targets must
-  repeat this comparison.
+  execlog/syscall capabilities, with hardware trigger sources present on both
+  boards after the Pico was flashed with the clean `915760f5` trigger-enabled
+  build; both passed all five onboard tests. Remaining targets must repeat
+  this comparison.
 
 ---
 
@@ -521,6 +525,12 @@ a faster stop — test both the latency and the things polling could not do.
   scheduler ticks (21.8–25.0 us), consistent with the configured 20 us
   qualification window plus dispatch. This supersedes the earlier inference
   from trajectory-stop records, which alone did not prove a GPIO interrupt.
+  On 2026-07-15 the clean current `915760f5` Pico build was flashed and again
+  advertised hardware-trigger support. A cold full home plus independent
+  axis runs retained fresh OID 19, 21, and 23 source records; their first
+  actuator stops followed by 264, 262, and 277 ticks respectively, and the
+  printer remained ready. This confirms the interrupt path is present in the
+  candidate now on the machine, not only in the historical image.
 - [ ] **7.2 — Latency vs polling.** Compare stop latency with
   `hardware_endstop_trigger: False` (forced legacy) vs on.
   Pass: hardware path stops measurably sooner; record both numbers and a
@@ -595,7 +605,12 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   cold Z move was followed by a deliberate `M112`; the deferred shutdown
   handler queried the still-connected shutdown boards and persisted 42 Pico
   plus 22 EBB36 records, including the Z segment completions, before firmware
-  restart. Both heater targets were zero throughout.
+  restart. Repeated unpaced full-ring pulls then exposed receive framing loss
+  (`bytes_invalid` rose on both USB links); the host now pulls at most four
+  records at a time and waits on a same-queue response barrier after every
+  chunk. Two physical pulls of 1,475 and 1,500 retained records completed with
+  Pico and EBB36 `bytes_invalid` unchanged at zero. Both heater targets were
+  zero throughout.
 - [ ] **8.7 — Full replug cycle under print.** Combine 8.3–8.5 during an
   actual short print; reseat a toolhead cable.
   Pass: the part survives; no cold-bed detach; layers align across the
@@ -766,7 +781,9 @@ Type every new command once on a real machine and confirm it does what
 - [x] **13.9** `EXECLOG_DUMP` — reliable flight-recorder pulls completed after
   every bounded motion batch and after the final run on 2026-07-14; a deferred
   pull also persisted both boards' retained records after deliberate `M112`
-  on 2026-07-15.
+  on 2026-07-15. Four-record paced chunks with a per-chunk response barrier
+  subsequently transferred 1,475 and 1,500 records over the physical USB
+  links without increasing either board's `bytes_invalid` counter.
 - [x] **13.10** `TIMESYNC_STATUS` — per-secondary discipline state. The
   EBB36 reported `CONVERGED` against the Pico after cold connect and after
   `FIRMWARE_RESTART`.
