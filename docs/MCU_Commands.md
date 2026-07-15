@@ -334,7 +334,12 @@ and coexist with the legacy queue_step path.
   polynomial-order bits 6-7 = 10.
 
 * `traj_hold oid=%c duration=%u` : Appends a stationary (hold) segment
-  of the given 'duration'.
+  of the given machine-time 'duration'.
+
+* `traj_hold_local oid=%c duration=%u` : Appends a stationary (hold)
+  segment whose `duration` is already expressed in the actuator MCU's local
+  timer domain. Local-time fitted streams use this form, especially on a
+  secondary MCU whose timer frequency differs from the primary machine clock.
 
 * `trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i` : Anchors the
   chained position stream, declaring the signed low 32-bit phase 'pos' (in

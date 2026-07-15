@@ -56,9 +56,22 @@ pass.
   host regressions and Pico/EBB36 target builds pass. A full 99-layer replay
   with regenerated dictionaries produced 422 E rebases and 1,135,901 HELIX
   pulses versus 1,134,514 V1 pulses, with no interval at or below 64 ticks.
-  The rejected print-long E-stream workaround physically over-extruded and is
-  not considered qualified; board flashing and a supervised hot print are
-  still required for the replacement.
+  Exact `75f03262` images were then signed, archived, and flashed to both V0
+  boards. Klippy identified that version and ABI `27141a58f61f9fbc` on each;
+  all five onboard tests passed on both boards and the EBB36 discipline
+  reconverged within 2.5 us. Its first supervised hot print exposed one
+  remaining mixed-clock defect: the local-time E stream ended with legacy
+  `traj_hold`, whose duration firmware interpreted as machine ticks. The host
+  therefore undercounted the EBB36 horizon before the next local rebase.
+  `traj_hold_local` now preserves the timer domain for fitted zero spans and
+  terminal holds, while secondary setup rejects firmware lacking that ABI.
+  The offline sliced-G-code replay now advances both hold domains and rejects
+  a rebase before the wrap-safe local horizon; all 99 layers pass with 423
+  local E holds and no E interval at or below 64 ticks. Exact Pico and EBB36
+  target builds pass.
+  The rejected print-long E-stream workaround physically over-extruded and
+  `75f03262` is not considered physically qualified; the new hold fix still
+  requires flashing, onboard tests, and a supervised hot print.
 * The signed flasher/boot simulator tests include chunked 64-byte signatures,
   unsigned-image refusal, and bad-signature rejection.
 * Static datagram FEC uses bounded pair blocks: tests drop either the first or

@@ -197,7 +197,7 @@ def trajectory_streams(commands):
             streams[fields["oid"]] = []
         elif name in (
                 "trajectory_rebase", "trajectory_rebase_local",
-                "traj_hold", "queue_traj_segment",
+                "traj_hold", "traj_hold_local", "queue_traj_segment",
                 "queue_traj_segment_cubic", "queue_traj_segment_quintic"):
             streams[fields["oid"]].append((name, fields))
     return streams
@@ -217,6 +217,12 @@ def signed_i64(value):
     return value - (1 << 64) if value & (1 << 63) else value
 
 
+def timer_is_before(clock, reference):
+    """Mirror firmware timer_is_before() across the uint32 clock wrap."""
+    delta = ((int(clock) - int(reference)) & 0xffffffff)
+    return bool(delta & 0x80000000)
+
+
 def replay_trajectory(streams, solver, local_frequency, primary_frequency):
     all_pulses = {}
     for oid, stream in streams.items():
@@ -229,20 +235,26 @@ def replay_trajectory(streams, solver, local_frequency, primary_frequency):
         pulse_buffer = (ctypes.c_uint32 * 65536)()
         for name, fields in stream:
             if name in ("trajectory_rebase", "trajectory_rebase_local"):
-                clock = (fields["local_clock"]
-                         if name == "trajectory_rebase_local" else int(round(
-                             fields["clock"] * local_frequency
-                             / primary_frequency)))
+                rebase_clock = (
+                    fields["local_clock"]
+                    if name == "trajectory_rebase_local" else int(round(
+                        fields["clock"] * local_frequency
+                        / primary_frequency)))
+                if clock is not None and timer_is_before(rebase_clock, clock):
+                    raise ValueError(
+                        "rebase overlaps trajectory for oid %d: clock %d"
+                        " < local horizon %d" % (oid, rebase_clock, clock))
+                clock = rebase_clock
                 acc = signed_i64(fields["pos"] << 32)
                 mcu_position = fields["mcu_pos"]
                 continue
             if clock is None or acc is None or mcu_position is None:
                 raise ValueError("trajectory command precedes rebase for oid %d"
                                  % (oid,))
-            if name == "traj_hold":
-                clock += int(round(
-                    fields["duration"] * local_frequency
-                    / primary_frequency))
+            if name in ("traj_hold", "traj_hold_local"):
+                duration = fields["duration"]
+                clock += (duration if name == "traj_hold_local" else int(
+                    round(duration * local_frequency / primary_frequency)))
                 # A zero-coefficient hold loads as the negative fallback
                 # direction in the firmware and therefore clears the pulse
                 # interval predictor before subsequent positive motion.
@@ -456,7 +468,8 @@ def main():
                                        for c in stream),
                         "segments": sum(c[0].startswith("queue_traj_segment")
                                         for c in stream),
-                        "holds": sum(c[0] == "traj_hold" for c in stream),
+                        "holds": sum(c[0] in (
+                            "traj_hold", "traj_hold_local") for c in stream),
                         **pulse_summary(
                             {oid: pulses.get(oid, [])},
                             load_clock(dictionary))[str(oid)],

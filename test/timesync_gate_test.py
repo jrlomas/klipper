@@ -708,6 +708,7 @@ def test_trajectory_end_always_queues_terminal_hold():
     stepper.anchored = True
     stepper.intentions = []
     stepper.hold_cmd = FakeCommand()
+    stepper.local_hold_cmd = FakeCommand()
     stepper.terminal_hold_ticks = 1000
     stepper.wire_clock = 12_500_000
     stepper.wire_acc = 0
@@ -719,7 +720,8 @@ def test_trajectory_end_always_queues_terminal_hold():
     # An inactive trapq may contain only its zero-valued head sentinel.  It
     # must not be sampled as a new endpoint after the real path is complete.
     assert stepper.ffi_lib.generated_to == []
-    assert stepper.hold_cmd.sent == [[4, 1000]]
+    assert stepper.local_hold_cmd.sent == [[4, 1000]]
+    assert stepper.hold_cmd.sent == []
     assert stepper.rebase_min_clock == 12_501_000
     assert not stepper.anchored
 
@@ -737,6 +739,7 @@ def test_secondary_terminal_hold_respects_short_machine_gap():
     stepper.mcu = FakeMCU(64_000_000.)
     stepper.oid = 4
     stepper.hold_cmd = FakeCommand()
+    stepper.local_hold_cmd = FakeCommand()
     stepper.terminal_hold_ticks = 64_000
     stepper.wire_clock = 12_000_000
     stepper.execution_clock = 64_000_000
@@ -747,7 +750,8 @@ def test_secondary_terminal_hold_respects_short_machine_gap():
     # extruder windows. The local hold must fit that gap instead of emitting
     # a fixed 1ms machine-domain duration as if it were local ticks.
     assert stepper._queue_terminal_hold(1_637)
-    assert stepper.hold_cmd.sent == [[4, 8_730]]
+    assert stepper.local_hold_cmd.sent == [[4, 8_730]]
+    assert stepper.hold_cmd.sent == []
     assert stepper.wire_clock == 12_001_637
     assert stepper.execution_clock == 64_008_730
     assert stepper.rebase_min_clock == 12_001_637

@@ -1548,6 +1548,19 @@ command_traj_hold(uint32_t *args)
 DECL_COMMAND(command_traj_hold, "traj_hold oid=%c duration=%u");
 
 void
+command_traj_hold_local(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    // Fitted stepper streams use this MCU's timer domain.  In particular,
+    // a secondary-MCU terminal hold must not be expanded as though its
+    // duration were expressed in primary machine ticks.
+    trajq_queue_segment(&s->tq, TSEG_HOLD_AT_END | TSEG_LOCAL_TIME,
+                        args[1], 0, 0);
+}
+DECL_COMMAND(command_traj_hold_local,
+             "traj_hold_local oid=%c duration=%u");
+
+void
 command_trajectory_rebase(uint32_t *args)
 {
     struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);

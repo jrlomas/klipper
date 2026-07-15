@@ -240,9 +240,39 @@ produce two anchors and select the local command. The complete 99-layer cube
 replay with regenerated Pico/EBB36 dictionaries produced 422 E rebases,
 31,904 quintics, 423 holds, and 1,135,901 HELIX pulses versus 1,134,514 V1
 pulses (+0.122%), with a 3,909-tick minimum interval and no interval at or
-below 64 ticks. Both target builds pass. On-silicon self-tests and a
-supervised hot print remain the acceptance gates; this is not yet a physical
-pass.
+below 64 ticks. Both target builds pass. Exact `75f03262` images were signed,
+archived, and flashed to the Pico and EBB36; both identified ABI
+`27141a58f61f9fbc`, all five onboard self-tests passed on each, and the EBB36
+machine-time discipline reconverged within 2.5 us. A supervised hot print
+then exposed the remaining hold-domain defect described below; `75f03262` is
+therefore not a physical extrusion pass.
+
+### Experiment 1d: local segment stream with a machine-time terminal hold
+
+The first supervised print on `75f03262` again stopped with `Rebase overlaps
+active trajectory`. The capture made the mismatch deterministic. An E island
+started at EBB local clock 790,447,180 and its fitted local-time segments plus
+the requested terminal hold totalled 45,471,688 local ticks, giving a host
+horizon of 835,918,868. The next rebase was correctly scheduled later, at
+836,122,930. However, the 64,000-tick terminal hold used the legacy
+`traj_hold` command. That command has machine-time semantics, so firmware
+converted 64,000 Pico ticks into approximately 341,000 EBB ticks. The actual
+firmware horizon consequently extended beyond the next rebase even though
+the host's exact-local horizon check passed.
+
+The protocol now retains `traj_hold` for machine-time streams and adds
+`traj_hold_local` for a `TSEG_LOCAL_TIME` stream. Both fitted zero spans and
+terminal holds select the local command. Secondary trajectory setup refuses
+firmware that lacks either the local rebase or local hold ABI. The unequal
+12 MHz/64 MHz regression asserts that a shortened 8,730-tick EBB hold stays
+8,730 EBB ticks on the wire instead of being interpreted as primary ticks.
+The sliced-G-code replay now models both hold domains and applies the same
+wrap-safe rebase/horizon comparison as firmware, so the rejected legacy stream
+fails offline while the corrected stream passes. A full 99-layer replay emits
+422 E rebases, 31,904 E quintics, and 423 local E holds; it expands 1,135,901
+E pulses with a 3,909-tick minimum interval and no interval at or below 64
+ticks. Exact Pico and EBB36 target builds pass. Flashing, onboard tests, and a
+new supervised print remain the acceptance gates for this revision.
 
 ## Experiment 2: on-silicon deadline scaling
 

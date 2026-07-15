@@ -317,7 +317,8 @@ class TrajectoryStepper:
         ffi_main, self.ffi_lib = chelper.get_ffi()
         self.segfit = ffi_main.gc(self.ffi_lib.segfit_alloc(),
                                   self.ffi_lib.segfit_free)
-        self.queue_cmd = self.hold_cmd = self.rebase_cmd = None
+        self.queue_cmd = self.hold_cmd = self.local_hold_cmd = None
+        self.rebase_cmd = None
         self.local_rebase_cmd = None
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
@@ -433,6 +434,8 @@ class TrajectoryStepper:
             " velocity=%i accel=%i", cq=cmd_queue)
         self.hold_cmd = self.mcu.lookup_command(
             "traj_hold oid=%c duration=%u", cq=cmd_queue)
+        self.local_hold_cmd = self.mcu.try_lookup_command(
+            "traj_hold_local oid=%c duration=%u", cq=cmd_queue)
         self.rebase_cmd = self.mcu.lookup_command(
             "trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i",
             cq=cmd_queue)
@@ -451,9 +454,10 @@ class TrajectoryStepper:
 
     def connect(self):
         if (self.mcu is not self._machine_mcu()
-                and self.local_rebase_cmd is None):
+                and (self.local_rebase_cmd is None
+                     or self.local_hold_cmd is None)):
             raise self.mcu.error(
-                "Firmware for %s lacks the local-clock rebase barrier"
+                "Firmware for %s lacks the local-clock rebase/hold ABI"
                 " required by secondary-MCU trajectory streams"
                 % (self.name,))
         if self.g1_segment_order == TSEG_POLY_QUINTIC >> 6 \
@@ -905,7 +909,7 @@ class TrajectoryStepper:
                         getattr(self, 'rebase_min_execution_clock', 0),
                         self.execution_clock)
                 return False
-        self.hold_cmd.send([self.oid, local_duration])
+        self._send_local_hold(local_duration)
         self._wire_segment(1, machine_duration, 0, 0,
                            exec_duration=local_duration)
         # wire_clock is the exact machine-clock horizon after the hold.  A
@@ -919,6 +923,15 @@ class TrajectoryStepper:
                 getattr(self, 'rebase_min_execution_clock', 0),
                 self.execution_clock)
         return True
+
+    def _send_local_hold(self, duration):
+        # traj_hold is the legacy machine-time command.  Fitted trajectories
+        # are encoded wholly in the actuator MCU's local timer domain, so use
+        # the explicit local form whenever firmware advertises it.  Falling
+        # back is safe only for the primary MCU, where both domains coincide;
+        # connect() rejects an older secondary-MCU firmware image.
+        cmd = getattr(self, 'local_hold_cmd', None) or self.hold_cmd
+        cmd.send([self.oid, duration])
 
     def _record_intention(self, prev_acc, prev_time):
         # Append (start_clock, end_clock, end_pos_subunits) for the span
@@ -1006,7 +1019,7 @@ class TrajectoryStepper:
             machine_duration = self._machine_duration(s.duration)
             if (not s.velocity and not s.accel and not s.jerk
                     and not s.snap and not s.crackle):
-                self.hold_cmd.send([self.oid, s.duration])
+                self._send_local_hold(s.duration)
                 self._wire_segment(1, machine_duration, 0, 0,
                                    exec_duration=s.duration)
                 continue

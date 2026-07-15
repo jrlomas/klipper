@@ -82,6 +82,7 @@ queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i accel=%i \
 queue_traj_segment_quintic oid=%c flags=%c duration=%u velocity=%i \
     accel=%i jerk=%i snap=%i crackle=%i           (Kconfig-gated)
 traj_hold oid=%c duration=%u
+traj_hold_local oid=%c duration=%u
 traj_get_position oid=%c
 ```
 
@@ -90,6 +91,12 @@ For the stepper backend, `pos` is the continuous Q-position anchor while
 remain separate: Klipper may change its logical coordinate or position offset
 without a motor pulse, and the next edge must still use the same half-step
 quantization phase as the legacy `itersolve`/`stepcompress` path.
+
+`traj_hold` retains the original machine-time duration semantics for shared
+or broadcast streams. `traj_hold_local` is the terminal/dwell form for a
+`TSEG_LOCAL_TIME` stream. Mixing the legacy hold into a secondary local-time
+stream would scale the hold by the primary-to-secondary clock ratio and make
+the firmware horizon disagree with the host's next rebase barrier.
 
 MCU→host messages:
 
