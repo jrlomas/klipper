@@ -41,6 +41,8 @@ RELAY_FIT_SAMPLES = 16      # smooth cross-link regression endpoint jitter
 RELAY_FIT_MIN_SPAN = 4.0    # reject high-variance short-burst rate fits
 HOST_STABLE_COUNT = 8       # consecutive steady host-model beacons
 HOST_RATE_TOLERANCE_PPM = 2.0
+HOST_DIVERGE_COUNT = 3      # sustained marginal SOF-rate misses
+HOST_GROSS_RATE_PPM = 50.0  # one impossible interval fails closed
 SOF_CAPTURE_DELAY = 0.010
 
 # timesync_state flag bits (must match src/timesync.c)
@@ -142,6 +144,10 @@ class SecondaryLink:
         self.sof_pending_beacon = None
         self.sof_unpaired_beacons = 0
         self.sof_rates = []
+        self.sof_bad_count = 0
+        self.sof_rate_machine_clock = None
+        self.sof_rate_local_clock = None
+        self.sof_filtered_count = 0
     def reset_relay_history(self):
         # The firmware mapping is intentionally retained while a board
         # freewheels.  Host endpoint-fit samples straddling a USB outage are
@@ -166,6 +172,10 @@ class SecondaryLink:
         self.sof_pending_beacon = None
         self.sof_unpaired_beacons = 0
         self.sof_rates = []
+        self.sof_bad_count = 0
+        self.sof_rate_machine_clock = None
+        self.sof_rate_local_clock = None
+        self.sof_filtered_count = 0
     def setup(self, freewheel_time, converge_window):
         self.freewheel_time = freewheel_time
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
@@ -282,9 +292,10 @@ class SecondaryLink:
         self.last_beacon_time = systime
     def relay_sof(self, seq, machine_clock, local_clock, eventtime):
         had_pending_beacon = self.sof_pending_beacon is not None
-        if self.last_machine_clock is not None:
-            machine_delta = machine_clock - self.last_machine_clock
-            local_delta = local_clock - self.last_raw_local_est
+        filtered_local_clock = local_clock
+        if self.sof_rate_machine_clock is not None:
+            machine_delta = machine_clock - self.sof_rate_machine_clock
+            local_delta = local_clock - self.sof_rate_local_clock
             if machine_delta > 0:
                 self.sample_rate = local_delta / machine_delta
                 self.host_rate = self.sample_rate
@@ -300,18 +311,43 @@ class SecondaryLink:
                 if abs(self.host_rate_error_ppm) <= HOST_RATE_TOLERANCE_PPM:
                     self.sof_rates.append(self.sample_rate)
                     del self.sof_rates[:-HOST_STABLE_COUNT]
+                    self.sof_bad_count = 0
                     self.host_stable_count = min(
                         HOST_STABLE_COUNT, self.host_stable_count + 1)
                 else:
-                    # Begin a fresh candidate interval sequence. A genuine
-                    # oscillator-rate change can reacquire; one bad pair
-                    # cannot remain hidden in the reference window.
-                    self.sof_rates = [self.sample_rate]
-                    self.host_stable_count = 1
+                    self.sof_bad_count += 1
+                    gross = (abs(self.host_rate_error_ppm)
+                             >= HOST_GROSS_RATE_PPM)
+                    if self.host_model_stable:
+                        # Preserve the already-qualified phase instead of
+                        # forwarding an ISR-latency outlier into the firmware
+                        # PI loop. This is one-beacon oscillator holdover, not
+                        # fabricated new evidence; bad_count still tracks the
+                        # rejected physical observations and fails closed on
+                        # sustained disagreement.
+                        filtered_local_clock = int(round(
+                            self.sof_rate_local_clock
+                            + reference * machine_delta))
+                        self.sof_filtered_count += 1
+                    if (not self.host_model_stable or gross
+                            or self.sof_bad_count >= HOST_DIVERGE_COUNT):
+                        # Begin a fresh candidate interval sequence. A
+                        # genuine oscillator-rate change can reacquire, while
+                        # one gross or three consecutive marginal misses fail
+                        # closed. Isolated ISR-entry jitter cannot revoke an
+                        # established clock map synchronously during motion.
+                        self.sof_rates = ([] if self.host_model_stable
+                                          else [self.sample_rate])
+                        self.host_stable_count = (0 if self.host_model_stable
+                                                  else 1)
+                        self.sof_bad_count = 0
         self.host_model_stable = (
             self.host_stable_count >= HOST_STABLE_COUNT)
+        self.sof_rate_machine_clock = machine_clock
+        self.sof_rate_local_clock = filtered_local_clock
         self.last_machine_clock = machine_clock
-        self.last_local_est = self.last_raw_local_est = local_clock
+        self.last_local_est = filtered_local_clock
+        self.last_raw_local_est = local_clock
         self.last_beacon_time = eventtime
         self.sof_pending_beacon = None
         if not had_pending_beacon:
@@ -320,7 +356,8 @@ class SecondaryLink:
             # beacon cannot discipline the firmware twice.
             self.sof_unpaired_beacons += 1
         self.sof_relay_cmd.send([
-            seq, machine_clock & 0xffffffff, local_clock & 0xffffffff])
+            seq, machine_clock & 0xffffffff,
+            filtered_local_clock & 0xffffffff])
     def query(self):
         self.last_state = self.query_cmd.send([])
         return self.last_state
@@ -710,6 +747,8 @@ class MachineTimeSync:
                 'host_stable_count': link.host_stable_count,
                 'host_rate': link.host_rate,
                 'host_rate_error_ppm': link.host_rate_error_ppm,
+                'sof_rate_bad_count': link.sof_bad_count,
+                'sof_filtered_count': link.sof_filtered_count,
                 'interval_supported': link.interval_supported,
                 'interval_samples': link.interval_samples,
                 'interval_diagnostics': link.interval_diagnostics,

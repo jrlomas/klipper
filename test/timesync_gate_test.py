@@ -1425,6 +1425,10 @@ def test_exact_sof_pairs_stabilize_without_host_endpoint_fit():
     link.host_model_stable = False
     link.sof_rates = []
     link.sof_unpaired_beacons = 0
+    link.sof_bad_count = 0
+    link.sof_rate_machine_clock = None
+    link.sof_rate_local_clock = None
+    link.sof_filtered_count = 0
     link.sof_pending_beacon = (9, 10, 11.)
     link.sof_relay_cmd = FakeCommand()
     rate = link.nominal_rate
@@ -1454,6 +1458,10 @@ def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
     link.host_model_stable = False
     link.sof_rates = []
     link.sof_unpaired_beacons = 0
+    link.sof_bad_count = 0
+    link.sof_rate_machine_clock = None
+    link.sof_rate_local_clock = None
+    link.sof_filtered_count = 0
     link.sof_pending_beacon = None
     link.sof_relay_cmd = FakeCommand()
     for index in range(timesync.HOST_STABLE_COUNT + 1):
@@ -1466,7 +1474,7 @@ def test_exact_sof_rate_supersedes_biased_startup_host_estimate():
     assert link.sof_unpaired_beacons == timesync.HOST_STABLE_COUNT + 1
 
 
-def test_exact_sof_rate_discontinuity_restarts_stability_gate():
+def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
     rate = 64. / 12. * (1. - 25.e-6)
     link.nominal_rate = rate
@@ -1478,6 +1486,10 @@ def test_exact_sof_rate_discontinuity_restarts_stability_gate():
     link.host_model_stable = False
     link.sof_rates = []
     link.sof_unpaired_beacons = 0
+    link.sof_bad_count = 0
+    link.sof_rate_machine_clock = None
+    link.sof_rate_local_clock = None
+    link.sof_filtered_count = 0
     link.sof_pending_beacon = None
     link.sof_relay_cmd = FakeCommand()
     for index in range(timesync.HOST_STABLE_COUNT + 1):
@@ -1485,13 +1497,67 @@ def test_exact_sof_rate_discontinuity_restarts_stability_gate():
         local = round(5_000_000 + index * 12_000_000 * rate)
         link.relay_sof(index, machine, local, 20. + index)
     assert link.host_model_stable
+    # Reproduce the second physical-print failure: one SOF ISR timestamp is
+    # about 47.5us late over a one-second interval. The original host sent it
+    # into the firmware PI loop, creating a synthetic 46.6us phase error.
+    # The qualified oscillator-rate holdover must absorb it instead.
+    phase_delay = round(12_000_000 * rate * 47.5e-6)
     index += 1
     machine = 1_000_000 + index * 12_000_000
-    local = round(5_000_000 + index * 12_000_000 * rate
-                  + 12_000_000 * rate * 20.e-6)
+    local = round(5_000_000 + index * 12_000_000 * rate) + phase_delay
     link.relay_sof(index, machine, local, 20. + index)
-    assert not link.host_model_stable
-    assert link.host_stable_count == 1
+    assert link.host_model_stable
+    assert link.sof_bad_count == 1
+    # Firmware receives a prediction on the qualified rate, not the delayed
+    # ISR timestamp that caused the physical-print shutdown.
+    expected = round(5_000_000 + index * 12_000_000 * rate)
+    assert link.sof_relay_cmd.sent[-1][2] == expected
+    assert link.last_raw_local_est == local
+    assert link.last_local_est == expected
+    assert link.sof_filtered_count == 1
+    index += 1
+    machine = 1_000_000 + index * 12_000_000
+    local = round(5_000_000 + index * 12_000_000 * rate)
+    link.relay_sof(index, machine, local, 20. + index)
+    assert link.host_model_stable
+    assert link.sof_bad_count == 0
+
+
+def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    rate = 64. / 12. * (1. - 25.e-6)
+    link.nominal_rate = rate
+    link.last_machine_clock = None
+    link.last_local_est = link.last_raw_local_est = None
+    link.last_beacon_time = None
+    link.sample_rate = link.host_rate = link.host_rate_error_ppm = None
+    link.host_stable_count = 0
+    link.host_model_stable = False
+    link.sof_rates = []
+    link.sof_unpaired_beacons = 0
+    link.sof_bad_count = 0
+    link.sof_rate_machine_clock = None
+    link.sof_rate_local_clock = None
+    link.sof_filtered_count = 0
+    link.sof_pending_beacon = None
+    link.sof_relay_cmd = FakeCommand()
+    machine = 1_000_000
+    local = 5_000_000
+    link.relay_sof(0, machine, local, 20.)
+    for index in range(1, timesync.HOST_STABLE_COUNT + 1):
+        machine += 12_000_000
+        local += round(12_000_000 * rate)
+        link.relay_sof(index, machine, local, 20. + index)
+    assert link.host_model_stable
+    changed_rate = rate * (1. + 20.e-6)
+    for miss in range(1, timesync.HOST_DIVERGE_COUNT + 1):
+        index += 1
+        machine += 12_000_000
+        local += round(12_000_000 * changed_rate)
+        link.relay_sof(index, machine, local, 20. + index)
+        assert link.host_model_stable == (
+            miss < timesync.HOST_DIVERGE_COUNT)
+    assert link.host_stable_count == 0
 
 
 def main():
@@ -1534,8 +1600,10 @@ def main():
     print("PASS: exact USB SOF pairs stabilize without host endpoint fit")
     test_exact_sof_rate_supersedes_biased_startup_host_estimate()
     print("PASS: exact USB SOF rate supersedes a biased startup estimate")
-    test_exact_sof_rate_discontinuity_restarts_stability_gate()
-    print("PASS: exact USB SOF rate discontinuity restarts stability gate")
+    test_isolated_sof_isr_delay_does_not_revoke_stable_gate()
+    print("PASS: isolated USB SOF ISR delay preserves a stable gate")
+    test_sustained_sof_rate_discontinuity_restarts_stability_gate()
+    print("PASS: sustained USB SOF rate change restarts stability gate")
     test_move_preflight_rejects_unsynced_secondary_before_lookahead()
     print("PASS: unconverged secondary moves fail before lookahead")
     test_stepper_activity_notification_is_one_shot()
