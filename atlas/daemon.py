@@ -26,6 +26,26 @@ from .view import LiveTail, TimelineFilter
 STATUS_SCHEMA_VERSION = 1
 DEFAULT_MAX_EVENTS = 2000
 DEFAULT_HEARTBEAT = 5.0
+DEFAULT_SOURCE_RESERVE = 64
+
+
+def _retain_source_diversity(events, limit):
+    """Bound arrival history without letting a hot source erase all others."""
+    if limit is None or len(events) <= limit:
+        return list(events)
+    groups = {}
+    for event in events:
+        groups.setdefault(event.source, []).append(event)
+    per_source = max(1, min(
+        DEFAULT_SOURCE_RESERVE, limit // max(1, len(groups))))
+    retained = set()
+    for source_events in groups.values():
+        retained.update(event.seq for event in source_events[-per_source:])
+    for event in reversed(events):
+        if len(retained) >= limit:
+            break
+        retained.add(event.seq)
+    return [event for event in events if event.seq in retained][-limit:]
 
 
 def _current_session(timeline):
@@ -295,12 +315,13 @@ class AtlasDaemon:
             if tail.last_error:
                 self._source_error = tail.last_error
         if self.follower.max_events is not None:
-            overflow = (len(self.follower.timeline.events)
-                        - self.follower.max_events)
-            if overflow > 0:
-                del self.follower.timeline.events[:overflow]
+            bounded = _retain_source_diversity(
+                self.follower.timeline.events, self.follower.max_events)
+            if len(bounded) < len(self.follower.timeline.events):
+                self.follower.timeline.events[:] = bounded
                 self.follower.timeline.note(
-                    "live timeline is bounded to the latest %d events"
+                    "live timeline is bounded to %d events with per-source "
+                    "retention"
                     % self.follower.max_events)
         monitor_alerts = []
         if self.monitor is not None and new_events:

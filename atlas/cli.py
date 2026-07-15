@@ -124,6 +124,12 @@ def _cmd_serve(args) -> int:
     memory_store = MachineMemoryStore(
         args.memory_file or os.path.join(state_dir, "memory.json"))
     assistant = None
+    moonraker_db = args.moonraker_db
+    if not moonraker_db and args.printer_config:
+        data_dir = os.path.dirname(os.path.dirname(os.path.abspath(
+            os.path.expanduser(args.printer_config))))
+        moonraker_db = os.path.join(
+            data_dir, "database", "moonraker-sql.db")
     if args.model:
         model_path = os.path.abspath(os.path.expanduser(args.model))
         backend = LlamaCppBackend(
@@ -136,7 +142,8 @@ def _cmd_serve(args) -> int:
                 "configured model or llama.cpp runtime is unavailable")
         assistant = AssistantRuntime(
             backend, memory=memory_store.memory,
-            config_path=args.printer_config)
+            config_path=args.printer_config,
+            job_history_path=moonraker_db)
     daemon = AtlasDaemon(
         log_path=args.logfile, state_path=args.state_file,
         catalog_path=args.catalog, interval=args.interval,
@@ -277,6 +284,9 @@ def main(argv=None) -> int:
     s.add_argument("--printer-config",
                    default=os.environ.get("ATLAS_PRINTER_CONFIG") or None,
                    help="read-only config source for classified previews")
+    s.add_argument("--moonraker-db",
+                   default=os.environ.get("ATLAS_MOONRAKER_DB") or None,
+                   help="read-only Moonraker SQLite job history")
     s.set_defaults(func=_cmd_serve)
 
     a = sub.add_parser("assistant", help="query the running local assistant")

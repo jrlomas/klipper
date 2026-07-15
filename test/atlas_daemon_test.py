@@ -13,10 +13,12 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
 
-from atlas.daemon import AtlasDaemon, build_status  # noqa: E402
+from atlas.daemon import (AtlasDaemon, _retain_source_diversity,  # noqa: E402
+                          build_status)
 from atlas.decode import decode_klippy_log  # noqa: E402
 from atlas.diagnosis import Matcher, load_pattern  # noqa: E402
 from atlas.view import LiveTail  # noqa: E402
+from atlas.timeline import Event  # noqa: E402
 
 
 START = "Start printer at X (100.0 5.0)\nStats 6.0: gcodein=0\n"
@@ -131,6 +133,22 @@ def test_rotation_and_bounded_timeline():
         print("PASS: live store survives rotation and bounds retained events")
 
 
+def test_global_bound_retains_quiet_sources():
+    events = []
+    for seq in range(50):
+        events.append(Event(seq, "log", "host", "info", "host"))
+    for seq in range(50, 550):
+        events.append(Event(
+            seq, "execution", "mcu/ebb36/execution", "info", "step"))
+    bounded = _retain_source_diversity(events, 100)
+    sources = {event.source for event in bounded}
+    assert sources == {"host", "mcu/ebb36/execution"}
+    assert len(bounded) == 100
+    assert bounded[-1].seq == 549
+    assert sum(event.source == "host" for event in bounded) == 50
+    print("PASS: a hot structured source cannot erase quieter sources")
+
+
 def test_idle_poll_does_not_republish():
     with tempfile.TemporaryDirectory() as tmp:
         log = os.path.join(tmp, "klippy.log")
@@ -216,6 +234,7 @@ def main():
     test_restart_clears_active_diagnosis_without_erasing_timeline()
     test_waits_for_log_to_appear()
     test_rotation_and_bounded_timeline()
+    test_global_bound_retains_quiet_sources()
     test_idle_poll_does_not_republish()
     test_idle_heartbeat_proves_liveness()
     test_source_failure_degrades_without_losing_state()

@@ -8,6 +8,8 @@ import threading
 import time
 
 from .apply import ApplyPipeline, Proposal
+from .config_context import read_config_tree
+from .jobs import JobHistoryReader
 from .memory import MachineMemory, RagIndex, kb_documents
 from .model import answer_question, interpret_incident, propose_config_edit
 from .model.assistant import config_excerpt
@@ -45,7 +47,7 @@ class AssistantRuntime:
     def __init__(self, backend, patterns=None, memory=None,
                  config_path=None, allow_stub=False, wall_clock=time.time,
                  proposal_ttl=DEFAULT_PROPOSAL_TTL,
-                 max_queue=DEFAULT_MAX_QUEUE):
+                 max_queue=DEFAULT_MAX_QUEUE, job_history_path=None):
         if not backend.available():
             raise RuntimeError("configured model backend is unavailable")
         if getattr(backend, "name", "") == "stub" and not allow_stub:
@@ -53,6 +55,7 @@ class AssistantRuntime:
         self.backend = backend
         self.config_path = (os.path.abspath(os.path.expanduser(config_path))
                             if config_path else None)
+        self.job_history = JobHistoryReader(job_history_path)
         self.clock = wall_clock or time.time
         self.proposal_ttl = proposal_ttl
         self._lock = threading.Lock()
@@ -100,6 +103,7 @@ class AssistantRuntime:
                 "grounding": self.rag.status(),
                 "grounding_documents": len(self.rag),
                 "machine_memory": self.memory is not None,
+                "job_history": self.job_history.status(),
                 "request_count": request_count,
                 "failure_count": self._failure_count,
                 "rejected_count": self._rejected_count,
@@ -153,7 +157,9 @@ class AssistantRuntime:
     def _config_context(self, request=""):
         if self.config_path is None:
             return None
-        return config_excerpt(self._read_config(), request=request)
+        tree = read_config_tree(
+            self.config_path, max_bytes=DEFAULT_MAX_CONFIG_BYTES)
+        return config_excerpt(tree, request=request)
 
     def _validate_history(self, value):
         if value is None:
@@ -267,11 +273,16 @@ class AssistantRuntime:
                 if operation == "ask":
                     question = self._validate_question(params.get("question"))
                     history = self._validate_history(params.get("history"))
-                    result = {"answer": answer_question(
-                        self.backend, question, timeline, self.rag,
-                        history=history,
-                        config_context=self._config_context(question)),
-                              "read_only": True}
+                    answer = self.job_history.answer_if_authoritative(question)
+                    deterministic = answer is not None
+                    if answer is None:
+                        answer = answer_question(
+                            self.backend, question, timeline, self.rag,
+                            history=history,
+                            config_context=self._config_context(question),
+                            job_context=self.job_history.context())
+                    result = {"answer": answer, "read_only": True,
+                              "deterministic": deterministic}
                 elif operation == "interpret":
                     result = {"interpretation": interpret_incident(
                         self.backend, timeline, self.rag,

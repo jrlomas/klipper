@@ -17,14 +17,14 @@ from . import prompts
 
 
 def answer_question(backend, question, timeline, rag_index=None, k=4,
-                    history=None, config_context=None):
+                    history=None, config_context=None, job_context=None):
     """Answer a read-only operator question grounded in current facts."""
     summary = prompts.timeline_summary(timeline)
     query = "%s\n%s" % (question, summary)
     hits = rag_index.query(query, k=k) if rag_index is not None else None
     prompt = prompts.build_assistant_prompt(
         question, summary, hits, history=history,
-        config_context=config_context)
+        config_context=config_context, job_context=job_context)
     return backend.generate(
         prompt, system=prompts.SYSTEM_ASSISTANT).text
 
@@ -133,34 +133,105 @@ def _is_vague_edit_request(request):
 
 def config_excerpt(current_config, request="", max_chars=12000):
     """Return bounded, request-relevant raw sections for model grounding."""
-    if len(current_config) <= max_chars:
-        return current_config
-    query = set(request.lower().replace("_", " ").split())
+    query = _search_terms(request)
     blocks = []
     current = []
     section = "preamble"
+    source = ""
+
+    def flush():
+        if current:
+            blocks.append((source, section, "".join(current)))
+
     for line in current_config.splitlines(True):
+        if line.startswith("# Atlas source: "):
+            flush()
+            source = line[len("# Atlas source: "):].strip()
+            section = "preamble"
+            current = []
+            continue
         if line.lstrip().startswith("[") and "]" in line:
-            if current:
-                blocks.append((section, "".join(current)))
+            flush()
             section = line.strip().strip("[]").lower()
             current = [line]
         else:
             current.append(line)
-    if current:
-        blocks.append((section, "".join(current)))
+    flush()
     ranked = []
-    for index, (section, block) in enumerate(blocks):
-        searchable = block.lower().replace("_", " ")
-        score = sum(1 for term in query if term in searchable)
-        if section == "printer" or section.startswith("include"):
-            score += 1
-        ranked.append((-score, index, block))
+    for index, (source, section, block) in enumerate(blocks):
+        section_terms = _search_terms(section)
+        body_terms = _search_terms(block)
+        score = 4 * len(query & section_terms) + len(query & body_terms)
+        if not query and (section == "printer"
+                          or section.startswith("include")):
+            score = 1
+        ranked.append([score, index, source, section, block])
+
+    positive = [item for item in ranked if item[0] > 0]
+    if positive:
+        threshold = max(1, (max(item[0] for item in positive) + 1) // 2)
+        selected = {item[1] for item in positive if item[0] >= threshold}
+    else:
+        selected = {item[1] for item in ranked[:1]}
+
+    # Include both sides of an LED reference, for example an effect block
+    # containing `neopixel:board_neopixel` and its hardware section.
+    section_index = {item[3]: item[1] for item in ranked}
+    references = {}
+    for _score, index, _source, _section, block in ranked:
+        targets = set()
+        for kind, name in re.findall(
+                r"\b(neopixel|dotstar)\s*:\s*([A-Za-z0-9_.-]+)",
+                block, re.IGNORECASE):
+            target = "%s %s" % (kind.lower(), name.lower())
+            if target in section_index:
+                targets.add(section_index[target])
+        references[index] = targets
+    changed = True
+    while changed:
+        changed = False
+        for index, targets in references.items():
+            if index in selected:
+                additions = targets - selected
+            elif targets & selected:
+                additions = {index}
+            else:
+                additions = set()
+            if additions:
+                selected.update(additions)
+                changed = True
+
     chosen = []
     used = 0
-    for _score, index, block in sorted(ranked):
-        if used + len(block) > max_chars:
+    for score, index, source, _section, block in sorted(
+            ranked, key=lambda item: (-item[0], item[1])):
+        if index not in selected:
             continue
-        chosen.append((index, block))
-        used += len(block)
+        rendered = (("# Atlas source: %s\n" % source) if source else "") \
+            + block
+        if used + len(rendered) > max_chars:
+            continue
+        chosen.append((index, rendered))
+        used += len(rendered)
     return "".join(block for _, block in sorted(chosen))
+
+
+def _search_terms(value):
+    stop = {
+        "a", "about", "and", "are", "config", "configuration", "for",
+        "give", "in", "is", "located", "me", "of", "on", "printer",
+        "section", "show", "the", "this", "to", "using", "we", "what",
+        "where", "which", "with",
+    }
+    terms = set()
+    for raw in re.findall(r"[a-z0-9]+", value.lower().replace("_", " ")):
+        term = raw
+        if len(term) > 4 and term.endswith("ies"):
+            term = term[:-3] + "y"
+        elif len(term) > 3 and term.endswith("s"):
+            term = term[:-1]
+        if term not in stop:
+            terms.add(term)
+    if terms & {"led", "neopixel", "dotstar"}:
+        terms.update(("led", "neopixel", "dotstar"))
+    return terms

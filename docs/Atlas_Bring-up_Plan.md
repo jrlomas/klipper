@@ -81,6 +81,13 @@ and gates every commit. No hardware, no GPU, no model.
   *Pass:* ALL PASS, including config/G-code hashes, bounded normalized
   G/M/T context, MCU/software identity, `0700` archive / `0600` records, and
   replay idempotence.
+- [x] **Assistant fact grounding.** *Do:*
+  `python3 test/atlas_config_context_test.py` and
+  `python3 test/atlas_jobs_test.py`. *Expect:* included config files remain
+  root-confined and source-labelled; LED/effect references return the active
+  linked sections rather than commented examples; completed-print facts come
+  from Moonraker's read-only job table. *Pass:* exact regressions pass, and
+  last-success queries bypass model inference.
 - [x] **Provisioning (A6).** *Do:* `python3 test/atlas_provision_test.py`.
   *Expect:* the board catalog validates, detection flags ambiguity, the
   planner blocks on UNCONFIRMED/ambiguous. *Pass:* ALL PASS.

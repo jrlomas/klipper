@@ -302,6 +302,18 @@ pass.
   with deterministic and model metrics reported separately. Its contract suite
   passes. The pinned model then passed all six per-kind metrics on both CUDA
   and ROCm on 2026-07-14; Hailo validation remains open.
+* Live assistant follow-up found three grounding/UI defects beyond corpus v2.
+  Atlas now reads Klipper includes through a root-confined, byte/file/depth-
+  bounded tree, ranks active semantic sections with source attribution, and
+  follows LED-effect references; this prevents a commented display-neopixel
+  example from displacing the active EBB36 neopixel and `led_effect` sections.
+  Exact last-success questions are answered deterministically from Moonraker's
+  read-only completed-job table rather than inferred by Qwen. Global timeline
+  retention now reserves events per source, so the high-rate EBB36 execution
+  stream cannot erase host/trace/link sources from Mainsail. The Mainsail
+  assistant adds a local clear-conversation control, and default plus saved
+  layouts place Atlas immediately above Temperatures. Focused backend and UI
+  regressions cover each behavior.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.

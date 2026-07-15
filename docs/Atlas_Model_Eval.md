@@ -17,6 +17,11 @@ The CLI transport explicitly requests full layer offload for CUDA/ROCm
 (`--gpu-layers 99`); the CPU profile explicitly disables devices and uses zero
 GPU layers. Accelerator labels therefore describe the executed command rather
 than relying on version-dependent llama.cpp defaults.
+Frequently requested exact facts are deliberately kept out of the model's
+reasoning burden. In particular, the newest completed print comes from
+Moonraker's read-only job table, while configuration retrieval resolves and
+labels the bounded local include tree before Qwen sees it. Earlier assistant
+replies are explicitly non-authoritative conversation context.
 
 ## Corpus v2
 

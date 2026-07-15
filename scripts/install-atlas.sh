@@ -118,6 +118,8 @@ if [ ! -f "${ENV_DEST}" ]; then
         printf 'ATLAS_PRINTER_CONFIG=%s\n' \
             "${ATLAS_DATA}/config/printer.cfg"
         printf 'ATLAS_GCODE_DIR=%s\n' "${ATLAS_DATA}/gcodes"
+        printf 'ATLAS_MOONRAKER_DB=%s\n' \
+            "${ATLAS_DATA}/database/moonraker-sql.db"
     } > "${ENV_DEST}"
 fi
 
@@ -130,6 +132,7 @@ ensure_env() {
 }
 ensure_env ATLAS_INCIDENT_DIR "${STATE_DIR}/incidents"
 ensure_env ATLAS_GCODE_DIR "${ATLAS_DATA}/gcodes"
+ensure_env ATLAS_MOONRAKER_DB "${ATLAS_DATA}/database/moonraker-sql.db"
 
 UNIT_DEST="$(stage_path "${UNIT_FILE}")"
 sed -e "s|@ATLAS_USER@|${ATLAS_USER}|g" \

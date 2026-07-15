@@ -25,6 +25,7 @@ honesty; Atlas gives it a mind.
 | `timeline.py` | merged, machine-time-ordered event store (the spine Planes 2–4 read) | ✅ |
 | `daemon.py` | always-on log follower + bounded timeline + deterministic diagnosis; atomically publishes the versioned Moonraker/Mainsail status contract and owns the optional local-model runtime | ✅ |
 | `assistant.py` / `ipc.py` | serialized, size-bounded assistant service over a mode-private Unix socket; grounded chat, interpretation, and expiring deterministic config previews | ✅ workstation |
+| `config_context.py` / `jobs.py` | root-confined include-aware config retrieval plus read-only Moonraker job-history facts; exact last-success questions bypass the model | ✅ workstation |
 | `../moonraker_components/atlas.py` | schema-validating API bridge with status/incidents/health and assistant relay endpoints, stale detection, and websocket updates | ✅ |
 | `observe.py` | rotation-safe JSONL ingestion for trace, execution, link-stat, and timesync events on exact machine time | ✅ |
 | `incidents.py` / `history.py` / `monitor.py` | deterministic one-occurrence-per-failure capture, private bounded evidence archive, aggregate SQLite history, and persistent per-machine drift baselines | ✅ |
@@ -58,7 +59,9 @@ The workstation path is a usable product seam, not only a model helper:
 the daemon hosts inference, Moonraker relays typed requests under Moonraker's
 configured authorization policy,
 the Mainsail Atlas panel provides bounded conversational chat and config
-previews, and `atlas assistant` provides the same operations from a terminal.
+previews, a one-click clear for browser-held conversation state, and a default
+dashboard position immediately above Temperatures. `atlas assistant` provides
+the same operations from a terminal.
 The assistant refuses to start with an implicit stub or a missing model. Live
 config mutation remains disabled at this workstation checkpoint: targeted
 section/key proposals are constructed deterministically, classified, hashed,
@@ -80,7 +83,7 @@ The pinned corpus-v2 run passed every separately reported category on both
 CUDA and ROCm on 2026-07-14; this remains "authored on GPU, Hailo validation
 pending," not deploy-target sign-off.
 
-Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,moonraker,install,observe,incident_capture,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
+Tests: `test/atlas_{decoder,diagnosis,trace,trace_live,view,daemon,assistant,config_context,jobs,moonraker,install,observe,incident_capture,provision,fleet,kb,apply,model,eval,memory,patterns,llm}_test.py`
 — the complete deterministic Atlas workstation suite, all green. Exact check
 counts are intentionally left to the test runner so this status line cannot
 go stale when coverage grows.
@@ -156,6 +159,15 @@ excerpt, the active pattern catalog, and optional machine memory. Conversation
 context is carried by the client, bounded to eight messages / 8 KiB, and is
 not persisted by the daemon. Timeline, config, retrieval, memory, and history
 content are fenced as untrusted prompt data.
+Config questions traverse only the root-confined Klipper include tree, rank
+active request-relevant sections, follow LED hardware/effect references, and
+label every excerpt with its source file. Commented examples are not treated
+as active configuration. Atlas also reads Moonraker's SQLite job history in
+read-only mode: narrow questions such as "last successful print" are answered
+deterministically from the newest completed job instead of asking the model to
+infer from a transient timeline. The global timeline bound reserves space per
+source, preventing a high-rate execution stream from erasing host/trace/link
+sources in the Mainsail selector.
 The daemon creates `memory.json` with mode `0600`, assigns an opaque local
 machine token, mirrors learned monitor baselines and deduplicated diagnoses,
 and atomically refreshes the RAG corpus when those facts change.
@@ -182,6 +194,8 @@ $ python3 test/atlas_moonraker_test.py
 $ python3 test/atlas_install_test.py
 $ python3 test/atlas_observe_test.py
 $ python3 test/atlas_incident_capture_test.py
+$ python3 test/atlas_config_context_test.py
+$ python3 test/atlas_jobs_test.py
 $ python3 test/atlas_assistant_test.py
 ```
 

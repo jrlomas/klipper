@@ -7,6 +7,7 @@ import stat
 import sys
 import tempfile
 import threading
+import sqlite3
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 ".."))
@@ -33,7 +34,7 @@ CONFIG = ("[printer]\nkinematics: corexy\nmax_velocity: 300\n\n"
           "[extruder]\nmax_temp: 280\n")
 
 
-def _runtime(config_path=None, now=None):
+def _runtime(config_path=None, now=None, job_history_path=None):
     backend = StubBackend(
         default="The MCU stopped after a timer deadline was missed.",
         tool_calls=[{"name": "propose_config_edit", "arguments": {
@@ -46,7 +47,7 @@ def _runtime(config_path=None, now=None):
     return AssistantRuntime(
         backend, [PATTERN], memory, config_path=config_path,
         allow_stub=True, wall_clock=(lambda: now[0]) if now else None,
-        proposal_ttl=10)
+        proposal_ttl=10, job_history_path=job_history_path)
 
 
 def test_grounded_read_only_requests():
@@ -173,6 +174,27 @@ def test_read_only_questions_receive_bounded_config_context():
     print("PASS: ask receives bounded read-only current config grounding")
 
 
+def test_last_successful_print_bypasses_model_with_authoritative_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        database = os.path.join(tmp, "moonraker-sql.db")
+        with sqlite3.connect(database) as connection:
+            connection.execute("""CREATE TABLE job_history (
+                job_id INTEGER PRIMARY KEY, filename TEXT, status TEXT,
+                start_time REAL, end_time REAL, print_duration REAL,
+                total_duration REAL, filament_used REAL)""")
+            connection.execute(
+                "INSERT INTO job_history VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (9, "cube.gcode", "completed", 10, 20, 8, 10, 123))
+        runtime = _runtime(job_history_path=database)
+        response = runtime.handle("ask", {
+            "question": "What's the last print that succeeded?"}, TIMELINE)
+        assert response["result"]["deterministic"] is True
+        assert "cube.gcode (job 9)" in response["result"]["answer"]
+        assert runtime.backend.calls == []
+    print("PASS: last-success questions use authoritative history without "
+          "model inference")
+
+
 def test_status_is_lock_free_and_queue_is_bounded():
     entered = threading.Event()
     release = threading.Event()
@@ -216,6 +238,7 @@ def main():
     test_invalid_and_stub_production_guards()
     test_private_unix_ipc_round_trip()
     test_read_only_questions_receive_bounded_config_context()
+    test_last_successful_print_bypasses_model_with_authoritative_history()
     test_status_is_lock_free_and_queue_is_bounded()
     print("ALL PASS")
 
