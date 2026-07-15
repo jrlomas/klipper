@@ -184,7 +184,35 @@ gate and a converged firmware map. See the
 [raw SOF samples](evidence/machine_time/usb_sof_edges.csv) and
 [summary](evidence/machine_time/usb_sof_summary.json).
 
-The remaining measurement gap is timing under representative printing and
-USB/host load. Idle scope captures characterize the clock mechanism but are
-not a substitute for a longer capture during realistic trajectory and
-extrusion traffic.
+### Loaded-print SOF behavior
+
+The idle result did not carry unchanged into the timer-saturated print path.
+On 2026-07-15 the 549.28-second
+`xyz-10mm-calibration-cube_0.4n_0.2mm_PLA_V0_120_8m.gcode` run completed with
+both host and firmware gates continuously converged, but 24 individual SOF
+observations exceeded the configured +/-10 us phase budget and used
+one-beacon holdover. The largest raw residual seen by the 2.25-second status
+monitor was +171.86 us, and the largest observed run was two rejected samples;
+a bounded observation returned before the three-sample sustained-divergence
+gate. The monitor did not sample every 1 Hz observation, so this is an
+observed maximum rather than a complete extrema claim.
+
+Source inspection explains the difference from the idle nanosecond result.
+On STM32G0, `TIMx_IRQHandler()` globally masks interrupts around
+`timer_dispatch_many()`. The dispatcher runs due timer callbacks under that
+mask and only re-enables interrupts while waiting for a future deadline.
+`traj_stepper_event()` calls the quintic crossing solver from that timer path.
+Consequently USB's numerically higher NVIC priority cannot preempt a running
+motion callback: PRIMASK has disabled every interrupt. A batch of due timer
+events may occupy the dispatcher's approximately 100 us repeat window plus
+the final callback, which is consistent with the loaded-print observations.
+
+Production therefore treats same-frame SOF values as load-perturbed
+ISR-entry observations, not unconditionally exact edge captures. The host
+compares their phase residual with the configured `converge_window`, holds
+over the already-qualified oscillator map for isolated outliers, and revokes
+Class-0 only on three consecutive misses. A one-interval ppm derivative is
+diagnostic only: the failed predecessor used a 2 ppm gate, which rejected
+three approximately -2.25 us observations even while firmware error remained
+7 ticks (0.11 us). The completed print validates the phase-budget policy for
+this workload; it does not turn ISR-entry SOF into a hardware timestamp.

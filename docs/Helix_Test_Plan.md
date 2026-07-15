@@ -381,11 +381,21 @@ Prove the wire before you trust it to carry motion.
   spatial, extrusion, topology, and assurance analysis.
 
   USB remains an operational, statistically qualified profile rather than
-  being failed solely by the symmetry-free RTT envelope. The remaining test
-  condition is a longer scope capture under representative print and USB/host
-  load, plus temperature repetition. A shared timer-capture pulse or hardware-
-  timestamped bus is an optional stronger assurance path. Internal
-  `converged` state alone remains insufficient evidence for an absolute bound.
+  being failed solely by the symmetry-free RTT envelope. A 549.28-second
+  full-speed calibration-cube print on 2026-07-15 completed with both host and
+  firmware gates continuously converged. Under real XY and pressure-advanced
+  extrusion load, 24 individual same-frame SOF observations exceeded the
+  +/-10 us phase window and used oscillator holdover; the largest value seen
+  by the 2.25-second monitor was +171.86 us and the longest observed streak
+  was two. Source inspection localized this to globally masked STM32G0 timer
+  dispatch: the USB IRQ cannot preempt quintic timer callbacks despite its
+  higher NVIC priority. The previous 2 ppm derivative gate also rejected
+  harmless approximately 2.25 us phase changes and was replaced by the actual
+  configured phase budget. The remaining condition is a continuously recorded
+  scope capture under print load plus temperature repetition. A shared timer-
+  capture pulse, hardware-timestamped bus, or robust multi-frame SOF estimate
+  is an optional stronger assurance path. Internal `converged` state alone
+  remains insufficient evidence for an absolute bound.
 
 ---
 

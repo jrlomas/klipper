@@ -325,6 +325,39 @@ rate-consistent pairs, passed the host gate, and converged the firmware map to
 +3.84 us inside its configured +/-10 us ingest window. Both live MCUs reported
 the pushed `fc944686` firmware build during this final check.
 
+#### Representative print load changes the timestamp distribution
+
+The idle SOF experiment measured the USB mechanism with little competing
+timer work. A subsequent 549.28-second calibration-cube print exercised the
+Pico XY planner and EBB36 pressure-advanced extruder continuously. It
+completed with both discipline gates converged, while the host rejected 24
+individual raw SOF pairs outside +/-10 us and substituted one-beacon
+oscillator holdover. The largest residual caught by a 2.25-second monitor was
++171.86 us; two consecutive observations were rejected at the busiest point,
+then a bounded observation cleared the streak. Because the monitor did not
+observe every 1 Hz update, that value is not asserted as the run's absolute
+maximum.
+
+This is MCU-side interrupt latency, not Linux delivery jitter. The STM32G0
+timer IRQ enters `timer_dispatch_many()` with global interrupts disabled.
+Due trajectory callbacks—including the quintic step-crossing solver—run
+before interrupts are reopened. The USB IRQ's higher NVIC priority therefore
+cannot take effect during that interval. The generic dispatcher may service
+due callbacks for its roughly 100 us repeat window, plus the execution time
+of the callback that crosses the limit. The loaded observations are
+consistent with that mechanism.
+
+The engineering consequence is narrower than abandoning SOF. Matching frame
+numbers still removes host scheduling and command-delivery ambiguity, and
+the established crystal-rate map can safely span an isolated late ISR. The
+trust gate now uses the actual phase residual against the configured +/-10 us
+budget; three consecutive misses indicate sustained disagreement. The former
+2 ppm one-interval derivative gate was both stricter and dimensionally wrong:
+a harmless 2.25 us phase perturbation over one second looks like 2.25 ppm.
+Hardware timer capture of a shared edge, or a robust estimate over several
+SOF frames in each capture window, remains the route to eliminating rather
+than filtering ISR-entry latency.
+
 ## 5. Translation into a printed object
 
 ### 5.1 Motion phase
@@ -483,12 +516,17 @@ implementation—not a universal equivalence between SOF and a shared clock.
 7. **USB SOF materially increases precision on the tested topology.** Matching
    frames varied by 0.024 us RMS, and the steady disciplined clock map varied
    by 0.015 us RMS around a directly measured +0.58 us phase. This is roughly
-   24–70 times less variation than the preceding software-map runs.
+   24–70 times less variation than the preceding software-map runs when idle.
+8. **ISR-entry SOF is load-sensitive on the STM32G0.** A representative
+   549.28-second print completed with both gates converged, but 24 raw pairs
+   required holdover and the largest monitor-visible residual was +171.86 us.
+   Globally masked timer dispatch, not host delivery, explains the outliers.
 
-The remaining high-value experiment is a longer synchronized capture during a
-representative print, with concurrent trajectory and extrusion traffic, then a
-repeat across host load and toolhead temperature. That will extend this paper
-from idle/restart characterization to a full operating-envelope distribution.
+The remaining high-value experiment is a continuously recorded synchronized
+capture across host load and toolhead temperature, ideally comparing the
+current ISR-entry samples with timer input capture or a robust multi-frame SOF
+estimate. The completed print closes the basic loaded-operation gap but is not
+a full operating-envelope distribution.
 
 ## 9. Reproducibility
 

@@ -41,7 +41,7 @@ RELAY_FIT_SAMPLES = 16      # smooth cross-link regression endpoint jitter
 RELAY_FIT_MIN_SPAN = 4.0    # reject high-variance short-burst rate fits
 HOST_STABLE_COUNT = 8       # consecutive steady host-model beacons
 HOST_RATE_TOLERANCE_PPM = 2.0
-HOST_DIVERGE_COUNT = 3      # sustained marginal SOF-rate misses
+HOST_DIVERGE_COUNT = 3      # sustained out-of-budget SOF phase misses
 SOF_CAPTURE_DELAY = 0.010
 
 # timesync_state flag bits (must match src/timesync.c)
@@ -302,9 +302,9 @@ class SecondaryLink:
             if machine_delta > 0:
                 self.sample_rate = local_delta / machine_delta
                 self.host_rate = self.sample_rate
-                # An exact same-frame pair is a better rate observation than
+                # Exact same-frame pairs are better rate observations than
                 # the software-derived ClockSync estimates used to seed the
-                # firmware. Establish SOF rate consistency from those exact
+                # firmware. Establish SOF rate consistency from the exact
                 # pairs themselves; otherwise a biased startup USB estimate
                 # can permanently veto the hardware measurement.
                 reference = (_median(self.sof_rates)
