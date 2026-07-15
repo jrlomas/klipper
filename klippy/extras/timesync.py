@@ -42,7 +42,6 @@ RELAY_FIT_MIN_SPAN = 4.0    # reject high-variance short-burst rate fits
 HOST_STABLE_COUNT = 8       # consecutive steady host-model beacons
 HOST_RATE_TOLERANCE_PPM = 2.0
 HOST_DIVERGE_COUNT = 3      # sustained marginal SOF-rate misses
-HOST_GROSS_RATE_PPM = 50.0  # one impossible interval fails closed
 SOF_CAPTURE_DELAY = 0.010
 
 # timesync_state flag bits (must match src/timesync.c)
@@ -316,8 +315,6 @@ class SecondaryLink:
                         HOST_STABLE_COUNT, self.host_stable_count + 1)
                 else:
                     self.sof_bad_count += 1
-                    gross = (abs(self.host_rate_error_ppm)
-                             >= HOST_GROSS_RATE_PPM)
                     if self.host_model_stable:
                         # Preserve the already-qualified phase instead of
                         # forwarding an ISR-latency outlier into the firmware
@@ -329,12 +326,13 @@ class SecondaryLink:
                             self.sof_rate_local_clock
                             + reference * machine_delta))
                         self.sof_filtered_count += 1
-                    if (not self.host_model_stable or gross
+                    if (not self.host_model_stable
                             or self.sof_bad_count >= HOST_DIVERGE_COUNT):
                         # Begin a fresh candidate interval sequence. A
                         # genuine oscillator-rate change can reacquire, while
-                        # one gross or three consecutive marginal misses fail
-                        # closed. Isolated ISR-entry jitter cannot revoke an
+                        # three consecutive misses fail closed. The magnitude
+                        # of one ISR-entry delay is not evidence of oscillator
+                        # divergence, so no single observation revokes an
                         # established clock map synchronously during motion.
                         self.sof_rates = ([] if self.host_model_stable
                                           else [self.sample_rate])

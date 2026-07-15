@@ -614,9 +614,10 @@ The following information is available in the
   frame falls back to the host clock estimate for that beacon.
 - `mcus.<mcu_name>.sof_rate_bad_count`: Consecutive marginal exact-pair rate
   intervals outside the 2 ppm stability band. Once lock is established, one
-  or two marginal intervals are tolerated; three consecutive misses or one
-  gross 50 ppm excursion revokes the host gate. A good interval clears the
-  count.
+  or two intervals are tolerated and three consecutive misses revoke the host
+  gate. A good interval clears the count. Outlier magnitude alone does not
+  revoke an established map because the exact-pair timestamp includes
+  load-dependent ISR-entry latency.
 - `mcus.<mcu_name>.sof_filtered_count`: Number of exact-pair observations
   rejected since connect because their interval rate was outside the qualified
   band. Once lock exists, firmware receives a one-beacon holdover prediction

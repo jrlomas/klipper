@@ -1497,11 +1497,13 @@ def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
         local = round(5_000_000 + index * 12_000_000 * rate)
         link.relay_sof(index, machine, local, 20. + index)
     assert link.host_model_stable
-    # Reproduce the second physical-print failure: one SOF ISR timestamp is
-    # about 47.5us late over a one-second interval. The original host sent it
-    # into the firmware PI loop, creating a synthetic 46.6us phase error.
-    # The qualified oscillator-rate holdover must absorb it instead.
-    phase_delay = round(12_000_000 * rate * 47.5e-6)
+    # Reproduce the third physical-print failure: one SOF ISR timestamp is
+    # about 84.7us late over a one-second interval. The first holdover version
+    # protected the firmware PI loop but still revoked the host gate because
+    # the observation exceeded a single-sample "gross" cutoff. ISR-entry
+    # latency has no valid single-sample cutoff; qualified oscillator-rate
+    # holdover must absorb it while consecutive misses still fail closed.
+    phase_delay = round(12_000_000 * rate * 84.7e-6)
     index += 1
     machine = 1_000_000 + index * 12_000_000
     local = round(5_000_000 + index * 12_000_000 * rate) + phase_delay
