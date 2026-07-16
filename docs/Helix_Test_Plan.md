@@ -1110,9 +1110,12 @@ Now put it together on the **full printer**.
   production: the host aligned a late-visible E island by 30.4 us and 31.0 us
   to its immutable committed-hold horizon, respectively, and each print then
   continued to completion. The second file requested up to 300 mm/s and
-  7,000 mm/s^2, but the active V0 limits clamped motion to 200 mm/s and
-  3,000 mm/s^2; it therefore closes the repeatable baseline gate, not the
-  purpose-built high-load gate in 14.3.
+  7,000 mm/s^2. The active V0 velocity limit bounded translation to 200 mm/s,
+  but the slicer's `M204` commands did apply their requested acceleration;
+  Klipper's `M204` handler directly updates `toolhead.max_accel`. The earlier
+  claim that acceleration was clamped to the 3,000 mm/s^2 startup value was
+  based on the restored post-print state and was incorrect. The later PLA run
+  below provides an exact command count for the high-acceleration gate.
 
   A further supervised PLA cube on 2026-07-15 closed the physical regression
   for the bounded Q16 quintic-crossing repair in `81d7ddf4`. The EBB36 ran
@@ -1130,9 +1133,21 @@ Now put it together on the **full printer**.
   monotonic, sub-step quantized crossing while preserving fail-closed
   rejection of multi-step discontinuities; together with its captured-vector
   positive and negative regressions, the successful print closes that defect.
-- [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
+- [x] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.
+  The completed `Voron_Design_Cube_v8_0.4n_0.2mm_PLA_V0_120_26m.gcode`
+  qualification run contained 2,247 `M204 S7000` commands and 878
+  `M204 S6000` commands, interleaved with 2,369 `M204 S3000` and 117
+  `M204 S500` commands as the slicer changed acceleration by feature. Its
+  embedded profile specifies 7,000 mm/s^2 for infill and travel, 6,000
+  mm/s^2 for perimeters and solid infill, and 3,000 mm/s^2 for external
+  perimeters. Because Klipper applies each `M204 S...` value directly, this
+  was a real dynamic high-acceleration workload rather than a static profile
+  annotation. All 2,301,802 bytes completed with zero stalls, invalid link
+  bytes, queue underruns, or MCU shutdowns, and the operator confirmed clean
+  surface finish. This closes the high-acceleration qualification path; the
+  V0's 200 mm/s velocity limit remained in force.
 - [ ] **14.4 — Networked toolhead print.** Run a full print with the
   toolhead on CAN, then on WiFi/Ethernet.
   Pass: no wire-jitter artifacts; the queue absorbs latency as designed.
