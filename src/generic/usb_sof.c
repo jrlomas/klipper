@@ -19,14 +19,8 @@ struct usb_sof_sample {
 
 struct usb_sof_discard {
     uint32_t count;
-    uint32_t source;
-    uint32_t source_caller;
-    uint32_t exit_source;
-    uint32_t exit_caller;
-    uint32_t duration;
     uint16_t frame;
     uint8_t primask;
-    uint8_t entry_flags;
 };
 
 static struct usb_sof_sample usb_sof_ring[USB_SOF_RING_SIZE];
@@ -47,23 +41,14 @@ usb_sof_notify(uint16_t frame, uint32_t clock)
 }
 
 void
-usb_sof_note_discard(uint16_t frame, uint8_t primask, uint32_t source
-                     , uint32_t source_caller, uint32_t exit_source
-                     , uint32_t exit_caller, uint32_t duration
-                     , uint8_t entry_flags)
+usb_sof_note_discard(uint16_t frame, uint8_t primask)
 {
     uint32_t count = usb_sof_discard_count + 1;
     struct usb_sof_discard *sample = &usb_sof_discard_ring[
         (count - 1) % USB_SOF_RING_SIZE];
     sample->count = count;
-    sample->source = source;
-    sample->source_caller = source_caller;
-    sample->exit_source = exit_source;
-    sample->exit_caller = exit_caller;
-    sample->duration = duration;
     sample->frame = frame;
     sample->primask = primask;
-    sample->entry_flags = entry_flags;
     usb_sof_discard_count = count;
     usb_sof_discard_primask_count += !!primask;
 }
@@ -126,34 +111,3 @@ command_usb_sof_query(uint32_t *args)
           , discard_match, discard_match_primask);
 }
 DECL_COMMAND(command_usb_sof_query, "usb_sof_query frame=%hu");
-
-void
-command_usb_sof_guard_query(uint32_t *args)
-{
-    uint16_t requested = args[0];
-    struct usb_sof_discard result = {};
-    uint8_t found = 0;
-    irq_disable();
-    uint32_t count = usb_sof_discard_count;
-    uint_fast8_t available = count < USB_SOF_RING_SIZE
-                             ? count : USB_SOF_RING_SIZE;
-    uint_fast8_t i;
-    for (i = 0; i < available; i++) {
-        struct usb_sof_discard *sample = &usb_sof_discard_ring[
-            (count - i - 1) % USB_SOF_RING_SIZE];
-        if (sample->frame == requested) {
-            result = *sample;
-            found = 1;
-            break;
-        }
-    }
-    irq_enable();
-    sendf("usb_sof_guard_state requested=%hu found=%c source=%u"
-          " source_caller=%u exit_source=%u exit_caller=%u"
-          " duration=%u entry_flags=%c"
-          , requested, found, result.source, result.source_caller
-          , result.exit_source, result.exit_caller, result.duration
-          , result.entry_flags);
-}
-DECL_COMMAND(command_usb_sof_guard_query,
-             "usb_sof_guard_query frame=%hu");

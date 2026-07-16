@@ -1587,9 +1587,6 @@ def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
     link.sof_missed_frames = 0
     link.sof_guard_discard_matches = 0
     link.sof_guard_primask_matches = 0
-    link.sof_guard_entry_counts = {}
-    link.sof_guard_source_counts = {}
-    link.sof_guard_max_duration_ticks = 0
     link.sof_unclassified_misses = 0
     link.sof_last_miss = None
     owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
@@ -1607,13 +1604,6 @@ def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
         'frame': 873,
         'reason': 'guard-discard',
         'primask': True,
-        'source': 0,
-        'source_caller': 0,
-        'exit_source': 0,
-        'exit_caller': 0,
-        'duration_ticks': 0,
-        'entry': 'entry-unknown',
-        'entry_flags': 0,
         'window_captured': 9,
         'window_discarded': 1,
         'window_discarded_primask': 1,
@@ -1625,10 +1615,6 @@ def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
     assert link.sof_missed_frames == 1
     assert link.sof_guard_discard_matches == 1
     assert link.sof_guard_primask_matches == 1
-    assert link.sof_guard_entry_counts == {'entry-unknown': 1}
-    assert link.sof_guard_source_counts == {
-        '0x00000000/0x00000000': 1}
-    assert link.sof_guard_max_duration_ticks == 0
     assert link.sof_unclassified_misses == 0
 
     miss = owner._note_sof_window(link, 874, {

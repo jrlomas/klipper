@@ -523,23 +523,6 @@ of USB Start-of-Frame timestamps:
   frame itself was discarded and whether `PRIMASK` was set at that exact
   discard. The capture and discard rings each retain 32 entries.
 
-* `usb_sof_guard_query frame=%hu` : Requests source attribution for an exact
-  discarded frame. Generates "usb_sof_guard_state requested=%hu found=%c
-  source=%u source_caller=%u exit_source=%u exit_caller=%u duration=%u
-  entry_flags=%c". Each endpoint records both a local code-site address and
-  its caller return address. The site resolves inlined IRQ wrappers, while the
-  caller resolves wrappers retained out of line by LTO. Resolve both against
-  the exact firmware ELF with `arm-none-eabi-addr2line -afi`; the address with
-  the deeper application inline stack identifies the source. `duration` is
-  the masked interval in MCU timer ticks. In `entry_flags`, bit 0 means the
-  pre-mask
-  peripheral sample was
-  valid, bit 1 means SOF was already pending in that sample, bit 2 means it
-  was pending immediately after masking, and bit 3 means an attributed guard
-  was active. A valid entry with bits 1 and 2 clear proves the discarded SOF
-  arrived after the critical section began. This detail query is optional so
-  older primary-MCU firmware remains compatible.
-
 On STM32 USB FS, any SOF flag accumulated while `PRIMASK` is set is cleared
 immediately before global interrupts are restored; USB endpoint and reset
 flags remain pending and are serviced normally. Consequently a delayed

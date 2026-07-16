@@ -152,9 +152,6 @@ class SecondaryLink:
         self.sof_missed_frames = 0
         self.sof_guard_discard_matches = 0
         self.sof_guard_primask_matches = 0
-        self.sof_guard_entry_counts = {}
-        self.sof_guard_source_counts = {}
-        self.sof_guard_max_duration_ticks = 0
         self.sof_unclassified_misses = 0
         self.sof_last_miss = None
         self.sof_rate_machine_clock = None
@@ -195,9 +192,6 @@ class SecondaryLink:
         self.sof_missed_frames = 0
         self.sof_guard_discard_matches = 0
         self.sof_guard_primask_matches = 0
-        self.sof_guard_entry_counts = {}
-        self.sof_guard_source_counts = {}
-        self.sof_guard_max_duration_ticks = 0
         self.sof_unclassified_misses = 0
         self.sof_last_miss = None
         self.sof_rate_machine_clock = None
@@ -609,32 +603,10 @@ class MachineTimeSync:
         link.sof_missed_frames += 1
         guard_match = bool(state.get('discard_match', 0))
         primask_match = bool(state.get('discard_match_primask', 0))
-        source = int(state.get('discard_source', 0))
-        source_caller = int(state.get('discard_source_caller', 0))
-        exit_source = int(state.get('discard_exit_source', 0))
-        exit_caller = int(state.get('discard_exit_caller', 0))
-        duration = int(state.get('discard_duration', 0))
-        entry_flags = int(state.get('discard_entry_flags', 0))
-        if entry_flags & 0x01:
-            if entry_flags & 0x02:
-                entry = "already-pending"
-            elif entry_flags & 0x04:
-                entry = "entry-race"
-            else:
-                entry = "arrived-masked"
-        else:
-            entry = "entry-unknown"
         if guard_match:
             link.sof_guard_discard_matches += 1
             if primask_match:
                 link.sof_guard_primask_matches += 1
-            link.sof_guard_entry_counts[entry] = (
-                link.sof_guard_entry_counts.get(entry, 0) + 1)
-            source_key = "0x%08x/0x%08x" % (source, source_caller)
-            link.sof_guard_source_counts[source_key] = (
-                link.sof_guard_source_counts.get(source_key, 0) + 1)
-            link.sof_guard_max_duration_ticks = max(
-                link.sof_guard_max_duration_ticks, duration)
             reason = "guard-discard"
         else:
             link.sof_unclassified_misses += 1
@@ -643,13 +615,6 @@ class MachineTimeSync:
             'frame': requested,
             'reason': reason,
             'primask': primask_match,
-            'source': source,
-            'source_caller': source_caller,
-            'exit_source': exit_source,
-            'exit_caller': exit_caller,
-            'duration_ticks': duration,
-            'entry': entry,
-            'entry_flags': entry_flags,
             'window_captured': captured,
             'window_discarded': discarded,
             'window_discarded_primask': discarded_primask,
@@ -669,36 +634,17 @@ class MachineTimeSync:
             seq = self.sof_capture_seq
             for link in active:
                 secondary = link.sof_link.query(primary['frame'])
-                if (not secondary['found']
-                        and secondary.get('discard_match', 0)):
-                    guard = link.sof_link.query_guard(primary['frame'])
-                    if guard is not None and guard.get('found', 0):
-                        secondary.update({
-                            'discard_source': guard['source'],
-                            'discard_source_caller': guard['source_caller'],
-                            'discard_exit_source': guard['exit_source'],
-                            'discard_exit_caller': guard['exit_caller'],
-                            'discard_duration': guard['duration'],
-                            'discard_entry_flags': guard['entry_flags'],
-                        })
                 miss = self._note_sof_window(
                     link, primary['frame'], secondary)
                 if not secondary['found']:
                     held = self._fallback_sof_link(link)
                     logging.warning(
                         "timesync: mcu '%s' missed USB SOF frame %d;"
-                        " reason=%s primask=%d source=0x%08x"
-                        " source_caller=0x%08x exit_source=0x%08x"
-                        " exit_caller=0x%08x duration=%dticks entry=%s"
-                        " entry_flags=0x%02x window_captured=%d"
+                        " reason=%s primask=%d window_captured=%d"
                         " window_discarded=%d"
                         " window_discarded_primask=%d; %s"
                         , link.name, primary['frame'], miss['reason'],
-                        miss['primask'], miss['source'],
-                        miss['source_caller'], miss['exit_source'],
-                        miss['exit_caller'], miss['duration_ticks'],
-                        miss['entry'], miss['entry_flags'],
-                        miss['window_captured'],
+                        miss['primask'], miss['window_captured'],
                         miss['window_discarded'],
                         miss['window_discarded_primask'],
                         ("retaining qualified holdover"
@@ -897,10 +843,6 @@ class MachineTimeSync:
                     link.sof_guard_discard_matches),
                 'sof_guard_primask_matches': (
                     link.sof_guard_primask_matches),
-                'sof_guard_entry_counts': link.sof_guard_entry_counts,
-                'sof_guard_source_counts': link.sof_guard_source_counts,
-                'sof_guard_max_duration_ticks': (
-                    link.sof_guard_max_duration_ticks),
                 'sof_unclassified_misses': link.sof_unclassified_misses,
                 'sof_last_miss': link.sof_last_miss,
                 'sof_phase_error_us': (
