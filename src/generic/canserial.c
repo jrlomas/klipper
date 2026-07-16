@@ -60,7 +60,7 @@ canserial_tx_task(void)
         CanData.transmit_pos = CanData.transmit_max = 0;
         return;
     }
-    struct canbus_msg msg;
+    struct canbus_msg msg = {};
     msg.id = id + 1;
     uint32_t tpos = CanData.transmit_pos, tmax = CanData.transmit_max;
     for (;;) {
@@ -147,7 +147,7 @@ can_process_query_unassigned(struct canbus_msg *msg)
 {
     if (CanData.assigned_id)
         return;
-    struct canbus_msg send;
+    struct canbus_msg send = {};
     send.id = CANBUS_ID_ADMIN_RESP;
     send.dlc = 8;
     send.data[0] = CANBUS_RESP_NEED_NODEID;

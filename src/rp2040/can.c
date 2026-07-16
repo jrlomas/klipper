@@ -28,6 +28,8 @@ static struct can2040 cbus;
 int
 canhw_send(struct canbus_msg *msg)
 {
+    if ((msg->flags & CANMSG_FLAG_FD) || msg->dlc > 8)
+        return 0;
     int ret = can2040_transmit(&cbus, (void*)msg);
     if (ret < 0)
         return -1;

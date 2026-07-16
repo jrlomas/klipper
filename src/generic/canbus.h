@@ -5,17 +5,54 @@
 
 struct canbus_msg {
     uint32_t id;
-    uint32_t dlc;
+    // Payload length in bytes. Hardware drivers translate this to/from DLC.
+    uint8_t dlc;
+    uint8_t flags;
+    uint16_t tx_tag;
     union {
-        uint8_t data[8];
-        uint32_t data32[2];
+        uint8_t data[64];
+        uint32_t data32[16];
     };
 };
 
 #define CANMSG_ID_RTR (1<<30)
 #define CANMSG_ID_EFF (1<<31)
 
-#define CANMSG_DATA_LEN(msg) ((msg)->dlc > 8 ? 8 : (msg)->dlc)
+#define CANMSG_FLAG_FD       (1<<0)
+#define CANMSG_FLAG_BRS      (1<<1)
+#define CANMSG_FLAG_ESI      (1<<2)
+#define CANMSG_FLAG_TX_EVENT (1<<3)
+
+#define CANMSG_DATA_LEN(msg) ((msg)->dlc > 64 ? 64 : (msg)->dlc)
+
+static inline uint8_t
+canbus_dlc_to_len(uint8_t dlc)
+{
+    static const uint8_t lengths[16] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64
+    };
+    return lengths[dlc & 0x0f];
+}
+
+static inline uint8_t
+canbus_len_to_dlc(uint8_t len)
+{
+    if (len <= 8)
+        return len;
+    if (len <= 12)
+        return 9;
+    if (len <= 16)
+        return 10;
+    if (len <= 20)
+        return 11;
+    if (len <= 24)
+        return 12;
+    if (len <= 32)
+        return 13;
+    if (len <= 48)
+        return 14;
+    return 15;
+}
 
 struct canbus_status {
     uint32_t rx_error, tx_error, tx_retries;

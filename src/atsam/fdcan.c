@@ -86,6 +86,8 @@ static struct fdcan_msg_ram MSG_RAM __section(".dtcm.bss");
 int
 canhw_send(struct canbus_msg *msg)
 {
+    if ((msg->flags & CANMSG_FLAG_FD) || msg->dlc > 8)
+        return 0;
     uint32_t txfqs = CANx->MCAN_TXFQS;
     if (txfqs & MCAN_TXFQS_TFQF)
         // No space in transmit fifo - wait for irq
@@ -195,7 +197,7 @@ CAN_IRQHandler(void)
             uint32_t idx = (rxf0s & MCAN_RXF0S_F0GI_Msk) >> MCAN_RXF0S_F0GI_Pos;
             struct fdcan_fifo *rxf0 = &MSG_RAM.RXF0[idx];
             uint32_t ids = rxf0->id_section;
-            struct canbus_msg msg;
+            struct canbus_msg msg = {};
             if (ids & FDCAN_XTD)
                 msg.id = (ids & 0x1fffffff) | CANMSG_ID_EFF;
             else

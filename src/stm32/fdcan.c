@@ -6,6 +6,7 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include <string.h> // memcpy, memset
 #include "board/irq.h" // irq_save
 #include "command.h" // DECL_CONSTANT_STR
 #include "generic/armcm_boot.h" // armcm_enable_irq
@@ -98,6 +99,10 @@ struct fdcan_fifo {
 
 #define FDCAN_XTD (1<<30)
 #define FDCAN_RTR (1<<29)
+#define FDCAN_ESI (1U<<31)
+#define FDCAN_EFC (1U<<23)
+#define FDCAN_FDF (1U<<21)
+#define FDCAN_BRS (1U<<20)
 
 struct fdcan_msg_ram {
     uint32_t FLS[28]; // Filter list standard
@@ -124,6 +129,14 @@ struct fdcan_ram_layout {
 int
 canhw_send(struct canbus_msg *msg)
 {
+    uint32_t len = CANMSG_DATA_LEN(msg);
+    if (msg->dlc > 64 || ((msg->flags & CANMSG_FLAG_FD) == 0 && len > 8)
+        || ((msg->flags & CANMSG_FLAG_FD) && (msg->id & CANMSG_ID_RTR)))
+        return 0;
+#if !CONFIG_CANBUS_FD
+    if (msg->flags & CANMSG_FLAG_FD)
+        return 0;
+#endif
     uint32_t txfqs = SOC_CAN->TXFQS;
     if (txfqs & FDCAN_TXFQS_TFQF)
         // No space in transmit fifo - wait for irq
@@ -137,13 +150,24 @@ canhw_send(struct canbus_msg *msg)
     else
         ids = (msg->id & 0x7ff) << 18;
     ids |= msg->id & CANMSG_ID_RTR ? FDCAN_RTR : 0;
+    ids |= msg->flags & CANMSG_FLAG_ESI ? FDCAN_ESI : 0;
     txfifo->id_section = ids;
-    txfifo->dlc_section = (msg->dlc & 0x0f) << 16;
-    txfifo->data[0] = msg->data32[0];
-    txfifo->data[1] = msg->data32[1];
+    uint32_t dlc = canbus_len_to_dlc(len);
+    uint32_t ctl = dlc << 16;
+    if (msg->flags & CANMSG_FLAG_FD)
+        ctl |= FDCAN_FDF;
+    if (msg->flags & CANMSG_FLAG_BRS)
+        ctl |= FDCAN_BRS;
+    if (msg->flags & CANMSG_FLAG_TX_EVENT)
+        ctl |= FDCAN_EFC | ((uint32_t)msg->tx_tag << 24);
+    txfifo->dlc_section = ctl;
+    uint32_t wire_len = canbus_dlc_to_len(dlc);
+    memcpy(txfifo->data, msg->data, len);
+    if (wire_len > len)
+        memset((uint8_t*)txfifo->data + len, 0, wire_len - len);
     barrier();
     SOC_CAN->TXBAR = ((uint32_t)1 << w_index);
-    return CANMSG_DATA_LEN(msg);
+    return len;
 }
 
 static void
@@ -236,15 +260,21 @@ CAN_IRQHandler(void)
             uint32_t idx = (rxf0s & FDCAN_RXF0S_F0GI) >> FDCAN_RXF0S_F0GI_Pos;
             struct fdcan_fifo *rxf0 = &MSG_RAM.RXF0[idx];
             uint32_t ids = rxf0->id_section;
-            struct canbus_msg msg;
+            struct canbus_msg msg = {};
             if (ids & FDCAN_XTD)
                 msg.id = (ids & 0x1fffffff) | CANMSG_ID_EFF;
             else
                 msg.id = (ids >> 18) & 0x7ff;
             msg.id |= ids & FDCAN_RTR ? CANMSG_ID_RTR : 0;
-            msg.dlc = (rxf0->dlc_section >> 16) & 0x0f;
-            msg.data32[0] = rxf0->data[0];
-            msg.data32[1] = rxf0->data[1];
+            uint32_t ctl = rxf0->dlc_section;
+            msg.dlc = canbus_dlc_to_len((ctl >> 16) & 0x0f);
+            if (ctl & FDCAN_FDF)
+                msg.flags |= CANMSG_FLAG_FD;
+            if (ctl & FDCAN_BRS)
+                msg.flags |= CANMSG_FLAG_BRS;
+            if (ids & FDCAN_ESI)
+                msg.flags |= CANMSG_FLAG_ESI;
+            memcpy(msg.data, rxf0->data, msg.dlc);
             barrier();
             SOC_CAN->RXF0A = idx;
 
@@ -271,7 +301,7 @@ CAN_IRQHandler(void)
     }
 }
 
-static inline const uint32_t
+static inline uint32_t
 make_btr(uint32_t sjw,       // Sync jump width, ... hmm
          uint32_t time_seg1, // time segment before sample point, 1 .. 16
          uint32_t time_seg2, // time segment after sample point, 1 .. 8
@@ -283,38 +313,68 @@ make_btr(uint32_t sjw,       // Sync jump width, ... hmm
             | ((uint32_t)(brp - 1)) << FDCAN_NBTP_NBRP_Pos);
 }
 
-static inline const uint32_t
+static int
+compute_timing(uint32_t pclock, uint32_t bitrate, uint32_t max_brp,
+               uint32_t max_tseg1, uint32_t max_tseg2,
+               uint32_t target_sample_permille, uint32_t *best_brp,
+               uint32_t *best_tseg1, uint32_t *best_tseg2)
+{
+    if (!bitrate || pclock % bitrate)
+        return -1;
+    uint32_t bit_clocks = pclock / bitrate;
+    uint32_t found = 0, best_error = 1001;
+    for (uint32_t brp = 1; brp <= max_brp; brp++) {
+        if (bit_clocks % brp)
+            continue;
+        uint32_t tq = bit_clocks / brp;
+        if (tq < 3 || tq > 1 + max_tseg1 + max_tseg2)
+            continue;
+        uint32_t tseg2 = (tq * (1000 - target_sample_permille) + 500) / 1000;
+        if (tseg2 < 1)
+            tseg2 = 1;
+        if (tseg2 > max_tseg2)
+            tseg2 = max_tseg2;
+        uint32_t tseg1 = tq - 1 - tseg2;
+        if (tseg1 < 1 || tseg1 > max_tseg1)
+            continue;
+        uint32_t sample = ((1 + tseg1) * 1000 + tq / 2) / tq;
+        uint32_t error = (sample > target_sample_permille
+                          ? sample - target_sample_permille
+                          : target_sample_permille - sample);
+        if (!found || error < best_error) {
+            found = 1;
+            best_error = error;
+            *best_brp = brp;
+            *best_tseg1 = tseg1;
+            *best_tseg2 = tseg2;
+        }
+    }
+    return found ? 0 : -1;
+}
+
+static uint32_t
 compute_btr(uint32_t pclock, uint32_t bitrate)
 {
-    /*
-        Some equations:
-        Tpclock = 1 / pclock
-        Tq      = brp * Tpclock
-        Tbs1    = Tq * TS1
-        Tbs2    = Tq * TS2
-        NominalBitTime = Tq + Tbs1 + Tbs2
-        BaudRate = 1/NominalBitTime
-        Bit value sample point is after Tq+Tbs1. Ideal sample point
-        is at 87.5% of NominalBitTime
-        Use the lowest brp where ts1 and ts2 are in valid range
-     */
+    uint32_t brp = 1, tseg1 = 1, tseg2 = 1;
+    if (compute_timing(pclock, bitrate, 512, 256, 128, 875,
+                       &brp, &tseg1, &tseg2))
+        shutdown("CAN nominal bit timing is not exact");
+    uint32_t sjw = tseg2 > 4 ? 4 : tseg2;
+    return make_btr(sjw, tseg1, tseg2, brp);
+}
 
-    uint32_t bit_clocks = pclock / bitrate; // clock ticks per bit
-
-    uint32_t sjw = 2;
-    uint32_t qs;
-    // Find number of time quantas that gives us the exact wanted bit time
-    for (qs = 18; qs > 9; qs--) {
-        // check that bit_clocks / quantas is an integer
-        uint32_t brp_rem = bit_clocks % qs;
-        if (brp_rem == 0)
-            break;
-    }
-    uint32_t brp       = bit_clocks / qs;
-    uint32_t time_seg2 = qs / 8; // sample at ~87.5%
-    uint32_t time_seg1 = qs - (1 + time_seg2);
-
-    return make_btr(sjw, time_seg1, time_seg2, brp);
+static uint32_t
+compute_dbtp(uint32_t pclock, uint32_t bitrate)
+{
+    uint32_t brp = 1, tseg1 = 1, tseg2 = 1;
+    if (compute_timing(pclock, bitrate, 32, 32, 16, 800,
+                       &brp, &tseg1, &tseg2))
+        shutdown("CAN data bit timing is not exact");
+    uint32_t sjw = tseg2 > 4 ? 4 : tseg2;
+    return ((sjw - 1) << FDCAN_DBTP_DSJW_Pos
+            | (tseg2 - 1) << FDCAN_DBTP_DTSEG2_Pos
+            | (tseg1 - 1) << FDCAN_DBTP_DTSEG1_Pos
+            | (brp - 1) << FDCAN_DBTP_DBRP_Pos);
 }
 
 void
@@ -328,6 +388,12 @@ can_init(void)
     uint32_t pclock = get_pclock_frequency((uint32_t)SOC_CAN);
 
     uint32_t btr = compute_btr(pclock, CONFIG_CANBUS_FREQUENCY);
+#if CONFIG_CANBUS_FD
+    if (CONFIG_CANBUS_DATA_FREQUENCY
+        > CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE)
+        shutdown("CAN FD data rate exceeds transceiver capability");
+    uint32_t dbtr = compute_dbtp(pclock, CONFIG_CANBUS_DATA_FREQUENCY);
+#endif
 
     /*##-1- Configure the CAN #######################################*/
 
@@ -348,6 +414,10 @@ can_init(void)
     SOC_CAN->CCCR |= FDCAN_CCCR_PXHD;
 
     SOC_CAN->NBTP = btr;
+#if CONFIG_CANBUS_FD
+    SOC_CAN->DBTP = dbtr;
+    SOC_CAN->CCCR |= FDCAN_CCCR_FDOE | FDCAN_CCCR_BRSE;
+#endif
 
 #if CONFIG_MACH_STM32H7
     /* Setup message RAM addresses */
@@ -355,8 +425,14 @@ can_init(void)
     SOC_CAN->RXF0C = f0sa | (ARRAY_SIZE(MSG_RAM.RXF0) << FDCAN_RXF0C_F0S_Pos);
     SOC_CAN->RXESC = (7 << FDCAN_RXESC_F1DS_Pos) | (7 << FDCAN_RXESC_F0DS_Pos);
     uint32_t tbsa = (uint32_t)MSG_RAM.TXFIFO - SRAMCAN_BASE;
-    SOC_CAN->TXBC = tbsa | (ARRAY_SIZE(MSG_RAM.TXFIFO) << FDCAN_TXBC_TFQS_Pos);
+    SOC_CAN->TXBC = (tbsa
+                     | (ARRAY_SIZE(MSG_RAM.TXFIFO) << FDCAN_TXBC_TFQS_Pos)
+                     | FDCAN_TXBC_TFQM);
     SOC_CAN->TXESC = 7 << FDCAN_TXESC_TBDS_Pos;
+#else
+    // G0/G4 use the fixed message-RAM placement configured by reset values,
+    // but queue selection remains programmable.
+    SOC_CAN->TXBC |= FDCAN_TXBC_TFQM;
 #endif
 
     /* Leave the initialisation mode */
@@ -372,3 +448,10 @@ can_init(void)
     SOC_CAN->IE = FDCAN_IE_RF0NE | FDCAN_IE_TC | FDCAN_IE_PEDE | FDCAN_IE_PEAE;
 }
 DECL_INIT(can_init);
+
+DECL_CONSTANT("CANBUS_FD", CONFIG_CANBUS_FD);
+#if CONFIG_CANBUS_FD
+DECL_CONSTANT("CANBUS_DATA_FREQUENCY", CONFIG_CANBUS_DATA_FREQUENCY);
+DECL_CONSTANT("CANBUS_TRANSCEIVER_MAX_DATA_RATE",
+              CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE);
+#endif

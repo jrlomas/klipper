@@ -62,6 +62,8 @@ config USBSERIAL
     bool
 config USBCANBUS
     bool
+config HAVE_CANFD
+    bool
 config USB
     bool
     default y if USBSERIAL || USBCANBUS
@@ -579,6 +581,18 @@ config CANBUS
     default y if CANSERIAL || USBCANBUS
 config CANBUS_FREQUENCY
     int "CAN bus speed" if LOW_LEVEL_OPTIONS && CANBUS
+    default 1000000
+config CANBUS_FD
+    bool "Enable ISO CAN FD" if LOW_LEVEL_OPTIONS && CANBUS && HAVE_CANFD
+    depends on CANBUS && HAVE_CANFD
+    default n
+config CANBUS_DATA_FREQUENCY
+    int "CAN FD data phase speed" if LOW_LEVEL_OPTIONS && CANBUS_FD
+    depends on CANBUS_FD
+    default 1000000
+config CANBUS_TRANSCEIVER_MAX_DATA_RATE
+    int "CAN transceiver maximum data rate" if LOW_LEVEL_OPTIONS && CANBUS_FD
+    depends on CANBUS_FD
     default 1000000
 config CANBUS_FILTER
     bool

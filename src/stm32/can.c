@@ -98,6 +98,8 @@
 int
 canhw_send(struct canbus_msg *msg)
 {
+    if ((msg->flags & CANMSG_FLAG_FD) || msg->dlc > 8)
+        return 0;
     uint32_t tsr = SOC_CAN->TSR;
     if (!(tsr & (CAN_TSR_TME0|CAN_TSR_TME1|CAN_TSR_TME2))) {
         // No space in transmit fifo - enable tx irq
@@ -201,7 +203,7 @@ CAN_IRQHandler(void)
         // Read and ack data packet
         CAN_FIFOMailBox_TypeDef *mb = &SOC_CAN->sFIFOMailBox[0];
         uint32_t rir = mb->RIR;
-        struct canbus_msg msg;
+        struct canbus_msg msg = {};
         if (rir & CAN_RI0R_IDE)
             msg.id = ((rir >> CAN_RI0R_EXID_Pos) & 0x1fffffff) | CANMSG_ID_EFF;
         else

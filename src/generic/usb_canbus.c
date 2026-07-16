@@ -271,7 +271,7 @@ drain_host_queue(void)
         }
 
         // See if host frame needs to be transmitted
-        struct canbus_msg msg;
+        struct canbus_msg msg = {};
         msg.id = gs->can_id;
         msg.dlc = gs->can_dlc;
         msg.data32[0] = gs->data32[0];

@@ -156,6 +156,8 @@ compute_btr(uint32_t pclock, uint32_t bitrate)
 int
 canhw_send(struct canbus_msg *msg)
 {
+    if ((msg->flags & CANMSG_FLAG_FD) || msg->dlc > 8)
+        return 0;
     if (!(LPC_CANx->SR & CAN_SR_TBS1)) {
         irqstatus_t flag = irq_save();
         LPC_CANx->IER |= CAN_IER_TIE1;
@@ -220,7 +222,7 @@ can_process_rx(void)
 {
     while (LPC_CANx->SR & CAN_SR_RBS) {
         uint32_t rfs = LPC_CANx->RFS;
-        struct canbus_msg msg;
+        struct canbus_msg msg = {};
         if (rfs & CAN_RFS_FF)
             msg.id = (LPC_CANx->RID & 0x1fffffff) | CANMSG_ID_EFF;
         else
