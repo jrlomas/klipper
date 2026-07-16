@@ -48,6 +48,17 @@ EXECLOG_DRAIN_CHUNK = 4
 PING_INTERVAL = 1.0
 HOLD_SAMPLE_TIME = 0.25
 
+HH_DISABLED = 0
+HH_ARMED = 1
+HH_ENGAGED = 2
+HH_EXPIRED = 3
+HH_STATE_NAMES = {
+    HH_DISABLED: 'disabled',
+    HH_ARMED: 'armed',
+    HH_ENGAGED: 'engaged',
+    HH_EXPIRED: 'expired',
+}
+
 # Execution-log record types (mirror of src/execlog.h)
 EL_SEG_DONE = 1
 EL_TRIGGER = 2
@@ -95,7 +106,13 @@ class HeaterHold:
         self.mcu.register_config_callback(self._build_config)
         self.ping_cmd = self.setup_cmd = None
         self.engage_cmd = self.release_cmd = None
+        self.query_cmd = None
         self.heater = None
+        self.armed_target = None
+        self.state = HH_DISABLED
+        self.last_adc = 0
+        self.engaged_samples = 0
+        self.rearm_pending = False
         self.engaged = False
 
     def _build_config(self):
@@ -114,6 +131,23 @@ class HeaterHold:
             "heater_hold_engage oid=%c", cq=cq)
         self.release_cmd = self.mcu.lookup_command(
             "heater_hold_release oid=%c", cq=cq)
+        state_msg = ("heater_hold_state oid=%c state=%c adc=%hu"
+                     " samples=%u")
+        self.query_cmd = self.mcu.lookup_query_command(
+            "heater_hold_query oid=%c", state_msg, oid=self.oid, cq=cq)
+        self.mcu.register_serial_response(
+            self._handle_state, state_msg, self.oid)
+
+    def _handle_state(self, params):
+        self.state = params['state']
+        self.last_adc = params['adc']
+        self.engaged_samples = params['samples']
+        self.engaged = self.state == HH_ENGAGED
+
+    def query(self):
+        if self.query_cmd is not None:
+            self._handle_state(self.query_cmd.send([self.oid]))
+        return self.state
 
     def _temp_to_adc(self, temp):
         # The MCU works in raw ADC counts; convert through the
@@ -127,8 +161,9 @@ class HeaterHold:
     def arm(self, target_temp):
         if self.setup_cmd is None:
             return
+        target_temp = max(0., min(target_temp, self.hold_max_temp))
         try:
-            target = self._temp_to_adc(min(target_temp, self.hold_max_temp))
+            target = self._temp_to_adc(target_temp)
             ceiling = self._temp_to_adc(self.hold_max_temp)
             band_lo = self._temp_to_adc(max(0., target_temp - 15.))
             band = abs(band_lo - target)
@@ -146,6 +181,21 @@ class HeaterHold:
         self.setup_cmd.send([self.oid, target, ceiling, max(1, band),
                              min_valid, max_valid, ping_ticks, sample_ticks,
                              max_samples, 8])
+        self.armed_target = target_temp
+        self.state = HH_ARMED
+        self.engaged = False
+        self.rearm_pending = False
+
+    def sync_target(self, eventtime=None, force=False):
+        if self.heater is None:
+            pheaters = self.printer.lookup_object('heaters')
+            self.heater = pheaters.lookup_heater(self.name.split()[-1])
+        target = self.heater.get_status(eventtime)['target']
+        target = max(0., min(target, self.hold_max_temp))
+        if not force and target == self.armed_target:
+            return False
+        self.arm(target)
+        return True
 
     def disarm(self):
         if self.setup_cmd is not None:
@@ -159,12 +209,17 @@ class HeaterHold:
     def engage(self):
         if self.engage_cmd is not None:
             self.engage_cmd.send([self.oid])
+            self.state = HH_ENGAGED
             self.engaged = True
 
     def release(self):
         if self.release_cmd is not None:
             self.release_cmd.send([self.oid])
+            self.state = HH_DISABLED
             self.engaged = False
+            # Return the pin to host control now, then re-arm the passive
+            # liveness policy at the latest target on the next ping tick.
+            self.rearm_pending = True
 
 
 class McuExecLog:
@@ -338,13 +393,17 @@ class FailureRecovery:
         reactor = self.printer.get_reactor()
         if self.holds:
             for hold in self.holds.values():
-                hold.arm(hold.hold_max_temp)
+                hold.sync_target(reactor.monotonic(), force=True)
             self.ping_timer = reactor.register_timer(
                 self._ping_event, reactor.monotonic() + PING_INTERVAL)
 
     def _ping_event(self, eventtime):
         for hold in self.holds.values():
             try:
+                if hold.rearm_pending:
+                    hold.sync_target(eventtime, force=True)
+                elif hold.state == HH_ARMED:
+                    hold.sync_target(eventtime)
                 hold.ping()
             except Exception:
                 logging.exception("heater hold ping failed")
@@ -725,7 +784,15 @@ class FailureRecovery:
                               " motion reconciliation")
 
     def get_status(self, eventtime=None):
-        holds = dict((name, {'engaged': h.engaged})
+        holds = dict((name, {
+            'engaged': h.engaged,
+            'state': HH_STATE_NAMES.get(h.state, 'unknown'),
+            'target': h.armed_target,
+            'max_temp': h.hold_max_temp,
+            'max_duration': h.hold_max_duration,
+            'samples': h.engaged_samples,
+            'last_adc': h.last_adc,
+        })
                      for name, h in self.holds.items())
         disposition = {}
         tq = self.printer.lookup_object('trajectory_queuing', None)
@@ -745,10 +812,17 @@ class FailureRecovery:
     def cmd_STATUS(self, gcmd):
         parts = []
         for name, hold in sorted(self.holds.items()):
+            try:
+                hold.query()
+            except Exception:
+                logging.exception("heater hold state query failed")
             parts.append("%s: policy=hold max_temp=%.0f max_duration=%.0fs"
-                         " engaged=%d"
+                         " target=%.1f state=%s engaged=%d samples=%d"
                          % (name, hold.hold_max_temp,
-                            hold.hold_max_duration, hold.engaged))
+                            hold.hold_max_duration,
+                            hold.armed_target or 0.,
+                            HH_STATE_NAMES.get(hold.state, 'unknown'),
+                            hold.engaged, hold.engaged_samples))
         if not parts:
             parts.append("no heaters configured with failure_policy: hold")
         if self.link_paused_mcus:
@@ -788,8 +862,10 @@ class FailureRecovery:
 
     def cmd_ENGAGE(self, gcmd):
         heater = gcmd.get('HEATER', None)
+        eventtime = self.printer.get_reactor().monotonic()
         for name, hold in self.holds.items():
             if heater is None or name.endswith(heater):
+                hold.sync_target(eventtime, force=True)
                 hold.engage()
                 gcmd.respond_info("Engaged hold on %s" % (name,))
 

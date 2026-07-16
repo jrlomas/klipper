@@ -23,6 +23,7 @@
 #include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_COMMAND
 #include "execlog.h" // execlog_append
+#include "heater_hold_math.h" // heater_hold_at_or_above_ceiling
 #include "sched.h" // DECL_TASK
 
 enum {
@@ -75,13 +76,6 @@ heater_hold_transition(struct heater_hold *h, uint8_t state)
     sched_wake_task(&heater_hold_wake);
 }
 
-// "Hotter than" comparison honoring sensor direction
-static int
-hotter_than(struct heater_hold *h, uint16_t adc, uint16_t ref)
-{
-    return h->invert ? adc > ref : adc < ref;
-}
-
 // Periodic controller. Runs from the timer irq at sample_ticks; the
 // per-wake work is one ADC state-machine step or one control step.
 static uint_fast8_t
@@ -122,8 +116,8 @@ heater_hold_event(struct timer *t)
         return SF_RESCHEDULE;
     }
     // Hard ceiling
-    if (hotter_than(h, h->ceiling_adc, adc)
-        || adc == h->ceiling_adc) {
+    if (heater_hold_at_or_above_ceiling(
+            h->invert, adc, h->ceiling_adc)) {
         heater_output(h, 0);
         heater_hold_transition(h, HH_EXPIRED);
         h->time.waketime += h->sample_ticks;
@@ -151,7 +145,8 @@ heater_hold_event(struct timer *t)
         return SF_RESCHEDULE;
     }
     // Hysteresis control
-    heater_output(h, hotter_than(h, adc, h->target_adc));
+    heater_output(h, heater_hold_hotter_than(
+                      h->invert, adc, h->target_adc));
 
     h->time.waketime += h->sample_ticks;
     return SF_RESCHEDULE;

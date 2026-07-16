@@ -76,6 +76,7 @@ for TEST in \
     test/helix_gcode_pulse_compare_test.py \
     test/helix_motion_audit_test.py \
     test/helix_status_test.py \
+    test/heater_hold_safety_test.py \
     test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
     test/intentproto_transport_test.py \

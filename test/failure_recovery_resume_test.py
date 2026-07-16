@@ -228,6 +228,79 @@ def make_fr(printer):
     return fr.FailureRecovery(FakeConfig(printer))
 
 
+def test_heater_hold_tracks_live_target_and_mcu_state():
+    class Command:
+        def __init__(self, response=None):
+            self.calls = []
+            self.response = response
+        def send(self, args):
+            self.calls.append(list(args))
+            return self.response
+    class Heater:
+        target = 0.
+        def get_status(self, eventtime):
+            return {'target': self.target}
+    class Heaters:
+        def __init__(self, heater):
+            self.heater = heater
+        def lookup_heater(self, name):
+            assert name == 'heater_bed'
+            return self.heater
+    class Printer:
+        def __init__(self, heaters):
+            self.heaters = heaters
+        def lookup_object(self, name):
+            assert name == 'heaters'
+            return self.heaters
+    class Mcu:
+        def seconds_to_clock(self, seconds):
+            return int(seconds * 1000)
+
+    heater = Heater()
+    hold = fr.HeaterHold.__new__(fr.HeaterHold)
+    hold.printer = Printer(Heaters(heater))
+    hold.name = 'heater_bed'
+    hold.max_temp_cfg = 130.
+    hold.hold_max_temp = 65.
+    hold.hold_max_duration = 20.
+    hold.hold_ping_timeout = 2.
+    hold.mcu = Mcu()
+    hold.oid = 7
+    hold.heater = None
+    hold.setup_cmd = Command()
+    hold.engage_cmd = Command()
+    hold.release_cmd = Command()
+    hold.query_cmd = Command({
+        'state': fr.HH_EXPIRED, 'adc': 4321, 'samples': 80})
+    hold._temp_to_adc = lambda temp: int(temp * 100.)
+    hold.armed_target = None
+    hold.state = fr.HH_DISABLED
+    hold.last_adc = hold.engaged_samples = 0
+    hold.rearm_pending = False
+    hold.engaged = False
+
+    assert hold.sync_target(0., force=True)
+    assert hold.armed_target == 0. and hold.state == fr.HH_ARMED
+    heater.target = 55.
+    assert hold.sync_target(1.)
+    assert hold.setup_cmd.calls[-1][1] == 5500
+    assert not hold.sync_target(2.)
+    heater.target = 80.
+    assert hold.sync_target(3.)
+    assert hold.armed_target == 65.
+    assert hold.setup_cmd.calls[-1][1] == 6500
+
+    hold.engage()
+    assert hold.engaged and hold.state == fr.HH_ENGAGED
+    hold.release()
+    assert not hold.engaged and hold.state == fr.HH_DISABLED
+    assert hold.rearm_pending
+    assert hold.query() == fr.HH_EXPIRED
+    assert not hold.engaged and hold.last_adc == 4321
+    assert hold.engaged_samples == 80
+    print("PASS: heater hold follows live targets and reports MCU state")
+
+
 def test_execlog_drain_uses_response_barrier_and_deduplicates():
     class Recorder:
         def __init__(self):
@@ -432,6 +505,7 @@ def test_board_reset():
 
 
 def main():
+    test_heater_hold_tracks_live_target_and_mcu_state()
     test_execlog_drain_uses_response_barrier_and_deduplicates()
     test_execlog_normalizes_negative_position()
     test_shutdown_drain_is_deferred_outside_no_pause_handler()
