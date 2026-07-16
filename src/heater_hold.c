@@ -145,7 +145,7 @@ heater_hold_event(struct timer *t)
         return SF_RESCHEDULE;
     }
     // Hysteresis control
-    heater_output(h, heater_hold_hotter_than(
+    heater_output(h, heater_hold_colder_than(
                       h->invert, adc, h->target_adc));
 
     h->time.waketime += h->sample_ticks;

@@ -11,6 +11,12 @@ heater_hold_hotter_than(uint8_t invert, uint16_t adc, uint16_t reference)
 }
 
 static inline int
+heater_hold_colder_than(uint8_t invert, uint16_t adc, uint16_t reference)
+{
+    return invert ? adc < reference : adc > reference;
+}
+
+static inline int
 heater_hold_at_or_above_ceiling(uint8_t invert, uint16_t adc,
                                 uint16_t ceiling)
 {
