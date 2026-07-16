@@ -52,17 +52,33 @@ mcu is configured to use canbus):
   micro-controller canbus hardware.
 - `tx_error`: The number of transmit errors detected by the
   micro-controller canbus hardware.
-- `tx_retries`: The number of transmit attempts that were retried due
-  to bus contention or errors.
+- `tx_retries`: On rp2XXX, the controller retry count. On STM32 FDCAN HELIX
+  builds, the number of pending hardware transmissions cancelled after their
+  bounded useful-arrival deadline; the protocol ARQ may subsequently retry
+  the command block.
 - `bus_state`: The status of the interface (typically "active" for a
   bus in normal operation, "warn" for a bus with recent errors,
   "passive" for a bus that will no longer transmit canbus error
   frames, or "off" for a bus that will no longer transmit or receive
   messages).
 
-Note that only the rp2XXX micro-controllers report a non-zero
-`tx_retries` field and the rp2XXX micro-controllers always report
-`tx_error` as zero and `bus_state` as "active".
+The rp2XXX implementation always reports `tx_error` as zero and `bus_state`
+as "active". STM32 FDCAN reports protocol errors, bus state, and stale-buffer
+cancellations.
+
+## helix_can
+
+The following information is available in each
+[`helix_can bus_name`](Config_Reference.md#helix_can) object:
+
+- `interface`: Managed SocketCAN interface (normally `helixcan0`).
+- `profile`, `nominal_bitrate`, and `data_bitrate`: The unanimously selected
+  and read-back active profile.
+- `required_nodes`: Canonical full board identities required on the bus.
+- `epoch` and `state`: Profile transaction epoch and lifecycle state
+  (`bootstrap`, `preparing`, `active`, `maintenance`, or `failed`).
+- `time_epoch` and `time_source`: Two-step CAN time epoch and
+  `usb_sof_can_timestamp` when a composite bridge owns the source.
 
 ## configfile
 

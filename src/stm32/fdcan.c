@@ -406,6 +406,13 @@ CAN_IRQHandler(void)
                 CAN_Errors.rx_error += 1;
             canbus_notify_protocol_error();
         }
+        if (psr & FDCAN_PSR_BO) {
+            // Bus-off is an immediate transport hold, not eight independent
+            // transient errors. Feed the same bounded-burst gate to preserve
+            // one recovery path in the generic carrier.
+            for (uint_fast8_t i = 0; i < 8; i++)
+                canbus_notify_protocol_error();
+        }
     }
 }
 
@@ -556,6 +563,18 @@ canhw_abort_fd(void)
 {
     PreparedDBTP = PreparedDataBitrate = 0;
     PreparedBRS = 0;
+    // Suppress BRS emission and, if bus-off set INIT, explicitly begin the
+    // M_CAN recovery sequence by leaving INIT again. FDOE remains enabled so
+    // the controller can diagnose residual FD traffic while this node emits
+    // only the Classical recovery floor.
+    SOC_CAN->CCCR |= FDCAN_CCCR_INIT;
+    while (!(SOC_CAN->CCCR & FDCAN_CCCR_INIT))
+        ;
+    SOC_CAN->CCCR |= FDCAN_CCCR_CCE;
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_BRSE;
+    barrier();
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_CCE;
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT;
 }
 #endif
 

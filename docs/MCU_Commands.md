@@ -466,6 +466,39 @@ relays its beacons so secondary boards can discipline their clocks
   rate=%u last_err=%i machine_ref=%u local_ref=%u" response describing
   the filter state.
 
+### HELIX CAN-FD commands
+
+These commands implement the transactional carrier described by FD-0001
+[doc 15](founding/0001-motion-intentions/15-CANFD_Transport.md). They are
+issued by `[helix_can]`; manual use during an active machine is unsafe.
+
+* `get_canbus_capabilities` : Reports FD support, exact data-bitrate mask,
+  maximum payload, and declared transceiver ceiling.
+
+* `prepare_canbus_transport mtu=%c brs=%c data_bitrate=%u epoch=%u` : Validates
+  and stages an exact carrier/profile without emitting FD.
+
+* `commit_canbus_transport epoch=%u` : Commits controller data timing while
+  carrier emission remains Classical.
+
+* `enable_canbus_transport epoch=%u` : Enables the staged carrier after every
+  node and the Linux netdevice have committed.
+
+* `abort_canbus_transport epoch=%u` : Suppresses FD emission and returns to the
+  Classical recovery floor. The response is `canbus_transport state=%c
+  active=%c mtu=%c brs=%c data_bitrate=%u epoch=%u`.
+
+* `get_can_time_status` : Reports the downstream node's two-step timestamp
+  epoch, pending pair, quality, matched/missed/invalid counts, and sample age.
+
+* `can_time_bridge_start epoch=%u cadence_us=%u quality=%c
+  require_discipline=%c` : Starts or stops (`cadence_us=0`) the composite
+  bridge's FDCAN Tx-Event time source. A non-primary bridge refuses to emit
+  useful samples until its own USB-SOF discipline is enabled and converged.
+
+* `get_can_time_bridge_status` : Reports bridge time-source enable state,
+  epoch, quality, emitted sync/follow-up counts, and invalid-source count.
+
 ### Structured trace commands
 
 * `trace_test count=%hu` : Emits up to 1024 registered `trace_probe`

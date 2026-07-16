@@ -5,9 +5,9 @@ Before=klipper.service
 
 [Service]
 Type=simple
-ExecStart=/home/jrlomas/Projects/klipper/scripts/helix_can_manager.py --interface helixcan0 --group klipper
+ExecStart=/home/jrlomas/Projects/klipper/scripts/helix_can_manager.py --interface helixcan0 --group jrlomas
 User=root
-Group=root
+Group=jrlomas
 RuntimeDirectory=helix
 RuntimeDirectoryMode=0750
 NoNewPrivileges=yes

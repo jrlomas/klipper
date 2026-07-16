@@ -1,6 +1,7 @@
 """Named HELIX CAN bus configuration and profile ownership."""
 
 import json
+import logging
 import secrets
 import socket
 
@@ -122,6 +123,9 @@ class HelixCANBus:
     def _select_profile(self):
         capabilities = [conn.get_can_capabilities()
                         for conn in self.connections]
+        if not capabilities:
+            raise self.printer.config_error(
+                "HELIX CAN bus %s has no configured nodes" % (self.name,))
         for profile in self.preferred_profiles:
             if profile == 'CLASSIC_1M':
                 continue
@@ -148,6 +152,42 @@ class HelixCANBus:
         self.printer.send_event('helix_can:incident', {
             'bus': self.name, 'kind': 'profile_activation_failed',
             'epoch': epoch, 'reason': str(reason)})
+        logging.error('HELIX_CAN_INCIDENT %s', json.dumps({
+            'bus': self.name, 'kind': 'profile_activation_failed',
+            'epoch': epoch, 'reason': str(reason)}, sort_keys=True))
+    def owns_bridge(self, mcu_name):
+        return self.bridge_mcu == mcu_name
+    def quiesce(self, reason='maintenance'):
+        if self.bridge_mcu is not None and self.time_epoch:
+            try:
+                name = self.bridge_mcu
+                if name != 'mcu':
+                    name = 'mcu ' + name
+                bridge = self.printer.lookup_object(name)
+                stop = bridge.lookup_query_command(
+                    'can_time_bridge_start epoch=%u cadence_us=%u quality=%c'
+                    ' require_discipline=%c',
+                    'can_time_bridge_state enabled=%c epoch=%u quality=%c'
+                    ' sync_count=%u followup_count=%u invalid_count=%u')
+                stop.send([self.time_epoch, 0, 0, 0])
+            except Exception:
+                logging.exception('Unable to stop CAN time source on %s',
+                                  self.name)
+        for conn in self.connections:
+            try:
+                conn.abort_can_profile(self.epoch)
+            except Exception:
+                logging.exception('Unable to quiesce CAN node on %s',
+                                  self.name)
+        self._manager_apply('CLASSIC_1M')
+        self.active_profile = 'CLASSIC_1M'
+        self.state = 'maintenance'
+        self.time_epoch = 0
+        self.printer.send_event('helix_can:profile_changed', {
+            'bus': self.name, 'profile': 'CLASSIC_1M', 'epoch': self.epoch,
+            'reason': reason})
+        logging.info('HELIX CAN bus %s quiesced to Classical 1 Mbit: %s',
+                     self.name, reason)
     def _start_time_source(self):
         if self.bridge_mcu is None:
             return

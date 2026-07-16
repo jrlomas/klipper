@@ -42,6 +42,9 @@ def main():
     assert 'timesync_local_to_clock(local_clock)' in bridge
     assert 'timesync_ingest_can_sample(seq, machine_clock' in node
     assert 'CANBUS_TIME_FOLLOWUP' in node
+    assert 'CAN FD protocol error burst' in node
+    assert 'SOC_CAN->TXBCR = cancel' in fdcan
+    assert 'SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT' in fdcan
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')
 
 

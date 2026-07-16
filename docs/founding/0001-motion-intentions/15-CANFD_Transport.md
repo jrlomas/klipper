@@ -1,7 +1,8 @@
 # FD-0001: CAN FD Transport, Negotiation, and Time Transfer
 
-Status: Adopted design; implementation pending. The complete software vertical
-slice defined here is required before CAN FD hardware qualification begins.
+Status: Software vertical slice implemented and workstation-tested; physical
+CAN qualification pending. The implementation is checkpointed by commits
+`8b278385`, `0403c6f7`, and `0e73783c`.
 The 1 Mbit/s case is a profile of the same ISO CAN FD implementation, not a
 separate prototype protocol.
 
@@ -516,25 +517,31 @@ profile and time epochs agree.
 Implementation proceeds in dependency order, but does not create separate
 physical-test products:
 
-1. Freeze wire/state-machine definitions and identity/configuration schema.
-2. Implement the generic 64-byte carrier and complete STM32 FDCAN driver.
-3. Implement composite USB, full FD `gs_usb`, transactional profile control,
+1. [x] Freeze wire/state-machine definitions and identity/configuration schema.
+2. [x] Implement the generic 64-byte carrier and complete STM32 FDCAN driver.
+3. [x] Implement composite USB, full FD `gs_usb`, transactional profile control,
    product strings, and stable interface naming.
-4. Implement CAN hardware timestamps and the SOF-derived two-step time path.
-5. Implement host CAN FD transport, named bus object, canonical identities,
+4. [x] Implement CAN hardware timestamps and the SOF-derived two-step time path.
+5. [x] Implement host CAN FD transport, named bus object, canonical identities,
    manager privilege boundary, and Klippy lifecycle gates.
-6. Implement mixed-node containment, bus-off/USB-reset recovery, bootloader
+6. [x] Implement mixed-node containment, bus-off/USB-reset recovery, bootloader
    Classical quiesce, failure-recovery integration, status, Atlas incidents,
    and operational documentation.
-7. Complete workstation tests and an adversarial source review of the entire
+7. [ ] Complete the full workstation regression and an adversarial source review of the entire
    vertical slice.
-8. Only then begin physical qualification, first using the conservative
+8. [ ] Only then begin physical qualification, first using the conservative
    `FD_1M_NOBRS` profile and then the same code/state machine at 2/5/8 Mbit/s.
 
 The 1 Mbit/s run is the first electrical qualification point because existing
 transceivers can exercise it; it is not permission to omit BRS, TDC,
 negotiation, mixed-node handling, timestamping, or recovery from the software
 implementation that reaches the bench.
+
+The focused Python/C contract tests, host helper build, and both STM32G0B1
+node and composite-bridge builds pass. The unchecked step 7 deliberately keeps
+the full regression/adversarial review visible as the final software gate; the
+unchecked step 8 prevents those build results from being mistaken for physical
+CAN evidence.
 
 ## Acceptance matrix after implementation
 

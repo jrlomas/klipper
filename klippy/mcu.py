@@ -950,6 +950,9 @@ class MCURestartHelper:
         else:
             self._restart_arduino()
     def _firmware_restart_bridge(self):
+        for name, bus in self._printer.lookup_objects(module='helix_can'):
+            if bus.owns_bridge(self._name):
+                bus.quiesce('bridge firmware restart')
         self._firmware_restart(True)
 
 # Low-level mcu connection management helper

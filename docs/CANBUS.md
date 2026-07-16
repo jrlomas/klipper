@@ -1,8 +1,9 @@
 # CANBUS
 
 > **This is Helix** — an evolution of Klipper. This page documents
-> Controller Area Network (CAN) bus support in Helix; the capability is
-> shared with upstream Klipper. New to Helix? Start with the
+> Controller Area Network (CAN) bus support in Helix. Classical CAN remains
+> upstream-compatible; Helix also provides a transactional ISO CAN-FD mode.
+> New to Helix? Start with the
 > **[Helix overview](HELIX.md)**.
 
 This document describes Helix's Controller Area Network (CAN) bus support.
@@ -56,7 +57,24 @@ printer and use a multi-meter to check the resistance between the CANH
 and CANL wires - it should report ~60 ohms on a correctly wired CAN
 bus.
 
-## Finding the canbus_uuid for new micro-controllers
+## Finding a board identity
+
+HELIX CAN uses the full typed factory identifier as its canonical identity;
+the historical six-byte `canbus_uuid` hash is retained only for compatible
+Classical assignment frames. With the interface in Classical 1 Mbit bootstrap
+mode, run:
+
+```
+~/klippy-env/bin/python ~/Projects/klipper/scripts/helix_can_scan.py helixcan0
+```
+
+The result includes a value such as
+`board_id=stm32:00112233445566778899aabb` and its legacy assignment handle.
+If two boards ever produce the same six-byte handle, discovery refuses the
+collision instead of guessing. The old query below remains valid for legacy
+configurations.
+
+### Legacy canbus_uuid discovery
 
 Each micro-controller on the CAN bus is assigned a unique id based on
 the factory chip identifier encoded into each micro-controller. To
@@ -88,9 +106,71 @@ the CAN bus to communicate with the device - for example:
 canbus_uuid: 11aa22bb33cc
 ```
 
+The HELIX named-bus form is preferred for CAN-FD:
+
+```
+[mcu canbridge]
+serial: /dev/helix-can-bridge
+
+[helix_can helixcan0]
+interface: helixcan0
+bridge_mcu: canbridge
+preferred_profiles: FD_1M_NOBRS
+classic_node_policy: refuse
+
+[mcu ebb36]
+canbus: helixcan0
+board_id: stm32:00112233445566778899aabb
+```
+
+Every required node attaches in Classical 1 Mbit mode first. HELIX intersects
+the controller/transceiver capabilities, stages the same profile on every
+node, asks Linux to apply and read back the SocketCAN timing, and enables FD
+only after the complete transaction succeeds. A profile request is never
+silently rounded or downgraded.
+
 ## USB to CAN bus bridge mode
 
-Some micro-controllers support selecting "USB to CAN bus bridge" mode
+### HELIX composite bridge
+
+The HELIX bridge enumerates as manufacturer `OpenAMS`, product
+`Helix CAN-FD Bridge`. Interface zero binds to mainline Linux `gs_usb`; two
+additional interfaces form a CDC-ACM control console. The bridge is configured
+with `serial: /dev/helix-can-bridge` and is not assigned a synthetic CAN node
+or fake CAN UUID. The supplied systemd `.link` rule names the network device
+`helixcan0`; the privileged manager accepts only allowlisted profile names and
+interfaces over `/run/helix/helix-can-manager.sock`.
+
+The conservative current-hardware profile is `FD_1M_NOBRS`: it uses 64-byte
+ISO CAN-FD frames at a 1 Mbit/s nominal/data rate and therefore remains inside
+the existing transceivers' electrical ceiling. Later 2/5/8 Mbit/s BRS profiles
+use the same protocol and state machine but require suitable transceivers.
+
+Before a bridge firmware restart, Klippy quiesces every downstream node to the
+permanent Classical 1 Mbit recovery floor, stops the time beacon, and only then
+resets the USB bridge.
+
+Install the checked-in host integration once (the service unit currently uses
+this workstation's `/home/jrlomas/Projects/klipper` checkout):
+
+```
+sudo install -m 0644 ~/Projects/klipper/scripts/systemd/73-helix-can.link /etc/systemd/network/73-helix-can.link
+sudo install -m 0644 ~/Projects/klipper/scripts/udev/73-helix-can.rules /etc/udev/rules.d/73-helix-can.rules
+sudo install -m 0644 ~/Projects/klipper/scripts/systemd/helix-can-manager.service /etc/systemd/system/helix-can-manager.service
+sudo systemctl daemon-reload
+sudo udevadm control --reload
+sudo systemctl enable --now helix-can-manager.service
+```
+
+The service runs with only `CAP_NET_ADMIN`, accepts fixed profile names and an
+allowlisted interface, and exposes its socket to the workstation's `jrlomas`
+service group (change both unit arguments if the Klipper service user differs). Replug
+the bridge after installing the naming rules; do not rename a live CAN device
+during a print.
+
+### Legacy upstream-compatible bridge
+
+Some micro-controllers support the historical "USB to CAN bus bridge" mode
 during Helix's "make menuconfig". This mode may allow one to use a
 micro-controller as both a "USB to CAN bus adapter" and as a Helix
 node.

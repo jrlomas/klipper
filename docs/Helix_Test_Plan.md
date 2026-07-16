@@ -860,9 +860,28 @@ Phases 3/7/8 over each real transport.
   - [ ] **Recovery follow-up:** close Phase 8.7 under an active print; normal
     USB transport stability and powered reconnect are already checked.
 - [ ] **9.2 — CAN toolhead.** Bring up a CAN toolhead board.
-  Pass: enumerates (UUID admin), data traffic on the assigned ids,
-  `test_can_transport` behavior confirmed on real silicon; motion + time
-  sync + triggers work over CAN.
+  Pass: full `board_id` discovery and assignment, negotiated carrier traffic,
+  motion, hardware time sync, and triggers work over CAN.
+  - [x] **Software vertical slice:** canonical full identity with collision
+    refusal; named `helixcan0`; 0..64-byte ISO FD carrier; exact 1/2/5/8 Mbit
+    capability masks; prepare/commit/apply/enable rollback; composite
+    `gs_usb` + CDC bridge with no fake CAN node; bounded FDCAN cancellation;
+    FD error-burst hold; Classical bridge-restart quiesce; and two-step FDCAN
+    Tx-Event/RX timestamp transfer are implemented. Focused tests, chelper,
+    and STM32G0B1 node/bridge builds pass on 2026-07-16.
+  - [ ] **9.2a — Conservative electrical bring-up:** flash the FPS as the
+    composite bridge and EBB36 as a CAN node, install the supplied `.link`,
+    udev, and manager service, confirm stable `helixcan0`, scan the full EBB36
+    identity, and activate `FD_1M_NOBRS` with zero CAN error growth.
+  - [ ] **9.2b — Carrier and recovery:** exercise all FD DLCs, sustained MCU
+    protocol traffic, stale-recipient cancellation, bridge replug, bus-off,
+    FD error-burst Classical fallback, and bridge firmware-restart quiesce.
+  - [ ] **9.2c — Machine time and motion:** record Tx Event/RX timestamp pair
+    statistics and convergence under load, then home, move, extrude, and print
+    through the EBB36 over CAN. Scope the timing path where practical.
+  - [ ] **9.2d — Faster transceivers:** after hardware replacement, qualify
+    2/5/8 Mbit BRS profiles independently; do not infer them from the 1 Mbit
+    result.
 - [ ] **9.3 — WiFi (ESP32).** Datagram transport over WiFi.
   Expect: deep queue absorbs latency/jitter; authenticated datagrams;
   XOR-erasure FEC recovers dropped frames on a lossy link.

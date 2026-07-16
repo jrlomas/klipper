@@ -46,6 +46,14 @@ serial:
 #canbus_interface:
 #   If using a device connected to a CAN bus then this sets the CAN
 #   network interface to use. The default is 'can0'.
+#board_id:
+#   The canonical typed factory identity of a HELIX CAN node, for example
+#   "stm32:00112233445566778899aabb". Use this with "canbus" below instead
+#   of canbus_uuid. HELIX resolves the compatible six-byte assignment handle
+#   and refuses any collision.
+#canbus:
+#   The suffix of a [helix_can] section that owns this MCU's named bus (for
+#   example "helixcan0"). Required with board_id.
 #restart_method:
 #   This controls the mechanism the host will use to reset the
 #   micro-controller. The choices are 'arduino', 'cheetah', 'rpi_usb',
@@ -107,6 +115,38 @@ pins such as "extra_mcu:ar9" may then be used elsewhere in the config
 ```
 [mcu my_extra_mcu]
 # See the "mcu" section for configuration parameters.
+```
+
+### [helix_can]
+
+Transactional HELIX CAN-FD bus ownership (FD-0001
+[doc 15](founding/0001-motion-intentions/15-CANFD_Transport.md)). The bridge
+itself is a separate USB-serial MCU and is never represented by a CAN UUID.
+
+```
+[helix_can helixcan0]
+#interface: helixcan0
+#   SocketCAN network interface controlled by this object. The default is the
+#   section suffix.
+#bridge_mcu:
+#   Name of the composite USB bridge MCU (for example "canbridge"). When set,
+#   HELIX starts its hardware-timestamped CAN machine-time source after profile
+#   activation and quiesces the bus before bridge firmware restart.
+#bridge_is_primary: False
+#   Set True only if the composite bridge is also the primary machine-time MCU.
+#   Otherwise its USB SOF discipline must converge before it emits CAN time.
+#preferred_profiles: FD_8M_BRS, FD_5M_BRS, FD_2M_BRS, FD_1M_NOBRS
+#   Ordered profile preference. Only a profile supported exactly by every
+#   required node and its declared transceiver ceiling may be selected.
+#require_fd: True
+#   Refuse startup when no unanimous FD profile is available.
+#classic_node_policy: refuse
+#   "refuse" rejects an incompatible Classical-only node. "fallback" permits
+#   a second explicit CLASSIC_1M transaction; fallback is never silent.
+#time_beacon_us: 20000
+#   Hardware-timestamped two-step CAN time cadence, from 5000 to 1000000 us.
+#manager_socket: /run/helix/helix-can-manager.sock
+#   Privileged manager Unix socket. The default is shown.
 ```
 
 ### [failure_recovery]

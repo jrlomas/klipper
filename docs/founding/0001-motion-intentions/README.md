@@ -43,7 +43,7 @@ status line records its more precise state.
 | [12-ESP32_Architecture.md](12-ESP32_Architecture.md) | Network-native ESP32: radio quarantined on a separate core | Partial — component and modem consoles run on Lolin32; motion/peripheral proof pending |
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
 | [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Implemented; 12/64 MHz USB time merge qualified, coordinated action/CAN pending |
-| [15-CANFD_Transport.md](15-CANFD_Transport.md) | Transactional CAN FD, real bridge/node identities, SocketCAN control, and timestamped USB-SOF time transfer | Adopted design; complete vertical-slice implementation pending before hardware qualification |
+| [15-CANFD_Transport.md](15-CANFD_Transport.md) | Transactional CAN FD, real bridge/node identities, SocketCAN control, and timestamped USB-SOF time transfer | Vertical slice implemented and workstation-tested; physical CAN qualification pending |
 
 ## Reading order
 
