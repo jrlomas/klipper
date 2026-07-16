@@ -1113,6 +1113,23 @@ Now put it together on the **full printer**.
   7,000 mm/s^2, but the active V0 limits clamped motion to 200 mm/s and
   3,000 mm/s^2; it therefore closes the repeatable baseline gate, not the
   purpose-built high-load gate in 14.3.
+
+  A further supervised PLA cube on 2026-07-15 closed the physical regression
+  for the bounded Q16 quintic-crossing repair in `81d7ddf4`. The EBB36 ran
+  that image while the Pico ran `fc944686`; the job consumed all 2,301,802
+  G-code bytes, completed 1,733.4 s of print time, and commanded 3,638.0 mm
+  of filament. Klipper reported `complete`, the virtual SD position reached
+  the file size, and the operator confirmed that the finished cube looked
+  great. Both links retained zero invalid bytes and only their existing
+  nine-byte startup retransmit baseline, the toolhead reported zero stalls,
+  and neither MCU paused or entered trajectory recovery. The EBB36 remained
+  time-synchronized (`converged`, 38-tick final error, -0.064 ppm host-rate
+  error, and -0.0625 us final SOF phase error). A post-print `EXECLOG_DUMP`
+  drained the retained 2,048-record window without changing link health.
+  This run exercises the exact firmware correction that accepts a locally
+  monotonic, sub-step quantized crossing while preserving fail-closed
+  rejection of multi-step discontinuities; together with its captured-vector
+  positive and negative regressions, the successful print closes that defect.
 - [ ] **14.3 — High-speed / high-accel print.** Push into the regime where
   jerk/snap limiting and deep queues matter.
   Pass: surface finish holds; no step loss; no queue underrun stalls.
