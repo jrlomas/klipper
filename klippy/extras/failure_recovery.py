@@ -108,6 +108,7 @@ class HeaterHold:
         self.engage_cmd = self.release_cmd = None
         self.query_cmd = None
         self.heater = None
+        self.adc_max = None
         self.armed_target = None
         self.state = HH_DISABLED
         self.last_adc = 0
@@ -116,6 +117,7 @@ class HeaterHold:
         self.engaged = False
 
     def _build_config(self):
+        self.adc_max = int(self.mcu.get_constant_float('ADC_MAX'))
         # Thermistor-style dividers read hotter as lower ADC counts
         self.mcu.add_config_cmd(
             "config_heater_hold oid=%d heater_pin=%s sensor_pin=%s"
@@ -156,7 +158,8 @@ class HeaterHold:
         heater = pheaters.lookup_heater(self.name.split()[-1])
         sensor = heater.sensor
         adc_value = sensor.adc_convert.calc_adc(temp)
-        return max(0, min(0xffff, int(adc_value * 65535. + .5)))
+        return max(0, min(self.adc_max,
+                          int(adc_value * self.adc_max + .5)))
 
     def arm(self, target_temp):
         if self.setup_cmd is None:

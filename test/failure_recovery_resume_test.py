@@ -238,6 +238,10 @@ def test_heater_hold_tracks_live_target_and_mcu_state():
             return self.response
     class Heater:
         target = 0.
+        sensor = type('Sensor', (), {
+            'adc_convert': type('Convert', (), {
+                'calc_adc': staticmethod(lambda temp: temp / 100.)})()
+        })()
         def get_status(self, eventtime):
             return {'target': self.target}
     class Heaters:
@@ -265,6 +269,7 @@ def test_heater_hold_tracks_live_target_and_mcu_state():
     hold.hold_max_duration = 20.
     hold.hold_ping_timeout = 2.
     hold.mcu = Mcu()
+    hold.adc_max = 4095
     hold.oid = 7
     hold.heater = None
     hold.setup_cmd = Command()
@@ -272,7 +277,6 @@ def test_heater_hold_tracks_live_target_and_mcu_state():
     hold.release_cmd = Command()
     hold.query_cmd = Command({
         'state': fr.HH_EXPIRED, 'adc': 4321, 'samples': 80})
-    hold._temp_to_adc = lambda temp: int(temp * 100.)
     hold.armed_target = None
     hold.state = fr.HH_DISABLED
     hold.last_adc = hold.engaged_samples = 0
@@ -283,12 +287,12 @@ def test_heater_hold_tracks_live_target_and_mcu_state():
     assert hold.armed_target == 0. and hold.state == fr.HH_ARMED
     heater.target = 55.
     assert hold.sync_target(1.)
-    assert hold.setup_cmd.calls[-1][1] == 5500
+    assert hold.setup_cmd.calls[-1][1] == 2252
     assert not hold.sync_target(2.)
     heater.target = 80.
     assert hold.sync_target(3.)
     assert hold.armed_target == 65.
-    assert hold.setup_cmd.calls[-1][1] == 6500
+    assert hold.setup_cmd.calls[-1][1] == 2662
 
     hold.engage()
     assert hold.engaged and hold.state == fr.HH_ENGAGED
