@@ -48,6 +48,7 @@ class Heater:
         # pwm caching
         self.next_pwm_time = 0.
         self.last_pwm_value = 0.
+        self.autonomous_hold = None
         # Setup control algorithm sub-class
         algos = {'watermark': ControlBangBang, 'pid': ControlPID}
         algo = config.getchoice('control', algos)
@@ -70,6 +71,25 @@ class Heater:
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
     def set_pwm(self, read_time, value):
+        if self.autonomous_hold is not None:
+            # An engaged/expired MCU holder owns the physical pin until an
+            # explicit release.  In addition, discard historical PID output
+            # produced while the host catches up on buffered ADC reports
+            # after a stall.  Sending those old timestamps would turn a
+            # successful autonomous hold into an MCU "Timer too close"
+            # shutdown as soon as Klippy resumed.
+            if self.autonomous_hold.blocks_host_pwm():
+                self.next_pwm_time = 0.
+                self.last_pwm_value = 0.
+                return
+            pwm_time = read_time + self.pwm_delay
+            mcu = self.mcu_pwm.get_mcu()
+            eventtime = self.printer.get_reactor().monotonic()
+            min_lead = .25 * mcu.min_schedule_time()
+            if pwm_time < mcu.estimated_print_time(eventtime) + min_lead:
+                self.next_pwm_time = 0.
+                self.last_pwm_value = 0.
+                return
         if self.target_temp <= 0. or read_time > self.verify_mainthread_time:
             value = 0.
         if ((read_time < self.next_pwm_time or not self.last_pwm_value)
@@ -97,6 +117,10 @@ class Heater:
         #logging.debug("temp: %.3f %f = %f", read_time, temp)
     def _handle_shutdown(self):
         self.verify_mainthread_time = -999.
+    def setup_autonomous_hold(self, hold):
+        self.autonomous_hold = hold
+        # The bounded holder replaces the legacy host-refresh watchdog.
+        self.mcu_pwm.setup_max_duration(0.)
     # External commands
     def get_name(self):
         return self.name

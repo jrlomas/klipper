@@ -116,6 +116,24 @@ class HeaterHold:
         self.rearm_pending = False
         self.engaged = False
 
+    def prepare_mcu_config(self):
+        # A normal Klipper heater uses a short max_duration watchdog which
+        # requires the host to refresh its PWM output continuously.  An
+        # autonomous hold intentionally survives loss of that host traffic,
+        # so leaving the legacy watchdog armed would make the two safety
+        # mechanisms compete for the same output and shut the MCU down before
+        # the bounded hold can run.  Replace it only for an explicitly opted-
+        # in heater, after all config objects exist but before the MCU config
+        # callbacks are finalized.  The hold firmware then owns the ceiling,
+        # sensor-validity, deviation, liveness, and duration bounds.
+        if self.heater is None:
+            pheaters = self.printer.lookup_object('heaters')
+            self.heater = pheaters.lookup_heater(self.name.split()[-1])
+        self.heater.setup_autonomous_hold(self)
+
+    def blocks_host_pwm(self):
+        return self.state in (HH_ENGAGED, HH_EXPIRED)
+
     def _build_config(self):
         self.adc_max = int(self.mcu.get_constant_float('ADC_MAX'))
         # Thermistor-style dividers read hotter as lower ADC counts
@@ -376,6 +394,12 @@ class FailureRecovery:
                                " G-Code command boundary")
 
     def _handle_mcu_identify(self):
+        # The autonomous holder replaces each opted-in heater's legacy PWM
+        # refresh watchdog.  MCU configuration is not finalized until the
+        # subsequent klippy:connect event, so this remains early enough to
+        # affect the emitted PWM/digital-output configuration command.
+        for hold in self.holds.values():
+            hold.prepare_mcu_config()
         # Configure execution logs on the mcus that support them
         for name in self.execlog_mcu_names:
             objname = 'mcu' if name == 'mcu' else 'mcu ' + name

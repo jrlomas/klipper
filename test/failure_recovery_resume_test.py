@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                 "..", "klippy"))
 
 import extras.failure_recovery as fr  # noqa: E402
+import extras.heaters as heaters_mod  # noqa: E402
 from extras.failure_recovery import (  # noqa: E402
     EL_SEG_DONE, EL_UNDERRUN)
 
@@ -305,6 +306,96 @@ def test_heater_hold_tracks_live_target_and_mcu_state():
     print("PASS: heater hold follows live targets and reports MCU state")
 
 
+def test_heater_hold_replaces_legacy_pwm_watchdog():
+    class Pwm:
+        def __init__(self):
+            self.max_durations = []
+        def setup_max_duration(self, duration):
+            self.max_durations.append(duration)
+    class Heater:
+        def __init__(self):
+            self.mcu_pwm = Pwm()
+            self.hold = None
+        def setup_autonomous_hold(self, hold):
+            self.hold = hold
+            self.mcu_pwm.setup_max_duration(0.)
+    class Heaters:
+        def __init__(self, heater):
+            self.heater = heater
+            self.lookups = []
+        def lookup_heater(self, name):
+            self.lookups.append(name)
+            return self.heater
+    class Printer:
+        def __init__(self, heaters):
+            self.heaters = heaters
+        def lookup_object(self, name):
+            assert name == 'heaters'
+            return self.heaters
+
+    heater = Heater()
+    heaters = Heaters(heater)
+    hold = fr.HeaterHold.__new__(fr.HeaterHold)
+    hold.printer = Printer(heaters)
+    hold.name = 'heater_bed'
+    hold.heater = None
+
+    hold.prepare_mcu_config()
+    assert heaters.lookups == ['heater_bed']
+    assert hold.heater is heater
+    assert heater.hold is hold
+    assert heater.mcu_pwm.max_durations == [0.]
+    print("PASS: heater hold replaces legacy PWM refresh watchdog")
+
+
+def test_autonomous_hold_filters_stale_and_competing_host_pwm():
+    class Reactor:
+        def monotonic(self):
+            return 100.
+    class Printer:
+        def get_reactor(self):
+            return Reactor()
+    class Mcu:
+        def min_schedule_time(self):
+            return .100
+        def estimated_print_time(self, eventtime):
+            assert eventtime == 100.
+            return 100.
+    class Pwm:
+        def __init__(self):
+            self.calls = []
+        def get_mcu(self):
+            return Mcu()
+        def set_pwm(self, print_time, value):
+            self.calls.append((print_time, value))
+    class Hold:
+        def __init__(self):
+            self.blocked = False
+        def blocks_host_pwm(self):
+            return self.blocked
+
+    heater = heaters_mod.Heater.__new__(heaters_mod.Heater)
+    heater.printer = Printer()
+    heater.mcu_pwm = Pwm()
+    heater.autonomous_hold = Hold()
+    heater.pwm_delay = .300
+    heater.target_temp = 50.
+    heater.verify_mainthread_time = 200.
+    heater.next_pwm_time = 0.
+    heater.last_pwm_value = 0.
+    heater.min_pwm_change = .01
+
+    heater.set_pwm(90., .5)
+    assert heater.mcu_pwm.calls == []
+    heater.autonomous_hold.blocked = True
+    heater.set_pwm(100., .5)
+    assert heater.mcu_pwm.calls == []
+    heater.autonomous_hold.blocked = False
+    heater.set_pwm(100., .5)
+    assert heater.mcu_pwm.calls == [(100.3, .5)]
+    print("PASS: held heater rejects stale and competing host PWM")
+
+
 def test_execlog_drain_uses_response_barrier_and_deduplicates():
     class Recorder:
         def __init__(self):
@@ -510,6 +601,8 @@ def test_board_reset():
 
 def main():
     test_heater_hold_tracks_live_target_and_mcu_state()
+    test_heater_hold_replaces_legacy_pwm_watchdog()
+    test_autonomous_hold_filters_stale_and_competing_host_pwm()
     test_execlog_drain_uses_response_barrier_and_deduplicates()
     test_execlog_normalizes_negative_position()
     test_shutdown_drain_is_deferred_outside_no_pause_handler()

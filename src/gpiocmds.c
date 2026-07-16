@@ -21,6 +21,8 @@ struct digital_out_s {
     struct gpio_out pin;
     uint32_t max_duration, cycle_time;
     struct move_queue_head mq;
+    uint32_t pin_id;
+    uint8_t taken_over;
 #if CONFIG_WANT_TRAFFIC_CLASSES
     uint16_t drop_count;
     uint32_t last_scheduled, last_actual;
@@ -145,6 +147,7 @@ command_config_digital_out(uint32_t *args)
     struct digital_out_s *d = oid_alloc(args[0], command_config_digital_out
                                         , sizeof(*d));
     d->pin = pin;
+    d->pin_id = args[1];
     d->flags = (args[2] ? DF_ON : 0) | (args[3] ? DF_DEFAULT_ON : 0);
     d->max_duration = args[4];
     move_queue_setup(&d->mq, sizeof(struct digital_move));
@@ -152,6 +155,57 @@ command_config_digital_out(uint32_t *args)
 DECL_COMMAND(command_config_digital_out,
              "config_digital_out oid=%c pin=%u value=%c"
              " default_value=%c max_duration=%u");
+
+// Transfer a software-PWM pin to an autonomous controller.  A direct GPIO
+// write alone is not sufficient: the digital_out timer may still be toggling
+// the same pin and can turn it back on after a heater ceiling/duration cutoff.
+// Cancel both the active timer and queued updates, reset the digital object's
+// state, and then apply the requested level.  irq_save() makes this safe from
+// either a command handler or an autonomous timer callback.
+int
+digital_out_takeover_pin(uint32_t pin, uint8_t value)
+{
+    uint8_t oid;
+    struct digital_out_s *d;
+    foreach_oid(oid, d, command_config_digital_out) {
+        if (d->pin_id != pin)
+            continue;
+        irqstatus_t flag = irq_save();
+        d->taken_over = 1;
+        sched_del_timer(&d->timer);
+        // Unlike shutdown/config reset, takeover is reversible.  Return every
+        // cancelled move to the runtime pool so repeated hold/release cycles
+        // cannot exhaust soft-move storage.
+        while (!move_queue_empty(&d->mq))
+            move_free(move_queue_pop(&d->mq));
+        uint8_t on_flag = value ? DF_ON : 0;
+        gpio_out_write(d->pin, on_flag);
+        d->on_duration = d->off_duration = d->end_time = 0;
+        d->flags = (d->flags & DF_DEFAULT_ON) | on_flag;
+        irq_restore(flag);
+        return 0;
+    }
+    return -1;
+}
+
+// Return a taken-over pin to its configured digital output object.  Keep the
+// physical output at its safe value; the next normal queued update establishes
+// the requested PWM state.
+int
+digital_out_release_pin(uint32_t pin)
+{
+    uint8_t oid;
+    struct digital_out_s *d;
+    foreach_oid(oid, d, command_config_digital_out) {
+        if (d->pin_id != pin)
+            continue;
+        irqstatus_t flag = irq_save();
+        d->taken_over = 0;
+        irq_restore(flag);
+        return 0;
+    }
+    return -1;
+}
 
 void
 command_set_digital_out_pwm_cycle(uint32_t *args)
@@ -184,6 +238,14 @@ queue_digital_out(struct digital_out_s *d, uint32_t time,
     m->on_duration = on_duration;
 
     irq_disable();
+    // An autonomous owner has cancelled this object's timer and queue.  A
+    // command that was already in transport when takeover occurred must not
+    // reclaim the pin; discard it until the owner explicitly releases it.
+    if (d->taken_over) {
+        move_free(m);
+        irq_enable();
+        return;
+    }
     int first_on_queue = move_queue_push(&m->node, &d->mq);
     if (!first_on_queue) {
         irq_enable();
@@ -271,6 +333,11 @@ void
 command_update_digital_out(uint32_t *args)
 {
     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+    irq_disable();
+    if (d->taken_over) {
+        irq_enable();
+        return;
+    }
     sched_del_timer(&d->timer);
     if (!move_queue_empty(&d->mq))
         shutdown("update_digital_out not valid with active queue");
@@ -284,6 +351,7 @@ command_update_digital_out(uint32_t *args)
     } else {
         d->flags = (flags & DF_DEFAULT_ON) | on_flag;
     }
+    irq_enable();
 }
 DECL_COMMAND(command_update_digital_out, "update_digital_out oid=%c value=%c");
 

@@ -23,6 +23,7 @@
 #include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_COMMAND
 #include "execlog.h" // execlog_append
+#include "gpiocmds.h" // digital_out_takeover_pin, digital_out_release_pin
 #include "heater_hold_math.h" // heater_hold_at_or_above_ceiling
 #include "sched.h" // DECL_TASK
 
@@ -58,6 +59,25 @@ struct heater_hold {
 };
 
 static struct task_wake heater_hold_wake;
+static void heater_hold_transition(struct heater_hold *h, uint8_t state);
+
+static uint_fast8_t
+heater_takeover(struct heater_hold *h)
+{
+    // The normal software-PWM object may have an active toggle timer even
+    // when no future host updates remain.  Quiesce it before the autonomous
+    // holder writes the shared pin, otherwise it can re-energize the heater
+    // after a ceiling/duration cutoff reports output off.
+    if (digital_out_takeover_pin(h->heater_pin, 0)) {
+        h->heater_out = gpio_out_setup(h->heater_pin, 0);
+        h->heater_on = 0;
+        heater_hold_transition(h, HH_EXPIRED);
+        return 0;
+    }
+    h->heater_out = gpio_out_setup(h->heater_pin, 0);
+    h->heater_on = 0;
+    return 1;
+}
 
 static void
 heater_output(struct heater_hold *h, uint8_t on)
@@ -86,7 +106,10 @@ heater_hold_event(struct timer *t)
     if (h->state == HH_ARMED) {
         if (timer_read_time() - h->last_ping > h->ping_timeout) {
             // Host went silent: take the heater over
-            h->heater_out = gpio_out_setup(h->heater_pin, h->heater_on);
+            if (!heater_takeover(h)) {
+                h->time.waketime += h->sample_ticks;
+                return SF_RESCHEDULE;
+            }
             h->engaged_samples = 0;
             h->deviation_count = 0;
             heater_hold_transition(h, HH_ENGAGED);
@@ -228,7 +251,10 @@ command_heater_hold_engage(uint32_t *args)
     struct heater_hold *h = heater_hold_oid_lookup(args[0]);
     irq_disable();
     if (h->state == HH_ARMED) {
-        h->heater_out = gpio_out_setup(h->heater_pin, h->heater_on);
+        if (!heater_takeover(h)) {
+            irq_enable();
+            return;
+        }
         h->engaged_samples = 0;
         h->deviation_count = 0;
         heater_hold_transition(h, HH_ENGAGED);
@@ -247,6 +273,7 @@ command_heater_hold_release(uint32_t *args)
         heater_output(h, 0);
     sched_del_timer(&h->time);
     h->state = HH_DISABLED;
+    digital_out_release_pin(h->heater_pin);
     irq_enable();
     sendf("heater_hold_state oid=%c state=%c adc=%hu samples=%u"
           , h->oid, h->state, h->last_adc, h->engaged_samples);

@@ -1468,16 +1468,21 @@ max_temp:
 #   the stock watchdog behavior. Setting this to 'hold' arms an
 #   autonomous micro-controller bang-bang holder that keeps the heater
 #   at a safe temperature if the host or link goes away. The remaining
-#   'hold_*' options below only apply when this is 'hold'. The default
-#   is 'off'.
+#   'hold_*' options below only apply when this is 'hold'. For an opted-in
+#   heater this bounded holder replaces the normal short host-refresh PWM
+#   watchdog; sensor validity, deviation, ceiling, and duration limits stay
+#   enforced on the micro-controller. On engage, the holder takes exclusive
+#   ownership of the software-PWM GPIO, cancels pending host PWM, and rejects
+#   in-flight host updates. Host PWM resumes only after explicit release. The
+#   default is 'off'.
 #hold_max_temp: 110
 #   Only used when failure_policy is 'hold'. Ceiling temperature (in
 #   Celsius) the autonomous holder will maintain and never exceed. Must
 #   not exceed the heater's max_temp. The default is 110.
 #hold_max_duration: 3600
 #   Only used when failure_policy is 'hold'. Maximum time (in seconds)
-#   the autonomous holder will keep the heater warm before releasing
-#   it. The default is 3600.
+#   the autonomous holder will keep the heater warm before turning it
+#   off. The default is 3600.
 #hold_ping_timeout: 5.0
 #   Only used when failure_policy is 'hold'. If the host stops sending
 #   liveness pings for longer than this time (in seconds), the micro-

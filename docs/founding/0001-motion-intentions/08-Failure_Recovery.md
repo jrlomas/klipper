@@ -2,7 +2,8 @@
 
 Status: Core implemented and workstation-tested in HELIX 0.9; live
 host-stall/underrun recovery and powered USB link-loss/reconnect validated on
-RP2040 + STM32G0B1 hardware. Active lost-board motion, heater-hold, and an
+RP2040 + STM32G0B1 hardware, with autonomous RP2040 bed hold, duration cutoff,
+and ceiling cutoff physically validated. Active lost-board motion and an
 under-print resume witness remain.
 
 Klipper's failure philosophy today is binary: any error — a late
@@ -213,6 +214,29 @@ deliberately minimal on-MCU capability:
   failed);
 * the `hold_max_duration` deadline → off, unconditionally.
 
+The RP2040 implementation was physically qualified on the V0 on 2026-07-15
+with a 50 C bed target, 65 C ceiling, 2.5-second liveness timeout, and
+20-second duration. Host silence engaged the holder without shutting down the
+printer; the bed was 50.48 C after 66 controller samples and the holder turned
+off at exactly 80 × 250 ms samples.
+
+The first ceiling run revealed why controller state is not sufficient safety
+evidence. The holder expired at sample zero and reported output off, but the
+ordinary software-PWM timer still owned the shared GPIO and subsequently
+reasserted it; the bed rose from 67.97 C to approximately 88 C before `M112`.
+The fixed handoff cancels that timer and all queued PWM, rejects updates that
+were already in host transport, and retains exclusive ownership through
+expiry. In the corrected physical regression, a temporary 55 C ceiling was
+crossed at 55.05 C while host PWM requested 13.2%; the holder expired at sample
+zero (ADC 3490), host target/power remained zero, Klipper remained ready, and
+the bed cooled from 51.86 C to 50.27 C over the recorded 60-second window.
+Historical ADC/PID updates accumulated during a host stall are also discarded
+instead of being sent with past MCU clocks. Explicit release returns ownership
+to the host and re-arms the liveness policy at the current target. The live
+hand-back check accepted 91.7% host PWM immediately after release and raised
+the bed from 47.84 C to 49.07 C in ten seconds before target/power returned to
+zero.
+
 This *replaces* the blanket `max_duration` watchdog for held heaters
 with a different — still strictly bounded — safety envelope, and that
 trade must be stated plainly: an opt-in held bed keeps ~60–110 °C
@@ -261,13 +285,13 @@ changed the stale planned Z endpoint to the MCU-derived ramp endpoint
 (87.789057 mm in the first complete reconciliation). A follow-up run exposed
 and fixed the idle-snapshot rule above; after a deliberate delay, a cold Z
 witness moved exactly from 32.210946 to 37.210946 mm while both boards remained
-ready. Powered secondary-USB loss and in-place reconnect are now independently
-qualified as described above. The remaining qualification is an independent
-physical position/pulse measurement, active motion on the disconnected board,
-heater hold, and an under-print witness feature. The current
-virtual-SD implementation resumes at the next G-Code command; it does not yet
-reconstruct the unexecuted suffix of the command that was already consumed by
-lookahead when the queue starved. Until that host replanning step exists, the
+ready. Powered secondary-USB loss, in-place reconnect, and autonomous bed hold
+are now independently qualified as described above. The remaining
+qualification is an independent physical position/pulse measurement, active
+motion on the disconnected board, and an under-print witness feature. The
+current virtual-SD implementation resumes at the next G-Code command; it does
+not yet reconstruct the unexecuted suffix of the command that was already
+consumed by lookahead when the queue starved. Until that host replanning step exists, the
 mechanism is safe and position-coherent but not print-transparent.
 
 **Print-quality honesty** (unchanged from

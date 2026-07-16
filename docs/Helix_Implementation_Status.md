@@ -351,12 +351,20 @@ security decision, or belong to an explicitly optional later architecture:
 The V0 USB rig now establishes real Pico/EBB36 identification, signed
 build/flash, feature/ABI advertisement, built-in self-tests, legacy telemetry,
 mixed-frequency machine-time discipline, structured trace/drop accounting,
-and firmware-reset recovery. The Lolin32 evidence above separately establishes
-the authenticated WiFi component/modem console and controlled-loss pair FEC.
+firmware-reset recovery, and bounded autonomous RP2040 bed hold. The heater
+qualification covered manual engage/release, host-silence engage at 50 C,
+exact 20-second expiry, a physical ceiling cutoff under active PWM, exclusive
+software-PWM/GPIO ownership, stale-PWM rejection, and return to host ownership
+without a printer shutdown. The ceiling test first caught a false telemetry
+pass—the old PWM timer reasserted the pin and drove the bed to about 88 C—then
+the corrected 55 C regression showed sustained cooldown with Klipper ready.
+The Lolin32 evidence
+above separately establishes the authenticated WiFi component/modem console
+and controlled-loss pair FEC.
 
 The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
 remain material: trajectory drift/underrun/stress tests, trace-off step timing,
-scoped cross-MCU action, PWM waveform quality, heater hold, fault injection,
+scoped cross-MCU action, PWM waveform quality, remaining fault injection,
 soak, real printing, V2.4 CAN,
 constrained F072 silicon, native RMII/W5500 PHYs, product-key provisioning,
 and Pi/Hailo deployment.

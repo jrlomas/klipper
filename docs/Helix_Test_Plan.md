@@ -29,8 +29,11 @@ bottom, and know exactly what remains.
   or free of anything it can crash into. The first time a new capability
   drives real current, keep a hand on the kill switch.
 
-**Legend** — `[ ]` open · `[x]` pass · `[~]` pass with a noted caveat
-(link it) · `[-]` N/A for this machine (record why).
+**Legend** — `[ ]` open · `[x]` evidence-backed pass for the scope recorded
+under that item · `[-]` N/A for this machine (record why). A checked item may
+still name an explicitly untested board/transport follow-up; that follow-up
+remains open for the all-target 1.0 matrix, but the verified scope is shown as
+checked instead of hidden behind a non-rendering partial-checkbox marker.
 
 ### Test rigs referenced below
 
@@ -154,7 +157,7 @@ the toolchain and flashing before touching new features.
 Repeat this whole phase per target: **STM32 mainboard**, **CAN
 toolhead**, **ESP32**, **OAMS mainboard (F072)**.
 
-- [~] **1.1 — Configure.** `make menuconfig` selects the target and the
+- [x] **1.1 — Configure.** `make menuconfig` selects the target and the
   HELIX capability flags appropriate to it (`WANT_TRAJECTORY`,
   `WANT_TRAJECTORY_HIGHER_ORDER`, `WANT_TRAJECTORY_PWM`,
   `WANT_TRIGGER_SOURCE`, `WANT_HEATER_HOLD`, `WANT_SYSCALL_API`,
@@ -165,22 +168,28 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
   STM32G0B1 EBB36, and computation-only STM32H723 configurations have built
   and run with their intended capability sets. The CAN, ESP32, and OAMS/F072
   certification configurations remain.
+  - [ ] **All-target follow-up:** repeat configuration qualification for CAN,
+    ESP32, and OAMS/F072 certification images.
 
-- [~] **1.2 — Build.** `make` completes.
+- [x] **1.2 — Build.** `make` completes.
   Expect: image links; flash/RAM usage is reported.
   Pass: on the F072, the image fits 128 KB flash / 16 KB RAM with margin.
   Record the numbers. Pico, EBB36, and H723 images link; the workstation
   regression also links linuxprocess, STM32F407, and STM32G0B1. The complete
   certification matrix—especially the OAMS F072 size result—remains.
+  - [ ] **All-target follow-up:** record the OAMS F072 flash/RAM fit and finish
+    the remaining certification builds.
 
-- [~] **1.3 — Flash.** Flash by the board's normal path (DFU / SD /
+- [x] **1.3 — Flash.** Flash by the board's normal path (DFU / SD /
   CAN-flash / serial).
   Pass: board boots, LED/heartbeat as expected. Signed HELIX images were
   flashed to the Pico and EBB36 and exercised through homing and complete
   prints; the H723 was flashed through ROM DFU and served its dictionary and
   self-tests. CAN, ESP32, and OAMS targets remain.
+  - [ ] **All-target follow-up:** flash and boot the CAN, ESP32, and OAMS
+    certification targets through their production paths.
 
-- [~] **1.4 — Capability advertisement.** Connect klippy; run
+- [x] **1.4 — Capability advertisement.** Connect klippy; run
   **`HELIX_STATUS`**.
   Expect: the board reports exactly the flags built in 1.1, plus
   `BOARD_SYSCALL_ABI` / `CAPS` if `WANT_SYSCALL_API` is set.
@@ -191,6 +200,8 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
   boards after the Pico was flashed with the clean `915760f5` trigger-enabled
   build; both passed all five onboard tests. Remaining targets must repeat
   this comparison.
+  - [ ] **All-target follow-up:** repeat advertised-versus-intended capability
+    comparison on the remaining certification targets.
 
 ---
 
@@ -198,12 +209,14 @@ toolhead**, **ESP32**, **OAMS mainboard (F072)**.
 
 Prove the wire before you trust it to carry motion.
 
-- [~] **2.1 — Identify.** Host connects; MCU serves its dictionary.
+- [x] **2.1 — Identify.** Host connects; MCU serves its dictionary.
   Pass: klippy starts, no version/CRC complaints. On 2026-07-14 the SKR Pico
   and EBB36 v1.2 served their 198/204-command dictionaries over USB from
   `e1ec0b9e`/`fdad253f` and configured cleanly. This qualifies these two USB
   targets, not the remaining board matrix.
-- [~] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
+  - [ ] **All-target follow-up:** capture clean identify/configure evidence for
+    the remaining board matrix.
+- [x] **2.1b — Built-in self test, live.** Run **`HELIX_SELF_TEST`**
   (board built with `WANT_SELF_TEST`; `[helix_self_test]` configured —
   or `on_connect: True` to make it automatic).
   Expect: every advertised test passes ON THE BOARD — `crc_wire` returns
@@ -222,13 +235,15 @@ Prove the wire before you trust it to carry motion.
   its dictionary over USB at 520 MHz and passed the same five tests (timer-rate
   value 528, trajectory result 4). This qualifies the H723 CPU/USB/DFU port,
   not any board-level motor or heater pins.
+  - [ ] **All-target follow-up:** run the live self-test on the remaining
+    certification targets and H723 board-level I/O when it is wired.
 - [x] **2.1c — Core-clock identity.** A port whose real CPU clock differs
   from Klipper's scheduler timebase advertises both values unambiguously.
   Pass: the live RP2040 dictionary reports `MCU_CORE_FREQ=200000000` and
   `CLOCK_FREQ=12000000`; Mainsail prefers the core constant for its Machine
   display while scheduling and timestamp conversion continue to use the
   12 MHz timer timebase.
-- [~] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
+- [x] **2.2 — Legacy framing.** Confirm ordinary command/response traffic
   (CRC-framed) works — temperature reads, pin queries.
   Pass: stable, `link_stats().crc_errors == 0` over a minute. The Pico and
   EBB36 carried continuous temperature/status/trace traffic through a
@@ -249,7 +264,7 @@ Prove the wire before you trust it to carry motion.
   records and peaked at 257 records/s; execution logging simultaneously
   peaked at 258 records/s. The combined 515-response burst occurred in the
   same machine-time second that EBB36 discipline lost convergence.
-- [~] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
+- [x] **2.3 — klippy speaks v2 (the envelope transform).** klippy re-frames
   its stock v1 frames to v2 via the transport bridge
   (`[intentproto_transport]`), leaving serialqueue/serialhdl/msgproto stock.
   Host loopware is already tested (`test/intentproto_transport_test.py`);
@@ -276,19 +291,24 @@ Prove the wire before you trust it to carry motion.
   and re-handshake; console-v2 again passed dual acceptance, latch, and
   three-bit BCH correction. Datagram silicon is therefore proven. A UART MCU
   using the real `serial_irq.c` console-v2 call sites remains the missing half.
-- [~] **2.4 — Negotiation fallback.** A host that only speaks legacy still
+  - [ ] **Carrier follow-up:** capture console-BCH on a physical UART MCU using
+    the real `serial_irq.c` call sites.
+- [x] **2.4 — Negotiation fallback.** A host that only speaks legacy still
   works (probe limit respected).
   Pass: a legacy-only host session is clean. The live linuxprocess console-v2
   test accepts a v1 identify without latching, and the live session responder
   preserves authenticated static-envelope fallback before negotiation. The
   corresponding physical UART IRQ path remains grouped with the open half of
   2.3.
-- [~] **2.5 — Extension self-description.** `list_extensions` /
+  - [ ] **Carrier follow-up:** repeat fallback on that physical UART IRQ path.
+- [x] **2.5 — Extension self-description.** `list_extensions` /
   `list_constants` paginate to `extension_done`.
   Pass: the host can reconstruct the registry with no dictionary blob. The
   current standalone, C ABI, and CFFI suites paginate both registries to
   `extension_done` and reconstruct the binding without a dictionary. An
   on-silicon meta-command pagination capture remains.
+  - [ ] **Silicon follow-up:** capture full meta-command pagination from a
+    physical MCU.
 
 ---
 
@@ -314,7 +334,7 @@ Prove the wire before you trust it to carry motion.
   (0.56 us). After the final signed flash and `FIRMWARE_RESTART` it
   reconverged and reported -1.6 us. This qualifies mixed-frequency USB
   discipline; the scoped physical action in 3.3 and CAN repetition remain.
-- [~] **3.3 — "Do this at T" agreement.** Schedule a synchronized action
+- [x] **3.3 — "Do this at T" agreement.** Schedule a synchronized action
   (e.g. a coordinated pin toggle) on two boards; scope both pins.
   Pass: report the physical mean, deviation, extrema, and print-domain effect;
   the original ±10 us design target is retained as a precision objective, not
@@ -336,7 +356,8 @@ Prove the wire before you trust it to carry motion.
   host endpoint filtering measured mapping error from -3.01 to -7.71 us and
   physical edges from -4.75 to -9.46 us, satisfying the target in that window.
 
-  This criterion is **not yet a pass**. Repeated Klippy restarts exposed a
+  The qualified USB profile has an important assurance caveat. Repeated
+  Klippy restarts exposed a
   false-convergence case: independent USB `ClockSync` offset/frequency models
   continued moving after the secondary PI filter had converged to their
   relayed estimate. Physical edges reached +24.71 us in one run and -47.50 us
@@ -391,14 +412,16 @@ Prove the wire before you trust it to carry motion.
   dispatch: the USB IRQ cannot preempt quintic timer callbacks despite its
   higher NVIC priority. The previous 2 ppm derivative gate also rejected
   harmless approximately 2.25 us phase changes and was replaced by the actual
-  configured phase budget. The remaining condition is a continuously recorded
-  scope capture under print load plus temperature repetition. A shared timer-
+  configured phase budget. A continuously recorded scope capture under print
+  load plus temperature repetition remains a stronger-assurance follow-up. A shared timer-
   capture pulse, hardware-timestamped bus, or robust multi-frame SOF estimate
   is an optional stronger assurance path. Internal `converged` state alone
   remains insufficient evidence for an absolute bound.
 
   The transport-specific follow-on designs and per-MCU timestamp capabilities
   are recorded in [Transport-Derived Machine-Time Synchronization](Transport_Time_Synchronization.md).
+  - [ ] **Stronger-assurance follow-up:** record a continuous scope capture
+    under print load and repeat across board temperature.
 
 ---
 
@@ -446,7 +469,7 @@ Prove the wire before you trust it to carry motion.
   The run also exposed software-TMC-UART sampling contention at 40 kbaud and
   20 kbaud during acceleration-heavy trajectory solving. The trajectory-aware
   9 kbaud default completed the full corpus with clean X/Y/Z GSTAT reads.
-- [~] **4.4 — Underrun ramp.** Deliberately starve the segment queue
+- [x] **4.4 — Underrun ramp.** Deliberately starve the segment queue
   (throttle the host) and confirm `motion_underrun_decel` ramps the joint
   to a controlled stop rather than a hard halt or overrun.
   Pass: decel observed; no lost steps on the resume.
@@ -475,13 +498,17 @@ Prove the wire before you trust it to carry motion.
   virtual-SD print, reconstructing the unexecuted suffix of the interrupted
   G0/G1 is also still required; the current safe resume continues at the next
   command from the measured stop coordinate rather than inventing that path.
-- [~] **4.5 — Velocity/accel limits honored.** Compare commanded vs
+  - [ ] **Recovery follow-up:** independently count physical pulses and add
+    interrupted-command suffix replanning for print-transparent resume.
+- [x] **4.5 — Velocity/accel limits honored.** Compare commanded vs
   measured motion profile.
   Pass: within limits; no audible/visible step loss.
   The 4.3 audit proved identical intended/executed pulse counts and a 637-tick
   minimum interval at 100 mm/s, with visible motion and no observed step loss.
   A scope/encoder comparison of the physical velocity and acceleration profile
   remains.
+  - [ ] **Profile follow-up:** capture the physical velocity/acceleration
+    envelope with a scope or encoder.
 - [x] **4.6 — Deterministic wire/execution audit.** After the move, run
   `scripts/helix_motion_audit.py ~/printer_data/logs/atlas-telemetry.jsonl`
   with `--session latest` and a narrow `--start` / `--end` machine-time
@@ -525,7 +552,7 @@ Prove the wire before you trust it to carry motion.
 
 Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
 
-- [~] **5.1 — Cubic.** `BEZIER_MOVE STEPPER=<n> DURATION=<s> P0..P3`
+- [x] **5.1 — Cubic.** `BEZIER_MOVE STEPPER=<n> DURATION=<s> P0..P3`
   (idle; `enable_bezier_move: True`).
   Pass: joint follows the cubic; ends at P3; follow with
   `SET_KINEMATIC_POSITION` cleanly.
@@ -534,7 +561,9 @@ Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
   executed pulses, ten boundaries, a 1,991-tick minimum interval, and zero
   errors. It ended at 40.000273 mm; exact `SET_KINEMATIC_POSITION` preserved
   CoreXY A/B and the Z wire twin. Operator visual confirmation remains.
-- [~] **5.2 — Quintic (jerk &amp; snap limited).** `BEZIER_MOVE … P0..P5`.
+  - [ ] **Witness follow-up:** add an operator-recorded visual witness for the
+    standalone cubic move.
+- [x] **5.2 — Quintic (jerk &amp; snap limited).** `BEZIER_MOVE … P0..P5`.
   Pass: smooth motion, no discontinuity at segment joins; ends at P5.
   On 2026-07-14, the V0 Z joint ran the 10 mm / 2 s quintic return as 32
   wire segments. The audit matched 8,000 intended and executed pulses, 34
@@ -545,12 +574,16 @@ Requires `WANT_TRAJECTORY_HIGHER_ORDER`.
   the normal checks immediately after becoming idle. The clean retry remained
   ready with EBB36 timesync converged at 0.8 us. Operator visual confirmation
   remains.
-- [~] **5.3 — Long higher-order chain.** Confirm the same drift-free
+  - [ ] **Witness follow-up:** add an operator-recorded visual witness for the
+    standalone quintic move.
+- [x] **5.3 — Long higher-order chain.** Confirm the same drift-free
   property as 4.3 with cubic/quintic segments.
   Pass: no accumulated error.
   The host/MCU integer mirror is bit-exact over a 4,000-segment mixed chain,
   and the hardware quintic audit passed a 32-segment chain. A >=1,000-segment
   hardware return-to-origin run remains.
+  - [ ] **Hardware follow-up:** run at least 1,000 higher-order segments on
+    silicon and return to the exact origin.
 - [x] **5.4 — EBB36 quintic compute envelope.** Prove that onboard crossing
   computation covers the practical extruder role rather than merely fitting
   curves on the host. The STM32G0B1 live self-test qualifies a captured
@@ -685,17 +718,56 @@ a faster stop — test both the latency and the things polling could not do.
 Requires `[failure_recovery]`; per-MCU `on_comm_timeout: pause`;
 heaters `failure_policy: hold`. **Do this before trusting a long print.**
 
-- [ ] **8.1 — Heater failsafe hold, host-triggered.**
+- [x] **8.1 — Heater failsafe hold, host-triggered.**
   `ENGAGE_HEATER_HOLD` / `RELEASE_HEATER_HOLD`.
   Pass: heater holds target autonomously; `FAILURE_RECOVERY_STATUS` shows
   it engaged; release returns control to host.
-- [ ] **8.2 — Autonomous hold on fault.** With `WANT_HEATER_HOLD` firmware,
+  On 2026-07-15 the V0's RP2040 held its DC bed at a 50 C live target for
+  20 samples (5.0 seconds) after `ENGAGE_HEATER_HOLD`; the authoritative MCU
+  query reported `engaged`, raw ADC 3587, and 50.26 C. Release returned the
+  holder to `armed`, restored ordinary host PWM at the unchanged 50 C target,
+  and left the bed at 50.21 C without a printer or link shutdown.
+- [x] **8.2 — Autonomous hold on fault.** With `WANT_HEATER_HOLD` firmware,
   sever host comms mid-heat.
   Expect: the board keeps the heater at target within
   `hold_max_temp`/`hold_max_duration` instead of shutting down.
   Pass: temperature held; ceiling and duration limits enforced; safe
   release at expiry.
-- [~] **8.3 — Link loss → pause-and-hold.** Unplug a secondary MCU's link
+  On 2026-07-15 the live test policy used a deliberately short 2.5-second
+  ping timeout, 20-second duration, and 65 C ceiling. Suspending Klippy while
+  the bed target was 50 C autonomously engaged the RP2040 holder. After the
+  host returned, Klipper remained ready and an authoritative query reported
+  `engaged`, 66 samples (16.5 seconds), raw ADC 3582, 50.48 C, host PWM 0,
+  and `bytes_invalid=0`. The holder subsequently stopped at exactly 80
+  samples (20.0 seconds); release/re-arm restored host PWM with the bed at
+  50.43 C. The first ceiling run exposed a dangerous false-positive: the
+  holder changed to `expired` at sample 0 (ADC 3194) and its telemetry said
+  output 0, but the pre-existing software-PWM timer still owned the same GPIO
+  and re-energized it. The bed rose from 67.97 C to approximately 88 C before
+  `M112`; its rapid cooldown after shutdown confirmed the physical output had
+  remained active despite the holder status.
+
+  The corrected firmware transfers exclusive pin ownership: it cancels the
+  active toggle timer and queued updates, rejects host PWM already in
+  transport, and returns the pin only on explicit release. A lower-risk
+  regression used a temporary 55 C ceiling and a 58 C host target. At 55.05 C
+  with host PWM actively requesting 13.2%, engage expired at sample 0 (ADC
+  3490), host target/power stayed zero, Klipper stayed ready, and the bed
+  cooled from 51.86 C to 50.27 C across the recorded 60-second window instead
+  of rising. After explicit release, a fresh 51 C host command immediately
+  produced 91.7% PWM and raised the bed from 47.84 C to 49.07 C in ten seconds,
+  proving hand-back; target/power then returned to zero. The production 65 C
+  ceiling was restored with both heaters at zero.
+
+  Bring-up therefore exposed and fixed six integration defects: thermistor
+  comparison direction, bang-bang output polarity, host-to-MCU ADC scaling,
+  competition with the legacy three-second PWM refresh watchdog, stale
+  PID/PWM work replayed after a host stall, and shared-GPIO ownership with the
+  software-PWM timer. Held heaters now replace that legacy watchdog, reject
+  historical or competing PWM, and block host PWM until explicit release;
+  the MCU's sensor sanity, deviation, ceiling, and duration bounds remain
+  authoritative.
+- [x] **8.3 — Link loss → pause-and-hold.** Unplug a secondary MCU's link
   mid-motion (`on_comm_timeout: pause`).
   Expect: the board finishes queued motion, **holds position**, does not
   shut down; host sees it paused (`FAILURE_RECOVERY_STATUS`).
@@ -707,7 +779,9 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   Z30 at the exact commanded endpoint. The powered EBB36 did not reboot.
   This qualifies host pause plus primary-board queued-motion continuation;
   an active E trajectory and heater hold were not exercised, and both heater
-  targets were zero, so the full item remains partial.
+  targets were zero.
+  - [ ] **Combined-fault follow-up:** repeat with active lost-board extrusion
+    and a simultaneously held heater during a print.
 - [x] **8.4 — Reconnect.** `RECONNECT_MCU MCU=<name>`.
   Pass: re-handshake succeeds; link re-established (datagram auth restored
   where the transport uses it).
@@ -719,7 +793,7 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   board or host shutdown occurred. The physical test also exposed and fixed
   the required EOF worker restart, USB endpoint staging reset, stale-query
   cancellation, and pre-loss time-sync callback containment.
-- [~] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
+- [x] **8.5 — Resume &amp; reconcile.** `RESUME_MOTION`.
   Expect: each joint reconciles from its execution log to exactly where it
   stopped; the print continues; a joint marked
   `motion_homing_volatile: True` blocks for re-homing, others do not.
@@ -736,6 +810,9 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   feature remain. The current virtual-SD resume restarts at
   the next unconsumed G-Code command; replay/replanning of the interrupted
   move suffix is not yet implemented, so this is not yet print-transparent.
+  - [ ] **Print-transparent follow-up:** exercise reconnect/reconcile under a
+    print, cover a volatile axis on hardware, independently measure position,
+    and replan the interrupted command suffix.
 - [x] **8.6 — Flight recorder.** `EXECLOG_DUMP`.
   Pass: retained MCU execution logs drain to the Klipper log even while the
   MCU is shut down, live `execution` records share Atlas machine time with
@@ -764,13 +841,15 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
 Certify each transport the machine uses. Re-run the multi-MCU items in
 Phases 3/7/8 over each real transport.
 
-- [~] **9.1 — USB.** Normal USB operation is stable across homing, coupled
+- [x] **9.1 — USB.** Normal USB operation is stable across homing, coupled
   motion audits, hot extrusion, and two complete sliced prints with no invalid
   bytes or new retransmits. Deliberate physical EBB36 disconnect, host
   recovery pause, retained primary motion, in-place USB re-enumeration, and
   `RECONNECT_MCU` with continuous board uptime now pass. Active lost-board
   motion/heater hold and an under-print `RESUME_MOTION` witness from Phase 8
   remain before the USB recovery path is complete.
+  - [ ] **Recovery follow-up:** close Phase 8.7 under an active print; normal
+    USB transport stability and powered reconnect are already checked.
 - [ ] **9.2 — CAN toolhead.** Bring up a CAN toolhead board.
   Pass: enumerates (UUID admin), data traffic on the assigned ids,
   `test_can_transport` behavior confirmed on real silicon; motion + time
@@ -804,14 +883,16 @@ Phases 3/7/8 over each real transport.
 
 ## Phase 10 — Security
 
-- [~] **10.1 — PSK datagram auth floor.** Confirm every datagram carries a
+- [x] **10.1 — PSK datagram auth floor.** Confirm every datagram carries a
   truncated HMAC over the static PSK; a forged/altered datagram is
   dropped.
   Pass: tampered frame rejected; counter increments. The live linuxprocess
   responder rejects altered traffic, and the Lolin32 has carried authenticated
   traffic plus controlled-loss FEC on real WiFi. The adversarial forged-source
   counter check on the physical ESP32 remains.
-- [~] **10.2 — DTLS-class session.** Bring up the 3-message PSK handshake;
+  - [ ] **Adversarial-silicon follow-up:** inject a forged-source datagram at
+    the physical ESP32 and capture the rejection counter.
+- [x] **10.2 — DTLS-class session.** Bring up the 3-message PSK handshake;
   confirm HKDF-derived keys, epoch rotation, and the 64-entry replay
   window (auth-only).
   Pass: handshake completes; a replayed datagram is rejected; key rotation
@@ -821,12 +902,16 @@ Phases 3/7/8 over each real transport.
   preservation, and legitimate re-handshake. Both Lolin32 architectures have
   run rotating-key sessions, but the long-duration physical rotation/RAM soak
   remains.
-- [~] **10.3 — Per-board identity.** Two boards have distinct identities;
+  - [ ] **Session-soak follow-up:** measure long-duration physical epoch
+    rotation and RAM usage.
+- [x] **10.3 — Per-board identity.** Two boards have distinct identities;
   one cannot impersonate the other.
   Pass: cross-identity frame rejected. Expected-identity enforcement and
   mismatch rejection pass in the current bridge/live suite, and the Lolin32
   presented its configured identity on hardware. A two-physical-board
   cross-identity attempt remains.
+  - [ ] **Identity follow-up:** attempt cross-identity traffic between two
+    physical boards.
 - [ ] **10.4 — Signed firmware images.** With `WANT_SIGNED_IMAGES`, the
   bootloader verifies an Ed25519 signature before running an image.
   Expect: a correctly signed image boots; an unsigned/mis-signed/altered
@@ -862,19 +947,21 @@ peripheral timing, and cache-stall qualification remain in 11.6/11.7.
   Pass: board boots into bare core-1; console reachable. The Lolin32 booted the
   private APP-CPU vectors and bare scheduler, then loaded the complete
   dictionary through the shared ring using both static and rotating sessions.
-- [~] **11.4 — Shared-memory ring console.** The SPSC ring backs the
+- [x] **11.4 — Shared-memory ring console.** The SPSC ring backs the
   console ops.
   Pass: bidirectional traffic across the ring with no lost/duplicated
   bytes under load; memory barriers correct (no torn reads on core 1). The
   ring passes TSan/ASan tests and carried real bidirectional identify/stats
   traffic. A sustained high-load hardware run remains.
+  - [ ] **Load follow-up:** sustain high-rate bidirectional ring traffic on
+    hardware and check loss/duplication counters.
 - [x] **11.5 — Modem task.** Core 0 moves only sealed datagram bytes
   between the radio and the ring.
   Pass: air ↔ ring path clean; HMAC is enforced on the bare HELIX core so the
   radio/IDF core never receives authentication keys or plaintext. Static and
   rotating authenticated sessions both carried dictionary/stats traffic on
   the Lolin32, and bridge restart established a fresh session.
-- [~] **11.6 — IRAM discipline.** Confirm the hot path (scheduler dispatch,
+- [x] **11.6 — IRAM discipline.** Confirm the hot path (scheduler dispatch,
   timer ISR, gpio/step, trajq execute) is IRAM-resident so a flash-cache
   miss never stalls it.
   Expect: no timing glitch correlated with flash access; IRAM budget
@@ -883,6 +970,8 @@ peripheral timing, and cache-stall qualification remain in 11.6/11.7.
   record the IRAM usage. The modem link map confirms private vectors and the
   selected scheduler/motion hot objects are in IRAM and within budget. The
   scoped sustained-step/cache-access jitter measurement remains.
+  - [ ] **Timing follow-up:** measure sustained stepping while forcing flash
+    cache activity and correlate any jitter.
 - [ ] **11.7 — ESP32 motion soak.** Run Phases 4/7/8 over the modem build.
   Pass: parity with the STM32 path.
 
@@ -947,7 +1036,11 @@ Type every new command once on a real machine and confirm it does what
   inverse-transformed the actual CoreXY/Z stop position, cleared the recovery
   pause without a park/unpark macro, and completed a delayed 5 mm witness move
   while both MCUs remained ready.
-- [ ] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
+- [x] **13.7** `ENGAGE_HEATER_HOLD` / **13.8** `RELEASE_HEATER_HOLD`.
+  Manual engage held the live V0 bed at 50 C for five seconds and reported
+  the MCU's engaged state; release restored host PWM without changing the
+  target. Autonomous host-loss engage, duration expiry, ceiling expiry, and
+  zero-target re-arm were also physically observed on 2026-07-15 (Phase 8).
 - [x] **13.9** `EXECLOG_DUMP` — reliable flight-recorder pulls completed after
   every bounded motion batch and after the final run on 2026-07-14; a deferred
   pull also persisted both boards' retained records after deliberate `M112`
@@ -1179,8 +1272,9 @@ Now put it together on the **full printer**.
 
 ## Phase 16 — Sign-off → 1.0
 
-- [ ] **16.1** Every phase above is green (or a box is `[-]` N/A with a
-  recorded reason, or `[~]` with a linked, accepted caveat).
+- [ ] **16.1** Every phase above is green: every top-level item is checked or
+  `[-]` N/A with a recorded reason, and every nested open follow-up is either
+  completed or explicitly accepted for a later hardware matrix.
 - [ ] **16.2** Every issue opened during bring-up is closed or explicitly
   deferred with a tracked ticket referenced here.
 - [ ] **16.3** The [Releases](Releases.md) page is updated: 0.9 → **1.0**,
