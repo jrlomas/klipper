@@ -22,7 +22,7 @@ class UsbSofLink:
     def __init__(self, mcu):
         self.mcu = mcu
         self.name = mcu.get_name()
-        self.enable_cmd = self.query_cmd = None
+        self.enable_cmd = self.query_cmd = self.guard_query_cmd = None
 
     def setup(self):
         self.enable_cmd = self.mcu.try_lookup_command(
@@ -37,6 +37,15 @@ class UsbSofLink:
                 or not self.mcu.check_valid_response(response)):
             return False
         self.query_cmd = self.mcu.lookup_query_command(query, response)
+        guard_query = 'usb_sof_guard_query frame=%hu'
+        guard_response = (
+            'usb_sof_guard_state requested=%hu found=%c source=%u'
+            ' source_caller=%u exit_source=%u exit_caller=%u'
+            ' duration=%u entry_flags=%c')
+        if (self.mcu.try_lookup_command(guard_query) is not None
+                and self.mcu.check_valid_response(guard_response)):
+            self.guard_query_cmd = self.mcu.lookup_query_command(
+                guard_query, guard_response)
         return True
 
     def enable(self, value):
@@ -44,6 +53,11 @@ class UsbSofLink:
 
     def query(self, frame=SOF_LATEST):
         return self.query_cmd.send([frame])
+
+    def query_guard(self, frame):
+        if self.guard_query_cmd is None:
+            return None
+        return self.guard_query_cmd.send([frame])
 
 
 class UsbSofSync:

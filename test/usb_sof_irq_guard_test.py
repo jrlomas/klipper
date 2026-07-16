@@ -21,32 +21,47 @@ def _function(source, name):
     return match.group('body')
 
 
-def test_arm_irq_discards_before_restoring_primask():
+def test_arm_irq_attributes_guard_before_restoring_primask():
     source = _read('src/generic/armcm_irq.c')
     disable = _function(source, 'irq_disable')
     enable = _function(source, 'irq_enable')
+    save = _function(source, 'irq_save')
     restore = _function(source, 'irq_restore')
     wait = _function(source, 'irq_wait')
 
-    assert 'irq_timing_discard' not in disable
-    assert enable.index('irq_timing_discard_pending()') < enable.index(
+    assert disable.index('irq_timing_guard_probe()') < disable.index(
+        'cpsid i')
+    assert disable.index('cpsid i') < disable.index(
+        'irq_timing_guard_begin')
+    assert save.index('irq_timing_guard_probe()') < save.index('cpsid i')
+    assert enable.index('irq_timing_guard_end') < enable.index(
         'cpsie i')
-    assert restore.index('irq_timing_discard_pending()') < restore.index(
+    assert restore.index('irq_timing_guard_end') < restore.index(
         'msr primask')
-    assert wait.index('irq_timing_discard_pending()') < wait.index('cpsie i')
-    print("PASS: pending SOF is discarded before every ARM PRIMASK restore")
+    assert wait.index('irq_timing_guard_end') < wait.index('cpsie i')
+    assert wait.index('cpsid i') < wait.rindex('irq_timing_guard_begin')
+    assert 'irq_timing_site()' in disable
+    assert 'irq_timing_site()' in save
+    assert 'mov %0, pc' in source
+    print("PASS: ARM PRIMASK guards retain entry/exit caller attribution")
 
 
 def test_stm32_guard_discards_only_sof():
     source = _read('src/stm32/usbfs.c')
     generic = _read('src/generic/usb_sof.c')
     mask = _function(source, 'usb_irq_mask')
-    discard = _function(source, 'usb_sof_board_discard_pending')
+    begin = _function(source, 'usb_sof_board_guard_begin')
+    discard = _function(source, 'usb_sof_board_guard_end')
     query = _function(generic, 'command_usb_sof_query')
+    guard_query = _function(generic, 'command_usb_sof_guard_query')
 
     assert 'USB_CNTR_CTRM | USB_CNTR_RESETM' in mask
-    assert 'usb_sof_enabled ? USB_CNTR_SOFM : 0' in mask
+    assert 'usb_sof_guard_enabled ? USB_CNTR_SOFM : 0' in mask
     assert 'USB->ISTR & USB_ISTR_SOF' in discard
+    assert 'USB_SOF_GUARD_ENTRY_PRE_VALID' in begin
+    assert 'USB_SOF_GUARD_ENTRY_PRE_PENDING' in begin
+    assert 'USB_SOF_GUARD_ENTRY_POST_PENDING' in begin
+    assert 'timer_read_time() - usb_sof_guard.start_clock' in discard
     assert 'mrs %0, primask' in discard
     assert 'USB->FNR & USB_FNR_FN' in discard
     assert '~USB_ISTR_SOF' in discard
@@ -54,12 +69,18 @@ def test_stm32_guard_discards_only_sof():
         'usb_sof_note_discard')
     assert 'USB->CNTR' not in discard
     assert 'discard_match_primask' in query
+    assert 'source=%u' in guard_query
+    assert 'source_caller=%u' in guard_query
+    assert 'exit_source=%u' in guard_query
+    assert 'exit_caller=%u' in guard_query
+    assert 'duration=%u' in guard_query
+    assert 'entry_flags=%c' in guard_query
     print("PASS: STM32 clears late SOF without touching endpoint IRQ state")
-    print("PASS: discarded SOF records exact frame and sampled PRIMASK")
+    print("PASS: discarded SOF records callers, duration, and entry state")
 
 
 def main():
-    test_arm_irq_discards_before_restoring_primask()
+    test_arm_irq_attributes_guard_before_restoring_primask()
     test_stm32_guard_discards_only_sof()
     print("ALL PASS")
 

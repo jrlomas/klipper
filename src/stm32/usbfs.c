@@ -335,22 +335,66 @@ usb_stall_ep0(void)
                                 , USB_EP_RX_STALL | USB_EP_TX_STALL);
 }
 
-static uint8_t set_address, usb_sof_enabled;
+static uint8_t set_address;
+uint8_t usb_sof_guard_enabled;
+
+struct usb_sof_guard {
+    uint32_t source;
+    uint32_t source_caller;
+    uint32_t start_clock;
+    uint8_t entry_flags;
+};
+
+static struct usb_sof_guard usb_sof_guard;
 
 static uint32_t
 usb_irq_mask(void)
 {
     return (USB_CNTR_CTRM | USB_CNTR_RESETM
-            | (usb_sof_enabled ? USB_CNTR_SOFM : 0));
+            | (usb_sof_guard_enabled ? USB_CNTR_SOFM : 0));
 }
 
 void
 usb_sof_board_enable(uint8_t enable)
 {
-    usb_sof_enabled = enable;
+    usb_sof_guard_enabled = enable;
     if (!enable)
         USB->ISTR = (uint16_t)~USB_ISTR_SOF;
     USB->CNTR = usb_irq_mask();
+}
+
+// Sample immediately before PRIMASK is set.  The caller repeats the peripheral
+// sample after masking so a frame already pending at entry can be
+// distinguished from one that arrived during the critical section.
+uint8_t
+usb_sof_board_guard_probe(void)
+{
+    if (!usb_sof_guard_enabled)
+        return 0;
+    return USB_SOF_GUARD_PROBE_VALID
+        | ((USB->ISTR & USB_ISTR_SOF)
+           ? USB_SOF_GUARD_PROBE_PENDING : 0);
+}
+
+void
+usb_sof_board_guard_begin(uint32_t source, uint32_t source_caller
+                          , uint8_t probe)
+{
+    if (!usb_sof_guard_enabled) {
+        usb_sof_guard.entry_flags = 0;
+        return;
+    }
+    uint8_t flags = USB_SOF_GUARD_ENTRY_ACTIVE;
+    if (probe & USB_SOF_GUARD_PROBE_VALID)
+        flags |= USB_SOF_GUARD_ENTRY_PRE_VALID;
+    if (probe & USB_SOF_GUARD_PROBE_PENDING)
+        flags |= USB_SOF_GUARD_ENTRY_PRE_PENDING;
+    if (USB->ISTR & USB_ISTR_SOF)
+        flags |= USB_SOF_GUARD_ENTRY_POST_PENDING;
+    usb_sof_guard.start_clock = timer_read_time();
+    usb_sof_guard.source = source;
+    usb_sof_guard.source_caller = source_caller;
+    usb_sof_guard.entry_flags = flags;
 }
 
 // Called with PRIMASK still set immediately before global interrupts are
@@ -358,15 +402,21 @@ usb_sof_board_enable(uint8_t enable)
 // clear only that source so it can not receive a falsely late ISR-entry
 // timestamp.  Endpoint/reset flags remain pending and are serviced normally.
 void
-usb_sof_board_discard_pending(void)
+usb_sof_board_guard_end(uint32_t exit_source, uint32_t exit_caller)
 {
-    if (!usb_sof_enabled || !(USB->ISTR & USB_ISTR_SOF))
+    uint8_t entry_flags = usb_sof_guard.entry_flags;
+    usb_sof_guard.entry_flags = 0;
+    if (!usb_sof_guard_enabled || !(USB->ISTR & USB_ISTR_SOF))
         return;
     uint32_t primask;
     asm volatile("mrs %0, primask" : "=r" (primask));
     uint16_t frame = USB->FNR & USB_FNR_FN;
+    uint32_t duration = entry_flags & USB_SOF_GUARD_ENTRY_ACTIVE
+                        ? timer_read_time() - usb_sof_guard.start_clock : 0;
     USB->ISTR = (uint16_t)~USB_ISTR_SOF;
-    usb_sof_note_discard(frame, !!primask);
+    usb_sof_note_discard(frame, !!primask, usb_sof_guard.source
+                         , usb_sof_guard.source_caller, exit_source
+                         , exit_caller, duration, entry_flags);
 }
 
 void
