@@ -1,0 +1,7 @@
+[Match]
+Driver=gs_usb
+Property=ID_VENDOR=OpenAMS
+Property=ID_MODEL=Helix_CAN-FD_Bridge
+
+[Link]
+Name=helixcan0

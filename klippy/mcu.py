@@ -964,8 +964,24 @@ class MCUConnectHelper:
         self._serial = serialhdl.SerialReader(self._reactor, mcu_name=name)
         self._baud = 0
         self._canbus_iface = None
+        self._helix_can_bus = None
         canbus_uuid = config.get('canbus_uuid', None)
-        if canbus_uuid is not None:
+        board_id = config.get('board_id', None)
+        helix_can_name = config.get('canbus', None)
+        if canbus_uuid is not None and board_id is not None:
+            raise config.error("Specify board_id or canbus_uuid, not both")
+        if board_id is not None:
+            if helix_can_name is None:
+                raise config.error("board_id requires a named canbus")
+            self._helix_can_bus = self._printer.load_object(
+                config, 'helix_can %s' % (helix_can_name,))
+            self._canbus_iface = self._helix_can_bus.get_interface()
+            cbid = self._printer.load_object(config, 'canbus_ids')
+            self._serialport = cbid.add_board_id(
+                config, board_id, self._canbus_iface)
+            self._helix_can_bus.add_required_node(self._serialport)
+            self._printer.load_object(config, 'canbus_stats %s' % (name,))
+        elif canbus_uuid is not None:
             self._serialport = canbus_uuid
             self._canbus_iface = config.get('canbus_interface', 'can0')
             cbid = self._printer.load_object(config, 'canbus_ids')
@@ -1005,6 +1021,8 @@ class MCUConnectHelper:
         if self._on_comm_timeout == 'pause':
             printer.register_event_handler("klippy:ready",
                                            self._start_link_checks)
+        if self._helix_can_bus is not None:
+            self._helix_can_bus.register_connection(self)
     def get_mcu(self):
         return self._mcu
     def get_serial(self):
@@ -1015,6 +1033,22 @@ class MCUConnectHelper:
         return self._serialport, self._baud
     def get_restart_helper(self):
         return self._restart_helper
+    def get_can_capabilities(self):
+        params = self._serial.get_canfd_capabilities()
+        return {'fd': bool(params['fd']),
+                'bitrate_mask': params['bitrate_mask'],
+                'max_payload': params['max_payload'],
+                'transceiver_max': params['transceiver_max']}
+    def prepare_can_profile(self, profile, epoch):
+        return self._serial.prepare_canfd(
+            profile['mtu'], profile['brs'], profile['data_bitrate'], epoch)
+    def enable_can_profile(self, profile, epoch):
+        return self._serial.enable_canfd(
+            profile['mtu'], profile['brs'], profile['data_bitrate'], epoch)
+    def commit_can_profile(self, profile, epoch):
+        return self._serial.commit_canfd(epoch)
+    def abort_can_profile(self, epoch):
+        return self._serial.abort_canfd(epoch)
     def _handle_shutdown(self, params):
         if self._is_shutdown:
             return
@@ -1082,9 +1116,18 @@ class MCUConnectHelper:
         try:
             if self._canbus_iface is not None:
                 cbid = self._printer.lookup_object('canbus_ids')
-                nodeid = cbid.get_nodeid(self._serialport)
-                self._serial.connect_canbus(self._serialport, nodeid,
-                                            self._canbus_iface)
+                nodeid = cbid.get_nodeid(self._serialport,
+                                         self._canbus_iface)
+                legacy_handle = cbid.resolve_legacy_handle(
+                    self._serialport, self._canbus_iface)
+                profile = {'mtu': 8, 'brs': False,
+                           'data_bitrate': 1000000}
+                if self._helix_can_bus is not None:
+                    profile = self._helix_can_bus.get_connection_profile()
+                self._serial.connect_canbus(
+                    legacy_handle, nodeid, self._canbus_iface,
+                    canfd_mtu=profile['mtu'], canfd_brs=profile['brs'],
+                    canfd_data_bitrate=profile['data_bitrate'])
             elif self._baud:
                 rts = self._restart_helper.lookup_attach_uart_rts()
                 self._serial.connect_uart(self._serialport, self._baud, rts)
@@ -1216,17 +1259,23 @@ class MCUConnectHelper:
         if self._canbus_iface is not None:
             import can # XXX
             cbid = self._printer.lookup_object('canbus_ids')
-            nodeid = cbid.get_nodeid(self._serialport)
+            nodeid = cbid.get_nodeid(self._serialport, self._canbus_iface)
             txid = nodeid * 2 + 256
             filters = [{"can_id": txid + 1, "can_mask": 0x7ff,
                         "extended": False}]
-            uuid = int(self._serialport, 16)
+            legacy_handle = cbid.resolve_legacy_handle(
+                self._serialport, self._canbus_iface)
+            uuid = int(legacy_handle, 16)
             uuid = [(uuid >> (40 - i*8)) & 0xff for i in range(6)]
             set_id_msg = can.Message(arbitration_id=0x3f0,
                                      data=[0x01] + uuid + [nodeid],
                                      is_extended_id=False)
+            profile = {'mtu': 8}
+            if self._helix_can_bus is not None:
+                profile = self._helix_can_bus.get_connection_profile()
             bus = can.interface.Bus(channel=self._canbus_iface,
-                                    can_filters=filters, bustype='socketcan')
+                                    can_filters=filters, bustype='socketcan',
+                                    fd=profile['mtu'] > 8)
             try:
                 bus.send(set_id_msg)
                 os.dup2(bus.fileno(), old_fd)

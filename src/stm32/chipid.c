@@ -29,7 +29,7 @@ chipid_init(void)
     if (CONFIG_USB_SERIAL_NUMBER_CHIPID)
         usb_fill_serial(&cdc_chipid.desc, ARRAY_SIZE(cdc_chipid.data)
                         , (void*)UID_BASE);
-    if (CONFIG_CANBUS)
+    if (CONFIG_CANSERIAL)
         canserial_set_uuid((void*)UID_BASE, CHIP_UID_LEN);
 }
 DECL_INIT(chipid_init);

@@ -6,6 +6,8 @@
 // callbacks provided by board specific code
 int_fast8_t usb_read_bulk_out(void *data, uint_fast8_t max_len);
 int_fast8_t usb_send_bulk_in(void *data, uint_fast8_t len);
+int_fast8_t usb_read_local_bulk_out(void *data, uint_fast8_t max_len);
+int_fast8_t usb_send_local_bulk_in(void *data, uint_fast8_t len);
 int_fast8_t usb_read_ep0(void *data, uint_fast8_t max_len);
 int_fast8_t usb_read_ep0_setup(void *data, uint_fast8_t max_len);
 int_fast8_t usb_send_ep0(const void *data, uint_fast8_t len);
@@ -19,6 +21,10 @@ struct usb_string_descriptor *usbserial_get_serialid(void);
 void usb_fill_serial(struct usb_string_descriptor *desc, int strlen, void *id);
 void usb_notify_bulk_in(void);
 void usb_notify_bulk_out(void);
+void usb_notify_local_bulk_in(void);
+void usb_notify_local_bulk_out(void);
+void usb_local_console_configure(void);
+void usb_local_console_shutdown(void);
 void usb_notify_ep0(void);
 
 #endif // usb_cdc.h

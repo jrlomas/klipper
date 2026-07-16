@@ -1,0 +1,26 @@
+[Unit]
+Description=Helix CAN profile manager
+After=systemd-udev-settle.service
+Before=klipper.service
+
+[Service]
+Type=simple
+ExecStart=/home/jrlomas/Projects/klipper/scripts/helix_can_manager.py --interface helixcan0 --group klipper
+User=root
+Group=root
+RuntimeDirectory=helix
+RuntimeDirectoryMode=0750
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

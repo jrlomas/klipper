@@ -78,6 +78,10 @@ for TEST in \
     test/helix_status_test.py \
     test/heater_hold_safety_test.py \
     test/canfd_dlc_test.py \
+    test/canbus_identity_test.py \
+    test/canbus_ids_test.py \
+    test/helix_can_manager_test.py \
+    test/helix_can_profile_test.py \
     test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
     test/intentproto_transport_test.py \

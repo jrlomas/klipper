@@ -18,15 +18,22 @@
 #include "sched.h" // sched_wake_task
 
 #define CANBUS_UUID_LEN 6
+#define CANBUS_BOARD_ID_MAX 16
 
 // Global storage
 static struct canbus_data {
     uint32_t assigned_id;
     uint8_t uuid[CANBUS_UUID_LEN];
+    uint8_t board_id[CANBUS_BOARD_ID_MAX];
+    uint8_t board_id_len, board_id_family, board_id_crc;
 
     // Tx data
     struct task_wake tx_wake;
     uint8_t transmit_pos, transmit_max;
+    uint8_t carrier_mtu, fd_active, fd_brs;
+    uint8_t staged_mtu, staged_brs, transport_state;
+    uint32_t transport_epoch;
+    uint32_t active_data_bitrate, staged_data_bitrate;
 
     // Rx data
     struct task_wake rx_wake;
@@ -64,10 +71,16 @@ canserial_tx_task(void)
     msg.id = id + 1;
     uint32_t tpos = CanData.transmit_pos, tmax = CanData.transmit_max;
     for (;;) {
-        int avail = tmax - tpos, now = avail > 8 ? 8 : avail;
+        uint32_t mtu = CanData.carrier_mtu ? CanData.carrier_mtu : 8;
+        int avail = tmax - tpos, now = avail > mtu ? mtu : avail;
         if (avail <= 0)
             break;
         msg.dlc = now;
+        if (CanData.fd_active) {
+            msg.flags = CANMSG_FLAG_FD;
+            if (CanData.fd_brs)
+                msg.flags |= CANMSG_FLAG_BRS;
+        }
         memcpy(msg.data, &CanData.transmit_buf[tpos], now);
         int ret = canbus_send(&msg);
         if (ret <= 0)
@@ -77,6 +90,170 @@ canserial_tx_task(void)
     CanData.transmit_pos = tpos;
 }
 DECL_TASK(canserial_tx_task);
+
+
+/****************************************************************
+ * Carrier profile control
+ ****************************************************************/
+
+static void
+canserial_report_transport(void)
+{
+    sendf("canbus_transport state=%c active=%c mtu=%c brs=%c"
+          " data_bitrate=%u epoch=%u"
+          , CanData.transport_state, CanData.fd_active, CanData.carrier_mtu
+          , CanData.fd_brs
+          , CanData.active_data_bitrate
+          , CanData.transport_epoch);
+}
+
+static int
+canserial_valid_mtu(uint32_t mtu)
+{
+    return (mtu == 8 || mtu == 12 || mtu == 16 || mtu == 20 || mtu == 24
+            || mtu == 32 || mtu == 48 || mtu == 64);
+}
+
+static int
+canserial_prepare_fd(uint32_t data_bitrate, uint8_t brs)
+{
+#if CONFIG_CANBUS_FD
+    return canhw_prepare_fd(data_bitrate, brs);
+#else
+    return -1;
+#endif
+}
+
+static uint32_t
+canserial_fd_bitrate_mask(void)
+{
+#if CONFIG_CANBUS_FD
+    return canhw_get_fd_bitrate_mask();
+#else
+    return 0;
+#endif
+}
+
+void
+command_set_canbus_transport(uint32_t *args)
+{
+    uint32_t active = args[0], mtu = args[1], brs = args[2];
+    uint32_t data_bitrate = args[3];
+    if (!active) {
+        CanData.fd_active = CanData.fd_brs = 0;
+        CanData.carrier_mtu = 8;
+        CanData.transport_state = 0;
+    } else if (!CONFIG_CANBUS_FD || mtu <= 8 || !canserial_valid_mtu(mtu)
+               || canserial_prepare_fd(data_bitrate, brs)) {
+        shutdown("Invalid CAN FD carrier profile");
+    } else {
+#if CONFIG_CANBUS_FD
+        if (canhw_commit_fd())
+            shutdown("Invalid CAN FD carrier profile");
+#endif
+        CanData.carrier_mtu = mtu;
+        CanData.fd_brs = !!brs;
+        CanData.fd_active = 1;
+        CanData.transport_state = 2;
+        CanData.active_data_bitrate = data_bitrate;
+    }
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_set_canbus_transport, HF_IN_SHUTDOWN,
+                   "set_canbus_transport active=%c mtu=%c brs=%c"
+                   " data_bitrate=%u");
+
+void
+command_prepare_canbus_transport(uint32_t *args)
+{
+    uint32_t mtu = args[0], brs = args[1], data_bitrate = args[2];
+    uint32_t epoch = args[3];
+    if (!CONFIG_CANBUS_FD || mtu <= 8 || !canserial_valid_mtu(mtu)
+        || canserial_prepare_fd(data_bitrate, brs))
+        shutdown("Unsupported CAN FD transport profile");
+    CanData.staged_mtu = mtu;
+    CanData.staged_brs = !!brs;
+    CanData.staged_data_bitrate = data_bitrate;
+    CanData.transport_epoch = epoch;
+    CanData.transport_state = 1;
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_prepare_canbus_transport, HF_IN_SHUTDOWN,
+                   "prepare_canbus_transport mtu=%c brs=%c"
+                   " data_bitrate=%u epoch=%u");
+
+void
+command_commit_canbus_transport(uint32_t *args)
+{
+    uint32_t epoch = args[0];
+    if (CanData.transport_state != 1 || epoch != CanData.transport_epoch)
+        shutdown("CAN FD transport commit failed");
+#if CONFIG_CANBUS_FD
+    if (canhw_commit_fd())
+        shutdown("CAN FD transport commit failed");
+#endif
+    // Carrier emission remains Classical until ENABLE. The controller now
+    // accepts the staged FD profile and can receive the host's enable frame.
+    CanData.transport_state = 1;
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_commit_canbus_transport, HF_IN_SHUTDOWN,
+                   "commit_canbus_transport epoch=%u");
+
+void
+command_enable_canbus_transport(uint32_t *args)
+{
+    uint32_t epoch = args[0];
+    if (CanData.transport_state != 1 || epoch != CanData.transport_epoch)
+        shutdown("CAN FD transport epoch mismatch");
+    CanData.carrier_mtu = CanData.staged_mtu;
+    CanData.fd_brs = CanData.staged_brs;
+    CanData.active_data_bitrate = CanData.staged_data_bitrate;
+    CanData.fd_active = 1;
+    CanData.transport_state = 2;
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_enable_canbus_transport, HF_IN_SHUTDOWN,
+                   "enable_canbus_transport epoch=%u");
+
+void
+command_abort_canbus_transport(uint32_t *args)
+{
+    CanData.fd_active = CanData.fd_brs = 0;
+    CanData.carrier_mtu = 8;
+    CanData.staged_mtu = CanData.staged_brs = 0;
+    CanData.staged_data_bitrate = 0;
+    CanData.transport_state = 0;
+    CanData.transport_epoch = args[0];
+    CanData.active_data_bitrate = CONFIG_CANBUS_FREQUENCY;
+#if CONFIG_CANBUS_FD
+    canhw_abort_fd();
+#endif
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_abort_canbus_transport, HF_IN_SHUTDOWN,
+                   "abort_canbus_transport epoch=%u");
+
+void
+command_get_canbus_transport(uint32_t *args)
+{
+    canserial_report_transport();
+}
+DECL_COMMAND_FLAGS(command_get_canbus_transport, HF_IN_SHUTDOWN,
+                   "get_canbus_transport");
+
+void
+command_get_canbus_capabilities(uint32_t *args)
+{
+    sendf("canbus_capabilities fd=%c bitrate_mask=%u max_payload=%c"
+          " transceiver_max=%u"
+          , CONFIG_CANBUS_FD, canserial_fd_bitrate_mask()
+          , CONFIG_CANBUS_FD ? 64 : 8
+          , CONFIG_CANBUS_FD ? CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE
+                             : CONFIG_CANBUS_FREQUENCY);
+}
+DECL_COMMAND_FLAGS(command_get_canbus_capabilities, HF_IN_SHUTDOWN,
+                   "get_canbus_capabilities");
 
 // Encode and transmit a "response" message
 void
@@ -118,7 +295,30 @@ console_sendf(const struct command_encoder *ce, va_list args)
 #define CANBUS_CMD_QUERY_UNASSIGNED 0x00
 #define CANBUS_CMD_SET_KLIPPER_NODEID 0x01
 #define CANBUS_CMD_REQUEST_BOOTLOADER 0x02
+#define CANBUS_CMD_QUERY_BOARD_ID 0x03
 #define CANBUS_RESP_NEED_NODEID 0x20
+#define CANBUS_RESP_BOARD_ID 0x21
+
+enum {
+    CANBUS_FAMILY_GENERIC,
+    CANBUS_FAMILY_STM32,
+    CANBUS_FAMILY_RP2040,
+    CANBUS_FAMILY_ATSAM,
+    CANBUS_FAMILY_ATSAMD,
+    CANBUS_FAMILY_LPC176X,
+};
+
+static uint8_t
+can_board_id_crc(uint8_t family, const uint8_t *data, uint32_t len)
+{
+    uint8_t crc = 0x5a ^ family ^ len;
+    for (uint32_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint_fast8_t bit = 0; bit < 8; bit++)
+            crc = (crc & 0x80) ? (crc << 1) ^ 0x07 : crc << 1;
+    }
+    return crc;
+}
 
 // Helper to verify a UUID in a command matches this chip's UUID
 static int
@@ -193,6 +393,36 @@ can_process_request_bootloader(struct canbus_msg *msg)
     bootloader_request();
 }
 
+static void
+can_process_query_board_id(struct canbus_msg *msg)
+{
+    if (msg->dlc < 8 || !can_check_uuid(msg))
+        return;
+    uint32_t offset = msg->data[7];
+    if (offset >= CanData.board_id_len)
+        return;
+    struct canbus_msg send = {};
+    send.id = CANBUS_ID_ADMIN_RESP;
+    send.dlc = 8;
+    send.data[0] = CANBUS_RESP_BOARD_ID;
+    send.data[1] = CanData.board_id_family;
+    send.data[2] = CanData.board_id_len;
+    send.data[3] = offset;
+    uint32_t count = CanData.board_id_len - offset;
+    if (count > 3)
+        count = 3;
+    memcpy(&send.data[4], &CanData.board_id[offset], count);
+    send.data[7] = CanData.board_id_crc;
+    // The response is Classical CAN and uses the same bounded queue retry as
+    // legacy discovery. A duplicate legacy handle causes multiple replies;
+    // the host treats that as a collision instead of guessing.
+    for (;;) {
+        int ret = canbus_send(&send);
+        if (ret >= 0)
+            return;
+    }
+}
+
 // Handle an "admin" command
 static void
 can_process_admin(struct canbus_msg *msg)
@@ -208,6 +438,9 @@ can_process_admin(struct canbus_msg *msg)
         break;
     case CANBUS_CMD_REQUEST_BOOTLOADER:
         can_process_request_bootloader(msg);
+        break;
+    case CANBUS_CMD_QUERY_BOARD_ID:
+        can_process_query_board_id(msg);
         break;
     }
 }
@@ -352,6 +585,28 @@ canserial_set_uuid(uint8_t *raw_uuid, uint32_t raw_uuid_len)
 {
     uint64_t hash = fasthash64(raw_uuid, raw_uuid_len, 0xA16231A7);
     memcpy(CanData.uuid, &hash, sizeof(CanData.uuid));
+    uint32_t board_id_len = raw_uuid_len;
+    if (board_id_len > sizeof(CanData.board_id))
+        board_id_len = sizeof(CanData.board_id);
+    memcpy(CanData.board_id, raw_uuid, board_id_len);
+    CanData.board_id_len = board_id_len;
+#if CONFIG_MACH_STM32
+    CanData.board_id_family = CANBUS_FAMILY_STM32;
+#elif CONFIG_MACH_RPXXXX
+    CanData.board_id_family = CANBUS_FAMILY_RP2040;
+#elif CONFIG_MACH_ATSAM
+    CanData.board_id_family = CANBUS_FAMILY_ATSAM;
+#elif CONFIG_MACH_ATSAMD
+    CanData.board_id_family = CANBUS_FAMILY_ATSAMD;
+#elif CONFIG_MACH_LPC176X
+    CanData.board_id_family = CANBUS_FAMILY_LPC176X;
+#else
+    CanData.board_id_family = CANBUS_FAMILY_GENERIC;
+#endif
+    CanData.board_id_crc = can_board_id_crc(
+        CanData.board_id_family, CanData.board_id, board_id_len);
+    CanData.carrier_mtu = 8;
+    CanData.active_data_bitrate = CONFIG_CANBUS_FREQUENCY;
     canserial_notify_rx();
 }
 

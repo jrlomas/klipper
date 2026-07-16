@@ -68,6 +68,12 @@ enum {
 int canhw_send(struct canbus_msg *msg);
 void canhw_set_filter(uint32_t id);
 void canhw_get_status(struct canbus_status *status);
+#if CONFIG_CANBUS_FD
+uint32_t canhw_get_fd_bitrate_mask(void);
+int canhw_prepare_fd(uint32_t data_bitrate, uint8_t brs);
+int canhw_commit_fd(void);
+void canhw_abort_fd(void);
+#endif
 
 // canbus.c
 int canbus_send(struct canbus_msg *msg);

@@ -217,6 +217,11 @@ static struct {
     uint32_t rx_error, tx_error;
 } CAN_Errors;
 
+#if CONFIG_CANBUS_FD
+static uint32_t PreparedDBTP, PreparedDataBitrate;
+static uint8_t PreparedBRS;
+#endif
+
 // Report interface status
 void
 canhw_get_status(struct canbus_status *status)
@@ -363,6 +368,7 @@ compute_btr(uint32_t pclock, uint32_t bitrate)
     return make_btr(sjw, tseg1, tseg2, brp);
 }
 
+#if CONFIG_CANBUS_FD
 static uint32_t
 compute_dbtp(uint32_t pclock, uint32_t bitrate)
 {
@@ -376,6 +382,79 @@ compute_dbtp(uint32_t pclock, uint32_t bitrate)
             | (tseg1 - 1) << FDCAN_DBTP_DTSEG1_Pos
             | (brp - 1) << FDCAN_DBTP_DBRP_Pos);
 }
+
+static int
+try_compute_dbtp(uint32_t pclock, uint32_t bitrate, uint32_t *dbtp)
+{
+    uint32_t brp = 1, tseg1 = 1, tseg2 = 1;
+    if (compute_timing(pclock, bitrate, 32, 32, 16, 800,
+                       &brp, &tseg1, &tseg2))
+        return -1;
+    uint32_t sjw = tseg2 > 4 ? 4 : tseg2;
+    *dbtp = ((sjw - 1) << FDCAN_DBTP_DSJW_Pos
+             | (tseg2 - 1) << FDCAN_DBTP_DTSEG2_Pos
+             | (tseg1 - 1) << FDCAN_DBTP_DTSEG1_Pos
+             | (brp - 1) << FDCAN_DBTP_DBRP_Pos);
+    return 0;
+}
+
+uint32_t
+canhw_get_fd_bitrate_mask(void)
+{
+    static const uint32_t rates[] = { 1000000, 2000000, 5000000, 8000000 };
+    uint32_t mask = 0, pclock = get_pclock_frequency((uint32_t)SOC_CAN);
+    for (uint_fast8_t i = 0; i < ARRAY_SIZE(rates); i++) {
+        uint32_t ignored;
+        if (rates[i] <= CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE
+            && !try_compute_dbtp(pclock, rates[i], &ignored))
+            mask |= 1U << i;
+    }
+    return mask;
+}
+
+int
+canhw_prepare_fd(uint32_t data_bitrate, uint8_t brs)
+{
+    uint32_t pclock = get_pclock_frequency((uint32_t)SOC_CAN), dbtp;
+    if (data_bitrate > CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE
+        || try_compute_dbtp(pclock, data_bitrate, &dbtp))
+        return -1;
+    if (!brs && data_bitrate != CONFIG_CANBUS_FREQUENCY)
+        return -1;
+    PreparedDBTP = dbtp;
+    PreparedDataBitrate = data_bitrate;
+    PreparedBRS = !!brs;
+    return 0;
+}
+
+int
+canhw_commit_fd(void)
+{
+    if (!PreparedDataBitrate)
+        return -1;
+    SOC_CAN->CCCR |= FDCAN_CCCR_INIT;
+    while (!(SOC_CAN->CCCR & FDCAN_CCCR_INIT))
+        ;
+    SOC_CAN->CCCR |= FDCAN_CCCR_CCE;
+    SOC_CAN->DBTP = PreparedDBTP;
+    SOC_CAN->CCCR |= FDCAN_CCCR_FDOE;
+    if (PreparedBRS)
+        SOC_CAN->CCCR |= FDCAN_CCCR_BRSE;
+    else
+        SOC_CAN->CCCR &= ~FDCAN_CCCR_BRSE;
+    barrier();
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_CCE;
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT;
+    return 0;
+}
+
+void
+canhw_abort_fd(void)
+{
+    PreparedDBTP = PreparedDataBitrate = 0;
+    PreparedBRS = 0;
+}
+#endif
 
 void
 can_init(void)

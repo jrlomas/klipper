@@ -124,8 +124,13 @@ class SerialReader:
             self.ffi_lib.serialqueue_set_receive_window(
                 self.serialqueue, receive_window)
         return True
-    def connect_canbus(self, canbus_uuid, canbus_nodeid, canbus_iface="can0"):
+    def connect_canbus(self, canbus_uuid, canbus_nodeid, canbus_iface="can0",
+                       canfd_mtu=8, canfd_brs=False,
+                       canfd_data_bitrate=1000000):
         import can # XXX
+        if canfd_mtu not in (8, 12, 16, 20, 24, 32, 48, 64):
+            self._error("Invalid CAN FD carrier MTU")
+        use_canfd = canfd_mtu > 8
         txid = canbus_nodeid * 2 + 256
         filters = [{"can_id": txid+1, "can_mask": 0x7ff, "extended": False}]
         # Prep for SET_NODEID command
@@ -150,7 +155,7 @@ class SerialReader:
             try:
                 bus = can.interface.Bus(channel=canbus_iface,
                                         can_filters=filters,
-                                        bustype='socketcan')
+                                        bustype='socketcan', fd=use_canfd)
                 bus.send(set_id_msg)
             except (can.CanError, os.error, IOError) as e:
                 logging.warning("%sUnable to open CAN port: %s",
@@ -166,6 +171,34 @@ class SerialReader:
                 params = self.send_with_response('get_canbus_id', 'canbus_id')
                 got_uuid = bytearray(params['canbus_uuid'])
                 if got_uuid == bytearray(uuid):
+                    if use_canfd:
+                        if not self.msgparser.get_constant_int(
+                                'CANBUS_FD', 0):
+                            self._error("MCU does not support CAN FD")
+                        ret = self.ffi_lib.serialqueue_set_canfd_mode(
+                            self.serialqueue, canfd_mtu, int(canfd_brs),
+                            canfd_data_bitrate)
+                        if ret:
+                            self._error("Unable to activate CAN FD transport")
+                        try:
+                            params = self.send_with_response(
+                                "set_canbus_transport active=1 mtu=%d brs=%d"
+                                " data_bitrate=%d"
+                                % (canfd_mtu, int(canfd_brs),
+                                   canfd_data_bitrate),
+                                'canbus_transport')
+                        except Exception:
+                            self.ffi_lib.serialqueue_set_canfd_mode(
+                                self.serialqueue, 8, 0, 1000000)
+                            raise
+                        if (params['active'] != 1
+                                or params['mtu'] != canfd_mtu
+                                or params['brs'] != int(canfd_brs)
+                                or params['data_bitrate']
+                                != canfd_data_bitrate):
+                            self.ffi_lib.serialqueue_set_canfd_mode(
+                                self.serialqueue, 8, 0, 1000000)
+                            self._error("CAN FD carrier profile mismatch")
                     break
             except:
                 logging.exception("%sError in canbus_uuid check",
@@ -173,6 +206,46 @@ class SerialReader:
             logging.info("%sFailed to match canbus_uuid - retrying..",
                          self.warn_prefix)
             self.disconnect()
+    def prepare_canfd(self, mtu, brs, data_bitrate, epoch):
+        params = self.send_with_response(
+            "prepare_canbus_transport mtu=%d brs=%d data_bitrate=%d epoch=%d"
+            % (mtu, int(brs), data_bitrate, epoch), 'canbus_transport')
+        if (params['state'] != 1 or params['active']
+                or params['epoch'] != epoch
+                or params['data_bitrate'] != data_bitrate):
+            self._error("MCU refused staged CAN FD profile")
+        return params
+    def get_canfd_capabilities(self):
+        return self.send_with_response('get_canbus_capabilities',
+                                       'canbus_capabilities')
+    def commit_canfd(self, epoch):
+        params = self.send_with_response(
+            "commit_canbus_transport epoch=%d" % (epoch,),
+            'canbus_transport')
+        if params['state'] != 1 or params['active'] \
+                or params['epoch'] != epoch:
+            self._error("MCU failed CAN FD profile commit")
+        return params
+    def enable_canfd(self, mtu, brs, data_bitrate, epoch):
+        ret = self.ffi_lib.serialqueue_set_canfd_mode(
+            self.serialqueue, mtu, int(brs), data_bitrate)
+        if ret:
+            self._error("Unable to enable CAN_RAW_FD_FRAMES")
+        params = self.send_with_response(
+            "enable_canbus_transport epoch=%d" % (epoch,),
+            'canbus_transport')
+        if (params['state'] != 2 or not params['active']
+                or params['mtu'] != mtu or params['brs'] != int(brs)
+                or params['epoch'] != epoch):
+            self._error("MCU failed CAN FD profile enable")
+        return params
+    def abort_canfd(self, epoch):
+        params = self.send_with_response(
+            "abort_canbus_transport epoch=%d" % (epoch,),
+            'canbus_transport')
+        self.ffi_lib.serialqueue_set_canfd_mode(
+            self.serialqueue, 8, 0, 1000000)
+        return params
     def connect_pipe(self, filename):
         logging.info("%sStarting connect", self.warn_prefix)
         start_time = self.reactor.monotonic()

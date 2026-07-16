@@ -13,6 +13,7 @@
 // background thread is launched to do this work and minimize latency.
 
 #include <linux/can.h> // // struct can_frame
+#include <linux/can/raw.h> // CAN_RAW_FD_FRAMES
 #include <math.h> // fabs
 #include <pthread.h> // pthread_mutex_lock
 #include <stddef.h> // offsetof
@@ -20,6 +21,7 @@
 #include <stdio.h> // snprintf
 #include <stdlib.h> // malloc
 #include <string.h> // memset
+#include <sys/socket.h> // setsockopt
 #include <termios.h> // tcflush
 #include <unistd.h> // pipe
 #include "compiler.h" // __visible
@@ -71,6 +73,8 @@ struct serialqueue {
     // Baud / clock tracking
     int receive_window;
     double bittime_adjust, idle_time;
+    double can_data_bittime;
+    uint8_t can_payload_size, can_bitrate_switch;
     struct clock_estimate ce;
     double last_receive_sent_time;
     // Retransmit support
@@ -177,9 +181,29 @@ static double
 calculate_bittime(struct serialqueue *sq, uint32_t bytes)
 {
     if (sq->serial_fd_type == SQT_CAN) {
-        uint32_t pkts = DIV_ROUND_UP(bytes, 8);
-        uint32_t bits = bytes * 8 + pkts * CANBUS_PACKET_BITS - CANBUS_IFS_BITS;
-        return sq->bittime_adjust * bits;
+        uint32_t mtu = sq->can_payload_size ? sq->can_payload_size : 8;
+        uint32_t pkts = DIV_ROUND_UP(bytes, mtu);
+        if (mtu <= 8) {
+            uint32_t bits = (bytes * 8 + pkts * CANBUS_PACKET_BITS
+                             - CANBUS_IFS_BITS);
+            return sq->bittime_adjust * bits;
+        }
+        // Conservative ISO CAN-FD accounting. Arbitration, ACK, EOF, and IFS
+        // remain at the nominal rate; payload and the 17/21-bit CRC use the
+        // data phase when BRS is active. Include a 20% stuffing allowance.
+        uint32_t nominal_bits = pkts * 38;
+        uint32_t data_bits = bytes * 8;
+        uint32_t remaining = bytes;
+        while (remaining) {
+            uint32_t frame_bytes = remaining > mtu ? mtu : remaining;
+            data_bits += frame_bytes > 16 ? 21 : 17;
+            remaining -= frame_bytes;
+        }
+        nominal_bits = (nominal_bits * 6 + 4) / 5;
+        data_bits = (data_bits * 6 + 4) / 5;
+        double data_adjust = (sq->can_bitrate_switch
+                              ? sq->can_data_bittime : sq->bittime_adjust);
+        return sq->bittime_adjust * nominal_bits + data_adjust * data_bits;
     } else {
         return sq->bittime_adjust * bytes;
     }
@@ -328,17 +352,27 @@ static void
 input_event(struct serialqueue *sq, double eventtime)
 {
     if (sq->serial_fd_type == SQT_CAN) {
-        struct can_frame cf;
+        struct canfd_frame cf;
         int ret = read(sq->serial_fd, &cf, sizeof(cf));
         if (ret <= 0) {
             report_errno("can read", ret);
             pollreactor_do_exit(sq->pr);
             return;
         }
+        if (ret != CAN_MTU && ret != CANFD_MTU) {
+            errorf("Invalid CAN frame size %d", ret);
+            return;
+        }
         if (cf.can_id != sq->client_id + 1)
             return;
-        memcpy(&sq->input_buf[sq->input_pos], cf.data, cf.can_dlc);
-        sq->input_pos += cf.can_dlc;
+        uint32_t len = cf.len;
+        if (len > sizeof(cf.data)
+            || len > sizeof(sq->input_buf) - sq->input_pos) {
+            errorf("Invalid CAN payload length %u", len);
+            return;
+        }
+        memcpy(&sq->input_buf[sq->input_pos], cf.data, len);
+        sq->input_pos += len;
     } else {
         int ret = read(sq->serial_fd, &sq->input_buf[sq->input_pos]
                        , sizeof(sq->input_buf) - sq->input_pos);
@@ -395,13 +429,16 @@ do_write(struct serialqueue *sq, void *buf, int buflen)
         return;
     }
     // Write to CAN fd
-    struct can_frame cf;
+    struct canfd_frame cf = {};
+    uint32_t mtu = sq->can_payload_size ? sq->can_payload_size : 8;
     while (buflen) {
-        int size = buflen > 8 ? 8 : buflen;
+        int size = buflen > mtu ? mtu : buflen;
         cf.can_id = sq->client_id;
-        cf.can_dlc = size;
+        cf.len = size;
+        cf.flags = sq->can_bitrate_switch ? CANFD_BRS : 0;
         memcpy(cf.data, buf, size);
-        int ret = write(sq->serial_fd, &cf, sizeof(cf));
+        int frame_size = mtu > 8 ? CANFD_MTU : CAN_MTU;
+        int ret = write(sq->serial_fd, &cf, frame_size);
         if (ret < 0) {
             report_errno("can write", ret);
             double curtime = get_monotonic();
@@ -713,6 +750,7 @@ serialqueue_alloc(int serial_fd, char serial_fd_type, int client_id
     sq->serial_fd = serial_fd;
     sq->serial_fd_type = serial_fd_type;
     sq->client_id = client_id;
+    sq->can_payload_size = 8;
     strncpy(sq->name, name, sizeof(sq->name));
     sq->name[sizeof(sq->name)-1] = '\0';
 
@@ -1084,6 +1122,30 @@ serialqueue_set_wire_frequency(struct serialqueue *sq, double frequency)
         sq->bittime_adjust = 10. / frequency;
     }
     pthread_mutex_unlock(&sq->lock);
+}
+
+int __visible
+serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size,
+                           int bitrate_switch, double data_frequency)
+{
+    if (sq->serial_fd_type != SQT_CAN || data_frequency <= 0.)
+        return -1;
+    switch (payload_size) {
+    case 8: case 12: case 16: case 20: case 24: case 32: case 48: case 64:
+        break;
+    default:
+        return -1;
+    }
+    int enable_fd = payload_size > 8;
+    if (setsockopt(sq->serial_fd, SOL_CAN_RAW, CAN_RAW_FD_FRAMES,
+                   &enable_fd, sizeof(enable_fd)) < 0)
+        return -1;
+    pthread_mutex_lock(&sq->lock);
+    sq->can_payload_size = payload_size;
+    sq->can_bitrate_switch = !!bitrate_switch;
+    sq->can_data_bittime = 1. / data_frequency;
+    pthread_mutex_unlock(&sq->lock);
+    return 0;
 }
 
 void __visible

@@ -205,7 +205,10 @@ defs_serialqueue = """
     void serialqueue_pull(struct serialqueue *sq
         , struct pull_queue_message *pqm);
     void serialqueue_set_wire_frequency(struct serialqueue *sq
-        , double frequency);
+                                        , double frequency);
+    int serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size
+                                   , int bitrate_switch
+                                   , double data_frequency);
     void serialqueue_set_receive_window(struct serialqueue *sq
         , int receive_window);
     void serialqueue_set_clock_est(struct serialqueue *sq, double est_freq

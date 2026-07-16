@@ -6,6 +6,10 @@ enum {
     USB_CDC_EP_BULK_IN = 1,
     USB_CDC_EP_BULK_OUT = 2,
     USB_CDC_EP_ACM = 3,
+    // Additional CDC-ACM data endpoints used by the Helix composite
+    // gs_usb + control-console device.
+    USB_CDC_LOCAL_EP_BULK_OUT = 4,
+    USB_CDC_LOCAL_EP_BULK_IN = 5,
 };
 
 // Default endpoint sizes

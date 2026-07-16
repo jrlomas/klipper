@@ -83,11 +83,15 @@ usb-src-$(CONFIG_HAVE_STM32_USBOTG) := stm32/usbotg.c
 usb-sof-src-$(CONFIG_HAVE_STM32_USBFS) := generic/usb_sof.c
 src-$(CONFIG_USBSERIAL) += $(usb-src-y) stm32/chipid.c generic/usb_cdc.c \
     $(usb-sof-src-y)
-canbus-src-y := generic/canserial.c ../lib/fast-hash/fasthash.c
-canbus-src-$(CONFIG_HAVE_STM32_CANBUS) += stm32/can.c
-canbus-src-$(CONFIG_HAVE_STM32_FDCANBUS) += stm32/fdcan.c
-src-$(CONFIG_CANSERIAL) += $(canbus-src-y) generic/canbus.c stm32/chipid.c
-src-$(CONFIG_USBCANBUS) += $(usb-src-y) $(canbus-src-y)
+canhw-src-$(CONFIG_HAVE_STM32_CANBUS) += stm32/can.c
+canhw-src-$(CONFIG_HAVE_STM32_FDCANBUS) += stm32/fdcan.c
+canserial-src-y := generic/canserial.c ../lib/fast-hash/fasthash.c
+src-$(CONFIG_CANSERIAL) += $(canserial-src-y) $(canhw-src-y) \
+    generic/canbus.c stm32/chipid.c
+usbcan-console-src-y := generic/canserial.c ../lib/fast-hash/fasthash.c
+usbcan-console-src-$(CONFIG_HELIX_USB_CAN_COMPOSITE) := \
+    generic/usb_local_console.c
+src-$(CONFIG_USBCANBUS) += $(usb-src-y) $(canhw-src-y) $(usbcan-console-src-y)
 src-$(CONFIG_USBCANBUS) += stm32/chipid.c generic/usb_canbus.c \
     $(usb-sof-src-y)
 src-$(CONFIG_WANT_HARD_PWM) += stm32/hard_pwm.c

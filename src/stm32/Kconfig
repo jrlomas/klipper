@@ -535,6 +535,16 @@ choice
             console is built.  Configure the board's PHY, reset pin,
             RMII pins, static IP, and PSK under "Ethernet transport".
 endchoice
+
+config HELIX_USB_CAN_COMPOSITE
+    bool "Expose a separate Helix CDC control interface" if LOW_LEVEL_OPTIONS && USBCANBUS
+    depends on USBCANBUS && HAVE_STM32_USBFS
+    help
+        Build a composite USB device with a Linux gs_usb CAN network
+        interface and an independent CDC-ACM Klipper control interface.
+        The bridge itself is then addressed over USB and is not represented
+        by a synthetic node on the downstream CAN bus.
+
 choice
     prompt "CAN bus interface" if USBCANBUS
     config STM32_CMENU_CANBUS_PB8_PB9

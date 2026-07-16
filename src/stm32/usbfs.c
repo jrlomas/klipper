@@ -125,6 +125,11 @@ btable_configure(void)
     epm_ep_desc_setup(USB_CDC_EP_BULK_OUT, 1, USB_CDC_EP_BULK_OUT_SIZE);
     epm_ep_desc_setup(USB_CDC_EP_BULK_IN, 0, 0);
     epm_ep_desc_setup(USB_CDC_EP_BULK_IN, 1, 0);
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    epm_ep_desc_setup(USB_CDC_LOCAL_EP_BULK_OUT, BUFRX,
+                      USB_CDC_EP_BULK_OUT_SIZE);
+    epm_ep_desc_setup(USB_CDC_LOCAL_EP_BULK_IN, BUFTX, 0);
+#endif
 }
 
 // Read a packet stored in dedicated usb memory
@@ -293,6 +298,34 @@ usb_send_bulk_in(void *data, uint_fast8_t len)
     return len;
 }
 
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+static uint8_t local_bulk_out_ready;
+
+int_fast8_t
+usb_read_local_bulk_out(void *data, uint_fast8_t max_len)
+{
+    if (!readb(&local_bulk_out_ready))
+        return -1;
+    uint32_t ep = USB_CDC_LOCAL_EP_BULK_OUT;
+    uint32_t count = btable_read_packet(ep, BUFRX, data, max_len);
+    writeb(&local_bulk_out_ready, 0);
+    uint32_t epr = USB_EPR[ep];
+    USB_EPR[ep] = calc_epr_bits(epr, USB_EPRX_STAT, USB_EP_RX_VALID);
+    return count;
+}
+
+int_fast8_t
+usb_send_local_bulk_in(void *data, uint_fast8_t len)
+{
+    uint32_t ep = USB_CDC_LOCAL_EP_BULK_IN, epr = USB_EPR[ep];
+    if ((epr & USB_EPTX_STAT) != USB_EP_TX_NAK)
+        return -1;
+    btable_write_packet(ep, BUFTX, data, len);
+    USB_EPR[ep] = calc_epr_bits(epr, USB_EPTX_STAT, USB_EP_TX_VALID);
+    return len;
+}
+#endif
+
 int_fast8_t
 usb_read_ep0(void *data, uint_fast8_t max_len)
 {
@@ -387,6 +420,12 @@ usb_set_configure(void)
         bulk_in_push_pos = BI_START;
         writel(&bulk_in_pop_flag, 0);
     }
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    ep = USB_CDC_LOCAL_EP_BULK_OUT;
+    writeb(&local_bulk_out_ready, 0);
+    USB_EPR[ep] = calc_epr_bits(USB_EPR[ep], USB_EPRX_STAT,
+                                USB_EP_RX_VALID);
+#endif
 }
 
 
@@ -417,6 +456,17 @@ usb_reset(void)
         bulk_in_pop_flag = USB_EP_DTOG_RX;
     }
     USB_EPR[ep] = bi_epr_flags;
+
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    ep = USB_CDC_LOCAL_EP_BULK_OUT;
+    USB_EPR[ep] = (USB_CDC_LOCAL_EP_BULK_OUT | USB_EP_BULK
+                   | USB_EP_RX_NAK | USB_EP_TX_NAK);
+    local_bulk_out_ready = 0;
+
+    ep = USB_CDC_LOCAL_EP_BULK_IN;
+    USB_EPR[ep] = (USB_CDC_LOCAL_EP_BULK_IN | USB_EP_BULK
+                   | USB_EP_RX_NAK | USB_EP_TX_NAK);
+#endif
 
     USB->CNTR = usb_irq_mask();
     USB->DADDR = USB_DADDR_EF;
@@ -449,6 +499,15 @@ USB_IRQHandler(void)
             }
             USB_EPR[ep] = ne;
             usb_notify_bulk_in();
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+        } else if (ep == USB_CDC_LOCAL_EP_BULK_OUT) {
+            USB_EPR[ep] = calc_epr_bits(epr, USB_EP_CTR_RX | USB_EP_CTR_TX, 0);
+            writeb(&local_bulk_out_ready, 1);
+            usb_notify_local_bulk_out();
+        } else if (ep == USB_CDC_LOCAL_EP_BULK_IN) {
+            USB_EPR[ep] = calc_epr_bits(epr, USB_EP_CTR_RX | USB_EP_CTR_TX, 0);
+            usb_notify_local_bulk_in();
+#endif
         } else if (ep == 0) {
             USB_EPR[ep] = calc_epr_bits(epr, USB_EP_CTR_RX | USB_EP_CTR_TX, 0);
             usb_notify_ep0();
