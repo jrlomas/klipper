@@ -1578,6 +1578,60 @@ def test_missing_sof_after_qualification_enters_bounded_holdover():
     assert not link.is_converged(104.001)
 
 
+def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.sof_capture_windows = 0
+    link.sof_captured_frames = 0
+    link.sof_discarded_frames = 0
+    link.sof_discarded_primask_frames = 0
+    link.sof_missed_frames = 0
+    link.sof_guard_discard_matches = 0
+    link.sof_guard_primask_matches = 0
+    link.sof_unclassified_misses = 0
+    link.sof_last_miss = None
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+
+    miss = owner._note_sof_window(link, 873, {
+        'found': 0,
+        'count': 9,
+        'capture_count': 9,
+        'discard_count': 1,
+        'discard_primask_count': 1,
+        'discard_match': 1,
+        'discard_match_primask': 1,
+    })
+    assert miss == {
+        'frame': 873,
+        'reason': 'guard-discard',
+        'primask': True,
+        'window_captured': 9,
+        'window_discarded': 1,
+        'window_discarded_primask': 1,
+    }
+    assert link.sof_capture_windows == 1
+    assert link.sof_captured_frames == 9
+    assert link.sof_discarded_frames == 1
+    assert link.sof_discarded_primask_frames == 1
+    assert link.sof_missed_frames == 1
+    assert link.sof_guard_discard_matches == 1
+    assert link.sof_guard_primask_matches == 1
+    assert link.sof_unclassified_misses == 0
+
+    miss = owner._note_sof_window(link, 874, {
+        'found': 0,
+        'count': 10,
+        'capture_count': 10,
+        'discard_count': 0,
+        'discard_primask_count': 0,
+        'discard_match': 0,
+        'discard_match_primask': 0,
+    })
+    assert miss['reason'] == 'unclassified'
+    assert not miss['primask']
+    assert link.sof_missed_frames == 2
+    assert link.sof_unclassified_misses == 1
+
+
 def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
     link.mcu_freq = 64_000_000.
@@ -1662,6 +1716,8 @@ def main():
     print("PASS: isolated USB SOF ISR delay preserves a stable gate")
     test_missing_sof_after_qualification_enters_bounded_holdover()
     print("PASS: missing USB SOF retains bounded qualified holdover")
+    test_missing_sof_is_attributed_to_exact_primask_guard_discard()
+    print("PASS: missing USB SOF reports exact PRIMASK guard attribution")
     test_sustained_sof_rate_discontinuity_restarts_stability_gate()
     print("PASS: sustained USB SOF rate change restarts stability gate")
     test_move_preflight_rejects_unsynced_secondary_before_lookahead()

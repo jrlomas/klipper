@@ -362,7 +362,11 @@ usb_sof_board_discard_pending(void)
 {
     if (!usb_sof_enabled || !(USB->ISTR & USB_ISTR_SOF))
         return;
+    uint32_t primask;
+    asm volatile("mrs %0, primask" : "=r" (primask));
+    uint16_t frame = USB->FNR & USB_FNR_FN;
     USB->ISTR = (uint16_t)~USB_ISTR_SOF;
+    usb_sof_note_discard(frame, !!primask);
 }
 
 void

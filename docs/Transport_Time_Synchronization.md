@@ -449,7 +449,11 @@ production filter holds over the qualified oscillator map without substituting
 a software endpoint estimate or refreshing the five-second freshness deadline.
 A later exact pair resumes discipline; repeated invalid observations therefore
 still fail closed at the normal freewheel timeout. A loaded physical repeat
-remains required to quantify the discard rate. CAN FDCAN timestamps or
+can distinguish the cause of every requested-frame miss: firmware retains the
+discarded frame number and sampled `PRIMASK` state in a separate bounded ring,
+while the host exposes cumulative captured, discarded, exact-match, and
+unclassified counters. A loaded physical repeat remains required to quantify
+the discard rate. CAN FDCAN timestamps or
 Ethernet MAC timestamps remain stronger because the event time is stored by
 the peripheral even when CPU service is delayed.
 

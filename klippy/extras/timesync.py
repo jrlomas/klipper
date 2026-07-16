@@ -145,6 +145,15 @@ class SecondaryLink:
         self.sof_rates = []
         self.sof_bad_count = 0
         self.sof_holdover_count = 0
+        self.sof_capture_windows = 0
+        self.sof_captured_frames = 0
+        self.sof_discarded_frames = 0
+        self.sof_discarded_primask_frames = 0
+        self.sof_missed_frames = 0
+        self.sof_guard_discard_matches = 0
+        self.sof_guard_primask_matches = 0
+        self.sof_unclassified_misses = 0
+        self.sof_last_miss = None
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
@@ -176,6 +185,15 @@ class SecondaryLink:
         self.sof_rates = []
         self.sof_bad_count = 0
         self.sof_holdover_count = 0
+        self.sof_capture_windows = 0
+        self.sof_captured_frames = 0
+        self.sof_discarded_frames = 0
+        self.sof_discarded_primask_frames = 0
+        self.sof_missed_frames = 0
+        self.sof_guard_discard_matches = 0
+        self.sof_guard_primask_matches = 0
+        self.sof_unclassified_misses = 0
+        self.sof_last_miss = None
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
@@ -572,6 +590,37 @@ class MachineTimeSync:
             link.relay(*pending)
         return False
 
+    def _note_sof_window(self, link, requested, state):
+        captured = int(state.get('capture_count', 0))
+        discarded = int(state.get('discard_count', 0))
+        discarded_primask = int(state.get('discard_primask_count', 0))
+        link.sof_capture_windows += 1
+        link.sof_captured_frames += captured
+        link.sof_discarded_frames += discarded
+        link.sof_discarded_primask_frames += discarded_primask
+        if state['found']:
+            return None
+        link.sof_missed_frames += 1
+        guard_match = bool(state.get('discard_match', 0))
+        primask_match = bool(state.get('discard_match_primask', 0))
+        if guard_match:
+            link.sof_guard_discard_matches += 1
+            if primask_match:
+                link.sof_guard_primask_matches += 1
+            reason = "guard-discard"
+        else:
+            link.sof_unclassified_misses += 1
+            reason = "unclassified"
+        link.sof_last_miss = {
+            'frame': requested,
+            'reason': reason,
+            'primask': primask_match,
+            'window_captured': captured,
+            'window_discarded': discarded,
+            'window_discarded_primask': discarded_primask,
+        }
+        return link.sof_last_miss
+
     def _sof_event(self, eventtime):
         active = [link for link in self.sof_links
                   if link.name not in self._paused_mcus]
@@ -585,11 +634,19 @@ class MachineTimeSync:
             seq = self.sof_capture_seq
             for link in active:
                 secondary = link.sof_link.query(primary['frame'])
+                miss = self._note_sof_window(
+                    link, primary['frame'], secondary)
                 if not secondary['found']:
                     held = self._fallback_sof_link(link)
                     logging.warning(
                         "timesync: mcu '%s' missed USB SOF frame %d;"
-                        " %s", link.name, primary['frame'],
+                        " reason=%s primask=%d window_captured=%d"
+                        " window_discarded=%d"
+                        " window_discarded_primask=%d; %s"
+                        , link.name, primary['frame'], miss['reason'],
+                        miss['primask'], miss['window_captured'],
+                        miss['window_discarded'],
+                        miss['window_discarded_primask'],
                         ("retaining qualified holdover"
                          if held else "using host estimate"))
                     continue
@@ -776,6 +833,18 @@ class MachineTimeSync:
                 'sof_rate_bad_count': link.sof_bad_count,
                 'sof_filtered_count': link.sof_filtered_count,
                 'sof_holdover_count': link.sof_holdover_count,
+                'sof_capture_windows': link.sof_capture_windows,
+                'sof_captured_frames': link.sof_captured_frames,
+                'sof_discarded_frames': link.sof_discarded_frames,
+                'sof_discarded_primask_frames': (
+                    link.sof_discarded_primask_frames),
+                'sof_missed_frames': link.sof_missed_frames,
+                'sof_guard_discard_matches': (
+                    link.sof_guard_discard_matches),
+                'sof_guard_primask_matches': (
+                    link.sof_guard_primask_matches),
+                'sof_unclassified_misses': link.sof_unclassified_misses,
+                'sof_last_miss': link.sof_last_miss,
                 'sof_phase_error_us': (
                     None if link.sof_phase_error_ticks is None else
                     link.sof_phase_error_ticks / link.mcu_freq * 1.e6),
@@ -808,12 +877,21 @@ class MachineTimeSync:
                 interval = " observed_rtt_bound=+/-%.1fus" % (
                     link.interval_diagnostics['relative_half_width_us'],)
             msgs.append(
-                "mcu '%s': %s err=%.1fus rate=%+.2fppm%s" % (
+                "mcu '%s': %s err=%.1fus rate=%+.2fppm%s"
+                " sof_windows=%d captured=%d discarded=%d"
+                " discarded_primask=%d misses=%d guard_matches=%d"
+                " guard_primask=%d unclassified=%d" % (
                     link.name,
                     ("CONVERGED" if link.is_converged(eventtime)
                      else "SYNCING"),
                     state['last_err'] / link.mcu_freq * 1e6, ppm,
-                    interval))
+                    interval, link.sof_capture_windows,
+                    link.sof_captured_frames, link.sof_discarded_frames,
+                    link.sof_discarded_primask_frames,
+                    link.sof_missed_frames,
+                    link.sof_guard_discard_matches,
+                    link.sof_guard_primask_matches,
+                    link.sof_unclassified_misses))
         gcmd.respond_info("\n".join(msgs))
 
 def load_config(config):

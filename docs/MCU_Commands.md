@@ -513,15 +513,24 @@ of USB Start-of-Frame timestamps:
 
 * `usb_sof_query frame=%hu` : Requests one retained 11-bit USB frame number;
   `65535` requests the newest sample. Generates "usb_sof_state
-  requested=%hu found=%c frame=%hu clock=%u count=%u". The monotonically
-  increasing count distinguishes a fresh frame from a repeated query.
+  requested=%hu found=%c frame=%hu clock=%u count=%u capture_count=%u
+  discard_count=%u discard_primask_count=%u discard_match=%c
+  discard_match_primask=%c". `count` identifies the returned sample, while
+  `capture_count` reports all captured frames in the current enable window.
+  `discard_count` reports SOF flags deliberately cleared before IRQ restore,
+  and `discard_primask_count` reports how many of those clears sampled
+  `PRIMASK=1`. The two `discard_match` fields identify whether the requested
+  frame itself was discarded and whether `PRIMASK` was set at that exact
+  discard. The capture and discard rings each retain 32 entries.
 
 On STM32 USB FS, any SOF flag accumulated while `PRIMASK` is set is cleared
 immediately before global interrupts are restored; USB endpoint and reset
 flags remain pending and are serviced normally. Consequently a delayed
 motion/timer critical section produces a missing frame number, which the host
 already rejects, rather than an ISR-entry timestamp biased late by the
-critical-section duration.
+critical-section duration. The host accumulates the window counters in
+`timesync.mcus.<name>` and classifies each requested-frame miss as an exact
+`guard-discard` (including the sampled `PRIMASK` bit) or `unclassified`.
 
 ### Board syscall API commands
 

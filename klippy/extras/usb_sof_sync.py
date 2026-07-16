@@ -29,7 +29,9 @@ class UsbSofLink:
             'usb_sof_enable enable=%c')
         query = 'usb_sof_query frame=%hu'
         response = ('usb_sof_state requested=%hu found=%c frame=%hu'
-                    ' clock=%u count=%u')
+                    ' clock=%u count=%u capture_count=%u discard_count=%u'
+                    ' discard_primask_count=%u discard_match=%c'
+                    ' discard_match_primask=%c')
         if (self.enable_cmd is None
                 or self.mcu.try_lookup_command(query) is None
                 or not self.mcu.check_valid_response(response)):

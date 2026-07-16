@@ -39,15 +39,23 @@ def test_arm_irq_discards_before_restoring_primask():
 
 def test_stm32_guard_discards_only_sof():
     source = _read('src/stm32/usbfs.c')
+    generic = _read('src/generic/usb_sof.c')
     mask = _function(source, 'usb_irq_mask')
     discard = _function(source, 'usb_sof_board_discard_pending')
+    query = _function(generic, 'command_usb_sof_query')
 
     assert 'USB_CNTR_CTRM | USB_CNTR_RESETM' in mask
     assert 'usb_sof_enabled ? USB_CNTR_SOFM : 0' in mask
     assert 'USB->ISTR & USB_ISTR_SOF' in discard
+    assert 'mrs %0, primask' in discard
+    assert 'USB->FNR & USB_FNR_FN' in discard
     assert '~USB_ISTR_SOF' in discard
+    assert discard.index('~USB_ISTR_SOF') < discard.index(
+        'usb_sof_note_discard')
     assert 'USB->CNTR' not in discard
+    assert 'discard_match_primask' in query
     print("PASS: STM32 clears late SOF without touching endpoint IRQ state")
+    print("PASS: discarded SOF records exact frame and sampled PRIMASK")
 
 
 def main():
