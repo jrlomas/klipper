@@ -144,6 +144,7 @@ class SecondaryLink:
         self.sof_unpaired_beacons = 0
         self.sof_rates = []
         self.sof_bad_count = 0
+        self.sof_holdover_count = 0
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
@@ -174,6 +175,7 @@ class SecondaryLink:
         self.sof_unpaired_beacons = 0
         self.sof_rates = []
         self.sof_bad_count = 0
+        self.sof_holdover_count = 0
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
         self.sof_filtered_count = 0
@@ -557,7 +559,18 @@ class MachineTimeSync:
         pending = link.sof_pending_beacon
         if pending is not None:
             link.sof_pending_beacon = None
+            if link.host_model_stable:
+                # A missing same-frame sample is not evidence of a clock or
+                # link gap.  Once exact SOF observations have qualified the
+                # mapping, do not replace one deliberately discarded sample
+                # with a noisier software endpoint estimate.  Sending
+                # nothing retains the last map without refreshing either
+                # freshness deadline, so repeated misses still fail closed
+                # at the normal freewheel timeout.
+                link.sof_holdover_count += 1
+                return True
             link.relay(*pending)
+        return False
 
     def _sof_event(self, eventtime):
         active = [link for link in self.sof_links
@@ -573,10 +586,12 @@ class MachineTimeSync:
             for link in active:
                 secondary = link.sof_link.query(primary['frame'])
                 if not secondary['found']:
+                    held = self._fallback_sof_link(link)
                     logging.warning(
                         "timesync: mcu '%s' missed USB SOF frame %d;"
-                        " using host estimate", link.name, primary['frame'])
-                    self._fallback_sof_link(link)
+                        " %s", link.name, primary['frame'],
+                        ("retaining qualified holdover"
+                         if held else "using host estimate"))
                     continue
                 local_clock = link.mcu.clock32_to_clock64(
                     secondary['clock'])
@@ -760,6 +775,7 @@ class MachineTimeSync:
                 'host_rate_error_ppm': link.host_rate_error_ppm,
                 'sof_rate_bad_count': link.sof_bad_count,
                 'sof_filtered_count': link.sof_filtered_count,
+                'sof_holdover_count': link.sof_holdover_count,
                 'sof_phase_error_us': (
                     None if link.sof_phase_error_ticks is None else
                     link.sof_phase_error_ticks / link.mcu_freq * 1.e6),

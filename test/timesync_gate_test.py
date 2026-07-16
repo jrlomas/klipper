@@ -1548,6 +1548,36 @@ def test_isolated_sof_isr_delay_does_not_revoke_stable_gate():
     assert link.sof_filtered_count == filtered_before
 
 
+def test_missing_sof_after_qualification_enters_bounded_holdover():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.host_model_stable = True
+    link.host_stable_count = timesync.HOST_STABLE_COUNT
+    link.sof_holdover_count = 0
+    link.sof_pending_beacon = (19, 120_000_000, 100.)
+    link.last_beacon_time = 99.
+    link.freewheel_time = timesync.FREEWHEEL_TIME
+    link.last_state = {
+        'flags': (timesync.TS_ENABLED | timesync.TS_PRIMED
+                  | timesync.TS_CONVERGED),
+    }
+    link.relay_cmd = FakeCommand()
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+
+    # An SOF intentionally discarded because it arrived while IRQs were
+    # masked is an invalid observation, not evidence that the clock or link
+    # disappeared.  Preserve the qualified map without extending its
+    # freshness deadline.
+    assert owner._fallback_sof_link(link)
+    assert link.host_model_stable
+    assert link.host_stable_count == timesync.HOST_STABLE_COUNT
+    assert link.sof_pending_beacon is None
+    assert link.sof_holdover_count == 1
+    assert link.relay_cmd.sent == []
+    assert link.last_beacon_time == 99.
+    assert link.is_converged(103.999)
+    assert not link.is_converged(104.001)
+
+
 def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
     link.mcu_freq = 64_000_000.
@@ -1630,6 +1660,8 @@ def main():
     print("PASS: exact USB SOF rate supersedes a biased startup estimate")
     test_isolated_sof_isr_delay_does_not_revoke_stable_gate()
     print("PASS: isolated USB SOF ISR delay preserves a stable gate")
+    test_missing_sof_after_qualification_enters_bounded_holdover()
+    print("PASS: missing USB SOF retains bounded qualified holdover")
     test_sustained_sof_rate_discontinuity_restarts_stability_gate()
     print("PASS: sustained USB SOF rate change restarts stability gate")
     test_move_preflight_rejects_unsynced_secondary_before_lookahead()

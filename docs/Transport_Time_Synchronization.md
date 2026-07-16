@@ -445,8 +445,11 @@ global interrupt masking as an explicit SOF discard window: immediately before
 restoring `PRIMASK`, it clears a pending SOF while retaining endpoint/reset
 flags for normal service. Frame-number pairing therefore sees a missing
 observation instead of accepting critical-section latency as clock phase; the
-production filter holds over the qualified oscillator map. A loaded physical
-repeat remains required to quantify the discard rate. CAN FDCAN timestamps or
+production filter holds over the qualified oscillator map without substituting
+a software endpoint estimate or refreshing the five-second freshness deadline.
+A later exact pair resumes discipline; repeated invalid observations therefore
+still fail closed at the normal freewheel timeout. A loaded physical repeat
+remains required to quantify the discard rate. CAN FDCAN timestamps or
 Ethernet MAC timestamps remain stronger because the event time is stored by
 the peripheral even when CPU service is delayed.
 
