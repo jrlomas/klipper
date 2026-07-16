@@ -347,6 +347,41 @@ due callbacks for its roughly 100 us repeat window, plus the execution time
 of the callback that crosses the limit. The loaded observations are
 consistent with that mechanism.
 
+A subsequent attribution build tested the mechanism at the USB peripheral
+flag. It sampled `ISTR.SOF` immediately before and after setting `PRIMASK`,
+then recorded the flag, frame number, elapsed timer ticks, and guarded call
+site before restoring interrupts. All 156 requested-frame misses in the
+loaded run matched an exact discard with `PRIMASK=1`. In 144 cases the SOF
+flag was clear before masking and pending before restore; four more crossed
+the narrow entry-sampling race. Eight occurred at the idle transition without
+a complete entry classification, and none were already pending before the
+guarded section. Thus 148/156, or 94.87%, were directly observed arriving
+while interrupts were masked.
+
+![Loaded-print USB SOF attribution](img/machine_time_sof_irq_attribution.svg)
+
+| Attributed path | Events | Mean masked interval | Maximum |
+| --- | ---: | ---: | ---: |
+| Initial timer-dispatch entry | 34 | 99.32 us | 355.98 us |
+| Re-entered timer dispatch | 98 | 24.51 us | 27.08 us |
+| Higher-order trajectory ingestion | 15 | 96.10 us | 109.31 us |
+| All exact requested-frame misses | 156 | 46.39 us | 355.98 us |
+
+The result explains the apparent bimodal behavior. Non-overlapping frames
+retain approximately 15 ns steady-run variation. An overlapping frame does
+not lengthen the critical section; it waits as a pending USB interrupt and is
+timestamped only when `USB_IRQHandler()` finally runs. Its apparent phase
+error is therefore approximately the remaining masked time, producing rare
+tens-to-hundreds-of-microseconds observations.
+
+The attribution firmware itself was too intrusive for production: it added
+entry/exit tracing to every guarded section, and the print object completed
+before a terminal timer deadline failure. That observer effect limits claims
+about the exact uninstrumented duration distribution, but it does not invalidate
+the clear-before/pending-after peripheral observation. Production uses the
+lighter guard that discards the pending SOF and records only its frame and
+sampled `PRIMASK`.
+
 The engineering consequence is narrower than abandoning SOF. Matching frame
 numbers still removes host scheduling and command-delivery ambiguity, and
 the established crystal-rate map can safely span an isolated late ISR. The
@@ -357,6 +392,9 @@ a harmless 2.25 us phase perturbation over one second looks like 2.25 ppm.
 Hardware timer capture of a shared edge, or a robust estimate over several
 SOF frames in each capture window, remains the route to eliminating rather
 than filtering ISR-entry latency.
+
+The complete extracted counts are in
+[the SOF IRQ attribution summary](evidence/machine_time/usb_sof_irq_attribution_summary.json).
 
 ## 5. Translation into a printed object
 

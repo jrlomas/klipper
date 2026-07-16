@@ -207,6 +207,63 @@ motion callback: PRIMASK has disabled every interrupt. A batch of due timer
 events may occupy the dispatcher's approximately 100 us repeat window plus
 the final callback, which is consistent with the loaded-print observations.
 
+#### Guard-attribution result
+
+A 2026-07-16 loaded print used temporary firmware instrumentation to test that
+explanation directly. The instrumentation sampled the STM32 USB `ISTR.SOF`
+flag immediately before setting `PRIMASK`, sampled it again after masking, and
+recorded any pending flag immediately before interrupts were restored. It also
+recorded the guarded section's entry site and elapsed MCU ticks.
+
+The print produced 156 requested-frame misses that all matched an exact
+guarded discard with `PRIMASK=1`. Of those:
+
+| Entry classification | Count | Interpretation |
+| --- | ---: | --- |
+| SOF clear before masking, pending before restore | 144 | Frame arrived while interrupts were masked |
+| SOF changed across the entry samples | 4 | Frame arrived in the narrow mask-entry race |
+| Idle-transition entry state unavailable | 8 | Pending at restore, but entry could not be classified |
+| Already pending before the guarded section | 0 | No evidence that stale pre-entry SOFs caused the outliers |
+
+The first two rows directly prove that 148 of 156 exact misses, or 94.87%,
+became pending while the MCU was globally interrupt-masked. Source attribution
+placed 132 events in the timer dispatcher, 15 in higher-order trajectory
+segment ingestion, one in the timer maintenance task, and eight at the idle
+transition.
+
+| Guarded path | Events | Mean elapsed time | Maximum elapsed time |
+| --- | ---: | ---: | ---: |
+| Initial timer-dispatch entry | 34 | 99.32 us | 355.98 us |
+| Re-entered timer dispatch | 98 | 24.51 us | 27.08 us |
+| Higher-order trajectory ingestion | 15 | 96.10 us | 109.31 us |
+| All exact requested-frame misses | 156 | 46.39 us | 355.98 us |
+
+In the complete set, 113 guarded intervals were at least 10 us, 26 were at
+least 50 us, 11 were at least 150 us, and nine were at least 250 us. The
+previous monitor-visible +171.86 us print outlier is therefore inside the
+directly observed masked-interval distribution.
+
+This establishes the causal chain. USB SOF does not create the long interval.
+Instead, an SOF edge occasionally occurs while `PRIMASK=1`; the USB interrupt
+remains pending; and `USB_IRQHandler()` calls `timer_read_time()` only after
+the timer or trajectory critical section restores interrupts. The stored value
+is therefore ISR-service time rather than physical frame-edge time. Frames
+that do not overlap a masked interval retain the measured approximately
+0.0153 us steady-run standard deviation.
+
+The full attribution build was deliberately removed after the experiment. It
+expanded every guarded entry and exit and the print subsequently completed its
+object before an end-of-print `Rescheduled timer in the past` shutdown. That
+terminal failure is treated as an observer effect, not evidence that clearing
+a pending frame is expensive. The elapsed duration was sampled before the
+discard-ring write, so bookkeeping can perturb absolute timings but cannot
+manufacture the pre-clear/post-pending classification or explain intervals as
+large as 100 to 356 us. Production firmware retains only the lightweight exact
+frame/`PRIMASK` discard accounting.
+
+The extracted attribution summary is retained in
+[usb_sof_irq_attribution_summary.json](evidence/machine_time/usb_sof_irq_attribution_summary.json).
+
 Production therefore treats same-frame SOF values as load-perturbed
 ISR-entry observations, not unconditionally exact edge captures. The host
 compares their phase residual with the configured `converge_window`, holds

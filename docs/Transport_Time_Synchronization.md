@@ -449,11 +449,18 @@ production filter holds over the qualified oscillator map without substituting
 a software endpoint estimate or refreshing the five-second freshness deadline.
 A later exact pair resumes discipline; repeated invalid observations therefore
 still fail closed at the normal freewheel timeout. A loaded physical repeat
-can distinguish the cause of every requested-frame miss: firmware retains the
-discarded frame number and sampled `PRIMASK` state in a separate bounded ring,
-while the host exposes cumulative captured, discarded, exact-match, and
-unclassified counters. A loaded physical repeat remains required to quantify
-the discard rate. CAN FDCAN timestamps or
+distinguished the cause of every requested-frame miss: all 156 requested
+misses matched an exact guarded discard with `PRIMASK=1`; 144 SOFs arrived
+inside the masked section and four crossed the mask-entry sampling race.
+Timer dispatch accounted for 132 events, higher-order trajectory ingestion
+for 15, timer maintenance for one, and the idle transition for eight. The
+directly observed guarded intervals reached 355.98 us, explaining why the
+otherwise approximately 15 ns steady SOF distribution has rare
+tens-to-hundreds-of-microseconds ISR-entry outliers. See the
+[qualification record](Machine_Time_Qualification.md#guard-attribution-result)
+and
+[extracted evidence](evidence/machine_time/usb_sof_irq_attribution_summary.json).
+CAN FDCAN timestamps or
 Ethernet MAC timestamps remain stronger because the event time is stored by
 the peripheral even when CPU service is delayed.
 

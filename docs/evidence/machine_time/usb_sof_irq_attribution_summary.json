@@ -1,0 +1,62 @@
+{
+  "date": "2026-07-16",
+  "purpose": "Determine why rare loaded STM32G0 USB SOF ISR-entry timestamps differ by tens or hundreds of microseconds while steady observations vary by approximately 15 ns RMS.",
+  "board": "EBB36 STM32G0B1, 64 MHz",
+  "instrumentation_commit": "023893fc",
+  "production_commit_after_removal": "b01d2cfe",
+  "requested_frame_misses": 156,
+  "exact_guard_discard_matches": 156,
+  "exact_primask_matches": 156,
+  "entry_classification": {
+    "arrived_while_masked": 144,
+    "mask_entry_race": 4,
+    "idle_transition_unknown": 8,
+    "already_pending_before_entry": 0,
+    "proved_arrived_during_masking": 148,
+    "proved_arrived_during_masking_percent": 94.87
+  },
+  "source_attribution": {
+    "timer_dispatch": 132,
+    "higher_order_trajectory_ingestion": 15,
+    "timer_maintenance_task": 1,
+    "idle_transition": 8
+  },
+  "duration_ticks": {
+    "frequency_hz": 64000000,
+    "all_mean": 2968.9,
+    "all_max": 22783,
+    "at_least_10_us": 113,
+    "at_least_50_us": 26,
+    "at_least_150_us": 11,
+    "at_least_250_us": 9
+  },
+  "path_duration_us": {
+    "initial_timer_dispatch": {
+      "events": 34,
+      "mean": 99.32,
+      "max": 355.98
+    },
+    "reentered_timer_dispatch": {
+      "events": 98,
+      "mean": 24.51,
+      "max": 27.08
+    },
+    "higher_order_trajectory_ingestion": {
+      "events": 15,
+      "mean": 96.10,
+      "max": 109.31
+    },
+    "all_exact_requested_frame_misses": {
+      "events": 156,
+      "mean": 46.39,
+      "max": 355.98
+    }
+  },
+  "prior_measurements_us": {
+    "steady_sof_phase_standard_deviation": 0.0153,
+    "loaded_print_monitor_visible_outlier": 171.86
+  },
+  "conclusion": "The rare large discrepancy is delayed ISR service, not a physical USB frame-time shift. An SOF edge occasionally arrives while PRIMASK blocks all interrupts, remains pending, and is timestamped when USB_IRQHandler finally executes after the timer or trajectory critical section.",
+  "observer_effect": "The full attribution build expanded every guarded entry and exit and was removed after the experiment. It perturbed absolute timing and was associated with a post-object timer deadline shutdown, but the elapsed time was sampled before discard bookkeeping and the clear-before/pending-after peripheral classification remains valid.",
+  "production_policy": "The lightweight guard clears a pending SOF before restoring interrupts, records exact frame and PRIMASK accounting, and retains the already-qualified oscillator map through bounded misses."
+}
