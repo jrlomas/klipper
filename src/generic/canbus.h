@@ -9,6 +9,9 @@ struct canbus_msg {
     uint8_t dlc;
     uint8_t flags;
     uint16_t tx_tag;
+    // Local MCU clock corresponding to the hardware start-of-frame
+    // timestamp. Valid only with CANMSG_FLAG_HW_TIMESTAMP.
+    uint32_t hw_clock;
     union {
         uint8_t data[64];
         uint32_t data32[16];
@@ -22,6 +25,7 @@ struct canbus_msg {
 #define CANMSG_FLAG_BRS      (1<<1)
 #define CANMSG_FLAG_ESI      (1<<2)
 #define CANMSG_FLAG_TX_EVENT (1<<3)
+#define CANMSG_FLAG_HW_TIMESTAMP (1<<4)
 
 #define CANMSG_DATA_LEN(msg) ((msg)->dlc > 64 ? 64 : (msg)->dlc)
 
@@ -80,5 +84,7 @@ int canbus_send(struct canbus_msg *msg);
 void canbus_set_filter(uint32_t id);
 void canbus_notify_tx(void);
 void canbus_process_data(struct canbus_msg *msg);
+void canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock);
+void canbus_notify_protocol_error(void);
 
 #endif // canbus.h

@@ -594,6 +594,23 @@ config CANBUS_TRANSCEIVER_MAX_DATA_RATE
     int "CAN transceiver maximum data rate" if LOW_LEVEL_OPTIONS && CANBUS_FD
     depends on CANBUS_FD
     default 1000000
+config CANBUS_TX_RETRY_US
+    int "CAN transmit retry deadline (microseconds)" if LOW_LEVEL_OPTIONS && CANBUS
+    depends on CANBUS
+    default 25000
+    help
+        Maximum time a normal frame may remain in a hardware transmit buffer
+        while automatic retransmission is active. On controllers that support
+        cancellation, an expired frame is dropped so stale motion traffic can
+        not block the bus indefinitely; the Klipper message ARQ then retries
+        the command block.
+config CANBUS_ADMIN_TX_RETRY_US
+    int "CAN administration retry deadline (microseconds)" if LOW_LEVEL_OPTIONS && CANBUS
+    depends on CANBUS
+    default 100000
+    help
+        Longer transmit deadline for discovery, assignment, and other CAN
+        administration frames.
 config CANBUS_FILTER
     bool
     default y if CANSERIAL

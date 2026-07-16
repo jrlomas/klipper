@@ -116,6 +116,18 @@ timesync_clock_to_local(uint32_t machine_clock)
     return ts->local_ref + (uint32_t)dl;
 }
 
+uint32_t
+timesync_local_to_clock(uint32_t local_clock)
+{
+    struct timesync_state *ts = &timesync;
+    if (!(ts->flags & TS_ENABLED))
+        return local_clock;
+    int32_t dl = local_clock - ts->local_ref;
+    int64_t scaled = (int64_t)dl * RATE_ONE;
+    scaled += scaled < 0 ? -(int64_t)(ts->rate / 2) : ts->rate / 2;
+    return ts->machine_ref + (int32_t)(scaled / ts->rate);
+}
+
 int
 timesync_class0_ok(void)
 {
@@ -130,6 +142,12 @@ timesync_class0_ok(void)
         // no longer be vouched for.
         return 0;
     return 1;
+}
+
+int
+timesync_is_enabled(void)
+{
+    return !!(timesync.flags & TS_ENABLED);
 }
 
 /****************************************************************
@@ -263,6 +281,14 @@ timesync_ingest_sample(uint8_t seq, uint32_t m, uint32_t l, uint32_t now)
     ts->last_machine = m;
     ts->last_local = l;
     ts->beacon_rx_local = now;
+}
+
+void
+timesync_ingest_can_sample(uint8_t seq, uint32_t machine_clock,
+                           uint32_t local_clock)
+{
+    timesync_ingest_sample(seq, machine_clock, local_clock,
+                           timer_read_time());
 }
 
 void

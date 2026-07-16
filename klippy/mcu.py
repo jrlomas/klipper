@@ -1033,6 +1033,8 @@ class MCUConnectHelper:
         return self._serialport, self._baud
     def get_restart_helper(self):
         return self._restart_helper
+    def is_helix_can(self):
+        return self._helix_can_bus is not None
     def get_can_capabilities(self):
         params = self._serial.get_canfd_capabilities()
         return {'fd': bool(params['fd']),
@@ -1682,6 +1684,8 @@ class MCU:
             self.estimated_print_time = dummy_estimated_print_time
     def get_name(self):
         return self._name
+    def is_helix_can(self):
+        return self._conn_helper.is_helix_can()
     def get_printer(self):
         return self._printer
     def is_fileoutput(self):

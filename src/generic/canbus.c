@@ -34,3 +34,16 @@ canbus_process_data(struct canbus_msg *msg)
 {
     canserial_process_data(msg);
 }
+
+void
+canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock)
+{
+    (void)tag;
+    (void)local_clock;
+}
+
+void
+canbus_notify_protocol_error(void)
+{
+    canserial_notify_protocol_error();
+}

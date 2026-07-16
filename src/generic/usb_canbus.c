@@ -17,6 +17,7 @@
 #include "generic/usbstd.h" // struct usb_device_descriptor
 #include "generic/usbstd_cdc.h" // struct usb_cdc_header_descriptor
 #include "sched.h" // sched_wake_task
+#include "timesync.h" // timesync_local_to_clock
 #include "usb_cdc.h" // usb_notify_ep0
 
 DECL_CONSTANT("CANBUS_BRIDGE", 1);
@@ -148,15 +149,36 @@ static struct usbcan_data {
     // A gs_usb FD frame spans two full-speed USB packets.
     uint8_t host_tx_staging[GS_HOST_FRAME_FD_SIZE];
     uint8_t host_tx_pos, host_tx_len;
+    uint32_t fd_error_window_start;
+    uint8_t fd_error_count, fd_error_hold;
 
     // Data from physical canbus interface
     uint32_t canhw_pull_pos, canhw_push_pos;
     struct canbus_msg canhw_queue[32];
+
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    // Two-step hardware-timestamped CAN machine-time source
+    struct timer time_timer;
+    uint32_t time_epoch, time_cadence_ticks;
+    uint32_t time_sync_count, time_followup_count, time_invalid_count;
+    uint32_t time_event_pull, time_event_push;
+    struct {
+        uint32_t local_clock;
+        uint8_t tag;
+    } time_events[8];
+    uint8_t time_enabled, time_due, time_seq, time_quality, time_timer_armed;
+    uint8_t time_require_discipline;
+#endif
 } UsbCan;
 
 enum {
     BSS_READY = 0, BSS_BLOCKING, BSS_DISCARDING
 };
+
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+static void drain_can_time_events(void);
+static void send_can_time_sync(void);
+#endif
 
 enum {
     HS_TX_ECHO = 1,
@@ -386,6 +408,18 @@ usbcan_task(void)
 {
     if (!sched_check_wake(&UsbCan.wake) && !check_need_discard())
         return;
+    if (UsbCan.fd_error_hold) {
+        UsbCan.fd_error_hold = 0;
+        UsbCan.fd_mode = 0;
+        shutdown("CAN FD protocol error burst");
+    }
+
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    // Time follow-ups carry an exact hardware Tx timestamp and must precede
+    // ordinary bulk forwarding in task context.
+    drain_can_time_events();
+    send_can_time_sync();
+#endif
 
     // Send messages read from canbus hardware to host
     drain_canhw_queue();
@@ -410,6 +444,140 @@ wake_usbcan_task(void)
     sched_wake_task(&UsbCan.wake);
 }
 
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+static uint_fast8_t
+can_time_timer_event(struct timer *timer)
+{
+    UsbCan.time_due = 1;
+    sched_wake_task(&UsbCan.wake);
+    timer->waketime += UsbCan.time_cadence_ticks;
+    if (UsbCan.time_enabled)
+        return SF_RESCHEDULE;
+    UsbCan.time_timer_armed = 0;
+    return SF_DONE;
+}
+
+static void
+drain_can_time_events(void)
+{
+    uint32_t pull = UsbCan.time_event_pull;
+    while (pull != readl(&UsbCan.time_event_push)) {
+        uint32_t pos = pull % ARRAY_SIZE(UsbCan.time_events);
+        uint8_t seq = UsbCan.time_events[pos].tag;
+        uint32_t local_clock = UsbCan.time_events[pos].local_clock;
+        struct canbus_msg followup = {};
+        followup.id = CANBUS_ID_TIME_FOLLOWUP;
+        followup.dlc = 8;
+        followup.data[0] = CANBUS_TIME_MAGIC;
+        followup.data[1] = CANBUS_TIME_FOLLOWUP;
+        followup.data[2] = seq;
+        followup.data[3] = UsbCan.time_quality;
+        uint32_t machine_clock = timesync_local_to_clock(local_clock);
+        memcpy(&followup.data[4], &machine_clock, sizeof(machine_clock));
+        if (try_canmsg_send(&followup) < 0)
+            break;
+        UsbCan.time_event_pull = pull = pull + 1;
+        UsbCan.time_followup_count++;
+    }
+}
+
+static void
+send_can_time_sync(void)
+{
+    if (!UsbCan.time_enabled || !UsbCan.time_due)
+        return;
+    if ((UsbCan.time_require_discipline && !timesync_is_enabled())
+        || !timesync_class0_ok()) {
+        UsbCan.time_invalid_count++;
+        UsbCan.time_due = 0;
+        return;
+    }
+    struct canbus_msg sync = {};
+    sync.id = CANBUS_ID_TIME_SYNC;
+    sync.dlc = 8;
+    sync.flags = CANMSG_FLAG_TX_EVENT;
+    sync.tx_tag = UsbCan.time_seq;
+    sync.data[0] = CANBUS_TIME_MAGIC;
+    sync.data[1] = CANBUS_TIME_SYNC;
+    sync.data[2] = UsbCan.time_seq;
+    sync.data[3] = UsbCan.time_quality;
+    memcpy(&sync.data[4], &UsbCan.time_epoch, sizeof(UsbCan.time_epoch));
+    if (try_canmsg_send(&sync) < 0)
+        return;
+    UsbCan.time_seq++;
+    UsbCan.time_sync_count++;
+    UsbCan.time_due = 0;
+}
+
+void
+canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock)
+{
+    uint32_t push = UsbCan.time_event_push;
+    if (push - UsbCan.time_event_pull >= ARRAY_SIZE(UsbCan.time_events)) {
+        UsbCan.time_invalid_count++;
+        return;
+    }
+    uint32_t pos = push % ARRAY_SIZE(UsbCan.time_events);
+    UsbCan.time_events[pos].tag = tag;
+    UsbCan.time_events[pos].local_clock = local_clock;
+    UsbCan.time_event_push = push + 1;
+    wake_usbcan_task();
+}
+
+static void
+can_time_report(void)
+{
+    sendf("can_time_bridge_state enabled=%c epoch=%u quality=%c"
+          " sync_count=%u followup_count=%u invalid_count=%u"
+          , UsbCan.time_enabled, UsbCan.time_epoch, UsbCan.time_quality
+          , UsbCan.time_sync_count, UsbCan.time_followup_count
+          , UsbCan.time_invalid_count);
+}
+
+void
+command_can_time_bridge_start(uint32_t *args)
+{
+    uint32_t epoch = args[0], cadence_us = args[1];
+    uint8_t quality = args[2], require_discipline = !!args[3];
+    if (!cadence_us) {
+        UsbCan.time_enabled = UsbCan.time_due = 0;
+        if (UsbCan.time_timer_armed) {
+            sched_del_timer(&UsbCan.time_timer);
+            UsbCan.time_timer_armed = 0;
+        }
+        can_time_report();
+        return;
+    }
+    if (cadence_us < 5000 || cadence_us > 1000000)
+        shutdown("Invalid CAN time beacon cadence");
+    if (UsbCan.time_enabled)
+        sched_del_timer(&UsbCan.time_timer);
+    UsbCan.time_epoch = epoch;
+    UsbCan.time_quality = quality;
+    UsbCan.time_require_discipline = require_discipline;
+    UsbCan.time_cadence_ticks = timer_from_us(cadence_us);
+    UsbCan.time_enabled = UsbCan.time_due = 1;
+    UsbCan.time_timer.func = can_time_timer_event;
+    UsbCan.time_timer.waketime = (timer_read_time()
+                                  + UsbCan.time_cadence_ticks);
+    sched_add_timer(&UsbCan.time_timer);
+    UsbCan.time_timer_armed = 1;
+    wake_usbcan_task();
+    can_time_report();
+}
+DECL_COMMAND_FLAGS(command_can_time_bridge_start, HF_IN_SHUTDOWN,
+                   "can_time_bridge_start epoch=%u cadence_us=%u quality=%c"
+                   " require_discipline=%c");
+
+void
+command_get_can_time_bridge_status(uint32_t *args)
+{
+    can_time_report();
+}
+DECL_COMMAND_FLAGS(command_get_can_time_bridge_status, HF_IN_SHUTDOWN,
+                   "get_can_time_bridge_status");
+#endif
+
 
 /****************************************************************
  * Interface to canbus hardware (read canbus hw msgs and tx notifications)
@@ -419,6 +587,22 @@ void
 canbus_notify_tx(void)
 {
     wake_usbcan_task();
+}
+
+void
+canbus_notify_protocol_error(void)
+{
+    if (!readb(&UsbCan.fd_mode))
+        return;
+    uint32_t now = timer_read_time();
+    if (now - UsbCan.fd_error_window_start > timer_from_us(10000)) {
+        UsbCan.fd_error_window_start = now;
+        UsbCan.fd_error_count = 0;
+    }
+    if (++UsbCan.fd_error_count >= 8) {
+        UsbCan.fd_error_hold = 1;
+        wake_usbcan_task();
+    }
 }
 
 // Handle incoming data from hw canbus interface (called from IRQ handler)

@@ -79,10 +79,16 @@ class HelixCANBus:
         self.manager_socket = config.get(
             'manager_socket', '/run/helix/helix-can-manager.sock')
         self.manager = HelixCANManagerClient(self.manager_socket)
+        self.bridge_mcu = config.get('bridge_mcu', None)
+        self.bridge_is_primary = config.getboolean(
+            'bridge_is_primary', False)
+        self.time_beacon_us = config.getint(
+            'time_beacon_us', 20000, minval=5000, maxval=1000000)
         # The manager replaces this bootstrap value before CAN MCU attach.
         self.active_profile = 'CLASSIC_1M'
         self.state = 'bootstrap'
         self.epoch = 0
+        self.time_epoch = 0
         self.printer.register_event_handler('klippy:mcu_identify',
                                             self._bootstrap)
         self.printer.register_event_handler('klippy:connect', self._activate)
@@ -142,11 +148,30 @@ class HelixCANBus:
         self.printer.send_event('helix_can:incident', {
             'bus': self.name, 'kind': 'profile_activation_failed',
             'epoch': epoch, 'reason': str(reason)})
+    def _start_time_source(self):
+        if self.bridge_mcu is None:
+            return
+        name = self.bridge_mcu
+        if name != 'mcu':
+            name = 'mcu ' + name
+        bridge = self.printer.lookup_object(name)
+        command = bridge.lookup_query_command(
+            'can_time_bridge_start epoch=%u cadence_us=%u quality=%c'
+            ' require_discipline=%c',
+            'can_time_bridge_state enabled=%c epoch=%u quality=%c'
+            ' sync_count=%u followup_count=%u invalid_count=%u')
+        self.time_epoch = secrets.randbits(32) or 1
+        params = command.send([self.time_epoch, self.time_beacon_us, 1,
+                               int(not self.bridge_is_primary)])
+        if not params['enabled'] or params['epoch'] != self.time_epoch:
+            raise self.printer.config_error(
+                'Composite CAN bridge refused hardware time source')
     def _activate(self):
         selected = self._select_profile()
         if selected == 'CLASSIC_1M':
             self.active_profile = selected
             self.state = 'active'
+            self._start_time_source()
             return
         profile = dict(self.get_connection_profile())
         mtu, brs, data_bitrate = PROFILE_DATA[selected]
@@ -164,6 +189,7 @@ class HelixCANBus:
             self._manager_apply(selected)
             for conn in prepared:
                 conn.enable_can_profile(profile, epoch)
+            self._start_time_source()
         except Exception as exc:
             self._abort(prepared, epoch, exc)
             raise self.printer.config_error(
@@ -181,7 +207,10 @@ class HelixCANBus:
                 'nominal_bitrate': self.nominal_bitrate,
                 'data_bitrate': profile['data_bitrate'],
                 'required_nodes': list(self.required_nodes),
-                'epoch': self.epoch, 'state': self.state}
+                'epoch': self.epoch, 'time_epoch': self.time_epoch,
+                'time_source': ('usb_sof_can_timestamp'
+                                if self.bridge_mcu else None),
+                'state': self.state}
 
 
 def load_config_prefix(config):

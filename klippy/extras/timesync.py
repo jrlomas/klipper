@@ -159,6 +159,12 @@ class SecondaryLink:
         self.sof_filtered_count = 0
         self.sof_phase_error_ticks = None
         self.converge_window = CONVERGE_WINDOW
+        self.direct_can_time = bool(
+            getattr(mcu, 'is_helix_can', lambda: False)())
+        if self.direct_can_time:
+            # Freshness and phase acceptance are enforced by the firmware's
+            # hardware-timestamp path; there is no host relay model to prove.
+            self.host_model_stable = True
     def reset_relay_history(self):
         # The firmware mapping is intentionally retained while a board
         # freewheels.  Host endpoint-fit samples straddling a USB outage are
@@ -397,7 +403,9 @@ class SecondaryLink:
             return False
         if not self.last_state['flags'] & TS_CONVERGED:
             return False
-        if eventtime is not None and self.freewheel_time:
+        if (not getattr(self, 'direct_can_time', False)
+                and eventtime is not None
+                and self.freewheel_time):
             if (self.last_beacon_time is None
                     or eventtime - self.last_beacon_time
                     > self.freewheel_time):
@@ -529,6 +537,8 @@ class MachineTimeSync:
                             " using host-relayed clock estimates")
             return
         for link in self.secondaries:
+            if getattr(link, 'direct_can_time', False):
+                continue
             sof_link = UsbSofLink(link.mcu)
             relay_cmd = link.mcu.try_lookup_command(
                 'sync_sof_relay seq=%c machine_clock=%u local_clock=%u')
@@ -710,6 +720,8 @@ class MachineTimeSync:
             machine_clock)
         for link in self.secondaries:
             if link.name in self._paused_mcus:
+                continue
+            if getattr(link, 'direct_can_time', False):
                 continue
             if (link in self.sof_links and not self.sof_commissioning
                     and self.sof_capture_seq is None

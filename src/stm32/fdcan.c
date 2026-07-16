@@ -8,6 +8,7 @@
 
 #include <string.h> // memcpy, memset
 #include "board/irq.h" // irq_save
+#include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_CONSTANT_STR
 #include "generic/armcm_boot.h" // armcm_enable_irq
 #include "generic/canbus.h" // canbus_notify_tx
@@ -125,6 +126,71 @@ struct fdcan_ram_layout {
 
 #define FDCAN_IE_TC        (FDCAN_IE_TCE | FDCAN_IE_TCFE | FDCAN_IE_TFEE)
 
+// Hardware automatic retransmission remains enabled for transient arbitration
+// and line errors.  A per-buffer deadline bounds it: once the deadline passes,
+// cancel the stale frame and let the command protocol's sequence/ACK layer
+// decide whether the command block is still useful and retransmit it.
+static struct {
+    struct timer timer;
+    uint32_t expires[3];
+    uint32_t pending;
+    uint32_t stale_cancels;
+    uint8_t timer_armed;
+} TxRetry;
+
+static uint_fast8_t
+can_tx_retry_event(struct timer *timer)
+{
+    uint32_t now = timer_read_time(), pending_hw = SOC_CAN->TXBRP;
+    uint32_t pending = TxRetry.pending & pending_hw;
+    uint32_t cancel = 0, next = 0;
+    for (uint_fast8_t i = 0; i < ARRAY_SIZE(TxRetry.expires); i++) {
+        uint32_t bit = 1U << i;
+        if (!(pending & bit))
+            continue;
+        uint32_t expires = TxRetry.expires[i];
+        if (!timer_is_before(now, expires))
+            cancel |= bit;
+        else if (!next || timer_is_before(expires, next))
+            next = expires;
+    }
+    if (cancel) {
+        SOC_CAN->TXBCR = cancel;
+        TxRetry.pending &= ~cancel;
+        TxRetry.stale_cancels += __builtin_popcount(cancel);
+        canbus_notify_tx();
+    }
+    if (next) {
+        timer->waketime = next;
+        return SF_RESCHEDULE;
+    }
+    TxRetry.timer_armed = 0;
+    return SF_DONE;
+}
+
+static void
+can_tx_retry_arm(uint32_t index, uint32_t id)
+{
+    uint32_t timeout = (id == CANBUS_ID_ADMIN || id == CANBUS_ID_ADMIN_RESP
+                        || id == CANBUS_ID_TIME_SYNC
+                        || id == CANBUS_ID_TIME_FOLLOWUP)
+                       ? CONFIG_CANBUS_ADMIN_TX_RETRY_US
+                       : CONFIG_CANBUS_TX_RETRY_US;
+    uint32_t expires = timer_read_time() + timer_from_us(timeout);
+    TxRetry.expires[index] = expires;
+    TxRetry.pending |= 1U << index;
+    if (!TxRetry.timer_armed) {
+        TxRetry.timer_armed = 1;
+        TxRetry.timer.func = can_tx_retry_event;
+        TxRetry.timer.waketime = expires;
+        sched_add_timer(&TxRetry.timer);
+    } else if (timer_is_before(expires, TxRetry.timer.waketime)) {
+        sched_del_timer(&TxRetry.timer);
+        TxRetry.timer.waketime = expires;
+        sched_add_timer(&TxRetry.timer);
+    }
+}
+
 // Transmit a packet
 int
 canhw_send(struct canbus_msg *msg)
@@ -167,6 +233,7 @@ canhw_send(struct canbus_msg *msg)
         memset((uint8_t*)txfifo->data + len, 0, wire_len - len);
     barrier();
     SOC_CAN->TXBAR = ((uint32_t)1 << w_index);
+    can_tx_retry_arm(w_index, msg->id & ~(CANMSG_ID_EFF | CANMSG_ID_RTR));
     return len;
 }
 
@@ -195,15 +262,17 @@ canhw_set_filter(uint32_t id)
 
     // Load filter
     can_filter(0, CANBUS_ID_ADMIN);
-    can_filter(1, id);
-    can_filter(2, id + 1);
+    can_filter(1, CANBUS_ID_TIME_SYNC);
+    can_filter(2, CANBUS_ID_TIME_FOLLOWUP);
+    can_filter(3, id);
+    can_filter(4, id + 1);
 
 #if CONFIG_MACH_STM32G0 || CONFIG_MACH_STM32G4
-    SOC_CAN->RXGFC = ((id ? 3 : 1) << FDCAN_RXGFC_LSS_Pos
+    SOC_CAN->RXGFC = ((id ? 5 : 3) << FDCAN_RXGFC_LSS_Pos
                       | 0x02 << FDCAN_RXGFC_ANFS_Pos);
 #elif CONFIG_MACH_STM32H7
     uint32_t flssa = (uint32_t)MSG_RAM.FLS - SRAMCAN_BASE;
-    SOC_CAN->SIDFC = flssa | ((id ? 3 : 1) << FDCAN_SIDFC_LSS_Pos);
+    SOC_CAN->SIDFC = flssa | ((id ? 5 : 3) << FDCAN_SIDFC_LSS_Pos);
     SOC_CAN->GFC = 0x02 << FDCAN_GFC_ANFS_Pos;
 #endif
 
@@ -216,6 +285,18 @@ canhw_set_filter(uint32_t id)
 static struct {
     uint32_t rx_error, tx_error;
 } CAN_Errors;
+
+static uint32_t
+fdcan_timestamp_to_clock(uint16_t timestamp)
+{
+    uint32_t local_now = timer_read_time();
+    uint16_t timestamp_now = SOC_CAN->TSCV;
+    uint16_t elapsed = timestamp_now - timestamp;
+    uint32_t local_elapsed = ((uint64_t)elapsed * CONFIG_CLOCK_FREQ
+                              + CONFIG_CANBUS_FREQUENCY / 2)
+                             / CONFIG_CANBUS_FREQUENCY;
+    return local_now - local_elapsed;
+}
 
 #if CONFIG_CANBUS_FD
 static uint32_t PreparedDBTP, PreparedDataBitrate;
@@ -240,6 +321,7 @@ canhw_get_status(struct canbus_status *status)
 
     status->rx_error = rx_error;
     status->tx_error = tx_error;
+    status->tx_retries = TxRetry.stale_cancels;
     if (psr & FDCAN_PSR_BO)
         status->bus_state = CANBUS_STATE_OFF;
     else if (psr & FDCAN_PSR_EP)
@@ -272,6 +354,8 @@ CAN_IRQHandler(void)
                 msg.id = (ids >> 18) & 0x7ff;
             msg.id |= ids & FDCAN_RTR ? CANMSG_ID_RTR : 0;
             uint32_t ctl = rxf0->dlc_section;
+            msg.hw_clock = fdcan_timestamp_to_clock(ctl & 0xffff);
+            msg.flags |= CANMSG_FLAG_HW_TIMESTAMP;
             msg.dlc = canbus_dlc_to_len((ctl >> 16) & 0x0f);
             if (ctl & FDCAN_FDF)
                 msg.flags |= CANMSG_FLAG_FD;
@@ -290,7 +374,25 @@ CAN_IRQHandler(void)
     if (ir & FDCAN_IE_TC) {
         // Tx
         SOC_CAN->IR = FDCAN_IE_TC;
+        TxRetry.pending &= ~(SOC_CAN->TXBTO | SOC_CAN->TXBCF);
         canbus_notify_tx();
+    }
+    if (ir & (FDCAN_IR_TEFN | FDCAN_IR_TEFL)) {
+        SOC_CAN->IR = FDCAN_IR_TEFN | FDCAN_IR_TEFL;
+        if (ir & FDCAN_IR_TEFL)
+            CAN_Errors.tx_error++;
+        for (;;) {
+            uint32_t txefs = SOC_CAN->TXEFS;
+            if (!(txefs & FDCAN_TXEFS_EFFL_Msk))
+                break;
+            uint32_t index = ((txefs & FDCAN_TXEFS_EFGI_Msk)
+                              >> FDCAN_TXEFS_EFGI_Pos);
+            uint32_t event = MSG_RAM.TEF[index * 2 + 1];
+            uint8_t tag = event >> 24;
+            uint32_t local_clock = fdcan_timestamp_to_clock(event & 0xffff);
+            SOC_CAN->TXEFA = index;
+            canbus_notify_tx_timestamp(tag, local_clock);
+        }
     }
     if (ir & (FDCAN_IR_PED | FDCAN_IR_PEA)) {
         // Bus error
@@ -302,6 +404,7 @@ CAN_IRQHandler(void)
                 CAN_Errors.tx_error += 1;
             else
                 CAN_Errors.rx_error += 1;
+            canbus_notify_protocol_error();
         }
     }
 }
@@ -493,6 +596,10 @@ can_init(void)
     SOC_CAN->CCCR |= FDCAN_CCCR_PXHD;
 
     SOC_CAN->NBTP = btr;
+    // Internal timestamp counter: one tick per nominal CAN bit. Timestamp
+    // conversion below anchors the 16-bit counter to the MCU timer while the
+    // FIFO/Event entry is still safely inside its wrap interval.
+    SOC_CAN->TSCC = 1 << FDCAN_TSCC_TSS_Pos;
 #if CONFIG_CANBUS_FD
     SOC_CAN->DBTP = dbtr;
     SOC_CAN->CCCR |= FDCAN_CCCR_FDOE | FDCAN_CCCR_BRSE;
@@ -508,6 +615,8 @@ can_init(void)
                      | (ARRAY_SIZE(MSG_RAM.TXFIFO) << FDCAN_TXBC_TFQS_Pos)
                      | FDCAN_TXBC_TFQM);
     SOC_CAN->TXESC = 7 << FDCAN_TXESC_TBDS_Pos;
+    uint32_t efsa = (uint32_t)MSG_RAM.TEF - SRAMCAN_BASE;
+    SOC_CAN->TXEFC = efsa | (3 << FDCAN_TXEFC_EFS_Pos);
 #else
     // G0/G4 use the fixed message-RAM placement configured by reset values,
     // but queue selection remains programmable.
@@ -524,7 +633,8 @@ can_init(void)
     /*##-3- Configure Interrupts #################################*/
     armcm_enable_irq(CAN_IRQHandler, CAN_IT0_IRQn, 1);
     SOC_CAN->ILE = FDCAN_ILE_EINT0;
-    SOC_CAN->IE = FDCAN_IE_RF0NE | FDCAN_IE_TC | FDCAN_IE_PEDE | FDCAN_IE_PEAE;
+    SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_TC | FDCAN_IE_PEDE
+                   | FDCAN_IE_PEAE | FDCAN_IE_TEFNE | FDCAN_IE_TEFLE);
 }
 DECL_INIT(can_init);
 

@@ -17,9 +17,17 @@ uint32_t timesync_ticks_to_local(uint32_t machine_ticks);
 int32_t timesync_derivative_to_local(int32_t value, uint8_t order);
 // Convert a 32-bit machine-time instant to the local clock domain
 uint32_t timesync_clock_to_local(uint32_t machine_clock);
+// Convert an exact local hardware timestamp back to machine time. This is
+// used by a CAN bridge to translate an FDCAN Tx Event timestamp after the
+// bridge's local clock has been disciplined from USB SOF observations.
+uint32_t timesync_local_to_clock(uint32_t local_clock);
+// Ingest an exact machine/local timestamp pair captured by CAN hardware.
+void timesync_ingest_can_sample(uint8_t seq, uint32_t machine_clock,
+                                uint32_t local_clock);
 // Report whether Class-0 (motion) ingest may trust the mapping:
 // zero when the discipline filter has not converged or the last
 // beacon is older than the freewheel budget.
 int timesync_class0_ok(void);
+int timesync_is_enabled(void);
 
 #endif // timesync.h

@@ -16,6 +16,7 @@
 #include "command.h" // DECL_CONSTANT
 #include "fasthash.h" // fasthash64
 #include "sched.h" // sched_wake_task
+#include "timesync.h" // timesync_ingest_can_sample
 
 #define CANBUS_UUID_LEN 6
 #define CANBUS_BOARD_ID_MAX 16
@@ -34,6 +35,13 @@ static struct canbus_data {
     uint8_t staged_mtu, staged_brs, transport_state;
     uint32_t transport_epoch;
     uint32_t active_data_bitrate, staged_data_bitrate;
+
+    // Hardware-timestamped two-step CAN machine-time transfer
+    uint32_t time_epoch, time_local_clock, time_last_rx;
+    uint32_t time_matched, time_missed, time_invalid;
+    uint8_t time_seq, time_quality, time_pending;
+    uint32_t fd_error_window_start;
+    uint8_t fd_error_count, fd_error_hold;
 
     // Rx data
     struct task_wake rx_wake;
@@ -55,6 +63,22 @@ void
 canserial_notify_tx(void)
 {
     sched_wake_task(&CanData.tx_wake);
+}
+
+void
+canserial_notify_protocol_error(void)
+{
+    if (!readb(&CanData.fd_active))
+        return;
+    uint32_t now = timer_read_time();
+    if (now - CanData.fd_error_window_start > timer_from_us(10000)) {
+        CanData.fd_error_window_start = now;
+        CanData.fd_error_count = 0;
+    }
+    if (++CanData.fd_error_count >= 8) {
+        CanData.fd_error_hold = 1;
+        sched_wake_task(&CanData.rx_wake);
+    }
 }
 
 void
@@ -445,6 +469,45 @@ can_process_admin(struct canbus_msg *msg)
     }
 }
 
+static void
+can_process_time(struct canbus_msg *msg)
+{
+    if (msg->dlc != 8 || msg->data[0] != CANBUS_TIME_MAGIC)
+        return;
+    uint8_t type = msg->data[1], seq = msg->data[2];
+    if (type == CANBUS_TIME_SYNC) {
+        if (!(msg->flags & CANMSG_FLAG_HW_TIMESTAMP)) {
+            CanData.time_invalid++;
+            return;
+        }
+        uint32_t epoch;
+        memcpy(&epoch, &msg->data[4], sizeof(epoch));
+        if (CanData.time_pending && CanData.time_seq != seq)
+            CanData.time_missed++;
+        if (epoch != CanData.time_epoch) {
+            CanData.time_epoch = epoch;
+            CanData.time_pending = 0;
+        }
+        CanData.time_seq = seq;
+        CanData.time_quality = msg->data[3];
+        CanData.time_local_clock = msg->hw_clock;
+        CanData.time_last_rx = timer_read_time();
+        CanData.time_pending = 1;
+        return;
+    }
+    if (type != CANBUS_TIME_FOLLOWUP || !CanData.time_pending
+        || CanData.time_seq != seq) {
+        CanData.time_missed++;
+        return;
+    }
+    uint32_t machine_clock;
+    memcpy(&machine_clock, &msg->data[4], sizeof(machine_clock));
+    timesync_ingest_can_sample(seq, machine_clock,
+                               CanData.time_local_clock);
+    CanData.time_pending = 0;
+    CanData.time_matched++;
+}
+
 
 /****************************************************************
  * CAN packet reading
@@ -472,7 +535,8 @@ canserial_process_data(struct canbus_msg *msg)
         memcpy(&CanData.receive_buf[rpos], msg->data, len);
         CanData.receive_pos = rpos + len;
         canserial_notify_rx();
-    } else if (id == CANBUS_ID_ADMIN
+    } else if (id == CANBUS_ID_ADMIN || id == CANBUS_ID_TIME_SYNC
+               || id == CANBUS_ID_TIME_FOLLOWUP
                || (CanData.assigned_id && id == CanData.assigned_id + 1)) {
         // Add to admin command queue
         uint32_t pushp = CanData.admin_push_pos;
@@ -519,6 +583,17 @@ canserial_rx_task(void)
     if (!sched_check_wake(&CanData.rx_wake))
         return;
 
+    if (CanData.fd_error_hold) {
+        CanData.fd_error_hold = 0;
+        CanData.fd_active = CanData.fd_brs = 0;
+        CanData.carrier_mtu = 8;
+        CanData.transport_state = 3;
+#if CONFIG_CANBUS_FD
+        canhw_abort_fd();
+#endif
+        shutdown("CAN FD protocol error burst");
+    }
+
     // Process pending admin messages
     for (;;) {
         uint32_t pushp = readl(&CanData.admin_push_pos);
@@ -532,6 +607,9 @@ canserial_rx_task(void)
             can_id_conflict();
         else if (id == CANBUS_ID_ADMIN)
             can_process_admin(msg);
+        else if (id == CANBUS_ID_TIME_SYNC
+                 || id == CANBUS_ID_TIME_FOLLOWUP)
+            can_process_time(msg);
         CanData.admin_pull_pos = pullp + 1;
     }
 
@@ -571,6 +649,19 @@ command_get_canbus_status(uint32_t *args)
 }
 DECL_COMMAND_FLAGS(command_get_canbus_status, HF_IN_SHUTDOWN
                    , "get_canbus_status");
+
+void
+command_get_can_time_status(uint32_t *args)
+{
+    uint32_t age = timer_read_time() - CanData.time_last_rx;
+    sendf("can_time_status epoch=%u pending=%c quality=%c matched=%u"
+          " missed=%u invalid=%u age_ticks=%u"
+          , CanData.time_epoch, CanData.time_pending, CanData.time_quality
+          , CanData.time_matched, CanData.time_missed
+          , CanData.time_invalid, age);
+}
+DECL_COMMAND_FLAGS(command_get_can_time_status, HF_IN_SHUTDOWN,
+                   "get_can_time_status");
 
 void
 command_get_canbus_id(uint32_t *args)
