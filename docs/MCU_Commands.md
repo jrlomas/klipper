@@ -516,6 +516,13 @@ of USB Start-of-Frame timestamps:
   requested=%hu found=%c frame=%hu clock=%u count=%u". The monotonically
   increasing count distinguishes a fresh frame from a repeated query.
 
+On STM32 USB FS, any SOF flag accumulated while `PRIMASK` is set is cleared
+immediately before global interrupts are restored; USB endpoint and reset
+flags remain pending and are serviced normally. Consequently a delayed
+motion/timer critical section produces a missing frame number, which the host
+already rejects, rather than an ISR-entry timestamp biased late by the
+critical-section duration.
+
 ### Board syscall API commands
 
 The unified cross-family board syscall table (FD-0001

@@ -227,6 +227,13 @@ pass.
   error was 36 EBB ticks (0.56 us). It reconverged after restart; the
   remaining physical coordinated-pin/scope test and CAN repetition are still
   open.
+* Loaded-print SOF monitoring exposed isolated STM32G0 ISR-entry timestamps
+  delayed by globally masked trajectory timer dispatch. STM32 USB FS now
+  clears any pending SOF immediately before restoring `PRIMASK`, while leaving
+  endpoint/reset flags pending for normal service. This converts a falsely
+  late phase sample into an explicit missing frame that the existing pairer
+  rejects. The exact EBB36 image builds; a loaded physical repeat must quantify
+  discard/holdover frequency.
 * Structured trace is live-qualified on both boards. Registered diagnostic
   records rendered and merged in cross-board machine-time order. Under a
   256-record burst, each 64-record ring reported 192 overwrites, the host saw

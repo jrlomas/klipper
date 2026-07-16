@@ -117,6 +117,13 @@ absolute-phase guarantee**. The host-relayed USB path remains an operational,
 statistically qualified scheduled-traffic mode; lack of a hard bound does not
 invalidate its demonstrated print behavior.
 
+For STM32 USB FS, a SOF observed only after a global interrupt-disabled
+critical section is not a valid timestamp. The firmware therefore clears any
+pending SOF immediately before restoring `PRIMASK`, while leaving USB
+endpoint/reset flags pending for normal service. This deliberately converts
+unbounded ISR latency into a missing observation; the estimator freewheels
+from prior qualified samples instead of learning a false phase error.
+
 The proposed two-step CAN broadcast, Ethernet/PTP, WiFi/TSF, and dedicated
 timer-capture profiles—together with STM32, RP2040, and ESP32 capability
 research—are specified in

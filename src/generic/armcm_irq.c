@@ -4,9 +4,26 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include "autoconf.h" // CONFIG_*
 #include "board/internal.h" // __CORTEX_M
 #include "irq.h" // irqstatus_t
 #include "sched.h" // DECL_SHUTDOWN
+#if CONFIG_MACH_STM32 && CONFIG_USB && CONFIG_HAVE_STM32_USBFS
+#include "usb_sof.h" // usb_sof_board_discard_pending
+#endif
+
+// STM32 USB FS timestamps SOF at ISR entry.  A SOF that arrives while
+// PRIMASK is set would otherwise remain pending and receive a falsely late
+// timestamp when interrupts resume.  Discard that peripheral flag while
+// PRIMASK is still set, immediately before restoring interrupts.  Endpoint
+// flags remain pending and are serviced normally.
+static inline void
+irq_timing_discard_pending(void)
+{
+#if CONFIG_MACH_STM32 && CONFIG_USB && CONFIG_HAVE_STM32_USBFS
+    usb_sof_board_discard_pending();
+#endif
+}
 
 void
 irq_disable(void)
@@ -17,6 +34,7 @@ irq_disable(void)
 void
 irq_enable(void)
 {
+    irq_timing_discard_pending();
     asm volatile("cpsie i" ::: "memory");
 }
 
@@ -32,12 +50,15 @@ irq_save(void)
 void
 irq_restore(irqstatus_t flag)
 {
+    if (!flag)
+        irq_timing_discard_pending();
     asm volatile("msr primask, %0" :: "r" (flag) : "memory");
 }
 
 void
 irq_wait(void)
 {
+    irq_timing_discard_pending();
     if (__CORTEX_M == 7)
         // Cortex-m7 may disable cpu counter on wfi, so use nop
         asm volatile("cpsie i\n    nop\n    cpsid i\n" ::: "memory");

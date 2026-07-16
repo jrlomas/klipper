@@ -348,7 +348,21 @@ void
 usb_sof_board_enable(uint8_t enable)
 {
     usb_sof_enabled = enable;
+    if (!enable)
+        USB->ISTR = (uint16_t)~USB_ISTR_SOF;
     USB->CNTR = usb_irq_mask();
+}
+
+// Called with PRIMASK still set immediately before global interrupts are
+// restored.  The USB peripheral retains SOF in ISTR while its ISR is blocked;
+// clear only that source so it can not receive a falsely late ISR-entry
+// timestamp.  Endpoint/reset flags remain pending and are serviced normally.
+void
+usb_sof_board_discard_pending(void)
+{
+    if (!usb_sof_enabled || !(USB->ISTR & USB_ISTR_SOF))
+        return;
+    USB->ISTR = (uint16_t)~USB_ISTR_SOF;
 }
 
 void

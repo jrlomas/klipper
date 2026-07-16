@@ -410,16 +410,25 @@ Prove the wire before you trust it to carry motion.
   by the 2.25-second monitor was +171.86 us and the longest observed streak
   was two. Source inspection localized this to globally masked STM32G0 timer
   dispatch: the USB IRQ cannot preempt quintic timer callbacks despite its
-  higher NVIC priority. The previous 2 ppm derivative gate also rejected
-  harmless approximately 2.25 us phase changes and was replaced by the actual
-  configured phase budget. A continuously recorded scope capture under print
-  load plus temperature repetition remains a stronger-assurance follow-up. A shared timer-
+  higher NVIC priority. The STM32 USB FS path now clears an accumulated SOF
+  flag immediately before restoring global interrupts, while leaving endpoint
+  and reset flags pending for normal service. The host therefore observes a
+  missing frame and holds over instead of accepting a late ISR-entry timestamp.
+  The previous 2 ppm
+  derivative gate also rejected harmless approximately 2.25 us phase changes
+  and was replaced by the actual configured phase budget. A loaded physical
+  repeat must quantify the new discard rate, and a continuously recorded scope
+  capture under print load plus temperature repetition remains a stronger-
+  assurance follow-up. A shared timer-
   capture pulse, hardware-timestamped bus, or robust multi-frame SOF estimate
   is an optional stronger assurance path. Internal `converged` state alone
   remains insufficient evidence for an absolute bound.
 
   The transport-specific follow-on designs and per-MCU timestamp capabilities
   are recorded in [Transport-Derived Machine-Time Synchronization](Transport_Time_Synchronization.md).
+  - [ ] **SOF discard follow-up:** repeat the full-speed print monitor and
+    confirm loaded STM32 critical sections produce missing paired frames, not
+    large late phase samples; record the discard/holdover rate.
   - [ ] **Stronger-assurance follow-up:** record a continuous scope capture
     under print load and repeat across board temperature.
 

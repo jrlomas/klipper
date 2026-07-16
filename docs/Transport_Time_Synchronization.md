@@ -440,11 +440,15 @@ do not create separate motion protocols.
 
 The current USB result remains valid for the Pico-XY plus EBB36-extruder V0:
 matched idle SOFs were exceptionally repeatable, while loaded STM32 timer
-dispatch delayed isolated ISR-entry observations. The production filter rejects
-those samples and holds over the qualified oscillator map. CAN FDCAN timestamps
-or Ethernet MAC timestamps would survive delayed CPU service because the event
-time is stored by the peripheral. That is the architectural improvement these
-profiles seek to verify.
+dispatch delayed isolated ISR-entry observations. STM32 USB FS now treats
+global interrupt masking as an explicit SOF discard window: immediately before
+restoring `PRIMASK`, it clears a pending SOF while retaining endpoint/reset
+flags for normal service. Frame-number pairing therefore sees a missing
+observation instead of accepting critical-section latency as clock phase; the
+production filter holds over the qualified oscillator map. A loaded physical
+repeat remains required to quantify the discard rate. CAN FDCAN timestamps or
+Ethernet MAC timestamps remain stronger because the event time is stored by
+the peripheral even when CPU service is delayed.
 
 ## 11. Primary sources and repository evidence
 
