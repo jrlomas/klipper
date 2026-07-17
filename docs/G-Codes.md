@@ -1718,6 +1718,25 @@ each disciplined secondary micro-controller - whether it has converged,
 its current synchronization error (in microseconds), and its clock rate
 correction (in ppm).
 
+### [helix_can]
+
+The following commands are available for each
+[helix_can config section](Config_Reference.md#helix_can).
+
+#### HELIX_CAN_STATUS
+`HELIX_CAN_STATUS BUS=<bus>`: Reports the negotiated lifecycle state, active
+profile and bit rates, profile and time epochs, required nodes, cumulative
+controller errors and retries, and bridge delivery conservation counters. A
+delivery result of `OK` means the bridge has reported neither queue drops nor
+accepted frames missing from the forwarded/queued accounting. Use counter
+deltas to attribute cumulative controller errors to a particular print.
+
+#### HELIX_CAN_QUIESCE
+`HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]`: Waits for motion to
+drain, stops the CAN time source, aborts the active FD profile on every node,
+and moves the bus to an allowlisted Classical CAN maintenance profile. Stop
+Klipper after the confirmation and before resetting or flashing hardware.
+
 ### [machine_time_sync_line]
 
 The following commissioning command is available when a

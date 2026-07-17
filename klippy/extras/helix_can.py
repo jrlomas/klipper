@@ -115,6 +115,10 @@ class HelixCANBus:
             'HELIX_CAN_QUIESCE', 'BUS', self.name,
             self.cmd_HELIX_CAN_QUIESCE,
             desc='Quiesce a Helix CAN bus for bridge maintenance')
+        gcode.register_mux_command(
+            'HELIX_CAN_STATUS', 'BUS', self.name,
+            self.cmd_HELIX_CAN_STATUS,
+            desc='Report Helix CAN profile and bridge delivery state')
     def add_required_node(self, board_id):
         if board_id in self.required_nodes:
             raise self.printer.config_error(
@@ -232,6 +236,46 @@ class HelixCANBus:
             'HELIX CAN bus %s is quiesced at %s; stop Klipper before '
             'resetting or flashing a node or bridge.'
             % (self.name, profile))
+    def cmd_HELIX_CAN_STATUS(self, gcmd):
+        profile = self.get_connection_profile()
+        status = self.bridge_status
+
+        def format_counter(name):
+            value = status.get(name)
+            return 'n/a' if value is None else str(value)
+
+        bus_state = status.get('bus_state')
+        bus_state = {0: 'active', 1: 'warn', 2: 'passive',
+                     3: 'off'}.get(bus_state, format_counter('bus_state'))
+        drops = status.get('rx_queue_drops')
+        unaccounted = status.get('handoff_unaccounted')
+        if drops is None or unaccounted is None:
+            delivery = 'UNKNOWN'
+        elif drops or unaccounted:
+            delivery = 'LOSS'
+        else:
+            delivery = 'OK'
+        required_nodes = ', '.join(self.required_nodes) or '(none)'
+        gcmd.respond_info(
+            "HELIX CAN bus '%s': %s\n"
+            "  interface=%s profile=%s nominal=%d data=%d mtu=%d brs=%d\n"
+            "  epoch=%u time_epoch=%u required_nodes=%s\n"
+            "  bridge(cumulative): bus=%s rx_error=%s tx_error=%s "
+            "tx_retries=%s\n"
+            "  delivery=%s accepted=%s forwarded=%s drops=%s depth=%s "
+            "highwater=%s unaccounted=%s"
+            % (self.name, self.state.upper(), self.interface,
+               profile['name'], self.nominal_bitrate,
+               profile['data_bitrate'], profile['mtu'], profile['brs'],
+               self.epoch, self.time_epoch, required_nodes, bus_state,
+               format_counter('rx_error'), format_counter('tx_error'),
+               format_counter('tx_retries'), delivery,
+               format_counter('hw_rx_frames'),
+               format_counter('usb_forwarded_frames'),
+               format_counter('rx_queue_drops'),
+               format_counter('rx_queue_depth'),
+               format_counter('rx_queue_highwater'),
+               format_counter('handoff_unaccounted')))
     def _start_time_source(self):
         if self.bridge_mcu is None:
             return

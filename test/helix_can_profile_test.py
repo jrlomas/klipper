@@ -184,6 +184,24 @@ def main():
                        'enable', 'enable']
     assert manager.requests[-1]['profile'] == 'FD_8M_BRS'
     assert config.printer.events[-1][0] == 'helix_can:profile_changed'
+    assert ('HELIX_CAN_STATUS', 'BUS', 'helixcan0') in (
+        config.printer.objects['gcode'].mux)
+    bus.add_required_node('stm32:ebb36')
+    bus.add_required_node('stm32:fps')
+    bus.bridge_status.update({
+        'rx_error': 7, 'tx_error': 2, 'tx_retries': 3,
+        'bus_state': 0, 'rx_queue_drops': 0,
+        'rx_queue_highwater': 236, 'rx_queue_depth': 0,
+        'hw_rx_frames': 100, 'usb_forwarded_frames': 100,
+        'handoff_unaccounted': 0})
+    gcmd = GCmd()
+    bus.cmd_HELIX_CAN_STATUS(gcmd)
+    assert "HELIX CAN bus 'helixcan0': ACTIVE" in gcmd.response
+    assert 'profile=FD_8M_BRS nominal=1000000 data=8000000' in gcmd.response
+    assert 'required_nodes=stm32:ebb36, stm32:fps' in gcmd.response
+    assert 'bridge(cumulative): bus=active rx_error=7' in gcmd.response
+    assert 'delivery=OK accepted=100 forwarded=100 drops=0' in gcmd.response
+    assert 'depth=0 highwater=236 unaccounted=0' in gcmd.response
 
     # Current EBB36/FPS transceivers constrain this same protocol to
     # CAN FD without bit-rate switching at 1 Mbit.

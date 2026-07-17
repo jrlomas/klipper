@@ -41,6 +41,12 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `SYNC_LINE_TEST [SAMPLES=<count>]` | With `[machine_time_sync_line]`, compare a direct primary-to-secondary edge timestamp with the current USB clock map. |
 | `USB_SOF_TEST [SAMPLES=<count>]` | With `[usb_sof_sync]`, match USB frame timestamps across two MCUs and calibrate them against the direct sync line. |
 
+### CAN transport — `[helix_can <bus>]`
+| Command | Summary |
+| --- | --- |
+| `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, controller errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Bridge counters are cumulative; compare deltas when diagnosing a particular print. |
+| `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]` | Drain motion and place the bus on an allowlisted Classical CAN maintenance profile before stopping Klipper to flash a bridge or node. |
+
 ### Structured trace — `[atlas_trace]`
 | Command | Summary |
 | --- | --- |

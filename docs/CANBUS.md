@@ -179,6 +179,13 @@ Before a bridge firmware restart, Klippy quiesces every downstream node to the
 permanent Classical 1 Mbit recovery floor, stops the time beacon, and only then
 resets the USB bridge.
 
+Use `HELIX_CAN_STATUS BUS=helixcan0` to inspect the active negotiation without
+changing it. The report includes the selected profile and rates, transaction
+and time epochs, required nodes, cumulative controller errors and retries, and
+the bridge's accepted-to-forwarded queue accounting. `delivery=OK` means no
+queue drops or unaccounted handoff have been observed; because the counters are
+cumulative, compare their deltas across a print when diagnosing an incident.
+
 For an operator-controlled bridge flash, run
 `HELIX_CAN_QUIESCE BUS=helixcan0` and wait for its confirmation, then stop
 Klipper before triggering the bootloader. The explicit maintenance command

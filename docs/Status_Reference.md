@@ -79,6 +79,9 @@ The following information is available in each
   (`bootstrap`, `preparing`, `active`, `maintenance`, or `failed`).
 - `time_epoch` and `time_source`: Two-step CAN time epoch and
   `usb_sof_can_timestamp` when a composite bridge owns the source.
+- `bridge_can`: Cumulative controller error/retry counters plus bridge queue
+  drops, depth, high-water mark, accepted hardware frames, forwarded USB
+  frames, and unaccounted handoff. Compare deltas to isolate one print.
 
 ## configfile
 
