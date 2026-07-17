@@ -33,6 +33,7 @@ struct adc_stream {
     uint32_t fault_status;
     uint8_t channel_count;
     uint8_t block_values;
+    uint8_t traffic_class;
     uint8_t oid;
     volatile uint8_t ready_mask;
     volatile uint8_t state;
@@ -103,10 +104,10 @@ command_adc_stream_start(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
     uint32_t start_clock = args[1], period_ticks = args[2];
-    uint8_t block_values = args[3];
+    uint8_t block_values = args[3], traffic_class = args[4];
     if (!s->channel_count || !period_ticks || !block_values
         || block_values > ADC_STREAM_MAX_BLOCK_VALUES
-        || block_values % s->channel_count)
+        || block_values % s->channel_count || traffic_class > 2)
         shutdown("Invalid ADC stream schedule");
     if (active_stream && active_stream != s)
         shutdown("ADC engine already claimed");
@@ -114,6 +115,7 @@ command_adc_stream_start(uint32_t *args)
         adc_stream_stop(s);
 
     s->block_values = block_values;
+    s->traffic_class = traffic_class;
     s->ready_mask = 0;
     s->sequence = 0;
     s->dropped_blocks = 0;
@@ -142,7 +144,7 @@ command_adc_stream_start(uint32_t *args)
 }
 DECL_COMMAND(command_adc_stream_start,
              "adc_stream_start oid=%c clock=%u period_ticks=%u"
-             " block_values=%c");
+             " block_values=%c traffic_class=%c");
 
 void
 command_adc_stream_stop(uint32_t *args)
@@ -169,6 +171,8 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         s->state = ADC_STREAM_FAULTED;
         board_adc_stream_stop_from_isr();
         sched_wake_task(&adc_stream_wake);
+        if (!s->traffic_class)
+            try_shutdown("Critical ADC stream overrun");
         return -1;
     }
     uint32_t sequence = s->sequence++;
@@ -202,6 +206,12 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         board_adc_stream_stop_from_isr();
     }
     sched_wake_task(&adc_stream_wake);
+    if (!s->traffic_class
+        && (status & (ACQ_STATUS_DMA_ERROR | ACQ_STATUS_PERIPHERAL_ERROR
+                      | ACQ_STATUS_SAMPLE_ERROR | ACQ_STATUS_OVERRUN)))
+        try_shutdown("Critical ADC acquisition fault");
+    if (!s->traffic_class && s->state == ADC_STREAM_FAULTED)
+        try_shutdown("Critical ADC stream overrun");
     return s->state == ADC_STREAM_FAULTED ? -1 : 0;
 }
 
@@ -217,10 +227,11 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
     if (ret)
         return;
 
-    sendf("adc_stream_data_telemetry oid=%c sequence=%u epoch=%u"
+    sendf("adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c"
           " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
           " channels=%c status=%u values=%*s",
-          s->oid, b->sequence, b->epoch, b->first_machine_clock,
+          s->oid, b->sequence, b->epoch, s->traffic_class,
+          b->first_machine_clock,
           b->period_numerator, b->period_denominator,
           b->uncertainty_ticks, s->channel_count, b->status,
           b->item_count * sizeof(uint16_t), b->data);
@@ -260,9 +271,10 @@ void
 command_adc_stream_get_status(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
-    sendf("adc_stream_status oid=%c state=%c channels=%c block_values=%c"
-          " epoch=%u sequence=%u dropped=%u status=%u",
-          s->oid, s->state, s->channel_count, s->block_values, s->epoch,
+    sendf("adc_stream_status oid=%c state=%c class=%c channels=%c"
+          " block_values=%c epoch=%u sequence=%u dropped=%u status=%u",
+          s->oid, s->state, s->traffic_class, s->channel_count,
+          s->block_values, s->epoch,
           s->sequence, s->dropped_blocks, s->fault_status);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_status, HF_IN_SHUTDOWN,

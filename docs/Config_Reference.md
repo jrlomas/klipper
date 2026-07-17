@@ -6189,6 +6189,42 @@ cs_pin:
 #   above parameters.
 ```
 
+## ADC stream
+
+DMA-backed multi-channel ADC acquisition is available on selected RP2040,
+STM32F072, STM32G0B1, and STM32H723 firmware builds. It is intended for raw
+instrumentation and commissioning; it does not yet replace heater or analog
+trigger configuration.
+
+```
+[adc_stream example]
+pins:
+#   A comma-separated list of one to four analog pins on one MCU. This
+#   parameter must be provided. Samples are reported in this order.
+#channel_names:
+#   Optional comma-separated labels for the pins. The default uses the pin
+#   descriptions.
+#sample_rate: 1000
+#   Number of complete channel scans per second. Each scan contains one value
+#   from every configured pin. The default is 1000.
+#block_scans:
+#   Number of scans per MCU report. The maximum is floor(16 / channel_count)
+#   and that maximum is the default.
+#traffic_class: telemetry
+#   The report importance: "critical", "prompt", or "telemetry". Critical
+#   acquisition faults shut down the MCU; prompt and telemetry faults stop
+#   only this stream and remain visible through status counters. The default
+#   is telemetry.
+#max_pending_samples: 4096
+#   Maximum decoded scans retained by Klippy for API clients. Further scans
+#   are explicitly counted as host_drops. The default is 4096.
+```
+
+The `ADC_STREAM_START`, `ADC_STREAM_STOP`, and `ADC_STREAM_STATUS` commands
+select a stream with `SENSOR=<name>`. API clients may subscribe through
+`adc_stream/dump_adc` with the same sensor name. Every batch carries sequence,
+epoch, discontinuity, MCU-drop, host-drop, and timestamp-uncertainty metadata.
+
 ## Common bus parameters
 
 ### Common SPI settings
