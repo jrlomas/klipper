@@ -1615,7 +1615,7 @@ def test_missing_sof_after_qualification_enters_bounded_holdover():
     # masked is an invalid observation, not evidence that the clock or link
     # disappeared.  Preserve the qualified map without extending its
     # freshness deadline.
-    assert owner._fallback_sof_link(link)
+    assert owner._fallback_sof_link(link, allow_holdover=True)
     assert link.host_model_stable
     assert link.host_stable_count == timesync.HOST_STABLE_COUNT
     assert link.sof_pending_beacon is None
@@ -1626,8 +1626,50 @@ def test_missing_sof_after_qualification_enters_bounded_holdover():
     assert not link.is_converged(104.001)
 
 
+def test_missing_sof_before_firmware_convergence_keeps_relaying():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.host_model_stable = True
+    link.sof_holdover_count = 0
+    link.sof_pending_beacon = (19, 120_000_000, 100.)
+    link.last_state = {
+        'flags': timesync.TS_ENABLED | timesync.TS_PRIMED,
+    }
+    relayed = []
+    link.relay = lambda *args: relayed.append(args)
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+
+    # A stable host regression is necessary but not sufficient for holdover.
+    # Keep feeding the firmware until its own phase gate qualifies the map.
+    assert not owner._fallback_sof_link(link)
+    assert link.sof_pending_beacon is None
+    assert link.sof_holdover_count == 0
+    assert relayed == [(19, 120_000_000, 100.)]
+
+
+def test_unclassified_sof_miss_keeps_qualified_map_fresh():
+    link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.host_model_stable = True
+    link.sof_holdover_count = 0
+    link.sof_pending_beacon = (20, 132_000_000, 101.)
+    link.last_state = {
+        'flags': (timesync.TS_ENABLED | timesync.TS_PRIMED
+                  | timesync.TS_CONVERGED),
+    }
+    relayed = []
+    link.relay = lambda *args: relayed.append(args)
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+
+    # Root-port frame domains may never produce an exact pair.  An
+    # unclassified miss therefore uses the qualified host regression; only a
+    # positively attributed IRQ-guard discard is permitted to hold over.
+    assert not owner._fallback_sof_link(link, allow_holdover=False)
+    assert link.sof_holdover_count == 0
+    assert relayed == [(20, 132_000_000, 101.)]
+
+
 def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
     link = timesync.SecondaryLink.__new__(timesync.SecondaryLink)
+    link.name = 'toolhead'
     link.sof_capture_windows = 0
     link.sof_captured_frames = 0
     link.sof_discarded_frames = 0
@@ -1636,6 +1678,8 @@ def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
     link.sof_guard_discard_matches = 0
     link.sof_guard_primask_matches = 0
     link.sof_unclassified_misses = 0
+    link.sof_consecutive_unclassified = 0
+    link.sof_pair_unavailable = False
     link.sof_last_miss = None
     owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
 
@@ -1678,6 +1722,19 @@ def test_missing_sof_is_attributed_to_exact_primask_guard_discard():
     assert not miss['primask']
     assert link.sof_missed_frames == 2
     assert link.sof_unclassified_misses == 1
+
+    for frame in range(875, 875 + timesync.SOF_UNCLASSIFIED_DISABLE_COUNT - 1):
+        owner._note_sof_window(link, frame, {
+            'found': 0,
+            'capture_count': 10,
+            'discard_count': 0,
+            'discard_primask_count': 0,
+            'discard_match': 0,
+            'discard_match_primask': 0,
+        })
+    assert link.sof_pair_unavailable
+    assert (link.sof_consecutive_unclassified
+            == timesync.SOF_UNCLASSIFIED_DISABLE_COUNT)
 
 
 def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
@@ -1768,6 +1825,10 @@ def main():
     print("PASS: isolated USB SOF ISR delay preserves a stable gate")
     test_missing_sof_after_qualification_enters_bounded_holdover()
     print("PASS: missing USB SOF retains bounded qualified holdover")
+    test_missing_sof_before_firmware_convergence_keeps_relaying()
+    print("PASS: pre-convergence USB SOF misses keep fallback relays active")
+    test_unclassified_sof_miss_keeps_qualified_map_fresh()
+    print("PASS: unclassified USB SOF misses keep qualified maps fresh")
     test_missing_sof_is_attributed_to_exact_primask_guard_discard()
     print("PASS: missing USB SOF reports exact PRIMASK guard attribution")
     test_sustained_sof_rate_discontinuity_restarts_stability_gate()

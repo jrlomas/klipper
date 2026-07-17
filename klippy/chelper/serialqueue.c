@@ -177,13 +177,34 @@ kick_bg_thread(struct serialqueue *sq)
 #define CANBUS_PACKET_BITS ((1 + 11 + 3 + 4) + (16 + 2 + 7 + 3))
 #define CANBUS_IFS_BITS 4
 
+// Return the largest exact CAN(-FD) payload length no greater than the
+// available byte stream.  Values 9..11, 13..15, etc. are not representable
+// by a CAN-FD DLC; hardware rounds them upward and the resulting padding
+// would otherwise be mistaken for Klipper stream bytes by the peer.
+static uint32_t
+can_payload_chunk(uint32_t available, uint32_t mtu)
+{
+    uint32_t size = available > mtu ? mtu : available;
+    if (size <= 8)
+        return size;
+    static const uint8_t fd_lengths[] = { 12, 16, 20, 24, 32, 48, 64 };
+    for (int i = ARRAY_SIZE(fd_lengths) - 1; i >= 0; i--)
+        if (size >= fd_lengths[i])
+            return fd_lengths[i];
+    return 8;
+}
+
 // Determine minimum time needed to transmit a given number of bytes
 static double
 calculate_bittime(struct serialqueue *sq, uint32_t bytes)
 {
     if (sq->serial_fd_type == SQT_CAN) {
         uint32_t mtu = sq->can_payload_size ? sq->can_payload_size : 8;
-        uint32_t pkts = DIV_ROUND_UP(bytes, mtu);
+        uint32_t pkts = 0, remaining = bytes;
+        while (remaining) {
+            remaining -= can_payload_chunk(remaining, mtu);
+            pkts++;
+        }
         if (mtu <= 8) {
             uint32_t bits = (bytes * 8 + pkts * CANBUS_PACKET_BITS
                              - CANBUS_IFS_BITS);
@@ -194,9 +215,9 @@ calculate_bittime(struct serialqueue *sq, uint32_t bytes)
         // data phase when BRS is active. Include a 20% stuffing allowance.
         uint32_t nominal_bits = pkts * 38;
         uint32_t data_bits = bytes * 8;
-        uint32_t remaining = bytes;
+        remaining = bytes;
         while (remaining) {
-            uint32_t frame_bytes = remaining > mtu ? mtu : remaining;
+            uint32_t frame_bytes = can_payload_chunk(remaining, mtu);
             data_bits += frame_bytes > 16 ? 21 : 17;
             remaining -= frame_bytes;
         }
@@ -440,7 +461,7 @@ do_write(struct serialqueue *sq, void *buf, int buflen)
     struct canfd_frame cf = {};
     uint32_t mtu = sq->can_payload_size ? sq->can_payload_size : 8;
     while (buflen) {
-        int size = buflen > mtu ? mtu : buflen;
+        int size = can_payload_chunk(buflen, mtu);
         cf.can_id = sq->client_id;
         cf.len = size;
         cf.flags = sq->can_bitrate_switch ? CANFD_BRS : 0;

@@ -14,6 +14,19 @@ def read(path):
 
 
 def main():
+    legal_lengths = (1, 2, 3, 4, 5, 6, 7, 8,
+                     12, 16, 20, 24, 32, 48, 64)
+    for total in range(1, 193):
+        remaining = total
+        chunks = []
+        while remaining:
+            chunk = max(length for length in legal_lengths
+                        if length <= min(remaining, 64))
+            chunks.append(chunk)
+            remaining -= chunk
+        assert sum(chunks) == total
+        assert all(chunk in legal_lengths for chunk in chunks)
+
     # A two-step transfer must be independent of both software queue delay
     # before CAN arbitration and interrupt/follow-up delivery delay.
     machine_at_tx = 0x12345678
@@ -57,6 +70,9 @@ def main():
     assert 'can_reset_host_session' in node
     assert 'command_reset_sequence();' in node
     assert 'canhw_abort_fd();' in node
+    assert 'canserial_payload_chunk(avail, mtu)' in node
+    assert 'can_payload_chunk(buflen, mtu)' in read(
+        'klippy/chelper/serialqueue.c')
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')
 
 

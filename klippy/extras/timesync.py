@@ -42,6 +42,7 @@ RELAY_FIT_MIN_SPAN = 4.0    # reject high-variance short-burst rate fits
 HOST_STABLE_COUNT = 8       # consecutive steady host-model beacons
 HOST_RATE_TOLERANCE_PPM = 2.0
 HOST_DIVERGE_COUNT = 3      # sustained out-of-budget SOF phase misses
+SOF_UNCLASSIFIED_DISABLE_COUNT = 8
 SOF_CAPTURE_DELAY = 0.010
 
 # timesync_state flag bits (must match src/timesync.c)
@@ -153,6 +154,8 @@ class SecondaryLink:
         self.sof_guard_discard_matches = 0
         self.sof_guard_primask_matches = 0
         self.sof_unclassified_misses = 0
+        self.sof_consecutive_unclassified = 0
+        self.sof_pair_unavailable = False
         self.sof_last_miss = None
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
@@ -199,6 +202,8 @@ class SecondaryLink:
         self.sof_guard_discard_matches = 0
         self.sof_guard_primask_matches = 0
         self.sof_unclassified_misses = 0
+        self.sof_consecutive_unclassified = 0
+        self.sof_pair_unavailable = False
         self.sof_last_miss = None
         self.sof_rate_machine_clock = None
         self.sof_rate_local_clock = None
@@ -575,7 +580,8 @@ class MachineTimeSync:
                 or self.primary.get_name() in self._paused_mcus):
             return
         active = [link for link in self.sof_links
-                  if link.name not in self._paused_mcus]
+                  if (link.name not in self._paused_mcus
+                      and not link.sof_pair_unavailable)]
         if not active:
             return
         self.sof_primary.enable(True)
@@ -586,18 +592,21 @@ class MachineTimeSync:
         self.reactor.update_timer(
             self.sof_timer, eventtime + SOF_CAPTURE_DELAY)
 
-    def _fallback_sof_link(self, link):
+    def _fallback_sof_link(self, link, allow_holdover=False):
         pending = link.sof_pending_beacon
         if pending is not None:
             link.sof_pending_beacon = None
-            if link.host_model_stable:
+            if (allow_holdover and link.host_model_stable
+                    and (link.last_state.get('flags', 0) & TS_CONVERGED)):
                 # A missing same-frame sample is not evidence of a clock or
-                # link gap.  Once exact SOF observations have qualified the
-                # mapping, do not replace one deliberately discarded sample
-                # with a noisier software endpoint estimate.  Sending
+                # link gap.  Once both the host model and firmware mapping
+                # have qualified, do not replace one deliberately discarded
+                # sample with a noisier software endpoint estimate.  Sending
                 # nothing retains the last map without refreshing either
                 # freshness deadline, so repeated misses still fail closed
-                # at the normal freewheel timeout.
+                # at the normal freewheel timeout.  Until firmware actually
+                # converges, keep relaying fallback samples so a stable host
+                # model cannot freeze an almost-qualified mapping forever.
                 link.sof_holdover_count += 1
                 return True
             link.relay(*pending)
@@ -612,17 +621,20 @@ class MachineTimeSync:
         link.sof_discarded_frames += discarded
         link.sof_discarded_primask_frames += discarded_primask
         if state['found']:
+            link.sof_consecutive_unclassified = 0
             return None
         link.sof_missed_frames += 1
         guard_match = bool(state.get('discard_match', 0))
         primask_match = bool(state.get('discard_match_primask', 0))
         if guard_match:
+            link.sof_consecutive_unclassified = 0
             link.sof_guard_discard_matches += 1
             if primask_match:
                 link.sof_guard_primask_matches += 1
             reason = "guard-discard"
         else:
             link.sof_unclassified_misses += 1
+            link.sof_consecutive_unclassified += 1
             reason = "unclassified"
         link.sof_last_miss = {
             'frame': requested,
@@ -632,11 +644,20 @@ class MachineTimeSync:
             'window_discarded': discarded,
             'window_discarded_primask': discarded_primask,
         }
+        if (not guard_match and link.sof_consecutive_unclassified
+                >= SOF_UNCLASSIFIED_DISABLE_COUNT):
+            link.sof_pair_unavailable = True
+            logging.warning(
+                "timesync: mcu '%s' has no common USB SOF frame domain after"
+                " %d captures; disabling exact-frame probes and retaining"
+                " the host clock regression", link.name,
+                link.sof_consecutive_unclassified)
         return link.sof_last_miss
 
     def _sof_event(self, eventtime):
         active = [link for link in self.sof_links
-                  if link.name not in self._paused_mcus]
+                  if (link.name not in self._paused_mcus
+                      and not link.sof_pair_unavailable)]
         try:
             primary = self.sof_primary.query()
             if not primary['found']:
@@ -650,7 +671,8 @@ class MachineTimeSync:
                 miss = self._note_sof_window(
                     link, primary['frame'], secondary)
                 if not secondary['found']:
-                    held = self._fallback_sof_link(link)
+                    held = self._fallback_sof_link(
+                        link, miss['reason'] == 'guard-discard')
                     logging.warning(
                         "timesync: mcu '%s' missed USB SOF frame %d;"
                         " reason=%s primask=%d window_captured=%d"
@@ -726,12 +748,14 @@ class MachineTimeSync:
                 continue
             if getattr(link, 'direct_can_time', False):
                 continue
-            if (link in self.sof_links and not self.sof_commissioning
+            sof_exact_active = (link in self.sof_links
+                                and not link.sof_pair_unavailable)
+            if (sof_exact_active and not self.sof_commissioning
                     and self.sof_capture_seq is None
                     and link.sof_unpaired_beacons):
                 link.sof_unpaired_beacons -= 1
                 continue
-            if (link in self.sof_links and not self.sof_commissioning
+            if (sof_exact_active and not self.sof_commissioning
                     and self.sof_capture_seq is not None):
                 link.sof_pending_beacon = (
                     self.sof_capture_seq, machine_clock, systime)
@@ -871,6 +895,7 @@ class MachineTimeSync:
                 'sof_guard_primask_matches': (
                     link.sof_guard_primask_matches),
                 'sof_unclassified_misses': link.sof_unclassified_misses,
+                'sof_pair_unavailable': link.sof_pair_unavailable,
                 'sof_last_miss': link.sof_last_miss,
                 'sof_phase_error_us': (
                     None if link.sof_phase_error_ticks is None else
@@ -879,6 +904,8 @@ class MachineTimeSync:
                 'interval_samples': link.interval_samples,
                 'interval_diagnostics': link.interval_diagnostics,
                 'usb_sof': link in self.sof_links,
+                'usb_sof_active': (link in self.sof_links
+                                   and not link.sof_pair_unavailable),
                 'host_clock': _clock_diagnostics(
                     _get_clocksync(link.mcu)),
             } for link in self.secondaries},

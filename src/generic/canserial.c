@@ -59,6 +59,19 @@ static struct canbus_data {
  * Data transmission over CAN
  ****************************************************************/
 
+static uint_fast8_t
+canserial_payload_chunk(uint_fast8_t available, uint_fast8_t mtu)
+{
+    uint_fast8_t size = available > mtu ? mtu : available;
+    if (size <= 8)
+        return size;
+    static const uint8_t fd_lengths[] = { 12, 16, 20, 24, 32, 48, 64 };
+    for (int_fast8_t i = ARRAY_SIZE(fd_lengths) - 1; i >= 0; i--)
+        if (size >= fd_lengths[i])
+            return fd_lengths[i];
+    return 8;
+}
+
 void
 canserial_notify_tx(void)
 {
@@ -96,9 +109,10 @@ canserial_tx_task(void)
     uint32_t tpos = CanData.transmit_pos, tmax = CanData.transmit_max;
     for (;;) {
         uint32_t mtu = CanData.carrier_mtu ? CanData.carrier_mtu : 8;
-        int avail = tmax - tpos, now = avail > mtu ? mtu : avail;
+        int avail = tmax - tpos;
         if (avail <= 0)
             break;
+        uint_fast8_t now = canserial_payload_chunk(avail, mtu);
         msg.dlc = now;
         if (CanData.fd_active) {
             msg.flags = CANMSG_FLAG_FD;
