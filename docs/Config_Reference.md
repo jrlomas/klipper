@@ -6192,9 +6192,9 @@ cs_pin:
 ## ADC stream
 
 DMA-backed multi-channel ADC acquisition is available on selected RP2040,
-STM32F072, STM32G0B1, and STM32H723 firmware builds. It is intended for raw
-instrumentation and commissioning; it does not yet replace heater or analog
-trigger configuration.
+STM32F072, STM32G0B1, STM32H723, and classic ESP32 firmware builds. It is
+intended for raw instrumentation and commissioning; it does not yet replace
+heater or analog trigger configuration.
 
 ```
 [adc_stream example]
@@ -6224,6 +6224,14 @@ The `ADC_STREAM_START`, `ADC_STREAM_STOP`, and `ADC_STREAM_STATUS` commands
 select a stream with `SENSOR=<name>`. API clients may subscribe through
 `adc_stream/dump_adc` with the same sensor name. Every batch carries sequence,
 epoch, discontinuity, MCU-drop, host-drop, and timestamp-uncertainty metadata.
+
+On classic ESP32, the stream uses ADC1 and the IDF continuous/I2S0 DMA engine.
+It cannot coexist on the same MCU with legacy heater or other `analog_in`
+inputs in this first implementation. Requested rates below IDF's minimum raw
+conversion rate use software boxcar averaging. ESP32 start time is marked
+inferred with a conservative uncertainty; it is not equivalent to an STM32
+timer-TRGO aperture. A driver-pool overflow stops the stream and is reported
+explicitly instead of overwriting samples.
 
 ## Common bus parameters
 

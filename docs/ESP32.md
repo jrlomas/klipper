@@ -17,8 +17,8 @@ firmware" -> Architecture; FD-0001
 * **component** (stage 1, default): Helix compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
   present on both cores.  Its authenticated session console has run on
-  a classic dual-core Lolin32; motion and peripheral qualification remain
-  pending.
+  a classic dual-core Lolin32. The continuous ADC stream has also passed a
+  live WiFi soak; motion and the remaining peripherals are pending.
 * **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
   Helix** — no RTOS, no IDF calls, register-level peripherals,
   IRAM-resident hot path — and core 0 is reduced to a network
@@ -77,7 +77,8 @@ The ESP32 is dual core; the component architecture splits it:
 
 * **Core 0**: WiFi and lwIP tasks (pinned via `sdkconfig.defaults`),
   `app_main` (NVS init, PSK load, WiFi bringup), the UDP receive
-  task, and the deferred ADC conversion task.
+  task, the deferred legacy ADC conversion task, and the continuous ADC DMA
+  drain task.
 * **Core 1**: the Helix scheduler task
   (`xTaskCreatePinnedToCore(..., 1)`) and the Helix hardware timer
   interrupt - the GPTimer callback is registered from the core-1
@@ -116,7 +117,9 @@ citizen of this chip.  This target is FOC-first.
 > repeated MCU stats, and established a fresh session after a host-bridge
 > restart.  This exercises the polled timer enough to operate the console;
 > it does not measure dispatch jitter or qualify GPIO, motion, heaters,
-> ADC, SPI, I2C, LEDC, watchdog fault injection, or RMT/PCNT/FOC behavior.
+> modem-mode ADC acquisition, SPI, I2C, LEDC, watchdog fault injection, or
+> RMT/PCNT/FOC behavior. Component-mode continuous ADC has a separate live
+> result below.
 
 The stage-3 architecture of doc 12: IDF, FreeRTOS and the closed
 radio blobs are confined to core 0, which becomes an on-die network
@@ -246,11 +249,11 @@ already a real `rsil` so the critical sections survive that change.
 
 Peripheral notes specific to the modem arch:
 
-* **ADC**: the oneshot unit, all eight ADC1 channel configs and the
-  conversion worker are set up from core 0 before core 1 boots;
-  the sample handshake is a lock-free seq/ack word pair (core 1
-  requests, the core-0 worker converts - the SAR ADC is entangled
-  with WiFi calibration, so conversions stay on the modem core).
+* **ADC**: both IDF drivers remain on core 0. Legacy ADC1 requests use a
+  lock-free seq/ack mailbox. The continuous stream uses IDF's I2S0-backed DMA
+  pool, software boxcar averaging, and an ownership-checked cross-core block
+  mailbox drained by core 1's `irq_poll()`. The two paths are explicitly
+  exclusive because IDF cannot give both drivers ADC1 simultaneously.
 * **I2C**: bus-error recovery reprograms the controller but cannot
   pulse the DPORT module reset from core 1; a truly wedged FSM
   escalates to `I2C_BUS_TIMEOUT` -> shutdown.
@@ -373,6 +376,7 @@ those configuration paths are register-level too (see above):
 | ------- | -------- | -------------- |
 | GPIO in/out | `gpiocmds`, `endstop`, `trsync`, `buttons` | IDF pad config; register (`out_w1ts/w1tc`) hot path |
 | ADC (ADC1) | `adccmds` | IDF oneshot, deferred to a core-0 task |
+| ADC stream (ADC1/I2S0 DMA) | `config_adc_stream` / `adc_stream_*` | IDF continuous driver on core 0; bounded cross-core blocks; component and modem builds |
 | SPI (`spi2`/HSPI, `spi3`/VSPI) | `spicmds` + software SPI | register level (polled, W0..W15 buffer) |
 | I2C (`i2c0`) | `i2ccmds` + software I2C | register level (command-list engine) |
 | Hard PWM (LEDC high-speed) | `pwmcmds` | IDF `ledc` config; register duty updates |
@@ -381,6 +385,17 @@ those configuration paths are register-level too (see above):
 | RMT step module | `config_stepper`/`queue_step`/... (when `CONFIG_KLIPPER_RMT_STEP`) | register level, see below |
 
 Details and constraints:
+
+* **Continuous ADC** (`src/esp32/adc_stream.c`): ADC1 only, one physical
+  stream, one to four ascending channels, and no coexistence with legacy ADC1
+  inputs in this first implementation. An 8 KiB non-overwriting IDF pool
+  absorbs bounded core-1 scheduling delays; pool exhaustion has its own status
+  flag and stops the stream. Rates below IDF's 20 kconversion/s minimum use
+  software boxcar averaging. Start phase is explicitly inferred. On
+  2026-07-17 a Lolin32 component image delivered 47,072 GPIO32 scans at
+  1 kscan/s in 2,942 consecutive 16-value blocks over WiFi/UDP with zero drops
+  and zero status faults, then stopped cleanly. Modem mode compiles and links
+  but has not yet received the equivalent live acquisition soak.
 
 * **SPI** (`src/esp32/spi.c`): synchronous polled transfers, ISR
   tolerant (klipper's `spidev_shutdown` can run from the shutdown
@@ -686,9 +701,9 @@ variants with pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0:
 
 | variant | configuration | application image | partition free |
 | --- | --- | ---: | ---: |
-| component | default | `0xc44b0` | 48% |
-| component-RMT | `sdkconfig.defaults.rmt` | `0xc4e00` | 48% |
-| modem | `sdkconfig.defaults.modem` | `0xc0140` | 49% |
+| component | default, ADC stream enabled | `0xcc1e0` | 46% |
+| component-RMT | `sdkconfig.defaults.rmt`, ADC stream enabled | `0xccbb0` | 45% |
+| modem | `sdkconfig.defaults.modem`, ADC stream enabled | `0xc7e50` | 47% |
 
 The first real builds exposed and fixed two issues that the stub path
 missed: disabled Kconfig booleans are absent from `sdkconfig.h`, and

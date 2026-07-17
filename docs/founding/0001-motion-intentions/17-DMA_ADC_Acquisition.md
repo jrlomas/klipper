@@ -1,8 +1,12 @@
 # FD-0001: Unified DMA and ADC Acquisition
 
-Status: Research complete and architecture adopted. Implementation and
-cross-family hardware qualification are pending. This work precedes the
-STM32F767 Ethernet implementation.
+Status: First acquisition slice implemented. The generic ownership core,
+Klippy raw-stream frontend, RP2040, STM32F072/G0B1/H723, and classic ESP32
+backends compile; the ESP32 component backend has passed a live WiFi/UDP soak.
+The STM32F072 backend has passed an initial live USB acquisition soak. Further
+native-board hardware qualification, safety-consumer migration, and the general
+DMA resource manager remain open. This work precedes the STM32F767 Ethernet
+implementation.
 
 This document specifies the common HELIX primitives for DMA-backed peripheral
 acquisition and applies them first to ADC sampling on STM32, RP2040, and ESP32.
@@ -21,6 +25,50 @@ The primitive is intentionally split in two:
 There will be no command that lets a host DMA arbitrary addresses. Peripheral
 endpoints are compiled allowlists selected by board backends. The abstraction
 unifies lifecycle and evidence, not raw DMA registers.
+
+## Implemented checkpoint (2026-07-17)
+
+The landed v0 is deliberately smaller than the complete architecture below:
+
+* `generic/acq_block` enforces the generation-checked `FREE -> DMA_OWNED ->
+  READY -> CONSUMER_OWNED -> FREE` lifecycle. A fixed, aligned two-block pool
+  never overwrites an unconsumed generation.
+* `adc_stream` accepts one physical stream of one to four ascending channels,
+  at most 16 interleaved values per block, a scheduled machine-clock start,
+  rational scan period, uncertainty, epoch, sequence, status, and explicit
+  fault/drop counters. Class 0 faults shut down; Class 1/2 faults stop the
+  stream and remain queryable.
+* RP2040 uses ADC FIFO/DREQ and chained DMA channels 10/11. STM32F072 and
+  STM32G0B1 use TIM3 TRGO plus DMA1 Channel 1; STM32H723 uses TIM3, ADC1,
+  DMAMUX request 9, DMA1 Stream 0, aligned blocks, and explicit D-cache
+  invalidation. STM32 starts with an immediate TRGO after arming the ADC so
+  the first aperture agrees with the recorded machine-clock start instead of
+  lagging it by one scan period. These four configurations cross-compile
+  cleanly.
+* Classic ESP32 uses the IDF 5.3.2 continuous ADC1/I2S0 DMA driver on core 0
+  in both component and modem builds. It uses an 8 KiB non-overwriting driver
+  pool, software boxcar averaging to bridge IDF's 20 kconversion/s minimum,
+  a cross-core mailbox, and a distinct backend-pool-overflow flag. The v0
+  stream is exclusive with the legacy ADC1 oneshot path and advertises an
+  inferred, conservative start uncertainty.
+* `klippy/extras/adc_stream.py` provides `[adc_stream]`, bounded decoded
+  buffering, `ADC_STREAM_START/STOP/STATUS`, and `adc_stream/dump_adc` with
+  explicit MCU gaps, host drops, and timing uncertainty.
+
+Evidence at this checkpoint:
+
+| Check | Result |
+| --- | --- |
+| Ownership and host decode tests | 3 tests pass: legal/stale block transitions, interleaved scan timestamps, sequence gaps, and bounded host drops |
+| Native builds | RP2040, STM32F072, STM32G0B1, and STM32H723 pass clean isolated builds |
+| ESP32 builds | component, component-RMT, and modem images compile and link with IDF 5.3.2 |
+| ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
+| STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
+
+This checkpoint does **not** claim heater/trigger safety migration, generalized
+DMA allocation, native-board analog accuracy, hardware oversampling, analog
+watchdog coexistence, or Ethernet/ADC contention proof. Those remain gated
+below.
 
 ## Why the existing ADC loop must change
 
@@ -328,8 +376,26 @@ The target-independent core owns subscriptions, blocks, sequence continuity,
 filters, local consumers, and reporting. The backend owns registers, DMA
 requests, start phase, raw result layout, and error decoding.
 
-The proposed protocol surface is versioned independently from legacy
+The implemented v0 protocol surface is versioned independently from legacy
 `analog_in`:
+
+```
+config_adc_stream oid=%c
+adc_stream_add_channel oid=%c pin=%u
+adc_stream_start oid=%c clock=%u period_ticks=%u block_values=%c
+                 traffic_class=%c
+adc_stream_stop oid=%c
+adc_stream_get_status oid=%c
+
+adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c
+    first_clock=%u period_num=%u period_den=%u uncertainty=%u
+    channels=%c status=%u values=%*s
+adc_stream_fault oid=%c status=%u dropped=%u sequence=%u
+adc_stream_status oid=%c state=%c class=%c channels=%c block_values=%c
+    epoch=%u sequence=%u dropped=%u status=%u
+```
+
+The complete subscription/safety interface remains the target surface:
 
 ```
 config_adc_stream oid=%c adc=%c rate=%u block_items=%hu flags=%u channels=%*s
@@ -350,9 +416,10 @@ adc_stream_data_telemetry oid=%c sub=%c seq=%u offset=%hu flags=%c data=%*s
 adc_stream_data_prompt oid=%c sub=%c seq=%u offset=%hu flags=%c data=%*s
 ```
 
-Exact field widths may change during implementation, but these semantics do
-not. The three summary messages share a payload schema (`count`, `min`, `max`,
-64-bit sum, format/shift, and continuity flags) but have distinct command IDs
+The target interface's exact field widths may change during implementation,
+but these semantics do not. Its three summary messages share a payload schema
+(`count`, `min`, `max`, 64-bit sum, format/shift, and continuity flags) but have
+distinct command IDs
 because FD-0001 makes class a static dictionary property, not a mutable frame
 field. Raw blocks are chunked across protocol frames and retain block sequence
 and offset. Routine capture uses Class 2; a bounded requested fault-window dump
@@ -541,32 +608,39 @@ measurement images because they perturb the ISR being measured.
   oversampling configurations.
 - [ ] Add a host reference model for scan ordering, boxcar accumulation,
   rounding, decimation, timestamps, epochs, and injected missing samples.
-- [ ] Define capability constants, status flags, ownership states, and failure
-  policies before target code.
+- [x] Define v0 limits, status flags, ownership states, and stop-versus-shutdown
+  failure behavior before live target testing.
+- [ ] Publish the full per-target capability and subscription policy model.
 
 Gate: the baseline is reproducible and the reference model rejects every
 silent gap or channel-phase discontinuity.
 
 ### Phase 1 - generic DMA/block and ADC cores
 
-- [ ] Implement fixed-lifetime DMA pool allocation, resource claims, block
-  state machine, SPSC ready ring, counters, and simulated backend.
+- [x] Implement the fixed-lifetime v0 block pool, generation-checked ownership
+  state machine, counters, and no-overwrite failure path.
+- [ ] Generalize allocation and peripheral/DMA resource claims into the shared
+  pool/resource manager required by Ethernet and multiple engines.
 - [ ] Implement ADC engine subscription merging, uniform scan planning,
   software filtering, local consumers, raw chunking, and summaries.
-- [ ] Add protocol dictionary/commands and `MCU_adc` capability negotiation.
+- [x] Add the v0 protocol dictionary/commands and Klippy `[adc_stream]` raw
+  acquisition frontend.
+- [ ] Add full `MCU_adc` capability negotiation and automatic legacy-consumer
+  adaptation.
 - [ ] Add distinct Class-0/1/2 report IDs, their bounded queues, Class-0
   acknowledgement/deadline feedback, and local deadline-failure actions.
-- [ ] Unit-test wrap, stale release, ring full, stop/restart epoch, rational
-  timestamps, multi-channel ordering, filter overflow, class starvation, and
-  all loss policies.
+- [x] Unit-test legal and stale block releases, interleaved multi-channel
+  ordering, rational timestamps, sequence gaps, and bounded host-queue drops.
+- [ ] Add randomized wrap/ring-full/restart/filter/class-starvation tests for
+  every target loss policy.
 
 Gate: randomized simulated streams match the host reference bit-for-bit and no
 injected discontinuity is reported as contiguous data.
 
 ### Phase 2 - RP2040 proof
 
-- [ ] Implement FIFO/DREQ, chained ping-pong DMA, error capture, scan order,
-  pacing divider, and inferred-start uncertainty.
+- [x] Implement FIFO/DREQ, chained ping-pong DMA, error capture, scan order,
+  pacing divider, and inferred-start uncertainty; cross-build the RP2040 image.
 - [ ] Migrate V0 thermistor monitoring through the compatibility adapter.
 - [ ] Test raw and decimated acquisition from DC, PWM+filter, and a known
   waveform while homing and high-rate motion execute.
@@ -579,8 +653,14 @@ equivalent or stronger.
 
 ### Phase 3 - STM32 proof
 
-- [ ] Implement classic and newer ADC-IP operations, timer TRGO, DMA mapping,
-  circular/double buffers, and watchdog coexistence.
+- [x] Implement and cross-build the v0 timer-TRGO/DMA backends for F072, G0B1,
+  and H723, including H7 cache maintenance and DMA-reachable aligned storage.
+- [x] Run an initial STM32F072 hardware soak over USB: one- and two-channel
+  streams, exact channel interleaving, restart epoch, zero drops/faults, and
+  clean stop. The measured 48 MHz clock was within about 22 ppm of nominal;
+  the exact OAMS1 build configuration is retained in the CI compile matrix.
+- [ ] Add circular/native-double-buffer variants, generalized resource maps,
+  and analog-watchdog coexistence.
 - [ ] Prove software OSR on F4/F7 and hardware OSR on a capable G0/G4/H7
   target against the same offline reference.
 - [ ] Prove the M7 MPU arena and H7 DMA-reachable-memory selection with caches
@@ -596,14 +676,21 @@ byte-identical between runs.
 
 ### Phase 4 - ESP32 proof
 
-- [ ] Replace the oneshot worker with IDF continuous mode in component and
-  modem architectures.
-- [ ] Implement ADC1/Wi-Fi and I2S0 conflict checks, IRAM-safe callbacks,
-  internal DMA memory, APB lock, calibration metadata, and shared-ring flow.
+- [x] Add IDF continuous mode for component and modem architectures while
+  retaining an explicitly exclusive legacy oneshot compatibility path.
+- [x] Implement ADC1-only conflict checks, non-overwriting internal DMA pool,
+  cross-core block flow, pool-overflow reporting, and inferred timing.
+- [ ] Add a general I2S0 resource claimant, calibration metadata/voltage
+  conversion, and measured APB-lock/timing evidence.
 - [ ] Test Wi-Fi reconnect, flash/cache-disabled intervals, pool exhaustion,
   raw telemetry throttling, and cross-core consumer delay.
-- [ ] Measure sample-rate error and timestamp uncertainty instead of assuming
-  STM32 timer-trigger quality.
+- [x] Run a component-mode WiFi/UDP acquisition soak: 47,072 GPIO32 scans at
+  1 kscan/s in 2,942 consecutive blocks, with zero MCU drops/status faults and
+  a clean commanded stop.
+- [x] Advertise inferred ESP32 timing and conservative start uncertainty rather
+  than claiming STM32 timer-trigger quality.
+- [ ] Measure sample aperture/rate error against external instrumentation and
+  replace the conservative bound with evidence.
 
 Gate: continuous Wi-Fi traffic and reconnects cause no silent ADC loss, motion
 core starvation, or unreported pool overflow; calibrated and raw outputs are
