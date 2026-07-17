@@ -45,6 +45,11 @@ def main():
     assert 'CAN FD protocol error burst' in node
     assert 'SOC_CAN->TXBCR = cancel' in fdcan
     assert 'SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT' in fdcan
+    assert 'fdcan_ram_write(txfifo->data' in fdcan
+    assert 'fdcan_ram_read(msg.data' in fdcan
+    assert 'memcpy(txfifo->data' not in fdcan
+    assert 'usb_local_check_reboot' in bridge
+    assert 'line_coding.dwDTERate == 1200' in bridge
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')
 
 

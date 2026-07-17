@@ -1,2 +1,2 @@
 # Stable command-console alias for the CDC function of the composite bridge.
-SUBSYSTEM=="tty", ACTION=="add", ATTRS{manufacturer}=="OpenAMS", ATTRS{product}=="Helix CAN-FD Bridge", SYMLINK+="helix-can-bridge"
+SUBSYSTEM=="tty", ACTION=="add", ATTRS{manufacturer}=="OpenAMS", ATTRS{product}=="Helix CAN-FD Bridge", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="helix-can-bridge"

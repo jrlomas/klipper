@@ -6,7 +6,6 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
-#include <string.h> // memcpy, memset
 #include "board/irq.h" // irq_save
 #include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_CONSTANT_STR
@@ -119,6 +118,36 @@ struct fdcan_ram_layout {
     struct fdcan_msg_ram fdcan2;
 };
 
+// Bosch M_CAN message RAM only supports aligned 32-bit accesses on STM32.
+// Byte-oriented memcpy stores can replicate the final byte across each word.
+static void
+fdcan_ram_write(uint32_t *dst, const uint8_t *src, uint32_t len,
+                uint32_t wire_len)
+{
+    for (uint32_t offset = 0; offset < wire_len; offset += 4) {
+        uint32_t word = 0;
+        for (uint_fast8_t byte = 0; byte < 4; byte++) {
+            uint32_t pos = offset + byte;
+            if (pos < len)
+                word |= (uint32_t)src[pos] << (byte * 8);
+        }
+        dst[offset / 4] = word;
+    }
+}
+
+static void
+fdcan_ram_read(uint8_t *dst, const uint32_t *src, uint32_t len)
+{
+    for (uint32_t offset = 0; offset < len; offset += 4) {
+        uint32_t word = src[offset / 4];
+        for (uint_fast8_t byte = 0; byte < 4; byte++) {
+            uint32_t pos = offset + byte;
+            if (pos < len)
+                dst[pos] = word >> (byte * 8);
+        }
+    }
+}
+
 
 /****************************************************************
  * CANbus code
@@ -228,9 +257,7 @@ canhw_send(struct canbus_msg *msg)
         ctl |= FDCAN_EFC | ((uint32_t)msg->tx_tag << 24);
     txfifo->dlc_section = ctl;
     uint32_t wire_len = canbus_dlc_to_len(dlc);
-    memcpy(txfifo->data, msg->data, len);
-    if (wire_len > len)
-        memset((uint8_t*)txfifo->data + len, 0, wire_len - len);
+    fdcan_ram_write(txfifo->data, msg->data, len, wire_len);
     barrier();
     SOC_CAN->TXBAR = ((uint32_t)1 << w_index);
     can_tx_retry_arm(w_index, msg->id & ~(CANMSG_ID_EFF | CANMSG_ID_RTR));
@@ -363,7 +390,7 @@ CAN_IRQHandler(void)
                 msg.flags |= CANMSG_FLAG_BRS;
             if (ids & FDCAN_ESI)
                 msg.flags |= CANMSG_FLAG_ESI;
-            memcpy(msg.data, rxf0->data, msg.dlc);
+            fdcan_ram_read(msg.data, rxf0->data, msg.dlc);
             barrier();
             SOC_CAN->RXF0A = idx;
 

@@ -1089,6 +1089,16 @@ static struct usb_cdc_line_coding line_coding = {
     .dwDTERate = 250000,
     .bDataBits = 8,
 };
+static uint8_t line_control_state;
+
+static void
+usb_local_check_reboot(void)
+{
+    if (!CONFIG_HAVE_BOOTLOADER_REQUEST)
+        return;
+    if (line_coding.dwDTERate == 1200 && !(line_control_state & 0x01))
+        bootloader_request();
+}
 
 static void
 usb_req_set_line_coding(struct usb_ctrlrequest *req)
@@ -1099,6 +1109,7 @@ usb_req_set_line_coding(struct usb_ctrlrequest *req)
         return;
     }
     usb_do_xfer(&line_coding, sizeof(line_coding), UX_READ);
+    usb_local_check_reboot();
 }
 
 static void
@@ -1119,7 +1130,9 @@ usb_req_set_control_line_state(struct usb_ctrlrequest *req)
         usb_do_stall();
         return;
     }
+    line_control_state = req->wValue;
     usb_do_xfer(NULL, 0, UX_SEND);
+    usb_local_check_reboot();
 }
 #endif
 
