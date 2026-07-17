@@ -44,16 +44,17 @@ status line records its more precise state.
 | [13-Syscall_API.md](13-Syscall_API.md) | Unified cross-family board syscall ABI | Implemented — board syscall ABI v1.0 |
 | [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Implemented; 12/64 MHz USB time merge qualified, coordinated action/CAN pending |
 | [15-CANFD_Transport.md](15-CANFD_Transport.md) | Transactional CAN FD, real bridge/node identities, SocketCAN control, and timestamped USB-SOF time transfer | Vertical slice and physical 1 Mbit carrier/time base qualified; injected recovery, CAN motion/print, and 2/5/8 Mbit BRS pending |
+| [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md) | NUCLEO-F767ZI native Ethernet, cache-safe DMA, IRQ service, hardware timestamping, DHCP, and ADC streaming | Adopted plan; implementation and board qualification pending |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 07 → 15 → 11 → 13 → 12
-* *Host / klippy*: 02 → 05 → 10 → 15 → 08 → 06
+* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 07 → 15 → 16 → 11 → 13 → 12
+* *Host / klippy*: 02 → 05 → 10 → 15 → 16 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 02 (underrun) → 03
-* *Third-party device vendor*: 10 → 02 → 03 → 07 → 15 → 11
+* *Third-party device vendor*: 10 → 02 → 03 → 07 → 15 → 16 → 11
 
 ## Glossary
 

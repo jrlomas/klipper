@@ -157,6 +157,12 @@ document lays that substrate (`trigger_source`, the comparator and ADC
 watchdog backends, input capture); the higher-order uses of it are now
 ordinary follow-on work rather than a fight with the scheduler.
 
+The first concrete DMA collection primitive is planned for the STM32F767
+Ethernet reference board: timer-triggered ADC conversions feed a cache-safe
+MPU DMA arena, and half/full-transfer interrupts publish blocks without a
+per-sample ISR. See
+[16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md#stm32-timer-triggered-adc-dma-primitive).
+
 ## The trigger-locality rule
 
 Hardware triggers make an existing truth sharper, so this document states

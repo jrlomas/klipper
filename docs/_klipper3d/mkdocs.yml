@@ -168,6 +168,7 @@ nav:
       - founding/0001-motion-intentions/13-Syscall_API.md
       - founding/0001-motion-intentions/14-Heterogeneous_Fleets.md
       - founding/0001-motion-intentions/15-CANFD_Transport.md
+      - founding/0001-motion-intentions/16-STM32F767_Ethernet.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
       - founding/0002-companion-system/00-Vision.md

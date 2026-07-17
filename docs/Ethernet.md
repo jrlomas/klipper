@@ -19,6 +19,12 @@ Two paths are provided:
     physical PHY in this project. Register, DMA, clock, and pin behavior
     therefore remain a board-bring-up item, not validated firmware.
 
+The adopted native-Ethernet reference-board plan is
+[FD-0001 doc 16 - STM32F767 Ethernet Reference Board Plan](founding/0001-motion-intentions/16-STM32F767_Ethernet.md).
+It covers the NUCLEO-F767ZI clock bypass and RMII routing, an MPU-managed DMA
+arena, interrupt-driven rings, IEEE 1588 timestamps, runtime provisioning,
+DHCP, and the shared STM32 ADC-DMA primitive.
+
 ## Same binding, different loss model
 
 Nothing about the protocol changes on Ethernet. FD-0001 doc 07 is

@@ -3,6 +3,10 @@
 Status: Core and native-RMII software integration are workstation-tested in
 HELIX 0.9; Ethernet/ESP32 board runtime work remains.
 
+The adopted NUCLEO-F767ZI hardware implementation and qualification sequence
+is specified in
+[16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md).
+
 > For the full, implementation-grounded treatment of the wire protocol
 > this document introduces, see [Protocol v2](../../Protocol_v2.md). This
 > document is the original design rationale; the values below have been
