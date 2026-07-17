@@ -113,9 +113,9 @@ uses the same generic block engine with software decimation.
                                                     v
                                          acquisition block queue
                                           /         |          \
-                                safety monitor  local filter  raw telemetry
+                                safety monitor  local filter  capture data
                                       |             |             |
-                               watchdog/trsync  control input  Class 2 chunks
+                               watchdog/trsync  control input  classed reports
                                                     |
                                              summary/report task
 ```
@@ -217,6 +217,8 @@ Every subscription states:
 * sample time/attenuation/resolution requirements;
 * oversampling ratio, shift, and filter mode;
 * block size, report rate, and loss policy;
+* report traffic class, delivery deadline where applicable, and local failure
+  action;
 * raw-code safety thresholds and consecutive-failure policy;
 * whether raw samples, summaries, or only a local callback are required.
 
@@ -231,7 +233,44 @@ owners named. It must not silently change a sample rate.
 Safety subscriptions are pinned. A commissioning capture cannot reconfigure
 or starve heater monitoring after the MCU enters the ready state.
 
-### Layer 4: oversampling and filtering
+### Layer 4: traffic-class delivery
+
+Traffic class is a property of each subscription's **outbound data product**.
+It does not change ADC pacing, DMA priority, block ownership, local filter
+execution, or analog-watchdog interrupt priority.
+
+* **Class 0 — Scheduled:** a timestamped, deadline-bearing summary whose timely
+  delivery is a prerequisite for continuing scheduled operation. It uses a
+  separately bounded critical-report queue and the reliable ordered transport.
+  Failure to enqueue or receive the transport acknowledgement before its
+  delivery deadline invokes the subscription's declared local action (`HOLD`,
+  `TRIGGER`, or `SHUTDOWN`) instead of allowing the machine to continue without
+  a required input. The transport must therefore return Class-0 acknowledgement
+  state to the producer; a carrier that cannot do so may not advertise this
+  report mode. Class 0 does not mean that Python runs in an interrupt and does
+  not add a per-sample firmware timer; hardware acquisition time and block
+  progression establish the report deadline.
+* **Class 1 — Prompt:** a reliable, ordered reading or event that should reach
+  the host promptly but is not tied to an absolute execution instant. Analog
+  watchdog trips, acquisition faults, continuity breaks, and requested bounded
+  post-event data use Class 1. Queue pressure may stall or coalesce an explicitly
+  coalescible reading, but it may not silently discard a fault event.
+* **Class 2 — Telemetry:** best-effort periodic values and raw commissioning
+  captures. These are source-rate-limited and may be dropped under congestion;
+  sequence gaps and drop counters make loss visible.
+
+Most thermistor/status reports remain Class 2 because local range checks and
+heater watchdogs are the safety mechanism. A load/pressure value used in a
+host control decision may be Class 1. Class 0 is intentionally rare: choosing
+it requires a deadline and a local failure action, not merely declaring the
+sensor "important."
+
+A report class never substitutes for local protection. A sensor may emit
+Class-2 telemetry while its comparator/ADC-watchdog path is safety critical,
+and a Class-0 report still cannot stop a heater or actuator faster than a local
+hardware trigger.
+
+### Layer 5: oversampling and filtering
 
 The API distinguishes four rates and never calls an average "extra bits"
 without evidence:
@@ -254,7 +293,7 @@ filter parameters, not an invented effective resolution. ENOB improvement is
 claimed only from measured noise/SINAD data with the sensor front end and
 sample rate stated. Analog antialias filtering remains a hardware requirement.
 
-### Layer 5: analog watchdog integration
+### Layer 6: analog watchdog integration
 
 The existing STM32 watchdog backend temporarily owns an ADC and free-runs one
 channel, which prevents normal sampling on that ADC. Refactor watchdogs as ADC
@@ -295,7 +334,8 @@ The proposed protocol surface is versioned independently from legacy
 ```
 config_adc_stream oid=%c adc=%c rate=%u block_items=%hu flags=%u channels=%*s
 adc_stream_subscribe oid=%c sub=%c channel=%c osr=%hu shift=%c mode=%c
-                     report_div=%hu low=%u high=%u fault_count=%c
+                     report_div=%hu report_class=%c deadline_ticks=%u
+                     fail_action=%c low=%u high=%u fault_count=%c
 adc_stream_start oid=%c clock=%u epoch=%u
 adc_stream_stop oid=%c mode=%c
 adc_stream_query oid=%c
@@ -303,15 +343,20 @@ adc_stream_query oid=%c
 adc_stream_status oid=%c epoch=%u next_seq=%u running=%c raw_count=%u
                   ready_highwater=%hu dma_errors=%u adc_errors=%u
                   overruns=%u telemetry_drops=%u watchdog_events=%u
-adc_stream_summary oid=%c sub=%c seq=%u first_clock=%u count=%hu
-                   min=%u max=%u sum_lo=%u sum_hi=%u flags=%u
-adc_stream_data oid=%c sub=%c seq=%u offset=%hu flags=%c data=%*s
+adc_stream_scheduled oid=%c sub=%c seq=%u first_clock=%u deadline=%u ...
+adc_stream_prompt oid=%c sub=%c seq=%u first_clock=%u ...
+adc_stream_telemetry oid=%c sub=%c seq=%u first_clock=%u ...
+adc_stream_data_telemetry oid=%c sub=%c seq=%u offset=%hu flags=%c data=%*s
+adc_stream_data_prompt oid=%c sub=%c seq=%u offset=%hu flags=%c data=%*s
 ```
 
 Exact field widths may change during implementation, but these semantics do
-not. Raw blocks are chunked across protocol frames, retain block sequence and
-offset, use Class 2, and are rate-limited. Safety events use the prompt path.
-No ISR calls `sendf()`.
+not. The three summary messages share a payload schema (`count`, `min`, `max`,
+64-bit sum, format/shift, and continuity flags) but have distinct command IDs
+because FD-0001 makes class a static dictionary property, not a mutable frame
+field. Raw blocks are chunked across protocol frames and retain block sequence
+and offset. Routine capture uses Class 2; a bounded requested fault-window dump
+uses Class 1. Bulk raw data is never Class 0. No ISR calls `sendf()`.
 
 The data dictionary publishes `ADC_STREAM_V1` plus target capabilities:
 
@@ -321,6 +366,12 @@ The data dictionary publishes `ADC_STREAM_V1` plus target capabilities:
 * exact external trigger, inferred timestamp, and per-sample tag support;
 * watchdog stage/count and simultaneous watchdog+DMA support;
 * maximum block/ring storage and active DMA resource assignments.
+
+The host registers response handlers for the selected class-specific message
+ID. DMA completion wakes the MCU task; per-subscription acquisition counters
+cross their report boundary; and the MCU pushes the appropriate report. Python
+receives it later in Klippy reactor context. There is no host polling loop and
+no path from a hardware ISR directly into Python.
 
 ## Time model
 
@@ -503,8 +554,11 @@ silent gap or channel-phase discontinuity.
 - [ ] Implement ADC engine subscription merging, uniform scan planning,
   software filtering, local consumers, raw chunking, and summaries.
 - [ ] Add protocol dictionary/commands and `MCU_adc` capability negotiation.
+- [ ] Add distinct Class-0/1/2 report IDs, their bounded queues, Class-0
+  acknowledgement/deadline feedback, and local deadline-failure actions.
 - [ ] Unit-test wrap, stale release, ring full, stop/restart epoch, rational
-  timestamps, multi-channel ordering, filter overflow, and all loss policies.
+  timestamps, multi-channel ordering, filter overflow, class starvation, and
+  all loss policies.
 
 Gate: randomized simulated streams match the host reference bit-for-bit and no
 injected discontinuity is reported as contiguous data.

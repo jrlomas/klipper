@@ -138,10 +138,15 @@ either direction.
 * **Endstop sampling, trsync:** Class 0 (they arm hard timers) — and
   see [09-Hardware_Triggers.md](09-Hardware_Triggers.md) for moving
   the detection itself out of the timer list entirely.
-* **ADC sampling:** configuration is Class 1; the periodic reports are
-  Class 2 (they already are MCU-driven and loss-tolerant — the host
-  treats a gap as a stale reading and the heater watchdog covers the
-  pathological case).
+* **ADC sampling:** configuration is Class 1. Acquisition reports are selected
+  per logical subscription as Class 0, 1, or 2 under
+  [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md). Class 0 is reserved
+  for a deadline-bearing value required to continue scheduled operation;
+  Class 1 carries reliable prompt readings and all watchdog/fault events; Class
+  2 remains the default for periodic temperature/status and raw commissioning
+  telemetry. The class governs transport and failure semantics, not ADC/DMA
+  interrupt priority. Safety action remains local to the MCU and cannot depend
+  on a Python callback arriving.
 * **Neopixel/display:** Class 1 (they lose their special-case
   sentinel).
 
