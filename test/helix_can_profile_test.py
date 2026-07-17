@@ -20,16 +20,55 @@ class Printer:
     def __init__(self):
         self.handlers = {}
         self.events = []
-        self.objects = {}
+        self.objects = {'gcode': GCode(), 'toolhead': Toolhead()}
 
     def register_event_handler(self, name, callback):
         self.handlers[name] = callback
+
+    def get_reactor(self):
+        return self
+
+    NOW = 0.
+
+    def register_timer(self, callback, waketime):
+        return (callback, waketime)
 
     def send_event(self, name, payload):
         self.events.append((name, payload))
 
     def lookup_object(self, name):
         return self.objects[name]
+
+
+class GCode:
+    def __init__(self):
+        self.mux = {}
+
+    def register_mux_command(self, command, key, value, callback, desc=None):
+        self.mux[(command, key, value)] = callback
+
+
+class Toolhead:
+    def __init__(self):
+        self.waited = False
+
+    def wait_moves(self):
+        self.waited = True
+
+
+class GCmd:
+    def __init__(self, params=None):
+        self.response = None
+        self.params = params or {}
+
+    def get(self, key, default=None):
+        return self.params.get(key, default)
+
+    def error(self, message):
+        return ConfigError(message)
+
+    def respond_info(self, message):
+        self.response = message
 
 
 class Config:
@@ -119,6 +158,8 @@ def main():
     assert 'RESP_SESSION_RESET' in serialhdl
     assert 'CAN session reset acknowledged' in serialhdl
     assert 'bus.set_filters(filters)' in serialhdl
+    assert 'handoff_unaccounted' in open(os.path.join(
+        ROOT, 'klippy', 'extras', 'helix_can.py')).read()
 
     empty = helix_can.HelixCANBus(Config())
     try:
@@ -160,6 +201,23 @@ def main():
     assert manager.requests[-1]['profile'] == 'CLASSIC_1M'
     assert bus.state == 'maintenance'
     assert [entry[0] for entry in log[-2:]] == ['abort', 'abort']
+    bus.state = 'active'
+    gcmd = GCmd()
+    bus.cmd_HELIX_CAN_QUIESCE(gcmd)
+    assert config.printer.objects['toolhead'].waited
+    assert bus.state == 'maintenance'
+    assert 'stop Klipper' in gcmd.response
+    gcmd = GCmd({'PROFILE': 'classic_500k'})
+    bus.cmd_HELIX_CAN_QUIESCE(gcmd)
+    assert manager.requests[-1]['profile'] == 'CLASSIC_500K'
+    assert bus.active_profile == 'CLASSIC_500K'
+    assert bus.get_connection_profile()['data_bitrate'] == 500000
+    assert bus.get_status(0.)['profile'] == 'CLASSIC_500K'
+    assert 'CLASSIC_500K' in gcmd.response
+    for name, bitrate in (('CLASSIC_125K', 125000),
+                          ('CLASSIC_250K', 250000)):
+        bus.active_profile = name
+        assert bus.get_connection_profile()['data_bitrate'] == bitrate
     print('PASS: profile prepare/commit/netdevice/enable transaction')
 
 

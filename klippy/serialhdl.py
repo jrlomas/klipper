@@ -7,6 +7,7 @@ import logging, threading, os, time
 import serial
 
 import msgproto, chelper, util
+import canbus_identity
 
 class error(Exception):
     pass
@@ -171,6 +172,7 @@ class SerialReader:
             # response is an ordering barrier.  A short timeout preserves
             # compatibility with stock nodes that do not implement it.
             reset_deadline = time.monotonic() + .150
+            reset_ack = False
             while time.monotonic() < reset_deadline:
                 msg = bus.recv(max(0., reset_deadline - time.monotonic()))
                 if msg is None:
@@ -183,7 +185,14 @@ class SerialReader:
                         and data[7] == canbus_nodeid):
                     logging.info("%sCAN session reset acknowledged",
                                  self.warn_prefix)
+                    reset_ack = True
                     break
+            if reset_ack:
+                frames, byte_count = canbus_identity.drain_session_tail(bus)
+                if frames:
+                    logging.info(
+                        "%sDiscarded %d stale CAN session-tail frames"
+                        " (%d bytes)", self.warn_prefix, frames, byte_count)
             bus.set_filters(filters)
             bus.close = bus.shutdown # XXX
             ret = self._start_session(bus, b'c', txid)

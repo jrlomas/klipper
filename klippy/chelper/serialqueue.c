@@ -63,6 +63,7 @@ struct serialqueue {
     int serial_fd, serial_fd_type, client_id;
     uint8_t input_buf[4096];
     uint8_t need_sync;
+    uint8_t can_carrier_boundary;
     int input_pos;
     // Multi-threaded support for pushing and pulling messages
     struct receiver receiver;
@@ -194,6 +195,44 @@ can_payload_chunk(uint32_t available, uint32_t mtu)
     return 8;
 }
 
+// Return the smallest legal CAN-FD payload length that can contain a packed
+// prefix of complete protocol records. Each record's first byte remains its
+// authoritative logical length, so final DLC padding is unambiguous.
+static uint32_t
+can_record_wire_len(uint32_t logical_len)
+{
+    if (logical_len <= 8)
+        return logical_len;
+    static const uint8_t fd_lengths[] = { 12, 16, 20, 24, 32, 48, 64 };
+    for (int i = 0; i < ARRAY_SIZE(fd_lengths); i++)
+        if (logical_len <= fd_lengths[i])
+            return fd_lengths[i];
+    return 64;
+}
+
+// Return the complete protocol-record prefix in an FD frame. Multiple blocks
+// may be packed together; zero bytes after the last block are DLC padding.
+static int
+can_frame_logical_len(uint8_t *data, uint32_t wire_len)
+{
+    uint32_t pos = 0;
+    while (pos < wire_len) {
+        if (data[pos] == 0) {
+            for (uint32_t i = pos + 1; i < wire_len; i++)
+                if (data[i])
+                    return -1;
+            break;
+        }
+        uint32_t record_len = data[pos] == MESSAGE_SYNC ? 1 : data[pos];
+        if ((record_len != 1
+             && (record_len < MESSAGE_MIN || record_len > MESSAGE_MAX))
+            || record_len > wire_len - pos)
+            return -1;
+        pos += record_len;
+    }
+    return pos;
+}
+
 // Determine minimum time needed to transmit a given number of bytes
 static double
 calculate_bittime(struct serialqueue *sq, uint32_t bytes)
@@ -201,8 +240,21 @@ calculate_bittime(struct serialqueue *sq, uint32_t bytes)
     if (sq->serial_fd_type == SQT_CAN) {
         uint32_t mtu = sq->can_payload_size ? sq->can_payload_size : 8;
         uint32_t pkts = 0, remaining = bytes;
+        uint32_t wire_bytes = 0, fd_crc_bits = 0;
         while (remaining) {
-            remaining -= can_payload_chunk(remaining, mtu);
+            uint32_t frame_bytes;
+            if (mtu > 8) {
+                uint32_t logical = remaining > MESSAGE_MAX
+                    ? MESSAGE_MAX : remaining;
+                frame_bytes = can_record_wire_len(logical);
+                remaining -= logical;
+            } else {
+                frame_bytes = can_payload_chunk(remaining, mtu);
+                remaining -= frame_bytes;
+            }
+            wire_bytes += frame_bytes;
+            if (mtu > 8)
+                fd_crc_bits += frame_bytes > 16 ? 21 : 17;
             pkts++;
         }
         if (mtu <= 8) {
@@ -214,13 +266,7 @@ calculate_bittime(struct serialqueue *sq, uint32_t bytes)
         // remain at the nominal rate; payload and the 17/21-bit CRC use the
         // data phase when BRS is active. Include a 20% stuffing allowance.
         uint32_t nominal_bits = pkts * 38;
-        uint32_t data_bits = bytes * 8;
-        remaining = bytes;
-        while (remaining) {
-            uint32_t frame_bytes = can_payload_chunk(remaining, mtu);
-            data_bits += frame_bytes > 16 ? 21 : 17;
-            remaining -= frame_bytes;
-        }
+        uint32_t data_bits = wire_bytes * 8 + fd_crc_bits;
         nominal_bits = (nominal_bits * 6 + 4) / 5;
         data_bits = (data_bits * 6 + 4) / 5;
         double data_adjust = (sq->can_bitrate_switch
@@ -229,6 +275,33 @@ calculate_bittime(struct serialqueue *sq, uint32_t bytes)
     } else {
         return sq->bittime_adjust * bytes;
     }
+}
+
+// Exact transmission time for a buffer containing complete protocol records.
+// This avoids treating a batch of several short records as one large FD frame.
+static double
+calculate_record_bittime(struct serialqueue *sq, uint8_t *buf, int buflen)
+{
+    if (sq->serial_fd_type != SQT_CAN || sq->can_payload_size <= 8)
+        return calculate_bittime(sq, buflen);
+    double total = 0.;
+    int frame_len = 0;
+    while (buflen) {
+        int record_len = buf[0] == MESSAGE_SYNC ? 1 : buf[0];
+        if (record_len < 1 || record_len > MESSAGE_MAX
+            || record_len > buflen)
+            return calculate_bittime(sq, buflen);
+        if (frame_len && frame_len + record_len > MESSAGE_MAX) {
+            total += calculate_bittime(sq, frame_len);
+            frame_len = 0;
+        }
+        frame_len += record_len;
+        buf += record_len;
+        buflen -= record_len;
+    }
+    if (frame_len)
+        total += calculate_bittime(sq, frame_len);
+    return total;
 }
 
 // Update internal state when the receive sequence increases
@@ -306,6 +379,12 @@ handle_message(struct serialqueue *sq, double eventtime, int len)
         // New sequence number
         if (rseq > sq->send_seq && sq->receive_seq != 1) {
             // An ack for a message not sent?  Out of order message?
+            if (sq->serial_fd_type == SQT_CAN)
+                errorf("Invalid CAN stream sequence len=%d wire=%u"
+                       " receive=%llu send=%llu", len,
+                       sq->input_buf[MESSAGE_POS_SEQ],
+                       (unsigned long long)sq->receive_seq,
+                       (unsigned long long)sq->send_seq);
             sq->bytes_invalid += len;
             pthread_mutex_unlock(&sq->lock);
             return;
@@ -394,14 +473,48 @@ input_event(struct serialqueue *sq, double eventtime)
         }
         if (cf.can_id != sq->client_id + 1)
             return;
+        // A negotiated Classical <-> FD carrier change is an explicit parser
+        // barrier. A previously configured MCU may have had one Classical
+        // fragment already in SocketCAN when the profile transaction began;
+        // it belongs to the old carrier and is not protocol corruption.
+        if (__atomic_exchange_n(&sq->can_carrier_boundary, 0,
+                                __ATOMIC_ACQ_REL)) {
+            sq->input_pos = 0;
+            sq->need_sync = 0;
+        }
         uint32_t len = cf.len;
-        if (len > sizeof(cf.data)
-            || len > sizeof(sq->input_buf) - sq->input_pos) {
+        if (len > sizeof(cf.data)) {
             errorf("Invalid CAN payload length %u", len);
             return;
         }
-        memcpy(&sq->input_buf[sq->input_pos], cf.data, len);
-        sq->input_pos += len;
+        if (ret == CANFD_MTU) {
+            // Helix CAN-FD maps a packed prefix of complete protocol records
+            // to one CAN frame. Walk the in-band lengths and discard only the
+            // final DLC padding.
+            int logical_len = can_frame_logical_len(cf.data, len);
+            if (logical_len <= 0) {
+                pthread_mutex_lock(&sq->lock);
+                sq->bytes_invalid += len;
+                pthread_mutex_unlock(&sq->lock);
+                return;
+            }
+            if (sq->input_pos) {
+                pthread_mutex_lock(&sq->lock);
+                sq->bytes_invalid += sq->input_pos;
+                pthread_mutex_unlock(&sq->lock);
+                sq->input_pos = 0;
+                sq->need_sync = 0;
+            }
+            memcpy(sq->input_buf, cf.data, logical_len);
+            sq->input_pos = logical_len;
+        } else {
+            if (len > sizeof(sq->input_buf) - sq->input_pos) {
+                errorf("Invalid CAN stream length %u", len);
+                return;
+            }
+            memcpy(&sq->input_buf[sq->input_pos], cf.data, len);
+            sq->input_pos += len;
+        }
     } else {
         int ret = read(sq->serial_fd, &sq->input_buf[sq->input_pos]
                        , sizeof(sq->input_buf) - sq->input_pos);
@@ -448,13 +561,63 @@ kick_event(struct serialqueue *sq, double eventtime)
 }
 
 // OS write of data to be sent to the mcu
+static int
+can_frame_write(struct serialqueue *sq, const uint8_t *buf, int logical_len)
+{
+    struct canfd_frame cf = {};
+    cf.can_id = sq->client_id;
+    cf.len = can_record_wire_len(logical_len);
+    cf.flags = sq->can_bitrate_switch ? CANFD_BRS : 0;
+    memcpy(cf.data, buf, logical_len);
+    int ret = write(sq->serial_fd, &cf, CANFD_MTU);
+    if (ret < 0) {
+        report_errno("can write", ret);
+        double curtime = get_monotonic();
+        if (!sq->last_write_fail_time)
+            sq->last_write_fail_time = curtime;
+        else if (curtime > sq->last_write_fail_time + 10.0) {
+            errorf("Halting reads due to CAN write errors.");
+            pollreactor_do_exit(sq->pr);
+        }
+        return -1;
+    }
+    sq->last_write_fail_time = 0.0;
+    return 0;
+}
+
 static void
-do_write(struct serialqueue *sq, void *buf, int buflen)
+do_write(struct serialqueue *sq, void *vbuf, int buflen)
 {
     if (sq->serial_fd_type != SQT_CAN) {
-        int ret = write(sq->serial_fd, buf, buflen);
+        int ret = write(sq->serial_fd, vbuf, buflen);
         if (ret < 0)
             report_errno("write", ret);
+        return;
+    }
+    uint8_t *buf = vbuf;
+    if (sq->can_payload_size > 8) {
+        // Pack complete protocol records into each FD frame. Never split a
+        // record: a missing frame then cannot corrupt any later frame.
+        while (buflen) {
+            uint8_t *frame = buf;
+            int frame_len = 0;
+            while (buflen) {
+                int record_len = buf[0] == MESSAGE_SYNC ? 1 : buf[0];
+                if (record_len < 1 || record_len > MESSAGE_MAX
+                    || record_len > buflen) {
+                    errorf("Invalid CAN carrier record length %d/%d",
+                           record_len, buflen);
+                    return;
+                }
+                if (frame_len && frame_len + record_len > MESSAGE_MAX)
+                    break;
+                frame_len += record_len;
+                buf += record_len;
+                buflen -= record_len;
+            }
+            if (can_frame_write(sq, frame, frame_len))
+                return;
+        }
         return;
     }
     // Write to CAN fd
@@ -527,8 +690,9 @@ retransmit_event(struct serialqueue *sq, double eventtime)
     }
     sq->retransmit_seq = sq->send_seq;
     sq->rtt_sample_seq = 0;
-    sq->idle_time = eventtime + calculate_bittime(sq, buflen);
-    double waketime = eventtime + sq->rto + calculate_bittime(sq, first_buflen);
+    sq->idle_time = eventtime + calculate_record_bittime(sq, buf, buflen);
+    double waketime = (eventtime + sq->rto
+                       + calculate_record_bittime(sq, buf, first_buflen));
 
     pthread_mutex_unlock(&sq->lock);
     return waketime;
@@ -746,7 +910,7 @@ command_event(struct serialqueue *sq, double eventtime)
         do_write(sq, buf, buflen);
         sq->bytes_write += buflen;
         double idletime = eventtime > sq->idle_time ? eventtime : sq->idle_time;
-        sq->idle_time = idletime + calculate_bittime(sq, buflen);
+        sq->idle_time = idletime + calculate_record_bittime(sq, buf, buflen);
         waketime = PR_NOW;
     }
     pthread_mutex_unlock(&sq->lock);
@@ -1170,6 +1334,8 @@ serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size,
                    &enable_fd, sizeof(enable_fd)) < 0)
         return -1;
     pthread_mutex_lock(&sq->lock);
+    if (sq->can_payload_size != payload_size)
+        __atomic_store_n(&sq->can_carrier_boundary, 1, __ATOMIC_RELEASE);
     sq->can_payload_size = payload_size;
     sq->can_bitrate_switch = !!bitrate_switch;
     sq->can_data_bittime = 1. / data_frequency;

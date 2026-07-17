@@ -14,6 +14,15 @@ PROFILE_DATA = {
     'FD_8M_BRS': (64, True, 8000000),
 }
 
+MAINTENANCE_PROFILE_DATA = {
+    'CLASSIC_125K': (8, False, 125000),
+    'CLASSIC_250K': (8, False, 250000),
+    'CLASSIC_500K': (8, False, 500000),
+}
+
+MAINTENANCE_PROFILES = tuple(sorted(MAINTENANCE_PROFILE_DATA)) \
+    + ('CLASSIC_1M',)
+
 PROFILE_MASKS = {
     'FD_1M_NOBRS': 1 << 0,
     'FD_2M_BRS': 1 << 1,
@@ -56,6 +65,7 @@ class HelixCANManagerClient:
 class HelixCANBus:
     def __init__(self, config):
         self.printer = config.get_printer()
+        self.reactor = self.printer.get_reactor()
         self.name = config.get_name().split()[-1]
         self.interface = config.get('interface', self.name)
         self.nominal_bitrate = config.getint(
@@ -83,6 +93,13 @@ class HelixCANBus:
         self.bridge_mcu = config.get('bridge_mcu', None)
         self.bridge_is_primary = config.getboolean(
             'bridge_is_primary', False)
+        self.bridge_status_cmd = self.bridge_status_timer = None
+        self.bridge_status = {
+            'rx_error': None, 'tx_error': None, 'tx_retries': None,
+            'bus_state': None, 'rx_queue_drops': None,
+            'rx_queue_highwater': None, 'rx_queue_depth': None,
+            'hw_rx_frames': None, 'usb_forwarded_frames': None,
+            'handoff_unaccounted': None}
         self.time_beacon_us = config.getint(
             'time_beacon_us', 20000, minval=5000, maxval=1000000)
         # The manager replaces this bootstrap value before CAN MCU attach.
@@ -93,6 +110,11 @@ class HelixCANBus:
         self.printer.register_event_handler('klippy:mcu_identify',
                                             self._bootstrap)
         self.printer.register_event_handler('klippy:connect', self._activate)
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_mux_command(
+            'HELIX_CAN_QUIESCE', 'BUS', self.name,
+            self.cmd_HELIX_CAN_QUIESCE,
+            desc='Quiesce a Helix CAN bus for bridge maintenance')
     def add_required_node(self, board_id):
         if board_id in self.required_nodes:
             raise self.printer.config_error(
@@ -104,7 +126,14 @@ class HelixCANBus:
     def get_interface(self):
         return self.interface
     def get_connection_profile(self):
-        mtu, brs, data_bitrate = PROFILE_DATA[self.active_profile]
+        profile_data = PROFILE_DATA.get(
+            self.active_profile,
+            MAINTENANCE_PROFILE_DATA.get(self.active_profile))
+        if profile_data is None:
+            raise self.printer.config_error(
+                'Unknown active HELIX CAN profile %s'
+                % (self.active_profile,))
+        mtu, brs, data_bitrate = profile_data
         return {'name': self.active_profile, 'mtu': mtu, 'brs': brs,
                 'data_bitrate': data_bitrate}
     def _manager_apply(self, profile):
@@ -157,7 +186,10 @@ class HelixCANBus:
             'epoch': epoch, 'reason': str(reason)}, sort_keys=True))
     def owns_bridge(self, mcu_name):
         return self.bridge_mcu == mcu_name
-    def quiesce(self, reason='maintenance'):
+    def quiesce(self, reason='maintenance', profile='CLASSIC_1M'):
+        if profile not in MAINTENANCE_PROFILES:
+            raise self.printer.config_error(
+                'Unknown HELIX CAN maintenance profile %s' % (profile,))
         if self.bridge_mcu is not None and self.time_epoch:
             try:
                 name = self.bridge_mcu
@@ -179,15 +211,27 @@ class HelixCANBus:
             except Exception:
                 logging.exception('Unable to quiesce CAN node on %s',
                                   self.name)
-        self._manager_apply('CLASSIC_1M')
-        self.active_profile = 'CLASSIC_1M'
+        self._manager_apply(profile)
+        self.active_profile = profile
         self.state = 'maintenance'
         self.time_epoch = 0
         self.printer.send_event('helix_can:profile_changed', {
-            'bus': self.name, 'profile': 'CLASSIC_1M', 'epoch': self.epoch,
+            'bus': self.name, 'profile': profile, 'epoch': self.epoch,
             'reason': reason})
-        logging.info('HELIX CAN bus %s quiesced to Classical 1 Mbit: %s',
-                     self.name, reason)
+        logging.info('HELIX CAN bus %s quiesced to %s: %s',
+                     self.name, profile, reason)
+    def cmd_HELIX_CAN_QUIESCE(self, gcmd):
+        toolhead = self.printer.lookup_object('toolhead')
+        toolhead.wait_moves()
+        profile = gcmd.get('PROFILE', 'CLASSIC_1M').strip().upper()
+        if profile not in MAINTENANCE_PROFILES:
+            raise gcmd.error(
+                'PROFILE must be %s' % (', '.join(MAINTENANCE_PROFILES),))
+        self.quiesce('explicit operator maintenance', profile)
+        gcmd.respond_info(
+            'HELIX CAN bus %s is quiesced at %s; stop Klipper before '
+            'resetting or flashing a node or bridge.'
+            % (self.name, profile))
     def _start_time_source(self):
         if self.bridge_mcu is None:
             return
@@ -206,6 +250,44 @@ class HelixCANBus:
         if not params['enabled'] or params['epoch'] != self.time_epoch:
             raise self.printer.config_error(
                 'Composite CAN bridge refused hardware time source')
+        self.bridge_status_cmd = bridge.lookup_query_command(
+            'get_usb_canbus_status',
+            'usb_canbus_status rx_error=%u tx_error=%u tx_retries=%u'
+            ' bus_state=%u rx_queue_drops=%u rx_queue_highwater=%hu'
+            ' rx_queue_depth=%hu hw_rx_frames=%u usb_forwarded_frames=%u')
+        if self.bridge_status_timer is None:
+            self.bridge_status_timer = self.reactor.register_timer(
+                self._query_bridge_status, self.reactor.NOW)
+    def _query_bridge_status(self, eventtime):
+        try:
+            params = self.bridge_status_cmd.send()
+        except Exception:
+            return eventtime + 1.
+        status = {key: params[key] for key in self.bridge_status
+                  if key != 'handoff_unaccounted'}
+        accounted = (status['usb_forwarded_frames']
+                     + status['rx_queue_drops']
+                     + status['rx_queue_depth']) & 0xffffffff
+        status['handoff_unaccounted'] = (
+            status['hw_rx_frames'] - accounted) & 0xffffffff
+        previous = self.bridge_status
+        self.bridge_status = status
+        grew = []
+        for key in ('rx_error', 'rx_queue_drops'):
+            prior = previous[key]
+            if prior is not None and status[key] > prior:
+                grew.append('%s=%d' % (key, status[key]))
+        if (status['handoff_unaccounted']
+                and not previous['handoff_unaccounted']):
+            grew.append('handoff_unaccounted=%d'
+                        % (status['handoff_unaccounted'],))
+        if grew:
+            payload = {'bus': self.name, 'kind': 'bridge_receive_loss',
+                       'status': dict(status)}
+            self.printer.send_event('helix_can:incident', payload)
+            logging.error('HELIX_CAN_INCIDENT %s',
+                          json.dumps(payload, sort_keys=True))
+        return eventtime + 1.
     def _activate(self):
         selected = self._select_profile()
         if selected == 'CLASSIC_1M':
@@ -250,6 +332,7 @@ class HelixCANBus:
                 'epoch': self.epoch, 'time_epoch': self.time_epoch,
                 'time_source': ('usb_sof_can_timestamp'
                                 if self.bridge_mcu else None),
+                'bridge_can': dict(self.bridge_status),
                 'state': self.state}
 
 

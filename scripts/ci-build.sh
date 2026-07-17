@@ -78,6 +78,7 @@ for TEST in \
     test/helix_status_test.py \
     test/heater_hold_safety_test.py \
     test/canfd_dlc_test.py \
+    test/canfd_record_carrier_test.py \
     test/canbus_identity_test.py \
     test/canbus_ids_test.py \
     test/can_time_transport_test.py \

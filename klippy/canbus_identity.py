@@ -25,6 +25,33 @@ class IdentityError(Exception):
     pass
 
 
+def drain_session_tail(bus, max_time=.150, quiet_time=.025,
+                       monotonic=time.monotonic):
+    """Discard old node frames after a session-reset acknowledgement.
+
+    A response block may already be split across FDCAN hardware buffers when
+    the out-of-band reset is processed.  The acknowledgement proves firmware
+    state was reset, but the last pieces of that old block can still follow it
+    through SocketCAN.  Wait for a bounded quiet interval before attaching the
+    new framed parser so it never starts in the middle of the old block.
+    """
+    deadline = monotonic() + max_time
+    quiet_deadline = min(deadline, monotonic() + quiet_time)
+    frames = byte_count = 0
+    while True:
+        now = monotonic()
+        timeout = min(deadline - now, quiet_deadline - now)
+        if timeout <= 0.:
+            break
+        msg = bus.recv(timeout)
+        if msg is None:
+            break
+        frames += 1
+        byte_count += len(msg.data)
+        quiet_deadline = min(deadline, monotonic() + quiet_time)
+    return frames, byte_count
+
+
 def board_id_crc(family, raw_id):
     crc = 0x5a ^ family ^ len(raw_id)
     for value in raw_id:

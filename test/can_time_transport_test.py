@@ -52,6 +52,10 @@ def main():
     assert 'msg.hw_clock = fdcan_timestamp_to_clock' in fdcan
     assert 'FDCAN_IR_TEFN' in fdcan and 'MSG_RAM.TEF' in fdcan
     assert 'CANMSG_FLAG_TX_EVENT' in bridge
+    assert 'command_get_usb_canbus_status' in bridge
+    assert 'UsbCan.canhw_queue_drops++' in bridge
+    assert 'UsbCan.canhw_queue_highwater = depth + 1' in bridge
+    assert 'canhw_queue[512]' in bridge
     assert 'timesync_local_to_clock(local_clock)' in bridge
     assert 'timesync_ingest_can_sample(seq, machine_clock' in node
     assert 'CANBUS_TIME_FOLLOWUP' in node
@@ -64,15 +68,22 @@ def main():
     assert 'SOC_CAN->TXBC &= ~FDCAN_TXBC_TFQM' in fdcan
     assert 'SOC_CAN->TXBTIE = tx_irq_mask' in fdcan
     assert 'SOC_CAN->TXBCIE = tx_irq_mask' in fdcan
+    assert 'FDCAN_IE_RF0LE' in fdcan
+    assert 'CAN_Errors.rx_error++' in fdcan
     assert 'usb_local_check_reboot' in bridge
     assert 'line_coding.dwDTERate == 1200' in bridge
     assert 'CANBUS_RESP_SESSION_RESET' in node
     assert 'can_reset_host_session' in node
     assert 'command_reset_sequence();' in node
     assert 'canhw_abort_fd();' in node
-    assert 'canserial_payload_chunk(avail, mtu)' in node
-    assert 'can_payload_chunk(buflen, mtu)' in read(
-        'klippy/chelper/serialqueue.c')
+    assert "pack as many complete protocol" in node
+    assert 'canserial_frame_logical_len(msg->data, len)' in node
+    assert 'canserial_carrier_wire_len(now)' in node
+    host = read('klippy/chelper/serialqueue.c')
+    assert 'can_frame_logical_len(cf.data, len)' in host
+    assert 'ret == CANFD_MTU' in host
+    assert 'hw_rx_frames=%u usb_forwarded_frames=%u' in bridge
+    assert 'irqstatus_t irqflag = irq_save();' in bridge
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')
 
 

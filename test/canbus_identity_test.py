@@ -21,6 +21,16 @@ class CanModule:
     Message = Message
 
 
+class TailBus:
+    def __init__(self, payloads):
+        self.queue = [Message(0x109, payload) for payload in payloads]
+        self.timeouts = []
+
+    def recv(self, timeout):
+        self.timeouts.append(timeout)
+        return self.queue.pop(0) if self.queue else None
+
+
 class FakeBus:
     def __init__(self, raw_id, collide=False, assigned=False):
         self.raw_id = bytes(raw_id)
@@ -64,6 +74,11 @@ class FakeBus:
 
 
 def main():
+    tail = TailBus((b'old-block-head', b'old-block-tail'))
+    assert ci.drain_session_tail(tail) == (2, 28)
+    assert not tail.queue
+    assert all(0. < timeout <= .150 for timeout in tail.timeouts)
+
     raw_id = bytes.fromhex('00112233445566778899aabb')
     bus = FakeBus(raw_id)
     nodes = ci.scan_bus('helixcan0', bus_factory=lambda **kw: bus,
@@ -89,7 +104,7 @@ def main():
         assert 'multiple board identities' in str(exc)
     else:
         raise AssertionError('legacy-handle collision was not rejected')
-    print('PASS: canonical CAN board discovery and collision rejection')
+    print('PASS: canonical CAN identity and session-tail isolation')
 
 
 if __name__ == '__main__':

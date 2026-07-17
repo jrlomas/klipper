@@ -60,16 +60,36 @@ static struct canbus_data {
  ****************************************************************/
 
 static uint_fast8_t
-canserial_payload_chunk(uint_fast8_t available, uint_fast8_t mtu)
+canserial_carrier_wire_len(uint_fast8_t payload_len)
 {
-    uint_fast8_t size = available > mtu ? mtu : available;
-    if (size <= 8)
-        return size;
+    if (payload_len <= 8)
+        return payload_len;
     static const uint8_t fd_lengths[] = { 12, 16, 20, 24, 32, 48, 64 };
-    for (int_fast8_t i = ARRAY_SIZE(fd_lengths) - 1; i >= 0; i--)
-        if (size >= fd_lengths[i])
+    for (uint_fast8_t i = 0; i < ARRAY_SIZE(fd_lengths); i++)
+        if (payload_len <= fd_lengths[i])
             return fd_lengths[i];
-    return 8;
+    return 64;
+}
+
+static int
+canserial_frame_logical_len(uint8_t *data, uint32_t wire_len)
+{
+    uint32_t pos = 0;
+    while (pos < wire_len) {
+        if (data[pos] == 0) {
+            for (uint32_t i = pos + 1; i < wire_len; i++)
+                if (data[i])
+                    return -1;
+            break;
+        }
+        uint32_t record_len = data[pos] == MESSAGE_SYNC ? 1 : data[pos];
+        if ((record_len != 1
+             && (record_len < MESSAGE_MIN || record_len > MESSAGE_MAX))
+            || record_len > wire_len - pos)
+            return -1;
+        pos += record_len;
+    }
+    return pos;
 }
 
 void
@@ -112,14 +132,37 @@ canserial_tx_task(void)
         int avail = tmax - tpos;
         if (avail <= 0)
             break;
-        uint_fast8_t now = canserial_payload_chunk(avail, mtu);
-        msg.dlc = now;
+        uint_fast8_t now;
         if (CanData.fd_active) {
+            // Retain Klipper's write batching: pack as many complete protocol
+            // records as fit, but never split one across FD frames.
+            now = 0;
+            while (now < avail) {
+                uint_fast8_t first = CanData.transmit_buf[tpos + now];
+                uint_fast8_t record_len = first == MESSAGE_SYNC ? 1 : first;
+                if ((record_len != 1
+                     && (record_len < MESSAGE_MIN
+                         || record_len > MESSAGE_MAX))
+                    || record_len > avail - now) {
+                    CanData.transmit_pos = CanData.transmit_max = 0;
+                    shutdown("Invalid CAN-FD transmit record");
+                }
+                if (now && now + record_len > MESSAGE_MAX)
+                    break;
+                now += record_len;
+            }
+            memset(msg.data, 0, sizeof(msg.data));
+            msg.dlc = canserial_carrier_wire_len(now);
             msg.flags = CANMSG_FLAG_FD;
             if (CanData.fd_brs)
                 msg.flags |= CANMSG_FLAG_BRS;
+            memcpy(msg.data, &CanData.transmit_buf[tpos], now);
+        } else {
+            now = avail > mtu ? mtu : avail;
+            msg.dlc = now;
+            msg.flags = 0;
+            memcpy(msg.data, &CanData.transmit_buf[tpos], now);
         }
-        memcpy(msg.data, &CanData.transmit_buf[tpos], now);
         int ret = canbus_send(&msg);
         if (ret <= 0)
             break;
@@ -606,14 +649,29 @@ canserial_process_data(struct canbus_msg *msg)
 {
     uint32_t id = msg->id;
     if (CanData.assigned_id && id == CanData.assigned_id) {
-        // Add to incoming data buffer
-        int rpos = CanData.receive_pos;
         uint32_t len = CANMSG_DATA_LEN(msg);
-        if (len > sizeof(CanData.receive_buf) - rpos)
-            return;
-        memcpy(&CanData.receive_buf[rpos], msg->data, len);
-        CanData.receive_pos = rpos + len;
-        canserial_notify_rx();
+        if (msg->flags & CANMSG_FLAG_FD) {
+            int record_len = canserial_frame_logical_len(msg->data, len);
+            if (record_len <= 0) {
+                canserial_notify_protocol_error();
+                return;
+            }
+            int rpos = CanData.receive_pos;
+            if (record_len > sizeof(CanData.receive_buf) - rpos)
+                return;
+            memcpy(&CanData.receive_buf[rpos], msg->data, record_len);
+            CanData.receive_pos = rpos + record_len;
+            canserial_notify_rx();
+        } else {
+            // Classical bootstrap and transition frames retain the original
+            // raw byte-stream encoding.
+            int rpos = CanData.receive_pos;
+            if (len > sizeof(CanData.receive_buf) - rpos)
+                return;
+            memcpy(&CanData.receive_buf[rpos], msg->data, len);
+            CanData.receive_pos = rpos + len;
+            canserial_notify_rx();
+        }
     } else if (id == CANBUS_ID_ADMIN || id == CANBUS_ID_TIME_SYNC
                || id == CANBUS_ID_TIME_FOLLOWUP
                || (CanData.assigned_id && id == CanData.assigned_id + 1)) {

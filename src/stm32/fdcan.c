@@ -367,7 +367,6 @@ CAN_IRQHandler(void)
 
     if (ir & FDCAN_IE_RF0NE) {
         SOC_CAN->IR = FDCAN_IE_RF0NE;
-
         uint32_t rxf0s = SOC_CAN->RXF0S;
         if (rxf0s & FDCAN_RXF0S_F0FL) {
             // Read and ack data packet
@@ -397,6 +396,13 @@ CAN_IRQHandler(void)
             // Process packet
             canbus_process_data(&msg);
         }
+    }
+    if (ir & FDCAN_IR_RF0L) {
+        // A lost FIFO element is a lost byte-stream fragment even when the
+        // physical bus itself is error-free. Account it as a receive error so
+        // bridge/node status exposes the transport failure.
+        SOC_CAN->IR = FDCAN_IR_RF0L;
+        CAN_Errors.rx_error++;
     }
     if (ir & FDCAN_IE_TC) {
         // Tx
@@ -494,18 +500,30 @@ compute_timing(uint32_t pclock, uint32_t bitrate, uint32_t max_brp,
     return found ? 0 : -1;
 }
 
-static uint32_t
-compute_btr(uint32_t pclock, uint32_t bitrate)
+static int
+try_compute_btr(uint32_t pclock, uint32_t bitrate, uint32_t *btr)
 {
     uint32_t brp = 1, tseg1 = 1, tseg2 = 1;
     if (compute_timing(pclock, bitrate, 512, 256, 128, 875,
                        &brp, &tseg1, &tseg2))
-        shutdown("CAN nominal bit timing is not exact");
+        return -1;
     uint32_t sjw = tseg2 > 4 ? 4 : tseg2;
-    return make_btr(sjw, tseg1, tseg2, brp);
+    *btr = make_btr(sjw, tseg1, tseg2, brp);
+    return 0;
+}
+
+static uint32_t
+compute_btr(uint32_t pclock, uint32_t bitrate)
+{
+    uint32_t btr;
+    if (try_compute_btr(pclock, bitrate, &btr))
+        shutdown("CAN nominal bit timing is not exact");
+    return btr;
 }
 
 #if CONFIG_CANBUS_FD
+static uint32_t ActiveNominalBitrate = CONFIG_CANBUS_FREQUENCY;
+
 static uint32_t
 compute_dbtp(uint32_t pclock, uint32_t bitrate)
 {
@@ -550,13 +568,31 @@ canhw_get_fd_bitrate_mask(void)
 }
 
 int
+canhw_set_nominal_bitrate(uint32_t bitrate)
+{
+    uint32_t pclock = get_pclock_frequency((uint32_t)SOC_CAN), nbtp;
+    if (try_compute_btr(pclock, bitrate, &nbtp))
+        return -1;
+    SOC_CAN->CCCR |= FDCAN_CCCR_INIT;
+    while (!(SOC_CAN->CCCR & FDCAN_CCCR_INIT))
+        ;
+    SOC_CAN->CCCR |= FDCAN_CCCR_CCE;
+    SOC_CAN->NBTP = nbtp;
+    barrier();
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_CCE;
+    SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT;
+    ActiveNominalBitrate = bitrate;
+    return 0;
+}
+
+int
 canhw_prepare_fd(uint32_t data_bitrate, uint8_t brs)
 {
     uint32_t pclock = get_pclock_frequency((uint32_t)SOC_CAN), dbtp;
     if (data_bitrate > CONFIG_CANBUS_TRANSCEIVER_MAX_DATA_RATE
         || try_compute_dbtp(pclock, data_bitrate, &dbtp))
         return -1;
-    if (!brs && data_bitrate != CONFIG_CANBUS_FREQUENCY)
+    if (!brs && data_bitrate != ActiveNominalBitrate)
         return -1;
     PreparedDBTP = dbtp;
     PreparedDataBitrate = data_bitrate;
@@ -686,7 +722,8 @@ can_init(void)
     /*##-3- Configure Interrupts #################################*/
     armcm_enable_irq(CAN_IRQHandler, CAN_IT0_IRQn, 1);
     SOC_CAN->ILE = FDCAN_ILE_EINT0;
-    SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_TC | FDCAN_IE_PEDE
+    SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_RF0LE | FDCAN_IE_TC
+                   | FDCAN_IE_PEDE
                    | FDCAN_IE_PEAE | FDCAN_IE_TEFNE | FDCAN_IE_TEFLE);
 }
 DECL_INIT(can_init);

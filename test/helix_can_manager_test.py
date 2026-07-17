@@ -22,6 +22,12 @@ class Result:
 
 
 def main():
+    bridge = open(os.path.join(ROOT, 'src', 'generic',
+                              'usb_canbus.c')).read()
+    fdcan = open(os.path.join(ROOT, 'src', 'stm32', 'fdcan.c')).read()
+    assert 'canhw_set_nominal_bitrate(nominal_bitrate)' in bridge
+    assert 'ActiveNominalBitrate = bitrate' in fdcan
+
     calls = []
 
     def runner(argv, **kwargs):
@@ -41,6 +47,25 @@ def main():
     assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
             'bitrate', '1000000', 'restart-ms', '100', 'dbitrate',
             '8000000', 'fd', 'on'] in calls
+
+    maintenance_calls = []
+    def maintenance_runner(argv, **kwargs):
+        maintenance_calls.append(argv)
+        if '-json' in argv:
+            return Result(stdout=json.dumps([{
+                'ifname': 'helixcan0', 'mtu': 16,
+                'linkinfo': {'info_data': {
+                    'ctrlmode': [],
+                    'bittiming': {'bitrate': 500000}}}}]))
+        return Result()
+    result = manager_module.LinkManager(maintenance_runner).apply(
+        'helixcan0', 'CLASSIC_500K')
+    assert result['ok'] and result['profile'] == 'CLASSIC_500K'
+    assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
+            'bitrate', '500000', 'restart-ms', '100', 'fd', 'off'] \
+        in maintenance_calls
+    assert manager_module.PROFILES['CLASSIC_125K']['nominal'] == 125000
+    assert manager_module.PROFILES['CLASSIC_250K']['nominal'] == 250000
     try:
         manager.apply('../../bad', 'FD_8M_BRS')
     except manager_module.ManagerError:

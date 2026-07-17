@@ -9,6 +9,7 @@
 #include "board/canbus.h" // canbus_notify_tx
 #include "board/canserial.h" // canserial_notify_tx
 #include "board/io.h" // readl
+#include "board/irq.h" // irq_save
 #include "board/misc.h" // console_sendf
 #include "board/pgm.h" // PROGMEM
 #include "board/usb_cdc_ep.h" // USB_CDC_EP_BULK_IN
@@ -154,7 +155,13 @@ static struct usbcan_data {
 
     // Data from physical canbus interface
     uint32_t canhw_pull_pos, canhw_push_pos;
-    struct canbus_msg canhw_queue[32];
+    uint32_t canhw_rx_frames, usb_forwarded_frames, canhw_queue_drops;
+    uint16_t canhw_queue_highwater;
+    // Full-speed gs_usb frames span two USB packets. Configuration replies
+    // can arrive from a 1 Mbit CAN-FD bus in a burst faster than the host
+    // endpoint drains them. Physical qualification reached 256 entries and
+    // dropped frames, while 512 absorbed and drained the same bounded burst.
+    struct canbus_msg canhw_queue[512];
 
 #if CONFIG_HELIX_USB_CAN_COMPOSITE
     // Two-step hardware-timestamped CAN machine-time source
@@ -249,6 +256,7 @@ drain_canhw_queue(void)
             return;
         }
         UsbCan.canhw_pull_pos = pull_pos = pull_pos + 1;
+        UsbCan.usb_forwarded_frames++;
     }
 }
 
@@ -609,11 +617,17 @@ canbus_notify_protocol_error(void)
 void
 canbus_process_data(struct canbus_msg *msg)
 {
+    UsbCan.canhw_rx_frames++;
     // Add to admin command queue
     uint32_t pushp = UsbCan.canhw_push_pos;
-    if (pushp - UsbCan.canhw_pull_pos >= ARRAY_SIZE(UsbCan.canhw_queue))
+    uint32_t depth = pushp - UsbCan.canhw_pull_pos;
+    if (depth >= ARRAY_SIZE(UsbCan.canhw_queue)) {
         // No space - drop message
+        UsbCan.canhw_queue_drops++;
         return;
+    }
+    if (depth + 1 > UsbCan.canhw_queue_highwater)
+        UsbCan.canhw_queue_highwater = depth + 1;
     if (!CONFIG_HELIX_USB_CAN_COMPOSITE
         && UsbCan.assigned_id && (msg->id & ~1) == UsbCan.assigned_id)
         // Id reserved for local
@@ -623,6 +637,29 @@ canbus_process_data(struct canbus_msg *msg)
     UsbCan.canhw_push_pos = pushp + 1;
     wake_usbcan_task();
 }
+
+void
+command_get_usb_canbus_status(uint32_t *args)
+{
+    struct canbus_status status;
+    memset(&status, 0, sizeof(status));
+    canhw_get_status(&status);
+    irqstatus_t irqflag = irq_save();
+    uint32_t depth = (UsbCan.canhw_push_pos - UsbCan.canhw_pull_pos);
+    uint32_t rx_frames = UsbCan.canhw_rx_frames;
+    uint32_t forwarded = UsbCan.usb_forwarded_frames;
+    uint32_t drops = UsbCan.canhw_queue_drops;
+    uint16_t highwater = UsbCan.canhw_queue_highwater;
+    irq_restore(irqflag);
+    sendf("usb_canbus_status rx_error=%u tx_error=%u tx_retries=%u"
+          " bus_state=%u rx_queue_drops=%u rx_queue_highwater=%hu"
+          " rx_queue_depth=%hu hw_rx_frames=%u usb_forwarded_frames=%u"
+          , status.rx_error, status.tx_error, status.tx_retries
+          , status.bus_state, drops, highwater, depth
+          , rx_frames, forwarded);
+}
+DECL_COMMAND_FLAGS(command_get_usb_canbus_status, HF_IN_SHUTDOWN,
+                   "get_usb_canbus_status");
 
 
 /****************************************************************
@@ -1242,8 +1279,14 @@ gs_mode_complete(void)
 #endif
         return;
     }
-    if (device_mode.mode != 1
-        || gs_timing_bitrate(&device_bittiming) != CONFIG_CANBUS_FREQUENCY) {
+    uint32_t nominal_bitrate = gs_timing_bitrate(&device_bittiming);
+    if (device_mode.mode != 1 || !nominal_bitrate
+#if CONFIG_CANBUS_FD
+        || canhw_set_nominal_bitrate(nominal_bitrate)
+#else
+        || nominal_bitrate != CONFIG_CANBUS_FREQUENCY
+#endif
+        ) {
         usb_xfer_error = 1;
         return;
     }
@@ -1253,7 +1296,7 @@ gs_mode_complete(void)
     }
 #if CONFIG_CANBUS_FD
     uint32_t data_bitrate = gs_timing_bitrate(&device_data_bittiming);
-    uint8_t brs = data_bitrate != CONFIG_CANBUS_FREQUENCY;
+    uint8_t brs = data_bitrate != nominal_bitrate;
     if (!data_bitrate || canhw_prepare_fd(data_bitrate, brs)
         || canhw_commit_fd()) {
         usb_xfer_error = 1;

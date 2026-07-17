@@ -16,6 +16,11 @@ import subprocess
 
 
 PROFILES = {
+    # Maintenance-only compatibility profile for retained CanBoot/Katapult
+    # installations.  Helix application negotiation never selects it.
+    'CLASSIC_125K': {'fd': False, 'nominal': 125000, 'data': None},
+    'CLASSIC_250K': {'fd': False, 'nominal': 250000, 'data': None},
+    'CLASSIC_500K': {'fd': False, 'nominal': 500000, 'data': None},
     'CLASSIC_1M': {'fd': False, 'nominal': 1000000, 'data': None},
     'FD_1M_NOBRS': {'fd': True, 'nominal': 1000000, 'data': 1000000},
     'FD_2M_BRS': {'fd': True, 'nominal': 1000000, 'data': 2000000},
