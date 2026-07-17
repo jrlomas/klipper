@@ -181,9 +181,19 @@ rose from zero to 11,114, Klippy retransmitted 669,735 bytes, and a 537 ms ACK
 stall exhausted the extruder trajectory horizon. The recovery hold paused and
 then resumed coherently. STM32 FDCAN firmware now drains every element pending
 in its three-slot hardware FIFO per interrupt and separately reports FIFO
-overruns, physical protocol errors, and FIFO high-water. This fix remains a
-physical requalification item until the new EBB36 image completes the same
-print with zero overrun growth.
+overruns, physical protocol errors, and FIFO high-water.
+
+Physical requalification passed on 2026-07-17 with firmware `219569e9` on
+both the FPS bridge and EBB36. The same 26-minute PLA cube completed in
+1,733.405 seconds of motion and used 3,637.983 mm of filament. The EBB36
+received 4,577,247 bytes with zero retransmitted or invalid bytes; its FIFO
+high-water reached two of three entries while FIFO overruns, protocol errors,
+and the compatibility receive-error aggregate remained zero. Final bridge
+accounting reported 236,528 accepted and forwarded frames, depth zero,
+high-water three, and zero drops or unaccounted handoff. SocketCAN remained
+`ERROR-ACTIVE` with zero errors, drops, missed frames, warning/passive
+transitions, or bus-offs. This closes the receive-drain print regression at
+the 1 Mbit `FD_1M_NOBRS` profile.
 
 After the first coherent resume, continued receive loss caused a second
 extruder underrun and then a delayed software-PWM update triggered `Timer too

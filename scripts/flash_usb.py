@@ -87,6 +87,36 @@ def detect_canboot(devpath):
     usbid = "%s:%s" % (vid, pid)
     return usbid == CANBOOT_ID
 
+def find_usb_tty(devpath, timeout=4.0):
+    # A composite Klipper application and Katapult may expose CDC on
+    # different interface numbers (for example :1.1 and :1.0).  A by-path
+    # symlink captured before the reboot is therefore not necessarily valid
+    # after Katapult enumerates.  Resolve the current tty below the unchanged
+    # physical USB device instead of reusing the stale interface path.
+    usbdir = os.path.dirname(devpath)
+    usbname = os.path.basename(usbdir)
+    end_time = time.time() + timeout
+    while 1:
+        try:
+            interfaces = os.listdir(usbdir)
+        except OSError:
+            interfaces = []
+        for intf in sorted(interfaces):
+            if not intf.startswith(usbname + ':'):
+                continue
+            ttydir = os.path.join(usbdir, intf, 'tty')
+            try:
+                ttys = os.listdir(ttydir)
+            except OSError:
+                continue
+            for tty in sorted(ttys):
+                path = os.path.join('/dev', tty)
+                if os.path.exists(path):
+                    return path
+        if time.time() >= end_time:
+            raise error("Unable to find Katapult serial device after reboot")
+        time.sleep(.100)
+
 def call_flashcan(device, binfile):
     try:
         import serial
@@ -151,7 +181,7 @@ def flash_dfuutil(device, binfile, extra_flags=[], sudo=True):
     enter_bootloader(device)
     pathname = wait_path(devpath)
     if detect_canboot(devpath):
-        call_flashcan(serbypath, binfile)
+        call_flashcan(find_usb_tty(devpath), binfile)
     else:
         # The application USB interface can remain present briefly after the
         # 1200-baud reboot request.  wait_path() may therefore observe the
@@ -179,7 +209,7 @@ def flash_hidflash(device, binfile, sudo=True):
     enter_bootloader(device)
     pathname = wait_path(devpath)
     if detect_canboot(devpath):
-        call_flashcan(serbypath, binfile)
+        call_flashcan(find_usb_tty(devpath), binfile)
     else:
         call_hidflash(binfile, sudo)
 

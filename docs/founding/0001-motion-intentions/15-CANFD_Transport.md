@@ -631,9 +631,28 @@ occupied. The remaining elements could be stranded until another arrival and
 eventually produce RF0L loss. The handler now clears the event and drains the
 bounded hardware FIFO in one service pass. New diagnostics split the legacy
 aggregate into `rx_fifo_overruns` and `rx_protocol_errors` and retain the FIFO
-high-water mark. This root-cause attribution and the drain fix are compile- and
-host-tested; physical closure requires flashing the EBB36 and repeating the
-same print with zero FIFO-overrun growth and no trajectory underrun.
+high-water mark.
+
+Physical closure passed on 2026-07-17 with firmware `219569e9` on both the FPS
+bridge and EBB36. Moonraker job `0000ED` repeated the same
+`Voron_Design_Cube_v8_0.4n_0.2mm_PLA_V0_120_26m.gcode` workload and completed
+1,733.405 seconds of motion with 3,637.983 mm of filament. The EBB36 received
+4,577,247 bytes with zero retransmitted or invalid bytes. Its hardware FIFO
+high-water reached two of three entries—direct evidence that multi-entry
+service was exercised—while `rx_fifo_overruns`, `rx_protocol_errors`, and the
+compatibility `rx_error` aggregate all remained zero. The link retained an
+approximately 1 ms RTT and the 25 ms minimum RTO instead of the previous
+537 ms escalation.
+
+Final `HELIX_CAN_STATUS` conservation was exact: 236,528 bridge frames were
+accepted and forwarded, queue depth returned to zero, high-water was three,
+and drops and unaccounted handoff were zero. SocketCAN reported 294,844 RX and
+61,130 TX packets with zero errors, drops, missed frames, warning/passive
+transitions, or bus-offs. The print crossed the former roughly 943-second
+underrun boundary and completed its end macro without trajectory recovery or
+`Timer too close`. This closes the EBB receive-drain physical regression for
+the 1 Mbit `FD_1M_NOBRS` profile; injected bus faults and faster BRS profiles
+remain separate qualification items.
 
 The resumed run produced the same signature again: the EBB36 aggregate reached
 20,534 receive errors and 1,226,991 retransmitted bytes while bridge

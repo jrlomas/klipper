@@ -83,6 +83,7 @@ for TEST in \
     test/canbus_identity_test.py \
     test/canbus_ids_test.py \
     test/can_time_transport_test.py \
+    test/flash_usb_test.py \
     test/helix_can_manager_test.py \
     test/helix_can_profile_test.py \
     test/extruder_trajectory_test.py \

@@ -914,18 +914,14 @@ Phases 3/7/8 over each real transport.
       than accepting only its compile-time value. The capability-limited
       manager allowlists 125/250/500 kbit maintenance rates plus the 1 Mbit
       application floor and rolls any failure back to 1 Mbit.
-    - [ ] Reinstall or qualify the retained EBB36 Katapult image. The Helix
-      application rebooted using its verified legacy handle
-      `7d8fe46a5f1f`, but the preserved vendor Katapult build
-      (`v0.0.1-79-g25a23cd`) answered on none of the standard
-      125/250/500 kbit or 1 Mbit Classical rates and did not enumerate on USB,
-      while the bridge applied and read back every tested rate. This bootloader
-      predates the current Helix image and has a mismatched CAN pin/clock or
-      otherwise defective vendor configuration;
-      recover by power-cycle/DFU, install a known PB0/PB1 1 Mbit Katapult
-      build, then complete an application flash over CAN. Do not count the
-      application carrier or bridge as the source of that bootloader failure.
-  - [ ] **9.2c — Machine time and motion:** record Tx Event/RX timestamp pair
+    - [x] Reinstall and qualify the EBB36 Katapult image. A known PB0/PB1,
+      8 MHz-reference, 1 Mbit build (`v0.0.1-113-gec59b9b`) replaced the
+      defective retained vendor image. On 2026-07-17 Katapult answered as UUID
+      `7d8fe46a5f1f`, wrote and verified all 41 pages of EBB36 application
+      `219569e9`, and returned the full canonical board identity to Helix over
+      CAN. The FPS bridge's USB Katapult also wrote and verified its 44-page
+      `219569e9` image at application offset `0x08002000`.
+  - [x] **9.2c — Machine time and motion:** record Tx Event/RX timestamp pair
     statistics and convergence under load, then home, move, extrude, and print
     through the EBB36 over CAN. Scope the timing path where practical.
     - [x] The composite bridge converged from the host clock regression and
@@ -937,9 +933,16 @@ Phases 3/7/8 over each real transport.
       exact-frame probing, exposes `sof_pair_unavailable`, and retains the
       qualified host regression; only a positively attributed IRQ-guard
       discard is allowed to use bounded holdover.
-    - [ ] Home, move, hot-extrude, and complete a sliced print with the EBB36
+    - [x] Home, move, hot-extrude, and complete a sliced print with the EBB36
       connected through CAN instead of USB, then retain flight-recorder and
-      time/error-counter evidence.
+      time/error-counter evidence. On 2026-07-17 the 26-minute PLA Voron cube
+      completed 1,733.405 seconds of motion and 3,637.983 mm of extrusion on
+      firmware `219569e9`. EBB36 FIFO high-water reached two of three entries,
+      but receive aggregate, FIFO-overrun, protocol-error, retransmit, and
+      invalid-byte counters remained zero. Final bridge conservation was
+      236,528 accepted and forwarded, depth zero, high-water three, zero drops,
+      and zero unaccounted handoff; SocketCAN likewise retained zero errors,
+      drops, missed frames, or bus-state transitions.
   - [ ] **9.2d — Faster transceivers:** after hardware replacement, qualify
     2/5/8 Mbit BRS profiles independently; do not infer them from the 1 Mbit
     result.
