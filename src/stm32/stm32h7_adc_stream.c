@@ -139,8 +139,12 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
 void
 board_adc_stream_start(void)
 {
-    ADC1->CR |= ADC_CR_ADSTART;
     TIM3->CNT = 0;
+    TIM3->SR = 0;
+    ADC1->CR |= ADC_CR_ADSTART;
+    // Keep the first hardware aperture aligned with the machine-clock
+    // timestamp captured immediately before this backend start call.
+    TIM3->EGR = TIM_EGR_UG;
     TIM3->SR = 0;
     TIM3->CR1 = TIM_CR1_CEN;
 }

@@ -132,8 +132,13 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
 void
 board_adc_stream_start(void)
 {
-    ADC1->CR |= ADC_CR_ADSTART;
     TIM3->CNT = 0;
+    TIM3->SR = 0;
+    ADC1->CR |= ADC_CR_ADSTART;
+    // Emit the first TRGO immediately after the ADC is armed. Without this
+    // update, the first aperture occurs one complete scan period after the
+    // machine-clock timestamp captured by the generic start timer.
+    TIM3->EGR = TIM_EGR_UG;
     TIM3->SR = 0;
     TIM3->CR1 = TIM_CR1_CEN;
 }
