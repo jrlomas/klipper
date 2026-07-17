@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, threading, os
+import logging, threading, os, time
 import serial
 
 import msgproto, chelper, util
@@ -143,6 +143,7 @@ class SerialReader:
         uuid = [(uuid >> (40 - i*8)) & 0xff for i in range(6)]
         CANBUS_ID_ADMIN = 0x3f0
         CMD_SET_NODEID = 0x01
+        RESP_SESSION_RESET = 0x23
         set_id_cmd = [CMD_SET_NODEID] + uuid + [canbus_nodeid]
         set_id_msg = can.Message(arbitration_id=CANBUS_ID_ADMIN,
                                  data=set_id_cmd, is_extended_id=False)
@@ -153,8 +154,11 @@ class SerialReader:
             if self.reactor.monotonic() > start_time + 90.:
                 self._error("Unable to connect")
             try:
+                bootstrap_filters = filters + [
+                    {"can_id": CANBUS_ID_ADMIN + 1, "can_mask": 0x7ff,
+                     "extended": False}]
                 bus = can.interface.Bus(channel=canbus_iface,
-                                        can_filters=filters,
+                                        can_filters=bootstrap_filters,
                                         bustype='socketcan', fd=use_canfd)
                 bus.send(set_id_msg)
             except (can.CanError, os.error, IOError) as e:
@@ -162,6 +166,25 @@ class SerialReader:
                                 self.warn_prefix, e)
                 self.reactor.pause(self.reactor.monotonic() + 5.)
                 continue
+            # Helix nodes acknowledge after discarding their prior framed
+            # stream and restoring the Classical bootstrap carrier.  The
+            # response is an ordering barrier.  A short timeout preserves
+            # compatibility with stock nodes that do not implement it.
+            reset_deadline = time.monotonic() + .150
+            while time.monotonic() < reset_deadline:
+                msg = bus.recv(max(0., reset_deadline - time.monotonic()))
+                if msg is None:
+                    break
+                data = bytes(msg.data)
+                if (msg.arbitration_id == CANBUS_ID_ADMIN + 1
+                        and len(data) == 8
+                        and data[0] == RESP_SESSION_RESET
+                        and data[1:7] == bytes(uuid)
+                        and data[7] == canbus_nodeid):
+                    logging.info("%sCAN session reset acknowledged",
+                                 self.warn_prefix)
+                    break
+            bus.set_filters(filters)
             bus.close = bus.shutdown # XXX
             ret = self._start_session(bus, b'c', txid)
             if not ret:

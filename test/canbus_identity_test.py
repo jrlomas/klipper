@@ -22,18 +22,27 @@ class CanModule:
 
 
 class FakeBus:
-    def __init__(self, raw_id, collide=False):
+    def __init__(self, raw_id, collide=False, assigned=False):
         self.raw_id = bytes(raw_id)
         self.collide = collide
+        self.assigned = assigned
         self.queue = []
         self.closed = False
 
     def send(self, msg):
         if msg.data[0] == ci.CMD_QUERY_UNASSIGNED:
-            self.queue.append(Message(ci.CANBUS_ID_ADMIN + 1,
-                                      bytes([ci.RESP_NEED_NODEID])
-                                      + bytes.fromhex('112233445566')
-                                      + b'\x01'))
+            if not self.assigned:
+                self.queue.append(Message(ci.CANBUS_ID_ADMIN + 1,
+                                          bytes([ci.RESP_NEED_NODEID])
+                                          + bytes.fromhex('112233445566')
+                                          + b'\x01'))
+            return
+        if msg.data[0] == ci.CMD_QUERY_ASSIGNED:
+            if self.assigned:
+                self.queue.append(Message(ci.CANBUS_ID_ADMIN + 1,
+                                          bytes([ci.RESP_ASSIGNED_ID])
+                                          + bytes.fromhex('112233445566')
+                                          + b'\x04'))
             return
         offset = msg.data[7]
         family = 1
@@ -65,6 +74,11 @@ def main():
                       'legacy_uuid': '112233445566',
                       'application': 1}]
     assert bus.closed
+    assigned_bus = FakeBus(raw_id, assigned=True)
+    assigned_nodes = ci.scan_bus(
+        'helixcan0', bus_factory=lambda **kw: assigned_bus,
+        can_module=CanModule, timeout=.01, response_window=.001)
+    assert assigned_nodes == nodes
     assert ci.normalize_board_id('STM32:' + raw_id.hex().upper()) \
         == 'stm32:' + raw_id.hex()
     try:

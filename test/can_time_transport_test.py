@@ -48,8 +48,15 @@ def main():
     assert 'fdcan_ram_write(txfifo->data' in fdcan
     assert 'fdcan_ram_read(msg.data' in fdcan
     assert 'memcpy(txfifo->data' not in fdcan
+    assert 'SOC_CAN->TXBC &= ~FDCAN_TXBC_TFQM' in fdcan
+    assert 'SOC_CAN->TXBTIE = tx_irq_mask' in fdcan
+    assert 'SOC_CAN->TXBCIE = tx_irq_mask' in fdcan
     assert 'usb_local_check_reboot' in bridge
     assert 'line_coding.dwDTERate == 1200' in bridge
+    assert 'CANBUS_RESP_SESSION_RESET' in node
+    assert 'can_reset_host_session' in node
+    assert 'command_reset_sequence();' in node
+    assert 'canhw_abort_fd();' in node
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')
 
 

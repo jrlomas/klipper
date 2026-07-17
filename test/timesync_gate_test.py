@@ -225,8 +225,56 @@ def test_pre_pause_timesync_query_cancellation_is_contained():
     owner.secondaries = [BrokenLink()]
     owner._paused_mcus = {BrokenLink.name}
     owner._last_converged = {}
+    owner._convergence_query_active = False
     owner.printer = types.SimpleNamespace(command_error=RuntimeError)
     owner._check_convergence()
+
+
+def test_timesync_status_timeout_fails_closed_without_shutdown():
+    class BrokenLink:
+        name = 'mcu toolhead'
+        def query(self):
+            raise RuntimeError('Unable to obtain timesync_state response')
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+    owner.secondaries = [BrokenLink()]
+    owner._paused_mcus = set()
+    owner._last_converged = {BrokenLink.name: True}
+    owner._convergence_query_active = False
+    owner.printer = types.SimpleNamespace(command_error=RuntimeError)
+    owner._check_convergence()
+    assert owner._last_converged[BrokenLink.name] is False
+    assert not owner._convergence_query_active
+
+
+def test_timesync_status_poll_is_not_reentrant():
+    class ReenteringLink:
+        name = 'mcu toolhead'
+        calls = 0
+        last_machine_clock = None
+        last_local_est = None
+        last_raw_local_est = None
+        sample_rate = None
+        relay_rate = None
+        def query(self):
+            self.calls += 1
+            owner._check_convergence()
+            return {
+                'flags': 0, 'prime_count': 0, 'rate': 1,
+                'last_err': 0, 'machine_ref': 0, 'local_ref': 0,
+            }
+        def is_converged(self, eventtime=None):
+            return False
+    owner = timesync.MachineTimeSync.__new__(timesync.MachineTimeSync)
+    link = ReenteringLink()
+    owner.secondaries = [link]
+    owner._paused_mcus = set()
+    owner._last_converged = {}
+    owner._convergence_query_active = False
+    owner.reactor = types.SimpleNamespace(monotonic=lambda: 1.)
+    owner.printer = types.SimpleNamespace(command_error=RuntimeError)
+    owner._check_convergence()
+    assert link.calls == 1
+    assert not owner._convergence_query_active
 
 
 def test_mixed_frequency_rate_representation():
@@ -1694,6 +1742,10 @@ def main():
     print("PASS: paused links suspend timesync traffic and restart relay fit")
     test_pre_pause_timesync_query_cancellation_is_contained()
     print("PASS: pre-pause timesync query cancellation cannot kill reactor")
+    test_timesync_status_timeout_fails_closed_without_shutdown()
+    print("PASS: time-sync status timeouts fail closed without shutdown")
+    test_timesync_status_poll_is_not_reentrant()
+    print("PASS: time-sync status polling is serialized")
     test_mixed_frequency_rate_representation()
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
     test_startup_rate_uses_connected_clock_regressions()

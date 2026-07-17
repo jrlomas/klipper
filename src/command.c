@@ -15,6 +15,13 @@
 
 static uint8_t next_sequence = MESSAGE_DEST;
 
+// Reset framed-console state at an out-of-band transport boundary.
+void
+command_reset_sequence(void)
+{
+    next_sequence = MESSAGE_DEST;
+}
+
 static uint32_t
 command_encode_ptr(void *p)
 {

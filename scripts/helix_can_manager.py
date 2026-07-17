@@ -64,22 +64,6 @@ class LinkManager:
             raise ManagerError('interface readback was not unique')
         return data[0]
 
-    @staticmethod
-    def _find_key(value, key):
-        if isinstance(value, dict):
-            if key in value:
-                return value[key]
-            for child in value.values():
-                found = LinkManager._find_key(child, key)
-                if found is not None:
-                    return found
-        elif isinstance(value, list):
-            for child in value:
-                found = LinkManager._find_key(child, key)
-                if found is not None:
-                    return found
-        return None
-
     def apply(self, interface, profile_name):
         if not IFACE_RE.match(interface):
             raise ManagerError('invalid interface name')
@@ -88,18 +72,27 @@ class LinkManager:
         try:
             self._configure(interface, profile_name)
             readback = self._readback(interface)
-            actual_nominal = self._find_key(readback, 'bitrate')
+            info = readback.get('linkinfo', {}).get('info_data', {})
+            actual_nominal = info.get('bittiming', {}).get('bitrate')
             if actual_nominal is None:
                 raise ManagerError('nominal bitrate missing from readback')
             if int(actual_nominal) != PROFILES[profile_name]['nominal']:
                 raise ManagerError('nominal bitrate readback mismatch')
-            actual_data = self._find_key(readback, 'data_bitrate')
             expected_data = PROFILES[profile_name]['data']
             if expected_data is not None:
+                ctrlmode = set(info.get('ctrlmode', []))
+                if 'FD' not in ctrlmode:
+                    raise ManagerError('CAN FD mode missing from readback')
+                if int(readback.get('mtu', 0)) != 72:
+                    raise ManagerError('CAN FD MTU missing from readback')
+                actual_data = info.get('data_bittiming', {}).get('bitrate')
                 if actual_data is None:
                     raise ManagerError('data bitrate missing from readback')
                 if int(actual_data) != expected_data:
                     raise ManagerError('data bitrate readback mismatch')
+            elif ('FD' in set(info.get('ctrlmode', []))
+                  or int(readback.get('mtu', 0)) != 16):
+                raise ManagerError('Classical CAN mode missing from readback')
             return {'ok': True, 'profile': profile_name,
                     'interface': interface, 'readback': readback}
         except Exception as original:

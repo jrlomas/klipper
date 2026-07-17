@@ -320,8 +320,11 @@ console_sendf(const struct command_encoder *ce, va_list args)
 #define CANBUS_CMD_SET_KLIPPER_NODEID 0x01
 #define CANBUS_CMD_REQUEST_BOOTLOADER 0x02
 #define CANBUS_CMD_QUERY_BOARD_ID 0x03
+#define CANBUS_CMD_QUERY_ASSIGNED 0x04
 #define CANBUS_RESP_NEED_NODEID 0x20
 #define CANBUS_RESP_BOARD_ID 0x21
+#define CANBUS_RESP_ASSIGNED_ID 0x22
+#define CANBUS_RESP_SESSION_RESET 0x23
 
 enum {
     CANBUS_FAMILY_GENERIC,
@@ -386,11 +389,68 @@ can_process_query_unassigned(struct canbus_msg *msg)
 }
 
 static void
+can_process_query_assigned(struct canbus_msg *msg)
+{
+    if (!CanData.assigned_id)
+        return;
+    struct canbus_msg send = {};
+    send.id = CANBUS_ID_ADMIN_RESP;
+    send.dlc = 8;
+    send.data[0] = CANBUS_RESP_ASSIGNED_ID;
+    memcpy(&send.data[1], CanData.uuid, sizeof(CanData.uuid));
+    send.data[7] = can_get_nodeid();
+    // This read-only response lets a restarted/redundant host recover the
+    // canonical board-id mapping without clearing a live node assignment.
+    for (;;) {
+        int ret = canbus_send(&send);
+        if (ret >= 0)
+            return;
+    }
+}
+
+static void
 can_id_conflict(void)
 {
     CanData.assigned_id = 0;
     canbus_set_filter(CanData.assigned_id);
     shutdown("Another CAN node assigned this ID");
+}
+
+static void
+can_reset_host_session(void)
+{
+    // SET_KLIPPER_NODEID is sent out-of-band before a host opens its framed
+    // stream.  Make it a session-takeover barrier: bytes and replies from the
+    // prior process cannot enter the new session, and every reconnect begins
+    // on the mandatory Classical carrier before negotiating FD again.
+    CanData.transmit_pos = CanData.transmit_max = 0;
+    CanData.receive_pos = 0;
+    CanData.fd_active = CanData.fd_brs = 0;
+    CanData.carrier_mtu = 8;
+    CanData.staged_mtu = CanData.staged_brs = 0;
+    CanData.staged_data_bitrate = 0;
+    CanData.transport_state = 0;
+    CanData.active_data_bitrate = CONFIG_CANBUS_FREQUENCY;
+#if CONFIG_CANBUS_FD
+    canhw_abort_fd();
+#endif
+    command_reset_sequence();
+}
+
+static void
+can_report_session_reset(void)
+{
+    struct canbus_msg send = {};
+    send.id = CANBUS_ID_ADMIN_RESP;
+    send.dlc = 8;
+    send.data[0] = CANBUS_RESP_SESSION_RESET;
+    memcpy(&send.data[1], CanData.uuid, sizeof(CanData.uuid));
+    send.data[7] = can_get_nodeid();
+    for (;;) {
+        int ret = canbus_send(&send);
+        if (ret >= 0)
+            return;
+    }
 }
 
 static void
@@ -404,6 +464,8 @@ can_process_set_klipper_nodeid(struct canbus_msg *msg)
             CanData.assigned_id = newid;
             canbus_set_filter(CanData.assigned_id);
         }
+        can_reset_host_session();
+        can_report_session_reset();
     } else if (newid == CanData.assigned_id) {
         can_id_conflict();
     }
@@ -465,6 +527,9 @@ can_process_admin(struct canbus_msg *msg)
         break;
     case CANBUS_CMD_QUERY_BOARD_ID:
         can_process_query_board_id(msg);
+        break;
+    case CANBUS_CMD_QUERY_ASSIGNED:
+        can_process_query_assigned(msg);
         break;
     }
 }

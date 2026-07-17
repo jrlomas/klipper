@@ -111,6 +111,15 @@ class Bridge:
 
 
 def main():
+    serialqueue = open(os.path.join(
+        ROOT, 'klippy', 'chelper', 'serialqueue.c')).read()
+    serialhdl = open(os.path.join(ROOT, 'klippy', 'serialhdl.py')).read()
+    assert 'errno == ENETDOWN || errno == ENETRESET' in serialqueue
+    assert 'pollreactor_do_exit(sq->pr)' in serialqueue
+    assert 'RESP_SESSION_RESET' in serialhdl
+    assert 'CAN session reset acknowledged' in serialhdl
+    assert 'bus.set_filters(filters)' in serialhdl
+
     empty = helix_can.HelixCANBus(Config())
     try:
         empty._select_profile()

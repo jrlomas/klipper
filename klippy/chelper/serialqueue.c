@@ -14,6 +14,7 @@
 
 #include <linux/can.h> // // struct can_frame
 #include <linux/can/raw.h> // CAN_RAW_FD_FRAMES
+#include <errno.h> // errno
 #include <math.h> // fabs
 #include <pthread.h> // pthread_mutex_lock
 #include <stddef.h> // offsetof
@@ -355,6 +356,13 @@ input_event(struct serialqueue *sq, double eventtime)
         struct canfd_frame cf;
         int ret = read(sq->serial_fd, &cf, sizeof(cf));
         if (ret <= 0) {
+            // A transactional CAN profile change briefly takes the netdevice
+            // down and back up.  SocketCAN keeps bound sockets valid across
+            // that transition, but read() reports ENETDOWN/ENETRESET while
+            // rtnetlink applies the new timing.  Preserve the protocol state
+            // and let poll resume after the interface returns.
+            if (ret < 0 && (errno == ENETDOWN || errno == ENETRESET))
+                return;
             report_errno("can read", ret);
             pollreactor_do_exit(sq->pr);
             return;

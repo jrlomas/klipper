@@ -6,8 +6,10 @@ import time
 CANBUS_ID_ADMIN = 0x3f0
 CMD_QUERY_UNASSIGNED = 0x00
 CMD_QUERY_BOARD_ID = 0x03
+CMD_QUERY_ASSIGNED = 0x04
 RESP_NEED_NODEID = 0x20
 RESP_BOARD_ID = 0x21
+RESP_ASSIGNED_ID = 0x22
 
 FAMILY_NAMES = {
     0: 'generic',
@@ -111,20 +113,26 @@ def scan_bus(interface, timeout=1.0, response_window=.12, bus_factory=None,
     bus = bus_factory(channel=interface, can_filters=filters,
                       bustype='socketcan')
     try:
-        query = can_module.Message(arbitration_id=CANBUS_ID_ADMIN,
-                                   data=[CMD_QUERY_UNASSIGNED],
-                                   is_extended_id=False)
-        bus.send(query)
         handles = {}
-        deadline = time.monotonic() + timeout
-        for msg in _recv_until(bus, deadline):
-            data = bytes(msg.data)
-            if (msg.arbitration_id != CANBUS_ID_ADMIN + 1 or len(data) < 7
-                    or data[0] != RESP_NEED_NODEID):
-                continue
-            legacy_uuid = data[1:7].hex()
-            app = data[7] if len(data) > 7 else 0x01
-            handles[legacy_uuid] = app
+        for query_code, response_code in (
+                (CMD_QUERY_UNASSIGNED, RESP_NEED_NODEID),
+                (CMD_QUERY_ASSIGNED, RESP_ASSIGNED_ID)):
+            query = can_module.Message(arbitration_id=CANBUS_ID_ADMIN,
+                                       data=[query_code],
+                                       is_extended_id=False)
+            bus.send(query)
+            deadline = time.monotonic() + timeout
+            for msg in _recv_until(bus, deadline):
+                data = bytes(msg.data)
+                if (msg.arbitration_id != CANBUS_ID_ADMIN + 1
+                        or len(data) < 7 or data[0] != response_code):
+                    continue
+                legacy_uuid = data[1:7].hex()
+                # Assigned reports carry the current node id in byte seven;
+                # this implementation is always the Klipper application.
+                app = (data[7] if response_code == RESP_NEED_NODEID
+                       and len(data) > 7 else 0x01)
+                handles[legacy_uuid] = app
         nodes = []
         for legacy_uuid, app in sorted(handles.items()):
             board_id = _query_identity(bus, can_module, legacy_uuid,

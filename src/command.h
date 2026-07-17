@@ -85,6 +85,7 @@ int_fast8_t command_find_block(uint8_t *buf, uint_fast8_t buf_len
                                , uint_fast8_t *pop_count);
 void command_dispatch(uint8_t *buf, uint_fast8_t msglen);
 void command_send_ack(void);
+void command_reset_sequence(void);
 int_fast8_t command_find_and_dispatch(uint8_t *buf, uint_fast8_t buf_len
                                       , uint_fast8_t *pop_count);
 

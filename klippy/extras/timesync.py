@@ -429,6 +429,7 @@ class MachineTimeSync:
         self._primary_intervals = {}
         self._last_converged = {}
         self._paused_mcus = set()
+        self._convergence_query_active = False
         self.prime_remaining = 0
         self.beacon_timer = self.reactor.register_timer(self._beacon_event)
         self.sof_timer = self.reactor.register_timer(self._sof_event)
@@ -462,6 +463,7 @@ class MachineTimeSync:
         self._primary_intervals = {}
         self._last_converged = {}
         self._paused_mcus = set()
+        self._convergence_query_active = False
         for name, mcu in self.printer.lookup_objects(module='mcu'):
             if mcu is primary:
                 continue
@@ -503,6 +505,7 @@ class MachineTimeSync:
         self._primary_intervals = {}
         self._last_converged = {}
         self._paused_mcus = set()
+        self._convergence_query_active = False
         self.sof_primary = None
         self.sof_links = []
     def _handle_comm_pause(self, mcu_name):
@@ -752,39 +755,51 @@ class MachineTimeSync:
             # the steady beacon cadence (about 1Hz), not in the 50ms burst.
             self._check_convergence()
     def _check_convergence(self):
-        for link in self.secondaries:
-            if link.name in self._paused_mcus:
-                continue
-            try:
-                state = link.query()
-            except self.printer.command_error:
-                # A query can already be waiting for its transport ack when
-                # comm_pause is emitted.  Reconnect deliberately cancels
-                # never-transmitted work; let that pre-loss timer invocation
-                # unwind without taking down the reactor.  Fresh sampling
-                # resumes only after mcu:comm_resume.
-                if link.name not in self._paused_mcus:
-                    raise
-                logging.info("timesync: query to MCU '%s' canceled at link"
-                             " recovery boundary", link.name)
-                continue
-            logging.debug(
-                "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
-                " raw_l=%s sample_rate=%s relay_rate=%s"
-                " flags=%d prime=%d rate=%d err=%d"
-                " map_m=%d map_l=%d",
-                link.name, link.last_machine_clock, link.last_local_est,
-                link.last_raw_local_est, link.sample_rate, link.relay_rate,
-                state['flags'], state['prime_count'], state['rate'],
-                state['last_err'], state['machine_ref'], state['local_ref'])
-            converged = link.is_converged(self.reactor.monotonic())
-            if self._last_converged.get(link.name) != converged:
-                logging.info(
-                    "timesync: mcu '%s' %s flags=%d rate=%d"
-                    " last_err=%d ticks",
-                    link.name, "converged" if converged else "syncing",
-                    state['flags'], state['rate'], state['last_err'])
-                self._last_converged[link.name] = converged
+        # QueryCommand.send() yields to the reactor while it waits for the
+        # response.  A simultaneous SOF completion or beacon callback may
+        # therefore re-enter this method and install a second waiter for the
+        # same response name.  One waiter then consumes the reply and the
+        # other times out.  Serialize this diagnostic polling loop; the next
+        # normal beacon will refresh it within one cadence.
+        if getattr(self, '_convergence_query_active', False):
+            return
+        self._convergence_query_active = True
+        try:
+            for link in self.secondaries:
+                if link.name in self._paused_mcus:
+                    continue
+                try:
+                    state = link.query()
+                except self.printer.command_error as exc:
+                    # Convergence reporting is a read-only diagnostic.  Its
+                    # absence must fail the trust gate closed, but must not
+                    # turn a delayed or canceled status response into a
+                    # machine-wide emergency stop.
+                    self._last_converged[link.name] = False
+                    logging.warning(
+                        "timesync: status query to MCU '%s' failed (%s);"
+                        " treating link as unconverged", link.name, exc)
+                    continue
+                logging.debug(
+                    "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
+                    " raw_l=%s sample_rate=%s relay_rate=%s"
+                    " flags=%d prime=%d rate=%d err=%d"
+                    " map_m=%d map_l=%d",
+                    link.name, link.last_machine_clock, link.last_local_est,
+                    link.last_raw_local_est, link.sample_rate, link.relay_rate,
+                    state['flags'], state['prime_count'], state['rate'],
+                    state['last_err'], state['machine_ref'],
+                    state['local_ref'])
+                converged = link.is_converged(self.reactor.monotonic())
+                if self._last_converged.get(link.name) != converged:
+                    logging.info(
+                        "timesync: mcu '%s' %s flags=%d rate=%d"
+                        " last_err=%d ticks",
+                        link.name, "converged" if converged else "syncing",
+                        state['flags'], state['rate'], state['last_err'])
+                    self._last_converged[link.name] = converged
+        finally:
+            self._convergence_query_active = False
     # Host-visible counterpart of the firmware ingest gate. trajq.c calls
     # timesync_class0_ok() before accepting every segment; clients can use
     # this query to avoid sending work that a syncing secondary will refuse.

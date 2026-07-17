@@ -28,8 +28,11 @@ def main():
         calls.append(argv)
         if '-json' in argv:
             return Result(stdout=json.dumps([{
-                'ifname': 'helixcan0', 'linkinfo': {'info_data': {
-                    'bitrate': 1000000, 'data_bitrate': 8000000}}}]))
+                'ifname': 'helixcan0', 'mtu': 72,
+                'linkinfo': {'info_data': {
+                    'ctrlmode': ['FD'],
+                    'bittiming': {'bitrate': 1000000},
+                    'data_bittiming': {'bitrate': 8000000}}}}]))
         return Result()
 
     manager = manager_module.LinkManager(runner)

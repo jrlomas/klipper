@@ -658,16 +658,23 @@ can_init(void)
     SOC_CAN->RXESC = (7 << FDCAN_RXESC_F1DS_Pos) | (7 << FDCAN_RXESC_F0DS_Pos);
     uint32_t tbsa = (uint32_t)MSG_RAM.TXFIFO - SRAMCAN_BASE;
     SOC_CAN->TXBC = (tbsa
-                     | (ARRAY_SIZE(MSG_RAM.TXFIFO) << FDCAN_TXBC_TFQS_Pos)
-                     | FDCAN_TXBC_TFQM);
+                     | (ARRAY_SIZE(MSG_RAM.TXFIFO) << FDCAN_TXBC_TFQS_Pos));
     SOC_CAN->TXESC = 7 << FDCAN_TXESC_TBDS_Pos;
     uint32_t efsa = (uint32_t)MSG_RAM.TEF - SRAMCAN_BASE;
     SOC_CAN->TXEFC = efsa | (3 << FDCAN_TXEFC_EFS_Pos);
 #else
     // G0/G4 use the fixed message-RAM placement configured by reset values,
-    // but queue selection remains programmable.
-    SOC_CAN->TXBC |= FDCAN_TXBC_TFQM;
+    // but FIFO/queue selection remains programmable.  Keep ordered FIFO mode:
+    // the carrier is a byte stream and relies on FIFO-empty refill wakes.
+    SOC_CAN->TXBC &= ~FDCAN_TXBC_TFQM;
 #endif
+
+    // Wake the producer whenever any hardware slot completes or finishes a
+    // cancellation.  TFE covers normal FIFO draining; these per-buffer gates
+    // also guarantee progress after a bounded stale-frame cancellation.
+    uint32_t tx_irq_mask = ((1U << ARRAY_SIZE(MSG_RAM.TXFIFO)) - 1);
+    SOC_CAN->TXBTIE = tx_irq_mask;
+    SOC_CAN->TXBCIE = tx_irq_mask;
 
     /* Leave the initialisation mode */
     SOC_CAN->CCCR &= ~FDCAN_CCCR_CCE;
