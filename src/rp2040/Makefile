@@ -16,6 +16,7 @@ CFLAGS += -Ilib/pico-sdk/$(MCU)/cmsis_include -Ilib/fast-hash -Ilib/can2040
 
 # Add source files
 src-y += rp2040/main.c rp2040/watchdog.c rp2040/gpio.c rp2040/adc.c
+src-$(CONFIG_WANT_ADC_STREAM) += rp2040/adc_stream.c
 src-y += generic/armcm_boot.c generic/armcm_irq.c
 src-y += generic/armcm_reset.c generic/crc16_ccitt.c
 src-$(CONFIG_MACH_RP2040) += rp2040/timer.c generic/timer_irq.c rp2040/bootrom.c

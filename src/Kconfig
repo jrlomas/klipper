@@ -94,6 +94,12 @@ config WANT_ADC
     bool
     depends on HAVE_GPIO_ADC
     default y
+config HAVE_ADC_STREAM
+    bool
+config WANT_ADC_STREAM
+    bool
+    depends on WANT_ADC && HAVE_ADC_STREAM
+    default y
 config WANT_SPI
     bool
     depends on HAVE_GPIO && HAVE_GPIO_SPI
@@ -473,6 +479,9 @@ menu "Optional features (to reduce code size)"
 config WANT_ADC
     bool "Support micro-controller based ADC (analog to digital)"
     depends on HAVE_GPIO_ADC
+config WANT_ADC_STREAM
+    bool "Support DMA-backed ADC acquisition streams"
+    depends on WANT_ADC && HAVE_ADC_STREAM
 config WANT_SPI
     bool "Support communicating with external chips via SPI bus"
     depends on HAVE_GPIO && HAVE_GPIO_SPI
