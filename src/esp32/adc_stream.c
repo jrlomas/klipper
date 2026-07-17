@@ -23,7 +23,7 @@
 #include "sched.h" // sched_shutdown
 
 #define ESP32_ADC_FRAME_BYTES 256
-#define ESP32_ADC_POOL_BYTES 1024
+#define ESP32_ADC_POOL_BYTES 8192
 #define ESP32_ADC_MIN_CONVERSIONS 20000u
 #define ESP32_ADC_MAX_CONVERSIONS 2000000u
 
@@ -262,7 +262,8 @@ adc_stream_task(void *arg)
                && __atomic_load_n(&start_sequence, __ATOMIC_ACQUIRE)
                   == local_sequence) {
             if (driver_overflow) {
-                publish_fault(ACQ_STATUS_OVERRUN);
+                publish_fault(ACQ_STATUS_OVERRUN
+                              | ACQ_STATUS_BACKEND_POOL_OVERFLOW);
                 break;
             }
             uint32_t length = 0;
@@ -296,6 +297,25 @@ adc_stream_task(void *arg)
                 if (block_pos != cfg.block_values)
                     continue;
 
+                // Unlike the native backends, IDF DMA writes into its own
+                // bounded pool. Hold this completed local block until the
+                // consumer has returned the block that follows it. This
+                // preserves the generic two-block ownership invariant while
+                // the IDF pool safely absorbs short core-1 scheduling delays.
+                uint8_t next_block = block_index ^ 1;
+                while (reserve_block(next_block)) {
+                    if (driver_overflow) {
+                        publish_fault(ACQ_STATUS_OVERRUN
+                                      | ACQ_STATUS_BACKEND_POOL_OVERFLOW);
+                        goto stop;
+                    }
+                    if (!__atomic_load_n(&run_requested, __ATOMIC_ACQUIRE)
+                        || __atomic_load_n(&start_sequence,
+                                           __ATOMIC_ACQUIRE)
+                           != local_sequence)
+                        goto stop;
+                    vTaskDelay(1);
+                }
                 // A new setup invalidates this local generation. Never copy
                 // stale samples into the generic block pool after restart.
                 if (__atomic_load_n(&setup_sequence, __ATOMIC_ACQUIRE)
@@ -310,12 +330,8 @@ adc_stream_task(void *arg)
 #if !KLIPPER_ARCH_MODEM
                 board_wake_main();
 #endif
-                block_index ^= 1;
+                block_index = next_block;
                 block_pos = 0;
-                if (reserve_block(block_index)) {
-                    publish_fault(ACQ_STATUS_OVERRUN);
-                    goto stop;
-                }
             }
         }
 
@@ -349,5 +365,5 @@ void
 esp32_adc_stream_init(void)
 {
     xTaskCreatePinnedToCore(adc_stream_task, "klipper_adc_dma", 4096, NULL,
-                            tskIDLE_PRIORITY + 2, NULL, 0);
+                            tskIDLE_PRIORITY + 5, NULL, 0);
 }

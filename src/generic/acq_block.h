@@ -21,6 +21,7 @@ enum acq_block_status {
     ACQ_STATUS_SAMPLE_ERROR = 1u << 3,
     ACQ_STATUS_OVERRUN = 1u << 4,
     ACQ_STATUS_INFERRED_TIME = 1u << 5,
+    ACQ_STATUS_BACKEND_POOL_OVERFLOW = 1u << 6,
 };
 
 struct acq_block {
