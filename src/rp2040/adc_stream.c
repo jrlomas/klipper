@@ -21,7 +21,8 @@
 #define ADC_DMA_CH1 11
 #define ADC_DMA_MASK ((1u << ADC_DMA_CH0) | (1u << ADC_DMA_CH1))
 
-static const struct adc_stream_backend_config *stream_cfg;
+static struct adc_stream_backend_config stream_cfg;
+static uint8_t stream_active;
 static uint32_t dma_ctrl[2];
 
 static void
@@ -30,9 +31,9 @@ adc_dma_rearm(uint8_t block)
     uint8_t channel = block ? ADC_DMA_CH1 : ADC_DMA_CH0;
     dma_channel_hw_t *dma = &dma_hw->ch[channel];
     dma->read_addr = (uint32_t)&adc_hw->fifo;
-    dma->write_addr = (uint32_t)&stream_cfg->buffer[
+    dma->write_addr = (uint32_t)&stream_cfg.buffer[
         block * ADC_STREAM_MAX_BLOCK_VALUES];
-    dma->transfer_count = stream_cfg->block_values;
+    dma->transfer_count = stream_cfg.block_values;
     // AL1_CTRL is a non-triggering alias. Keep the channel armed until the
     // peer's CHAIN_TO event starts it.
     dma->al1_ctrl = dma_ctrl[block];
@@ -94,7 +95,8 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     dma_hw->inte1 &= ~ADC_DMA_MASK;
     dma_hw->ints1 = ADC_DMA_MASK;
 
-    stream_cfg = cfg;
+    stream_cfg = *cfg;
+    stream_active = 1;
     for (uint8_t block = 0; block < 2; block++) {
         uint8_t channel = block ? ADC_DMA_CH1 : ADC_DMA_CH0;
         uint8_t chain = block ? ADC_DMA_CH0 : ADC_DMA_CH1;
@@ -148,7 +150,7 @@ void
 board_adc_stream_stop(void)
 {
     board_adc_stream_stop_from_isr();
-    stream_cfg = NULL;
+    stream_active = 0;
 }
 
 void
@@ -158,6 +160,6 @@ board_adc_stream_block_released(uint8_t block_index)
     // If the peer DMA completes first, its CHAIN_TO event finds this channel
     // disabled and the generic layer reports ring exhaustion instead of
     // allowing a silent overwrite.
-    if (stream_cfg)
+    if (stream_active)
         adc_dma_rearm(block_index);
 }

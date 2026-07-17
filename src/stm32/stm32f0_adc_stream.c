@@ -16,7 +16,7 @@
 #define ADC_DMA_FLAGS (DMA_IFCR_CGIF1 | DMA_IFCR_CTCIF1 \
                        | DMA_IFCR_CHTIF1 | DMA_IFCR_CTEIF1)
 
-static const struct adc_stream_backend_config *stream_cfg;
+static struct adc_stream_backend_config stream_cfg;
 static uint8_t dma_block;
 static uint8_t owns_tim3;
 
@@ -26,9 +26,9 @@ adc_dma_arm(uint8_t block)
     DMA1_Channel1->CCR = 0;
     DMA1->IFCR = ADC_DMA_FLAGS;
     DMA1_Channel1->CPAR = (uint32_t)&ADC1->DR;
-    DMA1_Channel1->CMAR = (uint32_t)&stream_cfg->buffer[
+    DMA1_Channel1->CMAR = (uint32_t)&stream_cfg.buffer[
         block * ADC_STREAM_MAX_BLOCK_VALUES];
-    DMA1_Channel1->CNDTR = stream_cfg->block_values;
+    DMA1_Channel1->CNDTR = stream_cfg.block_values;
     DMA1_Channel1->CCR = ADC_DMA_CCR | DMA_CCR_EN;
 }
 
@@ -102,7 +102,7 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     TIM3->EGR = TIM_EGR_UG;
     TIM3->SR = 0;
 
-    stream_cfg = cfg;
+    stream_cfg = *cfg;
     dma_block = 0;
     adc_dma_arm(0);
     armcm_enable_irq(DMA1_Channel1_IRQHandler, DMA1_Channel1_IRQn, 1);
@@ -153,7 +153,6 @@ board_adc_stream_stop(void)
     board_adc_stream_stop_from_isr();
     ADC1->CFGR1 &= ~(ADC_CFGR1_DMAEN | ADC_CFGR1_DMACFG
                      | ADC_CFGR1_EXTEN);
-    stream_cfg = NULL;
 }
 
 void

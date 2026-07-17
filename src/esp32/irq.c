@@ -90,4 +90,5 @@ irq_wait(void)
 void
 irq_poll(void)
 {
+    esp32_adc_stream_poll();
 }

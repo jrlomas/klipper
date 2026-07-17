@@ -18,7 +18,7 @@
                        | DMA_LIFCR_CTCIF0)
 #define ADC_DMA_ERRORS (DMA_LISR_FEIF0 | DMA_LISR_DMEIF0 | DMA_LISR_TEIF0)
 
-static const struct adc_stream_backend_config *stream_cfg;
+static struct adc_stream_backend_config stream_cfg;
 static uint8_t dma_block;
 static uint8_t owns_tim3;
 
@@ -35,7 +35,7 @@ adc_dma_arm(uint8_t block)
 {
     adc_dma_disable();
     DMA1->LIFCR = ADC_DMA_CLEAR;
-    uint16_t *destination = &stream_cfg->buffer[
+    uint16_t *destination = &stream_cfg.buffer[
         block * ADC_STREAM_MAX_BLOCK_VALUES];
     // Each block occupies exactly one aligned M7 cache line. No CPU writes are
     // permitted while DMA owns it, so invalidating cannot discard user data.
@@ -43,7 +43,7 @@ adc_dma_arm(uint8_t block)
                                 ADC_STREAM_MAX_BLOCK_VALUES * sizeof(uint16_t));
     DMA1_Stream0->PAR = (uint32_t)&ADC1->DR;
     DMA1_Stream0->M0AR = (uint32_t)destination;
-    DMA1_Stream0->NDTR = stream_cfg->block_values;
+    DMA1_Stream0->NDTR = stream_cfg.block_values;
     DMA1_Stream0->CR = ADC_DMA_CR | DMA_SxCR_EN;
 }
 
@@ -55,7 +55,7 @@ DMA1_Stream0_IRQHandler(void)
     adc_dma_disable();
     DMA1->LIFCR = ADC_DMA_CLEAR;
     uint8_t completed = dma_block;
-    uint16_t *completed_data = &stream_cfg->buffer[
+    uint16_t *completed_data = &stream_cfg.buffer[
         completed * ADC_STREAM_MAX_BLOCK_VALUES];
     SCB_InvalidateDCache_by_Addr(completed_data,
                                 ADC_STREAM_MAX_BLOCK_VALUES * sizeof(uint16_t));
@@ -118,7 +118,7 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     TIM3->EGR = TIM_EGR_UG;
     TIM3->SR = 0;
 
-    stream_cfg = cfg;
+    stream_cfg = *cfg;
     dma_block = 0;
     adc_dma_arm(0);
     armcm_enable_irq(DMA1_Stream0_IRQHandler, DMA1_Stream0_IRQn, 1);
@@ -159,7 +159,6 @@ board_adc_stream_stop(void)
 {
     board_adc_stream_stop_from_isr();
     ADC1->CFGR &= ~(ADC_CFGR_DMNGT | ADC_CFGR_EXTEN);
-    stream_cfg = NULL;
 }
 
 void

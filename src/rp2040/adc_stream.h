@@ -4,6 +4,12 @@
 #include <stdint.h>
 #include "../adc_stream.h"
 
+static inline struct gpio_adc
+board_adc_stream_setup_pin(uint32_t pin)
+{
+    return gpio_adc_setup(pin);
+}
+
 void board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                             struct adc_stream_backend_info *info);
 void board_adc_stream_start(void);

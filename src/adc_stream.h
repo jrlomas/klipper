@@ -32,4 +32,9 @@ struct adc_stream_backend_info {
 // to the CPU (including any required cache maintenance).
 int adc_stream_block_complete(uint8_t block_index, uint32_t status);
 
+// Called by an asynchronous backend when it cannot associate a failure with a
+// completed block (for example, an ESP-IDF DMA pool overflow reported on the
+// other CPU). The call must run in the klipper scheduler/IRQ domain.
+void adc_stream_backend_fault(uint32_t status);
+
 #endif // adc_stream.h

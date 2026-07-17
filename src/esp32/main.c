@@ -136,6 +136,8 @@ app_main(void)
     // run writes PHY calibration data to NVS (flash), and a flash
     // write disables the cache the bare core executes from.
     esp32_wifi_start();
+    esp32_adc_init();
+    esp32_adc_stream_init();
 
 #if KLIPPER_ARCH_MODEM
     // Stage the core-1 boot parameters in the shared area, start
@@ -143,7 +145,6 @@ app_main(void)
     memcpy(esp32_shmem.psk, psk_buf, psk_len);
     esp32_shmem.psk_len = psk_len;
     esp32_shmem.trust_network = KLIPPER_TRUST_NETWORK;
-    esp32_adc_modem_init();
     if (esp32_modem_start(CONFIG_KLIPPER_UDP_PORT) < 0)
         return;
     if (esp32_appcpu_start() < 0)

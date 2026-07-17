@@ -303,6 +303,7 @@ void DECL_IRAM
 irq_poll(void)
 {
     shmem_console_poll();
+    esp32_adc_stream_poll();
     if ((int32_t)(timer_read_time() - timer_next_wake) >= 0) {
         irq_disable();
         timer_next_wake = timer_dispatch_many();

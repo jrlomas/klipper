@@ -79,7 +79,7 @@ command_adc_stream_add_channel(uint32_t *args)
         shutdown("ADC stream channel change while active");
     if (s->channel_count >= ADC_STREAM_MAX_CHANNELS)
         shutdown("Too many ADC stream channels");
-    s->pins[s->channel_count++] = gpio_adc_setup(args[1]);
+    s->pins[s->channel_count++] = board_adc_stream_setup_pin(args[1]);
 }
 DECL_COMMAND(command_adc_stream_add_channel,
              "adc_stream_add_channel oid=%c pin=%u");
@@ -213,6 +213,22 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
     if (!s->traffic_class && s->state == ADC_STREAM_FAULTED)
         try_shutdown("Critical ADC stream overrun");
     return s->state == ADC_STREAM_FAULTED ? -1 : 0;
+}
+
+void
+adc_stream_backend_fault(uint32_t status)
+{
+    struct adc_stream *s = active_stream;
+    if (!s || (s->state != ADC_STREAM_RUNNING
+               && s->state != ADC_STREAM_ARMED))
+        return;
+    s->fault_status |= status | ACQ_STATUS_DISCONTINUITY;
+    s->dropped_blocks++;
+    s->state = ADC_STREAM_FAULTED;
+    board_adc_stream_stop_from_isr();
+    sched_wake_task(&adc_stream_wake);
+    if (!s->traffic_class)
+        try_shutdown("Critical ADC acquisition fault");
 }
 
 static void

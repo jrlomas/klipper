@@ -55,8 +55,12 @@ void esp32_pad_config(uint32_t pin, int input_en, int output_en
 void esp32_matrix_out(uint32_t pin, uint32_t sig_idx);
 void esp32_matrix_in(uint32_t pin, uint32_t sig_idx);
 
-// adc.c (modem arch: pre-configure the ADC unit from core 0)
-void esp32_adc_modem_init(void);
+// adc.c / adc_stream.c (IDF ADC drivers are confined to core 0)
+void esp32_adc_init(void);
+uint8_t esp32_adc_legacy_is_active(void);
+void esp32_adc_stream_init(void);
+void esp32_adc_stream_poll(void);
+uint8_t esp32_adc_stream_is_claimed(void);
 
 // wifi.c
 void esp32_wifi_start(void);

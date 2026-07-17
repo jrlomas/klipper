@@ -51,7 +51,7 @@ endif()
 set(KLIPPER_CORE_SRCS
     # core (see src/Makefile src-y)
     sched.c command.c basecmd.c debugcmds.c initial_pins.c
-    gpiocmds.c ${KLIPPER_STEPPER_SRC} endstop.c trsync.c adccmds.c
+    gpiocmds.c ${KLIPPER_STEPPER_SRC} endstop.c trsync.c adccmds.c adc_stream.c
     # peripheral command modules (CONFIG_WANT_* in autoconf.h)
     spicmds.c spi_software.c i2ccmds.c i2c_software.c pwmcmds.c
     buttons.c tmcuart.c neopixel.c
@@ -61,12 +61,14 @@ list(TRANSFORM KLIPPER_CORE_SRCS PREPEND ${KLIPPER_ROOT}/src/)
 set(KLIPPER_GENERIC_SRCS
     ${KLIPPER_ROOT}/src/generic/crc16_ccitt.c
     ${KLIPPER_ROOT}/src/generic/alloc.c
+    ${KLIPPER_ROOT}/src/generic/acq_block.c
     ${KLIPPER_ROOT}/src/generic/timer_irq.c
     ${KLIPPER_ROOT}/src/generic/udp_console.c)
 set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/main.c
     ${KLIPPER_ROOT}/src/esp32/gpio.c
     ${KLIPPER_ROOT}/src/esp32/adc.c
+    ${KLIPPER_ROOT}/src/esp32/adc_stream.c
     ${KLIPPER_ROOT}/src/esp32/spi.c
     ${KLIPPER_ROOT}/src/esp32/i2c.c
     ${KLIPPER_ROOT}/src/esp32/hard_pwm.c
