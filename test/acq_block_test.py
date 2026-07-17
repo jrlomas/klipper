@@ -18,3 +18,8 @@ def test_acq_block_ownership():
     ], check=True)
     result = subprocess.run([output], check=True, capture_output=True, text=True)
     assert result.stdout.startswith('PASS:')
+
+
+if __name__ == '__main__':
+    test_acq_block_ownership()
+    print('PASS: acquisition block ownership test runner')

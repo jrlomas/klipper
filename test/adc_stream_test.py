@@ -64,3 +64,9 @@ def test_sequence_gaps_and_host_queue_drops_are_explicit():
     assert stream.sequence_gaps == 2
     assert stream.host_drops == 1
     assert len(stream.pending) == 3
+
+
+if __name__ == "__main__":
+    test_interleaved_scans_get_scan_period_timestamps()
+    test_sequence_gaps_and_host_queue_drops_are_explicit()
+    print("PASS: ADC stream host decode, timing, gaps, and bounded drops")
