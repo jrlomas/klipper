@@ -25,6 +25,10 @@ It covers the NUCLEO-F767ZI clock bypass and RMII routing, an MPU-managed DMA
 arena, interrupt-driven rings, IEEE 1588 timestamps, runtime provisioning,
 DHCP, and the shared STM32 ADC-DMA primitive.
 
+The shared DMA ownership and completed-block substrate is defined separately
+in [FD-0001 doc 17 - Unified DMA and ADC Acquisition](founding/0001-motion-intentions/17-DMA_ADC_Acquisition.md),
+so Ethernet does not grow a second, incompatible DMA framework.
+
 ## Same binding, different loss model
 
 Nothing about the protocol changes on Ethernet. FD-0001 doc 07 is

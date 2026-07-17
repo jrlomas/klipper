@@ -4,6 +4,11 @@ Status: Adopted implementation plan. Workstation inspection is complete;
 target implementation and NUCLEO-F767ZI hardware qualification have not
 started.
 
+The unified DMA ownership, block-stream, ADC acquisition, and oversampling
+substrate is specified in
+[17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) and must land before
+this board's Ethernet driver is converted to IRQ-driven DMA service.
+
 This document turns the ST NUCLEO-F767ZI into the HELIX reference platform
 for native 10/100 Ethernet. It is intentionally more than a board enablement
 note: the target must establish a reusable STM32 contract for cache-coherent
@@ -227,6 +232,10 @@ than executing network-management traffic in a real-time context.
 
 ## STM32 timer-triggered ADC DMA primitive
 
+This section records the F767 use case. The authoritative cross-family API,
+ownership model, wire surface, and implementation order are in
+[17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md).
+
 Add a target-neutral `adc_stream` primitive with an STM32F7 backend. This is
 collection infrastructure, not a sensor-specific policy.
 
@@ -276,8 +285,8 @@ clock-failure path is observable rather than a hang.
 
 ### Phase 2 - MPU and DMA foundation
 
-- [ ] Add the linker DMA arena, MPU programming, alignment assertions, and
-  ownership helpers.
+- [ ] Reuse the unified DMA arena, resource manager, block ownership helpers,
+  MPU programming, and alignment assertions from FD-0001 doc 17.
 - [ ] Move Ethernet rings/buffers into it and enable F7 I/D cache outside the
   arena.
 - [ ] Add ownership, wrap, exhaustion, and deliberate misalignment tests.
@@ -324,8 +333,9 @@ cross-connection, or unsafe continuation on a stale authenticated peer.
 
 ### Phase 6 - ADC DMA primitive
 
-- [ ] Implement `adc_stream` core, STM32F7 timer/ADC/DMA backend, block queue,
-  counters, and telemetry/local-consumer APIs.
+- [ ] Reuse the `adc_stream` core and implement/qualify the STM32F7
+  timer/ADC/DMA backend, counters, and telemetry/local-consumer APIs defined in
+  FD-0001 doc 17.
 - [ ] Test exact sample rate and timestamp reconstruction with a signal
   generator or looped timer output.
 - [ ] Measure ENOB/noise improvement, block-processing cost, overrun behavior,
