@@ -6193,8 +6193,8 @@ cs_pin:
 
 DMA-backed multi-channel ADC acquisition is available on selected RP2040,
 STM32F072, STM32G0B1, STM32H723, and classic ESP32 firmware builds. It is
-intended for raw instrumentation and commissioning; it does not yet replace
-heater or analog trigger configuration.
+available for raw instrumentation and for bounded software-filtered logical
+subscriptions. It does not yet replace heater or analog trigger configuration.
 
 ```
 [adc_stream example]
@@ -6218,12 +6218,42 @@ pins:
 #max_pending_samples: 4096
 #   Maximum decoded scans retained by Klippy for API clients. Further scans
 #   are explicitly counted as host_drops. The default is 4096.
+#summaries: true
+#   Enable one logical filtered subscription per channel. The default is true.
+#raw_output: true
+#   Emit raw interleaved DMA blocks in addition to summaries. Disable this for
+#   routine filtered telemetry that does not need raw capture. The default is
+#   true for compatibility with dump_adc clients.
+#input_div: 1
+#   Comma-separated input decimation values, one per channel. A value of N
+#   accepts one sample every N physical scans. The default is 1 for each.
+#oversample: 1
+#   Comma-separated software boxcar lengths (1..256). The default is 1.
+#filter_shift:
+#   Comma-separated accumulator right shifts. Rounding is deterministic
+#   round-half-up. The default is log2(oversample) for power-of-two boxcars,
+#   otherwise zero.
+#report_div:
+#   Comma-separated numbers of filtered values per summary. Defaults are the
+#   smallest values that bound output to at most one summary per DMA block.
+#summary_class: telemetry
+#   Static outbound summary class: "prompt" or "telemetry". Class 0 is not
+#   available until deadline acknowledgement and local failure actions land.
 ```
 
 The `ADC_STREAM_START`, `ADC_STREAM_STOP`, and `ADC_STREAM_STATUS` commands
 select a stream with `SENSOR=<name>`. API clients may subscribe through
-`adc_stream/dump_adc` with the same sensor name. Every batch carries sequence,
-epoch, discontinuity, MCU-drop, host-drop, and timestamp-uncertainty metadata.
+`adc_stream/dump_adc` with the same sensor name. Every batch carries raw data,
+filtered summaries, sequence and summary-gap counters, epoch, discontinuity,
+MCU-drop, host-drop, capability, and timestamp-uncertainty metadata.
+
+Non-safety `MCU_adc` consumers may opt into the same engine through
+`setup_adc_stream()`. Helix merges opted consumers only when all active ADC
+users on that MCU are migrated and their periods have one integer uniform
+schedule. Otherwise it configures the unmodified legacy ADC path. OpenAMS FPS
+is the first migrated consumer; its `use_adc_stream: false` option forces the
+diagnostic legacy path. Heater ADCs remain legacy until their local safety
+contract is implemented and qualified.
 
 On classic ESP32, the stream uses ADC1 and the IDF continuous/I2S0 DMA engine.
 It cannot coexist on the same MCU with legacy heater or other `analog_in`

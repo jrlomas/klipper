@@ -62,6 +62,7 @@ set(KLIPPER_GENERIC_SRCS
     ${KLIPPER_ROOT}/src/generic/crc16_ccitt.c
     ${KLIPPER_ROOT}/src/generic/alloc.c
     ${KLIPPER_ROOT}/src/generic/acq_block.c
+    ${KLIPPER_ROOT}/src/generic/adc_filter.c
     ${KLIPPER_ROOT}/src/generic/timer_irq.c
     ${KLIPPER_ROOT}/src/generic/udp_console.c)
 set(KLIPPER_BOARD_SRCS

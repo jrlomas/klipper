@@ -759,9 +759,16 @@ class MCU_adc:
         self._report_clock = 0
         self._last_state = (0., 0.)
         self._oid = self._callback = None
+        self._use_adc_stream = False
+        self._adc_stream_class = 1
+        self._adc_config_built = False
         self._mcu.register_config_callback(self._build_config)
         self._inv_max_adc = 0.
         self._unpack_from = struct.Struct('<H').unpack_from
+        all_adcs = getattr(self._mcu, "_helix_all_adcs", None)
+        if all_adcs is None:
+            all_adcs = self._mcu._helix_all_adcs = []
+        all_adcs.append(self)
     def get_mcu(self):
         return self._mcu
     def setup_adc_sample(self, report_time, sample_time=0., sample_count=1,
@@ -776,11 +783,29 @@ class MCU_adc:
         self._range_check_count = range_check_count
     def setup_adc_callback(self, callback):
         self._callback = callback
+    def setup_adc_stream(self, report_class=1):
+        """Prefer the merged DMA engine, retaining automatic legacy fallback."""
+        if report_class not in (1, 2):
+            raise ValueError("ADC stream report_class must be 1 or 2")
+        self._use_adc_stream = True
+        self._adc_stream_class = report_class
+        manager = getattr(self._mcu, "_helix_adc_stream_manager", None)
+        if manager is None:
+            manager = MCUADCStreamManager(self._mcu)
+            self._mcu._helix_adc_stream_manager = manager
+        manager.add_adc(self)
     def get_last_value(self):
         return self._last_state
     def _build_config(self):
-        if not self._sample_count:
+        if self._adc_config_built:
             return
+        if self._use_adc_stream:
+            return
+        self._build_legacy_config()
+    def _build_legacy_config(self):
+        if self._adc_config_built or not self._sample_count:
+            return
+        self._adc_config_built = True
         self._oid = self._mcu.create_oid()
         self._mcu.add_config_cmd("config_analog_in oid=%d pin=%s"
                                  % (self._oid, self._pin))
@@ -843,6 +868,152 @@ class MCU_adc:
         self._last_state = samples[-1]
         if self._callback is not None:
             self._callback(samples)
+
+
+ADC_STREAM_SUMMARY_FORMAT = (
+    "oid=%c sub=%c sequence=%u epoch=%u first_clock=%u last_clock=%u"
+    " uncertainty=%u status=%u count=%hu min=%u max=%u"
+    " sum_lo=%u sum_hi=%u shift=%c")
+
+
+class MCUADCStreamManager:
+    """Merge explicitly opted legacy ADC consumers onto one DMA scan engine."""
+    def __init__(self, mcu):
+        self._mcu = mcu
+        self._adcs = []
+        self._oid = None
+        self._mcu.register_config_callback(self._build_config)
+    def add_adc(self, adc):
+        if adc not in self._adcs:
+            self._adcs.append(adc)
+    def _fallback(self, reason):
+        logging.info("MCU '%s' ADC DMA adapter disabled: %s; using legacy ADC",
+                     self._mcu.get_name(), reason)
+        for adc in self._adcs:
+            adc._use_adc_stream = False
+            adc._build_legacy_config()
+    def _build_config(self):
+        if not self._adcs:
+            return
+        all_adcs = getattr(self._mcu, "_helix_all_adcs", ())
+        if any(adc._sample_count and adc not in self._adcs
+               for adc in all_adcs):
+            self._fallback("another ADC consumer still owns the legacy engine")
+            return
+        if getattr(self._mcu, "_helix_explicit_adc_stream", False):
+            self._fallback("an explicit adc_stream section owns the engine")
+            return
+        subscribe_format = (
+            "adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu"
+            " osr=%hu shift=%c report_div=%hu report_class=%c")
+        if (self._mcu.get_constants().get("ADC_STREAM_V1") != 1
+                or self._mcu.try_lookup_command(subscribe_format) is None):
+            self._fallback("firmware does not advertise ADC_STREAM_V1")
+            return
+        max_channels = self._mcu.get_constants().get(
+            "ADC_STREAM_MAX_CHANNELS", 0)
+        max_subscriptions = self._mcu.get_constants().get(
+            "ADC_STREAM_MAX_SUBSCRIPTIONS", 0)
+        if len(self._adcs) > min(max_channels, max_subscriptions):
+            self._fallback("too many opted-in channels")
+            return
+        if any(not adc._sample_count for adc in self._adcs):
+            self._fallback("consumer has no sampling schedule")
+            return
+        if any(adc._batch_num != 1 or adc._range_check_count
+               or adc._min_sample > 0. or adc._max_sample < 1.
+               for adc in self._adcs):
+            self._fallback(
+                "consumer requires unsupported legacy batch or range semantics")
+            return
+        sample_times = [adc._sample_time for adc in self._adcs]
+        if any(value <= 0. for value in sample_times):
+            self._fallback(
+                "consumer requires legacy immediate conversion timing")
+            return
+        base_time = min(sample_times)
+        schedules = []
+        for adc in self._adcs:
+            input_div = int(adc._sample_time / base_time + .5)
+            if (not 1 <= input_div <= 0xffff
+                    or abs(input_div * base_time - adc._sample_time)
+                    > max(1.e-9, adc._sample_time * 1.e-6)):
+                self._fallback("sample periods are not integer-compatible")
+                return
+            osr = adc._sample_count
+            if osr > self._mcu.get_constants().get("ADC_STREAM_MAX_OSR", 0):
+                self._fallback("oversample count exceeds firmware limit")
+                return
+            filtered_period = base_time * input_div * osr
+            report_div = max(1, int(adc._report_time / filtered_period + .5))
+            if report_div > 4096:
+                self._fallback("report decimation exceeds firmware limit")
+                return
+            actual_report = filtered_period * report_div
+            if abs(actual_report - adc._report_time) > max(
+                    1.e-9, adc._report_time * 1.e-6):
+                self._fallback("report periods are not integer-compatible")
+                return
+            schedules.append((input_div, osr, report_div))
+
+        max_block_scans = 16 // len(self._adcs)
+        block_scans = min(
+            [max_block_scans]
+            + [input_div * osr * report_div
+               for input_div, osr, report_div in schedules])
+        if block_scans < 1:
+            self._fallback("no bounded block schedule fits")
+            return
+        self._oid = self._mcu.create_oid()
+        self._mcu.add_config_cmd("config_adc_stream oid=%d" % (self._oid,))
+        for adc in self._adcs:
+            self._mcu.add_config_cmd(
+                "adc_stream_add_channel oid=%d pin=%s"
+                % (self._oid, adc._pin))
+        for sub, (adc, schedule) in enumerate(zip(self._adcs, schedules)):
+            input_div, osr, report_div = schedule
+            self._mcu.add_config_cmd(
+                "adc_stream_subscribe oid=%d sub=%d channel=%d"
+                " input_div=%d osr=%d shift=0 report_div=%d report_class=%d"
+                % (self._oid, sub, sub, input_div, osr, report_div,
+                   adc._adc_stream_class))
+        self._mcu.add_config_cmd(
+            "adc_stream_set_options oid=%d raw_output=0" % (self._oid,))
+        start_clock = self._mcu.get_query_slot(self._oid)
+        period_ticks = max(1, self._mcu.seconds_to_clock(base_time))
+        self._mcu.add_config_cmd(
+            "adc_stream_start oid=%d clock=%d period_ticks=%d"
+            " block_values=%d traffic_class=2" % (
+                self._oid, start_clock, period_ticks,
+                block_scans * len(self._adcs)), is_init=True)
+        for message in ("adc_stream_prompt ", "adc_stream_telemetry "):
+            self._mcu.register_serial_response(
+                self._handle_summary, message + ADC_STREAM_SUMMARY_FORMAT,
+                self._oid)
+        self._mcu.register_serial_response(
+            self._handle_fault,
+            "adc_stream_fault oid=%c status=%u dropped=%u sequence=%u",
+            self._oid)
+    def _handle_summary(self, params):
+        sub = params["sub"]
+        if sub >= len(self._adcs) or not params["count"]:
+            logging.warning("MCU '%s' received invalid ADC DMA summary",
+                            self._mcu.get_name())
+            return
+        adc = self._adcs[sub]
+        total = params["sum_lo"] | (params["sum_hi"] << 32)
+        denominator = params["count"] * adc._sample_count
+        adc_max = float(self._mcu.get_constants().get("ADC_MAX", 4095))
+        value = total / (denominator * adc_max)
+        read_clock = self._mcu.clock32_to_clock64(params["last_clock"])
+        read_time = self._mcu.clock_to_print_time(read_clock)
+        adc._last_state = (read_time, value)
+        if adc._callback is not None:
+            adc._callback([(read_time, value)])
+    def _handle_fault(self, params):
+        logging.error("MCU '%s' ADC DMA acquisition fault: status=0x%x"
+                      " dropped=%d sequence=%d", self._mcu.get_name(),
+                      params["status"], params["dropped"], params["sequence"])
 
 
 ######################################################################

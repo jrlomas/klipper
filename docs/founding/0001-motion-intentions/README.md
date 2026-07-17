@@ -45,7 +45,7 @@ status line records its more precise state.
 | [14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md) | Coexisting firehose (v1) and intent (v2) boards; one coordination timeline | Implemented; 12/64 MHz USB time merge qualified, coordinated action/CAN pending |
 | [15-CANFD_Transport.md](15-CANFD_Transport.md) | Transactional CAN FD, real bridge/node identities, SocketCAN control, and timestamped USB-SOF time transfer | Vertical slice and physical 1 Mbit carrier/time base qualified; injected recovery, CAN motion/print, and 2/5/8 Mbit BRS pending |
 | [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md) | NUCLEO-F767ZI native Ethernet, cache-safe DMA, IRQ service, hardware timestamping, DHCP, and ADC streaming | Adopted plan; implementation and board qualification pending |
-| [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Research complete and plan adopted; implementation and cross-family proof pending |
+| [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Raw backends and v1 subscription/filter/summary core implemented; F072/ESP32 initial soaks pass; safety migration and broader proof pending |
 
 ## Reading order
 

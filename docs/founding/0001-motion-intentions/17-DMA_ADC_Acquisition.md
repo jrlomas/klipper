@@ -1,12 +1,13 @@
 # FD-0001: Unified DMA and ADC Acquisition
 
-Status: First acquisition slice implemented. The generic ownership core,
-Klippy raw-stream frontend, RP2040, STM32F072/G0B1/H723, and classic ESP32
-backends compile; the ESP32 component backend has passed a live WiFi/UDP soak.
-The STM32F072 backend has passed an initial live USB acquisition soak. Further
-native-board hardware qualification, safety-consumer migration, and the general
-DMA resource manager remain open. This work precedes the STM32F767 Ethernet
-implementation.
+Status: Subscription/filter slice implemented. The generic ownership core,
+deterministic reference filter, merged logical subscriptions, Klippy raw and
+summary frontend, opt-in `MCU_adc` compatibility adapter, RP2040,
+STM32F072/G0B1/H723, and classic ESP32 backends compile. The ESP32 component
+and STM32F072 backends have passed initial live acquisition soaks. Further
+native-board hardware qualification, safety-consumer migration, local safety
+consumers, and the general DMA resource manager remain open. This work
+precedes the STM32F767 Ethernet implementation.
 
 This document specifies the common HELIX primitives for DMA-backed peripheral
 acquisition and applies them first to ADC sampling on STM32, RP2040, and ESP32.
@@ -28,7 +29,8 @@ unifies lifecycle and evidence, not raw DMA registers.
 
 ## Implemented checkpoint (2026-07-17)
 
-The landed v0 is deliberately smaller than the complete architecture below:
+The landed v1 subscription slice is deliberately smaller than the complete
+architecture below:
 
 * `generic/acq_block` enforces the generation-checked `FREE -> DMA_OWNED ->
   READY -> CONSUMER_OWNED -> FREE` lifecycle. A fixed, aligned two-block pool
@@ -54,21 +56,40 @@ The landed v0 is deliberately smaller than the complete architecture below:
 * `klippy/extras/adc_stream.py` provides `[adc_stream]`, bounded decoded
   buffering, `ADC_STREAM_START/STOP/STATUS`, and `adc_stream/dump_adc` with
   explicit MCU gaps, host drops, and timing uncertainty.
+* Up to eight logical subscriptions select a physical channel, input
+  decimation, software OSR, deterministic rounded right shift, report
+  decimation, and static Prompt or Telemetry summary class. A 64-bit
+  accumulator produces count/min/max/sum summaries. Discontinuity resets a
+  partial filter instead of joining samples across a gap. Report schedules are
+  rejected unless MCU task work is bounded to at most one summary per
+  subscription per DMA block.
+* `klippy/extras/adc_stream_model.py` is the independent executable reference
+  for scan phase, boxcar accumulation, rounding, decimation, and summary
+  metadata. Five hundred seeded randomized schedules agree with a second
+  direct implementation. The C filter has matching fixed vectors.
+* `MCU_adc.setup_adc_stream()` collects opted-in legacy consumers into one
+  uniform engine only when `ADC_STREAM_V1` and integer-compatible schedules
+  are available. It falls back before configuration if firmware is
+  unsupported, another non-migrated ADC consumer exists, or an explicit raw
+  stream owns the MCU. OpenAMS FPS is the first non-safety consumer: five
+  samples at 5 ms spacing become one Prompt filtered result every 100 ms.
+  Heaters remain deliberately unmigrated.
 
 Evidence at this checkpoint:
 
 | Check | Result |
 | --- | --- |
-| Ownership and host decode tests | 3 tests pass: legal/stale block transitions, interleaved scan timestamps, sequence gaps, and bounded host drops |
+| Ownership, filter, adapter, and host decode tests | Fixed C vectors, 500 seeded randomized schedules, legal/stale block transitions, interleaved timestamps, summary scaling/gaps, merged FPS scheduling, split-ownership rejection, automatic legacy fallback, and bounded host drops pass |
 | Native builds | RP2040, STM32F072, STM32G0B1, and STM32H723 pass clean isolated builds |
 | ESP32 builds | component, component-RMT, and modem images compile and link with IDF 5.3.2 |
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
 
-This checkpoint does **not** claim heater/trigger safety migration, generalized
-DMA allocation, native-board analog accuracy, hardware oversampling, analog
-watchdog coexistence, or Ethernet/ADC contention proof. Those remain gated
-below.
+This checkpoint does **not** claim heater/trigger safety migration, Class-0
+deadline/acknowledgement delivery, local safety callbacks, generalized DMA
+allocation, raw chunking beyond the existing bounded block, native-board
+analog accuracy, hardware oversampling, analog-watchdog coexistence, or
+Ethernet/ADC contention proof. Those remain gated below.
 
 ## Why the existing ADC loop must change
 
@@ -376,7 +397,7 @@ The target-independent core owns subscriptions, blocks, sequence continuity,
 filters, local consumers, and reporting. The backend owns registers, DMA
 requests, start phase, raw result layout, and error decoding.
 
-The implemented v0 protocol surface is versioned independently from legacy
+The implemented base protocol remains versioned independently from legacy
 `analog_in`:
 
 ```
@@ -394,6 +415,30 @@ adc_stream_fault oid=%c status=%u dropped=%u sequence=%u
 adc_stream_status oid=%c state=%c class=%c channels=%c block_values=%c
     epoch=%u sequence=%u dropped=%u status=%u
 ```
+
+`ADC_STREAM_V1=1` adds the generic software-filter and capability surface:
+
+```
+adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu osr=%hu
+                     shift=%c report_div=%hu report_class=%c
+adc_stream_set_options oid=%c raw_output=%c
+adc_stream_get_capabilities oid=%c
+
+adc_stream_prompt oid=%c sub=%c sequence=%u epoch=%u first_clock=%u
+    last_clock=%u uncertainty=%u status=%u count=%hu min=%u max=%u
+    sum_lo=%u sum_hi=%u shift=%c
+adc_stream_telemetry ...same payload...
+adc_stream_capabilities oid=%c version=%c max_channels=%c
+    max_subscriptions=%c max_osr=%hu caps=%u
+```
+
+`input_div` is phase-locked to the acquisition epoch. `osr` accepted inputs
+are accumulated in 64 bits; a non-zero `shift` uses round-half-up before the
+right shift. `report_div` filtered values form one summary. The full 64-bit
+summary sum is transported as low/high words. Class 1 and 2 use distinct
+static message IDs. Class 0 is rejected by this command because its required
+acknowledgement, deadline, and local failure-action contract is not yet
+implemented. Raw block output is independently switchable.
 
 The complete subscription/safety interface remains the target surface:
 
@@ -606,7 +651,7 @@ measurement images because they perturb the ISR being measured.
 - [ ] Measure legacy timer invocations, conversion retries, CPU time, report
   bandwidth, and motion jitter for representative thermistor and high-rate
   oversampling configurations.
-- [ ] Add a host reference model for scan ordering, boxcar accumulation,
+- [x] Add a host reference model for scan ordering, boxcar accumulation,
   rounding, decimation, timestamps, epochs, and injected missing samples.
 - [x] Define v0 limits, status flags, ownership states, and stop-versus-shutdown
   failure behavior before live target testing.
@@ -621,18 +666,22 @@ silent gap or channel-phase discontinuity.
   state machine, counters, and no-overwrite failure path.
 - [ ] Generalize allocation and peripheral/DMA resource claims into the shared
   pool/resource manager required by Ethernet and multiple engines.
-- [ ] Implement ADC engine subscription merging, uniform scan planning,
-  software filtering, local consumers, raw chunking, and summaries.
+- [x] Implement ADC engine subscription merging, uniform scan planning,
+  software filtering, and bounded Prompt/Telemetry summaries.
+- [ ] Add local consumers and generalized raw chunking/fault-window capture.
 - [x] Add the v0 protocol dictionary/commands and Klippy `[adc_stream]` raw
   acquisition frontend.
-- [ ] Add full `MCU_adc` capability negotiation and automatic legacy-consumer
-  adaptation.
+- [x] Add `MCU_adc` v1 capability negotiation, merged opt-in adaptation,
+  split-ownership rejection, and automatic legacy fallback.
+- [ ] Qualify and enable automatic adaptation for the remaining legacy
+  consumers, especially heater-safety ADCs.
 - [ ] Add distinct Class-0/1/2 report IDs, their bounded queues, Class-0
   acknowledgement/deadline feedback, and local deadline-failure actions.
 - [x] Unit-test legal and stale block releases, interleaved multi-channel
   ordering, rational timestamps, sequence gaps, and bounded host-queue drops.
-- [ ] Add randomized wrap/ring-full/restart/filter/class-starvation tests for
-  every target loss policy.
+- [x] Add seeded randomized filter/decimation/reference-model tests.
+- [ ] Add randomized wrap/ring-full/restart/class-starvation tests for every
+  target loss policy.
 
 Gate: randomized simulated streams match the host reference bit-for-bit and no
 injected discontinuity is reported as contiguous data.
@@ -698,6 +747,8 @@ both reproducible.
 
 ### Phase 5 - consumer migration and qualification paper
 
+- [x] Migrate OpenAMS FPS as the first non-safety Prompt consumer, with an
+  explicit opt-out and automatic legacy fallback.
 - [ ] Migrate heaters, MCU temperature, ADC buttons, scaling, and analog
   trigger consumers target by target.
 - [ ] Preserve legacy fallback for unsupported boards and add a per-MCU

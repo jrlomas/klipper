@@ -12,7 +12,12 @@ from . import bulk_sensor
 
 
 TRAFFIC_CLASSES = {"critical": 0, "prompt": 1, "telemetry": 2}
+SUMMARY_CLASSES = {"prompt": 1, "telemetry": 2}
 STATE_NAMES = {0: "stopped", 1: "armed", 2: "running", 3: "faulted"}
+SUMMARY_FORMAT = (
+    "oid=%c sub=%c sequence=%u epoch=%u first_clock=%u last_clock=%u"
+    " uncertainty=%u status=%u count=%hu min=%u max=%u"
+    " sum_lo=%u sum_hi=%u shift=%c")
 
 
 class ADCStream:
@@ -27,6 +32,9 @@ class ADCStream:
         self.mcu = pin_params[0]["chip"]
         if any(p["chip"] is not self.mcu for p in pin_params):
             raise config.error("All adc_stream pins must use the same MCU")
+        if getattr(self.mcu, "_helix_explicit_adc_stream", False):
+            raise config.error("Only one explicit adc_stream may own an MCU")
+        self.mcu._helix_explicit_adc_stream = True
         self.pins = [p["pin"] for p in pin_params]
         self.channel_names = config.getlist("channel_names", pin_descs)
         if len(self.channel_names) != len(self.pins):
@@ -39,17 +47,54 @@ class ADCStream:
             "traffic_class", TRAFFIC_CLASSES, default="telemetry")
         self.max_pending = config.getint(
             "max_pending_samples", 4096, minval=16)
+        count = len(self.pins)
+        self.input_divs = config.getintlist(
+            "input_div", [1] * count, count=count)
+        self.oversamples = config.getintlist(
+            "oversample", [1] * count, count=count)
+        default_shifts = [
+            value.bit_length() - 1
+            if value > 0 and not value & (value - 1) else 0
+            for value in self.oversamples]
+        self.filter_shifts = config.getintlist(
+            "filter_shift", default_shifts, count=count)
+        default_report_divs = [max(
+            1, (self.block_scans + inp * osr - 1) // (inp * osr))
+            for inp, osr in zip(self.input_divs, self.oversamples)]
+        self.report_divs = config.getintlist(
+            "report_div", default_report_divs, count=count)
+        if any(not 1 <= value <= 0xffff for value in self.input_divs):
+            raise config.error("input_div values must be between 1 and 65535")
+        if any(not 1 <= value <= 256 for value in self.oversamples):
+            raise config.error("oversample values must be between 1 and 256")
+        if any(not 0 <= value <= 31 for value in self.filter_shifts):
+            raise config.error("filter_shift values must be between 0 and 31")
+        if any(not 1 <= value <= 4096 for value in self.report_divs):
+            raise config.error("report_div values must be between 1 and 4096")
+        self.summaries_enabled = config.getboolean("summaries", True)
+        self.raw_output = config.getboolean("raw_output", True)
+        if not self.summaries_enabled and not self.raw_output:
+            raise config.error("adc_stream must enable summaries or raw_output")
+        default_class = ("prompt" if self.traffic_class == 1
+                         else "telemetry")
+        self.summary_class = config.getchoice(
+            "summary_class", SUMMARY_CLASSES, default=default_class)
         self.oid = self.mcu.create_oid()
         self.adc_max = 4095.
         self.period_ticks = 0
         self.start_cmd = self.stop_cmd = self.query_cmd = None
         self.lock = threading.Lock()
         self.pending = []
+        self.pending_summaries = []
         self.last_values = [None] * len(self.pins)
         self.state = "configuring"
         self.epoch = self.last_sequence = None
         self.sequence_gaps = self.host_drops = self.mcu_drops = 0
+        self.summary_sequences = [None] * len(self.pins)
+        self.summary_epochs = [None] * len(self.pins)
+        self.summary_gaps = 0
         self.last_status = self.last_uncertainty = 0
+        self.capabilities = {}
         self.mcu.register_config_callback(self._build_config)
 
         self.batch_helper = bulk_sensor.BatchBulkHelper(
@@ -81,6 +126,20 @@ class ADCStream:
         for pin in self.pins:
             self.mcu.add_config_cmd(
                 "adc_stream_add_channel oid=%d pin=%s" % (self.oid, pin))
+        if self.summaries_enabled:
+            for channel, values in enumerate(zip(
+                    self.input_divs, self.oversamples, self.filter_shifts,
+                    self.report_divs)):
+                input_div, osr, shift, report_div = values
+                self.mcu.add_config_cmd(
+                    "adc_stream_subscribe oid=%d sub=%d channel=%d"
+                    " input_div=%d osr=%d shift=%d report_div=%d"
+                    " report_class=%d" % (
+                        self.oid, channel, channel, input_div, osr, shift,
+                        report_div, self.summary_class))
+        self.mcu.add_config_cmd(
+            "adc_stream_set_options oid=%d raw_output=%d"
+            % (self.oid, self.raw_output))
         start_clock = self.mcu.get_query_slot(self.oid)
         block_values = self.block_scans * len(self.pins)
         self.mcu.add_config_cmd(
@@ -96,6 +155,8 @@ class ADCStream:
             "adc_stream_stop oid=%c", cq=cq)
         self.query_cmd = self.mcu.lookup_command(
             "adc_stream_get_status oid=%c", cq=cq)
+        self.capabilities_cmd = self.mcu.lookup_command(
+            "adc_stream_get_capabilities oid=%c", cq=cq)
         data_format = (
             "adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c"
             " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
@@ -111,6 +172,16 @@ class ADCStream:
             "adc_stream_status oid=%c state=%c class=%c channels=%c"
             " block_values=%c epoch=%u sequence=%u dropped=%u status=%u",
             self.oid)
+        self.mcu.register_serial_response(
+            self._handle_summary, "adc_stream_prompt " + SUMMARY_FORMAT,
+            self.oid)
+        self.mcu.register_serial_response(
+            self._handle_summary, "adc_stream_telemetry " + SUMMARY_FORMAT,
+            self.oid)
+        self.mcu.register_serial_response(
+            self._handle_capabilities,
+            "adc_stream_capabilities oid=%c version=%c max_channels=%c"
+            " max_subscriptions=%c max_osr=%hu caps=%u", self.oid)
         self.state = "armed"
 
     def _handle_data(self, params):
@@ -153,6 +224,51 @@ class ADCStream:
             self.last_uncertainty = uncertainty / self.mcu.seconds_to_clock(1.)
             self.state = "running"
 
+    def _handle_summary(self, params):
+        sub = params["sub"]
+        if sub >= len(self.pins) or not params["count"]:
+            logging.warning("adc_stream %s received malformed summary",
+                            self.name)
+            return
+        sequence = params["sequence"]
+        epoch = params["epoch"]
+        previous = (self.summary_sequences[sub]
+                    if self.summary_epochs[sub] == epoch else None)
+        if previous is not None:
+            self.summary_gaps += (sequence - previous - 1) & 0xffffffff
+        self.summary_sequences[sub] = sequence
+        self.summary_epochs[sub] = epoch
+        self.epoch = epoch
+        total = params["sum_lo"] | (params["sum_hi"] << 32)
+        scale = ((1 << self.filter_shifts[sub])
+                 / float(self.oversamples[sub] * self.adc_max))
+        value = total * scale / params["count"]
+        last_clock = self.mcu.clock32_to_clock64(params["last_clock"])
+        last_time = self.mcu.clock_to_print_time(last_clock)
+        record = {
+            "channel": self.channel_names[sub], "time": last_time,
+            "value": value, "count": params["count"],
+            "minimum": params["min"] * scale,
+            "maximum": params["max"] * scale,
+            "sequence": sequence, "epoch": params["epoch"],
+            "status": params["status"],
+        }
+        with self.lock:
+            self.last_values[sub] = value
+            self.last_status |= params["status"]
+            self.pending_summaries.append(record)
+            if len(self.pending_summaries) > self.max_pending:
+                self.pending_summaries.pop(0)
+                self.host_drops += 1
+            self.state = "running"
+
+    def _handle_capabilities(self, params):
+        with self.lock:
+            self.capabilities = {
+                key: params[key] for key in (
+                    "version", "max_channels", "max_subscriptions",
+                    "max_osr", "caps")}
+
     def _handle_fault(self, params):
         with self.lock:
             self.state = "faulted"
@@ -171,16 +287,20 @@ class ADCStream:
     def _process_batch(self, eventtime):
         with self.lock:
             data, self.pending = self.pending, []
+            summaries, self.pending_summaries = self.pending_summaries, []
             result = {
                 "data": data,
+                "summaries": summaries,
                 "state": self.state,
                 "epoch": self.epoch,
                 "sequence": self.last_sequence,
                 "sequence_gaps": self.sequence_gaps,
+                "summary_gaps": self.summary_gaps,
                 "host_drops": self.host_drops,
                 "mcu_drops": self.mcu_drops,
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
+                "capabilities": dict(self.capabilities),
             }
         return result
 
@@ -193,10 +313,12 @@ class ADCStream:
                 "epoch": self.epoch,
                 "sequence": self.last_sequence,
                 "sequence_gaps": self.sequence_gaps,
+                "summary_gaps": self.summary_gaps,
                 "host_drops": self.host_drops,
                 "mcu_drops": self.mcu_drops,
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
+                "capabilities": dict(self.capabilities),
             }
 
     def _start(self):
@@ -224,12 +346,14 @@ class ADCStream:
     def cmd_ADC_STREAM_STATUS(self, gcmd):
         if self.query_cmd is not None and not self.mcu.is_fileoutput():
             self.query_cmd.send([self.oid])
+            self.capabilities_cmd.send([self.oid])
         status = self.get_status(self.printer.get_reactor().monotonic())
         gcmd.respond_info(
             "adc_stream %s: state=%s rate=%.3fHz epoch=%s sequence=%s"
-            " gaps=%d host_drops=%d mcu_drops=%d status=0x%x"
+            " gaps=%d summary_gaps=%d host_drops=%d mcu_drops=%d status=0x%x"
             % (self.name, status["state"], status["sample_rate"],
                status["epoch"], status["sequence"], status["sequence_gaps"],
+               status["summary_gaps"],
                status["host_drops"], status["mcu_drops"], status["status"]))
 
 

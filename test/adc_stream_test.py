@@ -28,10 +28,17 @@ def make_stream(max_pending=16):
     stream.adc_max = 4095.
     stream.lock = threading.Lock()
     stream.pending = []
+    stream.pending_summaries = []
     stream.last_values = [None, None]
     stream.max_pending = max_pending
     stream.epoch = stream.last_sequence = None
     stream.sequence_gaps = stream.host_drops = stream.mcu_drops = 0
+    stream.summary_sequences = [None, None]
+    stream.summary_epochs = [None, None]
+    stream.summary_gaps = 0
+    stream.oversamples = [4, 2]
+    stream.filter_shifts = [2, 1]
+    stream.capabilities = {}
     stream.last_status = stream.last_uncertainty = 0
     stream.state = "armed"
     return stream
@@ -66,7 +73,39 @@ def test_sequence_gaps_and_host_queue_drops_are_explicit():
     assert len(stream.pending) == 3
 
 
+def test_summary_decode_uses_filter_scale_and_tracks_gaps():
+    stream = make_stream()
+    params = {
+        "sub": 0, "sequence": 2, "epoch": 8, "first_clock": 1000,
+        "last_clock": 2000, "uncertainty": 2, "status": 0,
+        "count": 2, "min": 1024, "max": 3072,
+        "sum_lo": 4096, "sum_hi": 0, "shift": 2,
+    }
+    stream._handle_summary(params)
+    assert abs(stream.last_values[0] - 2048 / 4095.) < 1.e-12
+    params["sequence"] = 5
+    stream._handle_summary(params)
+    assert stream.summary_gaps == 2
+    params["epoch"] = 9
+    params["sequence"] = 0
+    stream._handle_summary(params)
+    assert stream.summary_gaps == 2
+    assert stream.pending_summaries[-1]["channel"] == "pressure"
+
+
+def test_capability_contract_is_exposed():
+    stream = make_stream()
+    stream._handle_capabilities({
+        "version": 1, "max_channels": 4, "max_subscriptions": 8,
+        "max_osr": 256, "caps": 31,
+    })
+    assert stream.capabilities["version"] == 1
+    assert stream.capabilities["caps"] == 31
+
+
 if __name__ == "__main__":
     test_interleaved_scans_get_scan_period_timestamps()
     test_sequence_gaps_and_host_queue_drops_are_explicit()
+    test_summary_decode_uses_filter_scale_and_tracks_gaps()
+    test_capability_contract_is_exposed()
     print("PASS: ADC stream host decode, timing, gaps, and bounded drops")

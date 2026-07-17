@@ -1,6 +1,6 @@
 # HELIX 0.9 Implementation Status
 
-Last workstation and V0 hardware audit: 2026-07-16.
+Last workstation and V0 hardware audit: 2026-07-17.
 
 This page is the boundary between code that exists, code that has actually
 run in workstation verification, target integration that remains, and tests
@@ -17,7 +17,7 @@ in a local working tree:
 | `jrlomas/klipper` | current tip of `claude/software-redesign-impl-finn0j` | Contains the reviewed transport/security and V0 hardware work plus the Atlas LLM audit remediation recorded below. Use the published branch tip as the immutable hash; this document does not self-reference its own commit. |
 | `jrlomas/mainsail` | `28807856` on `claude/software-redesign-impl-finn0j` | Atlas/OpenAMS panels merged with `mainsail-crew/develop` at `e9e33c11`; Atlas is centered, bounded to ten visible events, and responsive; unit tests, lint, formatting, and production build pass. |
 | `OpenAMSOrg/mainboard-firmware` | `6ff33f0` on `claude/software-redesign-impl-finn0j` | OAMS protocol-library sync, regenerated identify blob, and updater staging; updater limitations are recorded below. |
-| `OpenAMSOrg/klipper_openams` | `b350ecc` on `master` | Audited with no Atlas/intentproto drift requiring a code change. |
+| `OpenAMSOrg/klipper_openams` | `8e14338` on `claude/software-redesign-impl-finn0j` | FPS is the first non-safety `ADC_STREAM_V1` consumer, with corrected sampling arguments, explicit opt-out, automatic legacy fallback, regression test, and sample configuration. |
 
 These checkpoints do not convert any unchecked target or hardware item into a
 pass.
@@ -110,6 +110,19 @@ pass.
   fixed the missing APP cache-bus enable, canonical window-stack bootstrap,
   and syscall-0 window spill required by ROM `setjmp`.  This is boot/console
   evidence, not motion, peripheral, ISR-jitter, or thermal qualification.
+* The unified ADC DMA layer now includes the v1 generic subscription/filter
+  slice. Up to eight logical consumers share one uniform scan schedule with
+  integer input decimation, 64-bit boxcar accumulation, deterministic
+  round-half-up shifting, output decimation, discontinuity reset, and distinct
+  Prompt/Telemetry summaries. The host reference passes 500 seeded randomized
+  schedules; the C vectors, summary decoder, and `MCU_adc` adapter regressions
+  pass. An opted adapter falls back before configuration if firmware lacks v1,
+  schedules are incompatible, another legacy ADC consumer exists, or an
+  explicit raw stream owns the MCU. OpenAMS FPS is migrated on that boundary;
+  heater ADCs are not. F072, G0B1, H723, RP2040, and a classic ESP32 component
+  image compile with the slice. The earlier F072 and ESP32 raw hardware soaks
+  remain valid backend evidence; filtered FPS hardware qualification remains
+  open.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
   image. The path includes configurable pins and reset, bounded MDIO,

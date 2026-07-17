@@ -7,6 +7,15 @@
 #define ADC_STREAM_MAX_CHANNELS 4
 #define ADC_STREAM_MAX_BLOCK_VALUES 16
 #define ADC_STREAM_BLOCK_COUNT 2
+#define ADC_STREAM_MAX_SUBSCRIPTIONS 8
+
+enum adc_stream_capability {
+    ADC_STREAM_CAP_RAW_BLOCKS = 1u << 0,
+    ADC_STREAM_CAP_SW_BOXCAR = 1u << 1,
+    ADC_STREAM_CAP_INPUT_DECIMATION = 1u << 2,
+    ADC_STREAM_CAP_SUMMARIES = 1u << 3,
+    ADC_STREAM_CAP_PROMPT_REPORT = 1u << 4,
+};
 
 struct adc_stream_backend_config {
     struct gpio_adc *pins;
