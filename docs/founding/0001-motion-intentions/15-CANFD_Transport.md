@@ -421,8 +421,11 @@ critical path.
 ## Bootloader and recovery invariants
 
 Bootloader entry is always preceded by a maintenance hold and explicit
-`CLASSIC_1M` quiesce. A Classical-only Katapult/CanBoot image must never be
-entered while any participant may continue FD transmission. The HELIX
+Classical quiesce: normally `CLASSIC_1M`, or the allowlisted
+`CLASSIC_125K`, `CLASSIC_250K`, or `CLASSIC_500K` compatibility profile for a
+bootloader known to use that rate.
+A Classical-only Katapult/CanBoot image must never be entered while any
+participant may continue FD transmission. The HELIX
 first-class bootloader may later advertise FD capability, but the universal
 Classical recovery floor remains permanent.
 
@@ -527,10 +530,14 @@ physical-test products:
 6. [x] Implement mixed-node containment, bus-off/USB-reset recovery, bootloader
    Classical quiesce, failure-recovery integration, status, Atlas incidents,
    and operational documentation.
-7. [ ] Complete the full workstation regression and an adversarial source review of the entire
-   vertical slice.
-8. [ ] Only then begin physical qualification, first using the conservative
-   `FD_1M_NOBRS` profile and then the same code/state machine at 2/5/8 Mbit/s.
+7. [x] Complete the CAN-FD workstation regression and adversarial source review
+   of the vertical slice. The full Helix host set, intentproto library/C ABI,
+   Klippy import, and 1/8 Mbit node plus composite-bridge builds pass on
+   2026-07-16.
+8. [ ] Complete physical qualification. The conservative `FD_1M_NOBRS`
+   electrical, carrier, session-restart, and machine-time base passed on
+   2026-07-16; injected recovery, CAN motion/printing, and the same state
+   machine at 2/5/8 Mbit/s remain open.
 
 The 1 Mbit/s run is the first electrical qualification point because existing
 transceivers can exercise it; it is not permission to omit BRS, TDC,
@@ -538,10 +545,142 @@ negotiation, mixed-node handling, timestamping, or recovery from the software
 implementation that reaches the bench.
 
 The focused Python/C contract tests, host helper build, and both STM32G0B1
-node and composite-bridge builds pass. The unchecked step 7 deliberately keeps
-the full regression/adversarial review visible as the final software gate; the
-unchecked step 8 prevents those build results from being mistaken for physical
-CAN evidence.
+node and composite-bridge builds pass. Step 8 remains unchecked so the verified
+1 Mbit/s subset cannot be mistaken for recovery, motion, or faster-transceiver
+qualification.
+
+## 2026-07-16 physical qualification checkpoint
+
+The FPS STM32G0B1 enumerated as the composite `OpenAMS` / `Helix CAN-FD
+Bridge`; mainline `gs_usb` bound interface zero and the checked-in link rule
+provided `helixcan0`. The EBB36 was discovered by its full canonical identity,
+assigned without a synthetic bridge node, and the complete profile transaction
+activated `FD_1M_NOBRS`. Linux read back MTU 72 with 1 Mbit/s nominal and data
+timing. At the recorded checkpoint the link was `ERROR-ACTIVE` with zero bus
+errors, arbitration loss, warning/passive transitions, bus-offs, receive
+drops, or missed frames.
+
+The first sustained MCU run exposed two physical-only defects. STM32 FDCAN
+message RAM requires aligned word transfers, and CAN-FD cannot represent
+payload lengths 9..11, 13..15, and the other gaps in its DLC table. Passing
+such a byte count to hardware silently rounds the DLC. The aligned-access fix
+and a `can-utils` sweep then captured all 16 legal physical payload sizes
+(0..8, 12, 16, 20, 24, 32, 48, and 64) without controller error growth.
+
+A longer passive capture exposed the more important carrier consequence. The
+old byte-stream fragmenter sent a 22-byte MCU-protocol block as legal 20- and
+2-byte frames. On multiple runs the two-byte tail was absent from the host
+capture even though Linux reported zero dropped/missed packets, the FDCAN lost
+FIFO counter remained zero, the bridge's 32-frame forwarding queue had zero
+drops and a high-water mark of two, and the EBB36 reported no transmit error or
+retry. This reproduces the long-standing operational complaint that SocketCAN
+statistics do not prove application delivery; those counters cover different
+layers and cannot identify every loss after the adapter accepts a frame.
+
+The carrier therefore no longer fragments a protocol message. Each raw message
+is already 5..64 bytes and contains its own logical length, CRC, sync trailer,
+and sequence. HELIX restores the multi-message write batching introduced by
+upstream commit `c5968a08`: it packs as many complete raw messages as fit in
+one CAN-FD frame, never splits a message, selects the smallest physical DLC
+that contains the packed prefix, and zero-pads only after the final message.
+The receiver walks each in-band message length. An isolated 22-byte message is
+one 24-byte physical frame, multiple short messages with different sequences
+share a frame, and a 64-byte message remains one frame. Losing a frame can
+remove several complete messages, but can never splice a missing tail to the
+next frame. The bridge additionally reports
+the number of frames accepted from FDCAN and completed into the USB handoff,
+alongside FIFO loss, queue drops, high-water, and controller errors. Focused
+tests cover every 5..64 byte record and the 22-byte regression; physical
+captures now confirm the same boundaries on the FPS/EBB36 link.
+
+The first instrumented restart also demonstrated why those counters cannot be
+collapsed into Linux's `dropped=0`: bridge conservation totals were 2,398
+FDCAN frames accepted, 1,946 USB handoffs, and 452 explicit staging-queue
+drops, while SocketCAN still showed zero drops. The original 32-record queue
+was undersized for the MCU configuration-response burst because each 72-byte
+`gs_usb` FD record spans two full-speed USB packets. A 128-record repeat
+accepted 1,596 frames, forwarded 1,362, and explicitly dropped 234. With the
+correct complete-record packer, a 256-record repeat accepted 4,000, forwarded
+3,876, and dropped 124 at a high-water mark of 256.
+
+The final 512-record bridge closed that finite burst without hiding it:
+repeated cold/session reconnects forwarded all 37,288 accepted frames, returned
+to depth zero, reached a bounded high-water mark of 434, and retained zero
+queue drops and zero unaccounted handoff. A physical 1,013-frame capture decoded
+1,070 complete protocol records, including 56 multi-record frames, with no
+invalid carrier. Three following profile transitions retained zero invalid or
+retransmitted bytes at the Classical-to-FD parser boundary. The G0B1 bridge
+therefore uses the measured 512-record elasticity budget. Queue capacity does
+not qualify a future BRS profile; profile admission must still respect
+worst-case encoded `gs_usb` throughput on USB Full Speed.
+
+Bridge maintenance uses an explicit state boundary rather than a queue-size
+assumption. `HELIX_CAN_QUIESCE BUS=<name>` waits for queued motion, stops the
+time source, sends the FD-abort transaction to every downstream node, and asks
+the constrained manager to read back Classical 1 Mbit. The operator then stops
+Klipper before entering the bridge bootloader, preventing automatic reconnect
+from reactivating FD between quiesce and reset.
+
+For retained Katapult/CanBoot images compiled at legacy Classical rates, the
+same command accepts the allowlisted `CLASSIC_125K`, `CLASSIC_250K`, or
+`CLASSIC_500K` profile. Those profiles are maintenance-only: they are absent
+from capability intersection and application negotiation. The composite
+bridge now applies SocketCAN's exact runtime nominal timing to FDCAN instead of
+silently requiring its compile-time 1 Mbit value. FPS hardware readback
+qualified the 500 kbit Classical transition and the return to 1 Mbit. The
+allowlisted manager still owns the sole `CAP_NET_ADMIN`; arbitrary rates and
+interfaces remain impossible through its socket.
+
+The retained EBB36 v1.2 vendor bootloader remains explicitly unqualified. The
+application accepted its verified legacy-handle reboot, but the preserved
+Katapult image (`v0.0.1-79-g25a23cd`) answered on none of the standard
+125/250/500 kbit or 1 Mbit Classical rates and did not enumerate on USB. The
+same bridge applied and read back every tested timing. This isolates the defect
+to that bootloader's vendor pin/clock/transport configuration. A known PB0/PB1,
+8 MHz-reference, 1 Mbit Katapult image must be installed through DFU and then
+qualified by a complete CAN application flash.
+
+### Mandatory bridge-rate admission
+
+The bridge architecture is valid only when its effective forwarding service
+rate is greater than the encoded CAN offered rate for the selected profile.
+This is a system invariant, not an implementation recommendation. Raw link
+labels are insufficient: an 8 Mbit CAN data phase is not compared directly to
+"12 Mbit" USB Full Speed. Admission includes arbitration at the nominal rate,
+actual message-size distribution, Kevin's multi-message serial batching
+(`c5968a08`), fixed `gs_usb` host-record expansion, USB packetization, endpoint
+service cadence, and host scheduling.
+
+Bridge RAM is only burst elasticity. A larger queue is acceptable when a
+finite producer burst reaches a bounded high-water mark, then drains, while
+the exact conservation invariant remains true:
+
+```text
+FDCAN frames accepted
+    = USB records fully handed off + explicit queue drops + current depth
+```
+
+If depth or latency grows with test duration, no finite queue makes the
+profile safe. HELIX must refuse that profile on that bridge or require a faster
+upstream transport. Qualification at 1 Mbit does not imply 2/5/8 Mbit
+qualification; every profile gets a sustained worst-case saturation run and
+must show zero FIFO/queue loss, zero unaccounted handoff, bounded high-water
+with margin, and complete drain after load.
+
+Powered-board session takeover was repeated across three Klipper process
+restarts. Each run received the EBB36 session-reset acknowledgement, cleared
+the stale framed sequence, renegotiated FD, loaded the full MCU dictionary, and
+returned the printer to ready without reflashing or cycling board power.
+
+The bridge and EBB36 also reached firmware `flags=7` convergence. The EBB36
+uses the bridge's FDCAN Tx Event and its own RX-element timestamp, so USB and
+host scheduling delay are excluded from the downstream sample. On this
+workstation the Pico and FPS sit in USB frame-number domains that never produce
+an exact same-frame pair. After eight unclassified probes, Helix therefore
+disables that optional optimization and continuously refreshes the bridge from
+the qualified minimum-RTT host clock regression. A positively identified
+IRQ-guard discard still retains bounded holdover; an unclassified miss never
+freezes a merely stable or eventually stale mapping.
 
 ## Acceptance matrix after implementation
 

@@ -869,19 +869,89 @@ Phases 3/7/8 over each real transport.
     FD error-burst hold; Classical bridge-restart quiesce; and two-step FDCAN
     Tx-Event/RX timestamp transfer are implemented. Focused tests, chelper,
     and STM32G0B1 node/bridge builds pass on 2026-07-16.
-  - [ ] **9.2a — Conservative electrical bring-up:** flash the FPS as the
+  - [x] **9.2a — Conservative electrical bring-up:** flash the FPS as the
     composite bridge and EBB36 as a CAN node, install the supplied `.link`,
     udev, and manager service, confirm stable `helixcan0`, scan the full EBB36
     identity, and activate `FD_1M_NOBRS` with zero CAN error growth.
+    Passed on 2026-07-16 with the FPS bridge
+    (`stm32:58003500095043354d393320`) and EBB36
+    (`stm32:26000b001750425539393020`). Linux read back MTU 72 and 1 Mbit/s
+    nominal/data timing; the interface remained `ERROR-ACTIVE` with zero
+    bus errors, warning/passive transitions, bus-offs, drops, or missed
+    frames through repeated Klipper process restarts.
   - [ ] **9.2b — Carrier and recovery:** exercise all FD DLCs, sustained MCU
     protocol traffic, stale-recipient cancellation, bridge replug, bus-off,
     FD error-burst Classical fallback, and bridge firmware-restart quiesce.
+    - [x] Every legal payload length (0..8, 12, 16, 20, 24, 32, 48, and 64)
+      was emitted and captured over the physical FPS/EBB36 bus with
+      `can-utils`; the post-sweep controller counters remained zero.
+    - [x] Requalify sustained framed MCU traffic with the corrected atomic
+      record carrier. A 15,000-frame passive capture reproduced missing host
+      delivery while Linux, FDCAN, and bridge-queue drop counters all remained
+      zero. The old carrier split a 22-byte protocol block into 20+2 frames;
+      losing the two-byte tail corrupted subsequent framing. Host and MCU now
+      pack as many complete 5..64 byte raw messages as fit in each FD frame,
+      never split a message, round physical DLC upward, and ignore final
+      padding using each message's in-band length. This restores upstream
+      commit `c5968a08` batching. Focused regression and both G0B1 builds pass.
+      On the physical packed carrier, a 256-entry bridge accepted 4,000 frames,
+      forwarded 3,876, and dropped 124 at its ceiling. The qualified 512-entry
+      image forwarded all 37,288 accepted frames through repeated cold/session
+      reconnects, drained to zero, reached a bounded high-water mark of 434,
+      and reported zero drops and zero unaccounted handoff. A 1,013-frame
+      capture decoded 1,070 complete records, including 56 multi-record frames,
+      with no malformed record; three more profile transitions retained zero
+      stale-boundary bytes and zero retransmits.
+    - [x] Three host-only Klipper restarts reused the powered boards. Each
+      received the EBB36 session-reset acknowledgement, reactivated
+      `FD_1M_NOBRS`, loaded the full command dictionary, and returned ready
+      without a power cycle.
+    - [ ] Physically inject stale-recipient expiry, bridge replug, bus-off,
+      FD error-burst fallback, and bridge-firmware quiesce/re-entry.
+    - [x] The FPS bridge applied and read back both the 1 Mbit Classical floor
+      and a maintenance-only 500 kbit Classical profile through mainline
+      `gs_usb`; the firmware now programs exact SocketCAN nominal timing rather
+      than accepting only its compile-time value. The capability-limited
+      manager allowlists 125/250/500 kbit maintenance rates plus the 1 Mbit
+      application floor and rolls any failure back to 1 Mbit.
+    - [ ] Reinstall or qualify the retained EBB36 Katapult image. The Helix
+      application rebooted using its verified legacy handle
+      `7d8fe46a5f1f`, but the preserved vendor Katapult build
+      (`v0.0.1-79-g25a23cd`) answered on none of the standard
+      125/250/500 kbit or 1 Mbit Classical rates and did not enumerate on USB,
+      while the bridge applied and read back every tested rate. This bootloader
+      predates the current Helix image and has a mismatched CAN pin/clock or
+      otherwise defective vendor configuration;
+      recover by power-cycle/DFU, install a known PB0/PB1 1 Mbit Katapult
+      build, then complete an application flash over CAN. Do not count the
+      application carrier or bridge as the source of that bootloader failure.
   - [ ] **9.2c — Machine time and motion:** record Tx Event/RX timestamp pair
     statistics and convergence under load, then home, move, extrude, and print
     through the EBB36 over CAN. Scope the timing path where practical.
+    - [x] The composite bridge converged from the host clock regression and
+      the EBB36 converged from direct two-step FDCAN Tx-Event/RX timestamps
+      (`flags=7`, eight priming samples). Both remained converged during the
+      DLC sweep and sustained traffic.
+    - [x] This workstation's Pico and FPS bridge do not share a usable USB SOF
+      frame-number domain. After eight unclassified misses Helix now stops
+      exact-frame probing, exposes `sof_pair_unavailable`, and retains the
+      qualified host regression; only a positively attributed IRQ-guard
+      discard is allowed to use bounded holdover.
+    - [ ] Home, move, hot-extrude, and complete a sliced print with the EBB36
+      connected through CAN instead of USB, then retain flight-recorder and
+      time/error-counter evidence.
   - [ ] **9.2d — Faster transceivers:** after hardware replacement, qualify
     2/5/8 Mbit BRS profiles independently; do not infer them from the 1 Mbit
     result.
+    - [ ] For each profile, saturate the actual packed MCU workload long enough
+      to distinguish a bounded burst from sustained backlog. Require zero
+      FDCAN FIFO loss, zero bridge queue drops, zero handoff-unaccounted frames,
+      stable rather than duration-proportional high-water, and complete queue
+      drain after the producer stops. Raw USB/CAN bitrate comparison is not a
+      substitute for this encoded-rate admission test.
+    - [ ] If effective host-link service rate cannot remain above encoded CAN
+      offered rate, refuse that profile on USB FS and repeat only on USB HS,
+      native Ethernet, PCIe, or another measured faster transport.
 - [ ] **9.3 — WiFi (ESP32).** Datagram transport over WiFi.
   Expect: deep queue absorbs latency/jitter; authenticated datagrams;
   XOR-erasure FEC recovers dropped frames on a lossy link.

@@ -1,6 +1,6 @@
 # HELIX 0.9 Implementation Status
 
-Last workstation and V0 hardware audit: 2026-07-14.
+Last workstation and V0 hardware audit: 2026-07-16.
 
 This page is the boundary between code that exists, code that has actually
 run in workstation verification, target integration that remains, and tests
@@ -324,6 +324,31 @@ pass.
 * The downstream OAMS protocol port regenerates an identical checked-in
   identify blob and its host protocol/introspection test passes with stable
   OAMS message IDs plus the library meta messages.
+* The STM32G0B1 CAN-FD vertical slice now has physical FPS-bridge/EBB36
+  evidence at `FD_1M_NOBRS`. Canonical discovery, composite CDC plus mainline
+  `gs_usb`, stable `helixcan0`, transactional activation, every legal DLC,
+  legal-DLC traffic, and powered-board takeover across three Klipper restarts
+  pass with zero CAN-controller error/drop/retry growth. Longer passive
+  captures nevertheless found missing host-delivery frames while every Linux,
+  controller, and bridge-queue drop counter remained zero. The old byte-stream
+  carrier could split a 22-byte protocol block into 20+2 frames, allowing a
+  lost tail to corrupt later framing. The corrected carrier packs multiple
+  complete sequenced protocol messages per FD frame without ever splitting a
+  message, and ignores final physical-DLC padding according to the messages'
+  in-band lengths. Workstation regression and both G0B1 builds pass. Physical
+  requalification also passes: the final 512-entry bridge forwarded 37,288 of
+  37,288 accepted frames over repeated reconnects, drained to zero, bounded
+  high-water at 434, and reported zero drops or unaccounted handoff. A captured
+  1,013 frames decoded to 1,070 complete records (56 packed frames) without a
+  malformed record, and three subsequent profile transitions retained zero
+  stale-carrier bytes. Testing also fixed unaligned FDCAN message-RAM access.
+  The bridge now applies exact runtime nominal timing from SocketCAN; FPS
+  hardware readback passes at both the 1 Mbit floor and a maintenance-only
+  500 kbit Katapult compatibility profile. Both bridge and
+  EBB36 reach `flags=7` machine-time convergence; the EBB36 consumes direct
+  Tx-Event/RX hardware timestamps. This USB topology has no common Pico/FPS
+  SOF frame-number domain, so exact probing now disables itself after eight
+  unclassified misses and preserves the qualified host regression.
 
 The dedicated Helix linuxprocess configurations and live tests are now part
 of `scripts/ci-build.sh`. `HELIX_REQUIRE_LIVE=1` turns a missing feature build
@@ -355,7 +380,7 @@ security decision, or belong to an explicitly optional later architecture:
 
 ## Hardware and printer qualification
 
-The V0 USB rig now establishes real Pico/EBB36 identification, signed
+The V0 USB/CAN rig now establishes real Pico/EBB36 identification, signed
 build/flash, feature/ABI advertisement, built-in self-tests, legacy telemetry,
 mixed-frequency machine-time discipline, structured trace/drop accounting,
 firmware-reset recovery, and bounded autonomous RP2040 bed hold. The heater
@@ -365,14 +390,19 @@ software-PWM/GPIO ownership, stale-PWM rejection, and return to host ownership
 without a printer shutdown. The ceiling test first caught a false telemetry
 pass—the old PWM timer reasserted the pin and drove the bed to about 88 C—then
 the corrected 55 C regression showed sustained cooldown with Klipper ready.
-The Lolin32 evidence
+The same EBB36 has now also passed CAN-FD electrical, legal-DLC,
+session-restart, and machine-time bring-up through the FPS composite bridge at
+1 Mbit/s. The corrected complete-message packing carrier still requires a repeat
+physical soak after flashing. CAN
+homing/motion/extrusion/printing and injected replug/bus-off/error fallback are
+still open and are not inferred from the ready-state carrier test. The Lolin32 evidence
 above separately establishes the authenticated WiFi component/modem console
 and controlled-loss pair FEC.
 
 The unchecked items in the [HELIX Test and Bring-up Plan](Helix_Test_Plan.md)
 remain material: trajectory drift/underrun/stress tests, trace-off step timing,
 scoped cross-MCU action, PWM waveform quality, remaining fault injection,
-soak, real printing, V2.4 CAN,
+soak, CAN-connected real printing, V2.4 integration,
 constrained F072 silicon, native RMII/W5500 PHYs, product-key provisioning,
 and Pi/Hailo deployment.
 USB success on the V0 is not implicit CAN sign-off for the V2.4.

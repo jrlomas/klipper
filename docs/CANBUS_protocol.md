@@ -87,11 +87,60 @@ micro-controller to host by copying the message data into one or more
 packets with the node's transmit CAN bus id (`canbus_nodeid * 2 +
 256 + 1`).
 
-Before profile activation those packets carry at most eight bytes. An active
-HELIX FD profile permits DLC lengths 12, 16, 20, 24, 32, 48, and 64; the
-framed MCU protocol remains a byte stream, so its message boundaries need not
-align with CAN frames. FDF/BRS/ESI are represented explicitly and remote
-request frames are never encoded as FD.
+Before profile activation those packets carry at most eight bytes. Under an
+active HELIX FD profile, one CAN-FD payload packs as many *complete* framed MCU
+protocol messages as fit in 64 bytes. Each raw message retains its own length,
+CRC, sync trailer, and sequence. This preserves Kevin O'Connor's host write
+batching from commit `c5968a08` instead of imposing one sequence per transport
+frame. A raw message is never split between FD frames.
+
+If the packed logical length falls in a DLC gap (9..11, 13..15, and so on),
+the sender selects the smallest legal physical DLC and zero-pads only after the
+last complete message. The receiver walks each message's in-band length and
+ignores that final padding. Thus an isolated 22-byte message uses a 24-byte
+physical frame, several short messages with distinct sequences may share a
+single 64-byte frame, and a full 64-byte message still fits by itself.
+FDF/BRS/ESI are represented explicitly and remote-request frames are never
+encoded as FD.
+
+This packing rule is also the loss-containment boundary. Losing a CAN-FD frame
+may lose several complete sequenced messages, but it cannot leave a two-byte
+tail missing and concatenate the next frame onto an incomplete predecessor.
+The existing protocol sequence and retransmission machinery detects
+command-stream loss.
+Linux SocketCAN drop counters remain insufficient evidence of end-to-end
+delivery, so the bridge separately exposes physical receive, forwarding,
+FIFO-loss, queue-drop, and queue-high-water counters. The G0B1 composite bridge
+uses a physically qualified 512-frame staging queue for USB scheduling
+elasticity. Complete-message
+packing materially reduces the number of fixed-size `gs_usb` FD records; queue
+capacity is not permission to advertise a sustained CAN profile whose encoded
+USB rate exceeds USB Full Speed capacity.
+
+### Bridge forwarding-capacity invariant
+
+Every CAN bridge MUST satisfy this inequality for each admitted profile under
+the qualified workload:
+
+```text
+effective host-link service rate
+    > encoded CAN-to-host offered rate
+```
+
+The comparison is made after transport encoding, not from link labels such as
+"12 Mbit USB" and "8 Mbit CAN-FD". For `gs_usb`, each received CAN-FD frame
+occupies a fixed host record and one or more USB transactions even when the CAN
+payload is short. USB framing, host scheduling, endpoint cadence, CAN
+arbitration/data-phase ratios, and achieved multi-message packing density all
+enter the measurement. A queue may absorb a finite measured burst only when it
+returns to baseline and accepted/forwarded conservation remains lossless. A
+queue that grows with test duration proves the profile inadmissible.
+
+Raw USB Full Speed bitrate alone therefore does not qualify 2/5/8 Mbit BRS.
+Each profile requires a sustained saturation test showing zero FIFO and queue
+drops, `hw_rx_frames == usb_forwarded_frames + rx_queue_depth`, a bounded
+high-water mark with engineering margin, and complete drain after producer
+load stops. A faster host transport is required when that gate cannot pass.
 
 ## Profile transaction
 

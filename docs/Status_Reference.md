@@ -625,9 +625,21 @@ The following information is available in the
   mode, the rate and error are instead derived from consistency between
   consecutive exact same-frame clock pairs; a startup software clock estimate
   cannot veto the hardware-derived rate.
-- `mcus.<mcu_name>.usb_sof`: True when this secondary supports and is using
-  matched USB Start-of-Frame timestamps for discipline. A missed matching
-  frame falls back to the host clock estimate for that beacon.
+- `mcus.<mcu_name>.usb_sof`: True when this secondary supports matched USB
+  Start-of-Frame timestamps and exact-frame probing was attempted.
+- `mcus.<mcu_name>.usb_sof_active` and `sof_pair_unavailable`: Whether
+  exact-frame probing remains active, and whether it was disabled after eight
+  consecutive unclassified misses. Separate USB root-port/frame domains may
+  expose SOF counters that never match; that topology retains the qualified
+  host clock regression instead of probing and warning indefinitely.
+- `mcus.<mcu_name>.sof_capture_windows`, `sof_captured_frames`,
+  `sof_discarded_frames`, `sof_discarded_primask_frames`,
+  `sof_missed_frames`, `sof_guard_discard_matches`,
+  `sof_guard_primask_matches`, and `sof_unclassified_misses`: Cumulative
+  exact-frame observation and attribution counters. A positively attributed
+  IRQ-guard discard may retain a bounded qualified holdover sample. An
+  unclassified miss uses the host estimate so a non-pairable topology cannot
+  freeze and expire an otherwise valid mapping.
 - `mcus.<mcu_name>.sof_rate_bad_count`: Consecutive exact-pair observations
   outside the configured cross-MCU `converge_window`. Once lock is
   established, one or two observations are tolerated and three consecutive

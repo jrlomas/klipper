@@ -146,9 +146,65 @@ ISO CAN-FD frames at a 1 Mbit/s nominal/data rate and therefore remains inside
 the existing transceivers' electrical ceiling. Later 2/5/8 Mbit/s BRS profiles
 use the same protocol and state machine but require suitable transceivers.
 
+The FPS composite bridge and EBB36 v1.2 physically qualified this conservative
+profile on 2026-07-16. Linux read back MTU 72 and 1 Mbit/s nominal/data timing;
+all legal physical payload sizes (0..8, 12, 16, 20, 24, 32, 48, and 64) were
+emitted and captured with `can-utils`, and the controller retained zero error,
+drop, retry, and bus-off growth. Repeated Klipper process restarts also
+completed the session-reset handshake without cycling either board.
+
+Longer passive captures then reproduced an important limitation familiar from
+stock Klipper CAN deployments: a frame could be absent from the host capture
+while Linux still reported zero dropped or missed packets, and while the FDCAN
+FIFO and bridge forwarding queue also reported zero loss. The original FD byte
+stream split a 22-byte protocol block into 20- and 2-byte frames, so loss of
+the tail corrupted later framing. HELIX now packs one or more complete raw
+protocol messages into each CAN-FD frame, never splits a message, and uses each
+in-band length to discard final DLC padding. This preserves upstream sequence
+batching while removing partial-message loss propagation; bridge counters now distinguish frames
+accepted by FDCAN from frames handed to USB.
+
+Physical requalification then exposed the finite configuration-response burst
+that SocketCAN's counters had hidden. A packed-carrier 256-entry bridge lost
+124 of 4,000 accepted frames at a full queue. The qualified 512-entry bridge
+forwarded all 37,288 accepted frames across repeated cold/session reconnects,
+drained to depth zero, reached a bounded high-water mark of 434, and reported
+zero queue drops or unaccounted handoff. A 1,013-frame capture decoded 1,070
+complete protocol records (56 multi-record frames) with no malformed record.
+Three subsequent profile transitions reported zero stale-carrier bytes. This
+closes the packed-carrier/startup-burst gate, but is not yet CAN homing,
+extrusion, print, injected bus-off, or BRS qualification.
+
 Before a bridge firmware restart, Klippy quiesces every downstream node to the
 permanent Classical 1 Mbit recovery floor, stops the time beacon, and only then
 resets the USB bridge.
+
+For an operator-controlled bridge flash, run
+`HELIX_CAN_QUIESCE BUS=helixcan0` and wait for its confirmation, then stop
+Klipper before triggering the bootloader. The explicit maintenance command
+waits for motion to drain, aborts the FD profile on every node, stops the time
+source, and changes `helixcan0` to Classical 1 Mbit. Stopping Klipper prevents
+its normal reconnect path from immediately negotiating FD again while the
+operator prepares the flash.
+
+Retained Katapult/CanBoot images may have a different fixed Classical bitrate.
+Use, for example,
+`HELIX_CAN_QUIESCE BUS=helixcan0 PROFILE=CLASSIC_500K` for a known 500 kbit
+bootloader, then stop Klipper. The allowlisted `CLASSIC_125K`, `CLASSIC_250K`,
+and `CLASSIC_500K` profiles are maintenance-only and can never win application
+profile negotiation. The composite bridge now accepts exact nominal timing
+from SocketCAN; physical readback on the FPS bridge confirmed runtime timing
+changes including 500 kbit Classical and 1 Mbit Classical/FD operation. The
+manager remains the only `CAP_NET_ADMIN` holder and rejects arbitrary rates.
+
+The EBB36 v1.2's retained vendor Katapult image is a separate known hardware
+maintenance defect. Its Helix application accepted the verified reboot handle,
+but bootloader `v0.0.1-79-g25a23cd` answered on none of 125/250/500 kbit or
+1 Mbit and did not enumerate on USB, while the FPS bridge applied and read back
+each rate. Replace it through DFU with a known PB0/PB1, 8 MHz-reference,
+1 Mbit Katapult build before relying on CAN application updates. The marker
+`CanBoot!` in its flash is Katapult's retained compatibility marker; it does
+not mean the installed image has a working transport configuration.
 
 Install the checked-in host integration once (the service unit currently uses
 this workstation's `/home/jrlomas/Projects/klipper` checkout):
