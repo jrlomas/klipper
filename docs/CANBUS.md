@@ -175,6 +175,23 @@ Three subsequent profile transitions reported zero stale-carrier bytes. This
 closes the packed-carrier/startup-burst gate, but is not yet CAN homing,
 extrusion, print, injected bus-off, or BRS qualification.
 
+A later mixed-motion print kept the bridge conservation invariant exact but
+exposed repeated receive loss inside the EBB36: its aggregate receive counter
+rose from zero to 11,114, Klippy retransmitted 669,735 bytes, and a 537 ms ACK
+stall exhausted the extruder trajectory horizon. The recovery hold paused and
+then resumed coherently. STM32 FDCAN firmware now drains every element pending
+in its three-slot hardware FIFO per interrupt and separately reports FIFO
+overruns, physical protocol errors, and FIFO high-water. This fix remains a
+physical requalification item until the new EBB36 image completes the same
+print with zero overrun growth.
+
+After the first coherent resume, continued receive loss caused a second
+extruder underrun and then a delayed software-PWM update triggered `Timer too
+close`. Current Helix firmware applies late software-PWM state promptly while
+retaining the independent maximum-duration heater watchdog. Stale prompt
+output traffic therefore cannot turn an already-established trajectory
+recovery hold into a global MCU shutdown; motion commands remain fail-closed.
+
 Before a bridge firmware restart, Klippy quiesces every downstream node to the
 permanent Classical 1 Mbit recovery floor, stops the time beacon, and only then
 resets the USB bridge.

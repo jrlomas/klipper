@@ -311,7 +311,19 @@ canhw_set_filter(uint32_t id)
 
 static struct {
     uint32_t rx_error, tx_error;
+    uint32_t rx_fifo_overruns, rx_protocol_errors, rx_fifo_highwater;
 } CAN_Errors;
+
+static void
+fdcan_account_protocol_error(uint32_t lec)
+{
+    if (lec >= 3 && lec <= 5)
+        CAN_Errors.tx_error++;
+    else {
+        CAN_Errors.rx_error++;
+        CAN_Errors.rx_protocol_errors++;
+    }
+}
 
 static uint32_t
 fdcan_timestamp_to_clock(uint16_t timestamp)
@@ -338,17 +350,20 @@ canhw_get_status(struct canbus_status *status)
     uint32_t psr = SOC_CAN->PSR, lec = psr & FDCAN_PSR_LEC_Msk;
     if (lec && lec != 7) {
         // Reading PSR clears it - so update state here
-        if (lec >= 3 && lec <= 5)
-            CAN_Errors.tx_error += 1;
-        else
-            CAN_Errors.rx_error += 1;
+        fdcan_account_protocol_error(lec);
     }
     uint32_t rx_error = CAN_Errors.rx_error, tx_error = CAN_Errors.tx_error;
+    uint32_t fifo_overruns = CAN_Errors.rx_fifo_overruns;
+    uint32_t protocol_errors = CAN_Errors.rx_protocol_errors;
+    uint32_t fifo_highwater = CAN_Errors.rx_fifo_highwater;
     irq_restore(flag);
 
     status->rx_error = rx_error;
     status->tx_error = tx_error;
     status->tx_retries = TxRetry.stale_cancels;
+    status->rx_fifo_overruns = fifo_overruns;
+    status->rx_protocol_errors = protocol_errors;
+    status->rx_fifo_highwater = fifo_highwater;
     if (psr & FDCAN_PSR_BO)
         status->bus_state = CANBUS_STATE_OFF;
     else if (psr & FDCAN_PSR_EP)
@@ -366,9 +381,22 @@ CAN_IRQHandler(void)
     uint32_t ir = SOC_CAN->IR;
 
     if (ir & FDCAN_IE_RF0NE) {
+        // RF0N is an event flag, not a promise of one queued element. A
+        // trajectory critical section may defer this IRQ while all three
+        // hardware FIFO slots fill. Clear the event first, then drain the
+        // bounded hardware FIFO so an accumulated tail is not stranded until
+        // another edge (and eventually overwritten). New arrivals after the
+        // clear reassert RF0N and receive another bounded service pass.
         SOC_CAN->IR = FDCAN_IE_RF0NE;
-        uint32_t rxf0s = SOC_CAN->RXF0S;
-        if (rxf0s & FDCAN_RXF0S_F0FL) {
+        for (uint_fast8_t drained = 0;
+             drained < ARRAY_SIZE(MSG_RAM.RXF0); drained++) {
+            uint32_t rxf0s = SOC_CAN->RXF0S;
+            uint32_t fill = ((rxf0s & FDCAN_RXF0S_F0FL_Msk)
+                             >> FDCAN_RXF0S_F0FL_Pos);
+            if (fill > CAN_Errors.rx_fifo_highwater)
+                CAN_Errors.rx_fifo_highwater = fill;
+            if (!fill)
+                break;
             // Read and ack data packet
             uint32_t idx = (rxf0s & FDCAN_RXF0S_F0GI) >> FDCAN_RXF0S_F0GI_Pos;
             struct fdcan_fifo *rxf0 = &MSG_RAM.RXF0[idx];
@@ -403,6 +431,7 @@ CAN_IRQHandler(void)
         // bridge/node status exposes the transport failure.
         SOC_CAN->IR = FDCAN_IR_RF0L;
         CAN_Errors.rx_error++;
+        CAN_Errors.rx_fifo_overruns++;
     }
     if (ir & FDCAN_IE_TC) {
         // Tx
@@ -433,10 +462,7 @@ CAN_IRQHandler(void)
         SOC_CAN->IR = FDCAN_IR_PED | FDCAN_IR_PEA;
         uint32_t lec = psr & FDCAN_PSR_LEC_Msk;
         if (lec && lec != 7) {
-            if (lec >= 3 && lec <= 5)
-                CAN_Errors.tx_error += 1;
-            else
-                CAN_Errors.rx_error += 1;
+            fdcan_account_protocol_error(lec);
             canbus_notify_protocol_error();
         }
         if (psr & FDCAN_PSR_BO) {

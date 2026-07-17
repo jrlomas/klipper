@@ -47,8 +47,9 @@ out its current motion, held position, kept heaters on their per-heater
    host stall).
 3. `RECONNECT_MCU MCU=<name>` — re-handshake the board that entered
    pause-and-hold.
-4. `RESUME_MOTION` — reconcile every joint from its execution log and resume
-   the print.
+4. `RESUME` (or `RESUME_MOTION`) — an ordinary resume is recovery-aware and
+   reconciles every joint from its execution log before continuing. Explicit
+   `RESUME_MOTION` remains available for commissioning and scripts.
 
 The *why* — what each board preserves, and how resume is reconstructed rather
 than guessed — is in

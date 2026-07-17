@@ -27,7 +27,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | --- | --- |
 | `FAILURE_RECOVERY_STATUS` | Configured heater holds (policy, ceiling, duration, engaged?) and any micro-controllers in the paused-link state. |
 | `RECONNECT_MCU MCU=<name>` | Re-handshake a board that lost its link and entered pause-and-hold. |
-| `RESUME_MOTION` | Reconcile every joint from its execution log and resume the print; blocks only for a joint whose homing was genuinely lost. |
+| `RESUME_MOTION` | Reconcile every joint from its execution log and resume the print; blocks only for a joint whose homing was genuinely lost. During a trajectory recovery hold, ordinary `RESUME` and the Mainsail resume action automatically route here. |
 | `ENGAGE_HEATER_HOLD [HEATER=<name>]` | Manually engage the autonomous heater failsafe hold. |
 | `RELEASE_HEATER_HOLD [HEATER=<name>]` | Release the hold and return the heater(s) to host control. |
 | `EXECLOG_DUMP` | Drain the retained micro-controller execution logs (the "flight recorder") to the Klipper log. |
@@ -44,7 +44,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 ### CAN transport — `[helix_can <bus>]`
 | Command | Summary |
 | --- | --- |
-| `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, controller errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Bridge counters are cumulative; compare deltas when diagnosing a particular print. |
+| `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, per-node FIFO/protocol errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Counters are cumulative; compare deltas when diagnosing a particular print. |
 | `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]` | Drain motion and place the bus on an allowlisted Classical CAN maintenance profile before stopping Klipper to flash a bridge or node. |
 
 ### Structured trace — `[atlas_trace]`

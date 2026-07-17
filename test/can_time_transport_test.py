@@ -69,7 +69,10 @@ def main():
     assert 'SOC_CAN->TXBTIE = tx_irq_mask' in fdcan
     assert 'SOC_CAN->TXBCIE = tx_irq_mask' in fdcan
     assert 'FDCAN_IE_RF0LE' in fdcan
-    assert 'CAN_Errors.rx_error++' in fdcan
+    assert 'drained < ARRAY_SIZE(MSG_RAM.RXF0)' in fdcan
+    assert 'CAN_Errors.rx_fifo_overruns++' in fdcan
+    assert 'CAN_Errors.rx_protocol_errors++' in fdcan
+    assert 'command_get_canbus_diagnostics' in node
     assert 'usb_local_check_reboot' in bridge
     assert 'line_coding.dwDTERate == 1200' in bridge
     assert 'CANBUS_RESP_SESSION_RESET' in node
@@ -80,8 +83,10 @@ def main():
     assert 'canserial_frame_logical_len(msg->data, len)' in node
     assert 'canserial_carrier_wire_len(now)' in node
     host = read('klippy/chelper/serialqueue.c')
+    mcu = read('klippy/mcu.py')
     assert 'can_frame_logical_len(cf.data, len)' in host
     assert 'ret == CANFD_MTU' in host
+    assert ('set_digital_out_late_policy oid=%d apply_late=1' in mcu)
     assert 'hw_rx_frames=%u usb_forwarded_frames=%u' in bridge
     assert 'irqstatus_t irqflag = irq_save();' in bridge
     print('PASS: CAN time transfer uses RX and Tx-Event hardware timestamps')

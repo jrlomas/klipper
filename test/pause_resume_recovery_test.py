@@ -69,6 +69,31 @@ class FakeConfig:
         return default
 
 
+class FakeGcmd:
+    def __init__(self):
+        self.responses = []
+    def get_float(self, name, default):
+        return default
+    def respond_info(self, message):
+        self.responses.append(message)
+    def error(self, message):
+        return RuntimeError(message)
+
+
+class FakeTrajectory:
+    def __init__(self, active):
+        self.active = active
+    def is_recovery_active(self):
+        return self.active
+
+
+class FakeRecovery:
+    def __init__(self):
+        self.calls = []
+    def cmd_RESUME_MOTION(self, gcmd):
+        self.calls.append(gcmd)
+
+
 def main():
     printer = FakePrinter()
     pr = pause_resume.PauseResume(FakeConfig(printer))
@@ -98,6 +123,22 @@ def main():
         "SAVE_GCODE_STATE NAME=PAUSE_STATE",
         "SAVE_GCODE_STATE NAME=PAUSE_STATE"]
     assert all(script != "PAUSE" for script in printer.gcode.scripts)
+
+    # An ordinary UI RESUME must route through motion reconciliation while a
+    # trajectory hold is active. Once clear, normal Klipper resume remains
+    # unchanged.
+    trajectory = printer.extra_objects['trajectory_queuing'] = (
+        FakeTrajectory(True))
+    motion_recovery = printer.extra_objects['failure_recovery'] = (
+        FakeRecovery())
+    gcmd = FakeGcmd()
+    pr.cmd_RESUME(gcmd)
+    assert motion_recovery.calls == [gcmd]
+    assert printer.vsd.resumes == 1
+    trajectory.active = False
+    pr.cmd_RESUME(gcmd)
+    assert printer.vsd.resumes == 2
+    assert not pr.is_paused
     print("PASS: recovery pause bypasses motion macros and resumes in-command")
 
 

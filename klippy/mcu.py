@@ -708,6 +708,16 @@ class MCU_pwm:
         self._mcu.add_config_cmd(
             "set_digital_out_pwm_cycle oid=%d cycle_ticks=%d"
             % (self._oid, cycle_ticks))
+        # Software PWM is prompt state, not a Class-0 motion edge. A delayed
+        # CAN update should be applied immediately while the independent
+        # max_duration watchdog remains armed; shutting the whole MCU down
+        # with "Timer too close" defeats trajectory pause-and-recovery.
+        late_policy = self._mcu.try_lookup_command(
+            "set_digital_out_late_policy oid=%c apply_late=%c")
+        if late_policy is not None:
+            self._mcu.add_config_cmd(
+                "set_digital_out_late_policy oid=%d apply_late=1"
+                % (self._oid,))
         self._pwm_max = float(cycle_ticks)
         svalue = int(self._start_value * cycle_ticks + 0.5)
         self._mcu.add_config_cmd(

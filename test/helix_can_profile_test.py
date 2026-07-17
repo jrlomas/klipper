@@ -36,8 +36,8 @@ class Printer:
     def send_event(self, name, payload):
         self.events.append((name, payload))
 
-    def lookup_object(self, name):
-        return self.objects[name]
+    def lookup_object(self, name, default=None):
+        return self.objects.get(name, default)
 
 
 class GCode:
@@ -113,6 +113,12 @@ class Connection:
         self.bitrate_mask = bitrate_mask
         self.transceiver_max = transceiver_max
 
+    def get_mcu(self):
+        return self
+
+    def get_name(self):
+        return self.name
+
     def get_can_capabilities(self):
         return {'fd': True, 'bitrate_mask': self.bitrate_mask,
                 'max_payload': 64,
@@ -129,6 +135,14 @@ class Connection:
 
     def abort_can_profile(self, epoch):
         self.log.append(('abort', self.name, epoch))
+
+
+class CANStats:
+    def __init__(self, status):
+        self.status = status
+
+    def get_status(self, eventtime):
+        return dict(self.status)
 
 
 class Query:
@@ -194,6 +208,10 @@ def main():
         'rx_queue_highwater': 236, 'rx_queue_depth': 0,
         'hw_rx_frames': 100, 'usb_forwarded_frames': 100,
         'handoff_unaccounted': 0})
+    config.printer.objects['canbus_stats ebb36'] = CANStats({
+        'bus_state': 'active', 'rx_error': 17, 'tx_error': 0,
+        'tx_retries': 2, 'rx_fifo_overruns': 17,
+        'rx_protocol_errors': 0, 'rx_fifo_highwater': 3})
     gcmd = GCmd()
     bus.cmd_HELIX_CAN_STATUS(gcmd)
     assert "HELIX CAN bus 'helixcan0': ACTIVE" in gcmd.response
@@ -202,6 +220,10 @@ def main():
     assert 'bridge(cumulative): bus=active rx_error=7' in gcmd.response
     assert 'delivery=OK accepted=100 forwarded=100 drops=0' in gcmd.response
     assert 'depth=0 highwater=236 unaccounted=0' in gcmd.response
+    assert ('node ebb36: bus=active rx_error=17 tx_error=0 retries=2'
+            in gcmd.response)
+    assert 'fifo_overruns=17 protocol_errors=0 fifo_highwater=3' in (
+        gcmd.response)
 
     # Current EBB36/FPS transceivers constrain this same protocol to
     # CAN FD without bit-rate switching at 1 Mbit.

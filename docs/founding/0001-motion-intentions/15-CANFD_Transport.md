@@ -614,6 +614,38 @@ therefore uses the measured 512-record elasticity budget. Queue capacity does
 not qualify a future BRS profile; profile admission must still respect
 worst-case encoded `gs_usb` throughput on USB Full Speed.
 
+A subsequent trajectory print isolated a different queue boundary on the
+downstream EBB36. At print start its CAN receive error and Klippy retransmit
+counters were both zero. After roughly 943 seconds of mixed XY and extrusion
+traffic, the EBB36 aggregate receive count had reached 11,114 and Klippy had
+retransmitted 669,735 bytes. Immediately before the extruder trajectory
+underrun, its retransmission timeout jumped to 537 ms with 300 bytes waiting.
+At the same boundary the bridge and SocketCAN remained error-active and
+lossless: accepted and forwarded frame totals were equal, with zero bridge
+queue drops and zero unaccounted handoff. `RESUME_MOTION` reconciled all four
+joints and the print continued without a firmware restart.
+
+The STM32 FDCAN IRQ had acknowledged and processed only one RX FIFO element per
+RF0N event even though a deferred interrupt can find all three hardware slots
+occupied. The remaining elements could be stranded until another arrival and
+eventually produce RF0L loss. The handler now clears the event and drains the
+bounded hardware FIFO in one service pass. New diagnostics split the legacy
+aggregate into `rx_fifo_overruns` and `rx_protocol_errors` and retain the FIFO
+high-water mark. This root-cause attribution and the drain fix are compile- and
+host-tested; physical closure requires flashing the EBB36 and repeating the
+same print with zero FIFO-overrun growth and no trajectory underrun.
+
+The resumed run produced the same signature again: the EBB36 aggregate reached
+20,534 receive errors and 1,226,991 retransmitted bytes while bridge
+conservation remained exact. The extruder underrun correctly entered recovery,
+but 1.3 seconds later an already delayed soft-PWM update reached the EBB36 and
+the generic scheduler raised `Timer too close`. Helix now marks software-PWM
+updates as late-applicable on firmware that advertises the traffic-class
+policy: a delayed duty update is applied promptly while the independent
+`max_duration` heater watchdog remains armed. This prevents stale prompt state
+from converting an established trajectory hold into a global MCU shutdown;
+true Class-0 motion timing remains fail-closed.
+
 Bridge maintenance uses an explicit state boundary rather than a queue-size
 assumption. `HELIX_CAN_QUIESCE BUS=<name>` waits for queued motion, stops the
 time source, sends the FD-abort transaction to every downstream node, and asks

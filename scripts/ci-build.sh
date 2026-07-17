@@ -79,6 +79,7 @@ for TEST in \
     test/heater_hold_safety_test.py \
     test/canfd_dlc_test.py \
     test/canfd_record_carrier_test.py \
+    test/canbus_stats_diagnostics_test.py \
     test/canbus_identity_test.py \
     test/canbus_ids_test.py \
     test/can_time_transport_test.py \
@@ -86,6 +87,7 @@ for TEST in \
     test/helix_can_profile_test.py \
     test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
+    test/pause_resume_recovery_test.py \
     test/intentproto_transport_test.py \
     test/paradigm_validator_test.py \
     test/segfit_fidelity_test.py \

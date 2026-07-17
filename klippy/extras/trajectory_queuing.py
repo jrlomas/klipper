@@ -1390,6 +1390,9 @@ class TrajectoryQueuing:
         self.recovery_active = False
         self.recovery_trigger = None
 
+    def is_recovery_active(self):
+        return self.recovery_active
+
     def is_mcu_synced(self, mcu):
         if self.timesync is None:
             return True

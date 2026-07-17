@@ -243,6 +243,9 @@ class HelixCANBus:
         def format_counter(name):
             value = status.get(name)
             return 'n/a' if value is None else str(value)
+        def format_node_counter(node, name):
+            value = node.get(name)
+            return 'n/a' if value is None else str(value)
 
         bus_state = status.get('bus_state')
         bus_state = {0: 'active', 1: 'warn', 2: 'passive',
@@ -256,7 +259,7 @@ class HelixCANBus:
         else:
             delivery = 'OK'
         required_nodes = ', '.join(self.required_nodes) or '(none)'
-        gcmd.respond_info(
+        response = (
             "HELIX CAN bus '%s': %s\n"
             "  interface=%s profile=%s nominal=%d data=%d mtu=%d brs=%d\n"
             "  epoch=%u time_epoch=%u required_nodes=%s\n"
@@ -276,6 +279,27 @@ class HelixCANBus:
                format_counter('rx_queue_depth'),
                format_counter('rx_queue_highwater'),
                format_counter('handoff_unaccounted')))
+        for connection in self.connections:
+            get_mcu = getattr(connection, 'get_mcu', None)
+            if get_mcu is None:
+                continue
+            mcu_name = get_mcu().get_name()
+            node_stats = self.printer.lookup_object(
+                'canbus_stats %s' % (mcu_name,), None)
+            if node_stats is None:
+                continue
+            node = node_stats.get_status(None)
+            response += (
+                "\n  node %s: bus=%s rx_error=%s tx_error=%s retries=%s"
+                " fifo_overruns=%s protocol_errors=%s fifo_highwater=%s"
+                % (mcu_name, format_node_counter(node, 'bus_state'),
+                   format_node_counter(node, 'rx_error'),
+                   format_node_counter(node, 'tx_error'),
+                   format_node_counter(node, 'tx_retries'),
+                   format_node_counter(node, 'rx_fifo_overruns'),
+                   format_node_counter(node, 'rx_protocol_errors'),
+                   format_node_counter(node, 'rx_fifo_highwater')))
+        gcmd.respond_info(response)
     def _start_time_source(self):
         if self.bridge_mcu is None:
             return

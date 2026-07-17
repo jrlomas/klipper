@@ -547,6 +547,10 @@ joint's homing was genuinely lost (`motion_homing_volatile`), the resume
 is blocked and the affected axis is reported for re-homing rather than
 having a position faked. Normally invoked automatically at the end of the
 recovery flow; available manually for testing and recovery workflows.
+While a trajectory recovery hold is active, the ordinary `RESUME` command
+(including a Mainsail resume action) is automatically routed through this
+same reconciliation path. Outside recovery, `RESUME` retains its standard
+Klipper behavior.
 
 ### [fan_generic]
 
@@ -1726,10 +1730,11 @@ The following commands are available for each
 #### HELIX_CAN_STATUS
 `HELIX_CAN_STATUS BUS=<bus>`: Reports the negotiated lifecycle state, active
 profile and bit rates, profile and time epochs, required nodes, cumulative
-controller errors and retries, and bridge delivery conservation counters. A
-delivery result of `OK` means the bridge has reported neither queue drops nor
-accepted frames missing from the forwarded/queued accounting. Use counter
-deltas to attribute cumulative controller errors to a particular print.
+controller errors and retries, per-node FIFO/protocol receive diagnostics, and
+bridge delivery conservation counters. A delivery result of `OK` means the
+bridge has reported neither queue drops nor accepted frames missing from the
+forwarded/queued accounting. Use counter deltas to attribute cumulative
+controller errors to a particular print.
 
 #### HELIX_CAN_QUIESCE
 `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]`: Waits for motion to

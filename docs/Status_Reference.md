@@ -49,7 +49,15 @@ The following information is available in the `canbus_stats
 some_mcu_name` object (this object is automatically available if an
 mcu is configured to use canbus):
 - `rx_error`: The number of receive errors detected by the
-  micro-controller canbus hardware.
+  micro-controller canbus hardware. On current STM32 FDCAN Helix firmware,
+  this is the compatibility aggregate of the two counters below.
+- `rx_fifo_overruns`: STM32 FDCAN receive FIFO loss events. A nonzero delta
+  means valid bus traffic reached the controller faster than firmware drained
+  its hardware FIFO.
+- `rx_protocol_errors`: STM32 FDCAN receive-side physical/protocol errors,
+  separate from FIFO exhaustion.
+- `rx_fifo_highwater`: Highest observed STM32 FDCAN hardware receive FIFO
+  occupancy since boot. The current G0B1 layout has three entries.
 - `tx_error`: The number of transmit errors detected by the
   micro-controller canbus hardware.
 - `tx_retries`: On rp2XXX, the controller retry count. On STM32 FDCAN HELIX
@@ -63,8 +71,9 @@ mcu is configured to use canbus):
   messages).
 
 The rp2XXX implementation always reports `tx_error` as zero and `bus_state`
-as "active". STM32 FDCAN reports protocol errors, bus state, and stale-buffer
-cancellations.
+as "active". The extended receive diagnostics report `None` on firmware that
+does not advertise them. STM32 FDCAN reports the disaggregated receive path,
+bus state, and stale-buffer cancellations.
 
 ## helix_can
 

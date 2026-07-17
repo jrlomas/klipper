@@ -105,6 +105,22 @@ class PauseResume:
         self.pause_command_sent = False
     cmd_RESUME_help = ("Resumes the print from a pause")
     def cmd_RESUME(self, gcmd):
+        # A trajectory underrun invalidates the ordinary saved-position park
+        # frame. Reconcile the held MCU accumulators before restoring parser
+        # state or restarting virtual-SD ingestion. RESUME_MOTION clears the
+        # recovery flag before its final resume, so its fallback to this
+        # handler cannot recurse.
+        trajectory = self.printer.lookup_object(
+            'trajectory_queuing', None)
+        if (trajectory is not None and trajectory.is_recovery_active()):
+            recovery = self.printer.lookup_object('failure_recovery', None)
+            if recovery is None:
+                raise gcmd.error(
+                    "Trajectory recovery is active but [failure_recovery]"
+                    " is unavailable; run RESUME_MOTION after restoring the"
+                    " recovery configuration")
+            recovery.cmd_RESUME_MOTION(gcmd)
+            return
         if not self.is_paused:
             gcmd.respond_info("Print is not paused, resume aborted")
             return

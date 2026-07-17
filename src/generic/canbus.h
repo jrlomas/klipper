@@ -60,6 +60,9 @@ canbus_len_to_dlc(uint8_t len)
 
 struct canbus_status {
     uint32_t rx_error, tx_error, tx_retries;
+    // Optional receive-path diagnostics. Drivers that do not distinguish
+    // these leave them zero; rx_error remains the compatibility aggregate.
+    uint32_t rx_fifo_overruns, rx_protocol_errors, rx_fifo_highwater;
     uint32_t bus_state;
 };
 

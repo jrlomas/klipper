@@ -77,8 +77,9 @@ position with heaters on their policy, and waits. After you fix the
 cause:
 
 * `RECONNECT_MCU MCU=toolhead` — re-handshake the board.
-* `RESUME_MOTION` — reconcile every joint from its execution log and
-  resume the print.
+* `RESUME` (or `RESUME_MOTION`) — reconcile every joint from its execution
+  log and resume the print. During a trajectory hold, the ordinary Mainsail
+  resume action automatically takes the recovery-aware path.
 * `FAILURE_RECOVERY_STATUS` — see holds and paused links at a glance.
 
 **Homing after a board reset.** HELIX assumes a joint is still where it
