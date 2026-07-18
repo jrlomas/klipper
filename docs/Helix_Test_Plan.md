@@ -709,13 +709,21 @@ a faster stop — test both the latency and the things polling could not do.
   comparator trigger source.
   Pass: fires at the threshold; falls back to polling on silicon that
   lacks it (verify the fallback path too).
-- [ ] **7.5 — ADC watchdog / oversampling.** Arm the ADC-watchdog trigger
-  and, where supported, DMA oversampling.
-  Expect: an out-of-range sample fires without host polling; oversampled
-  reads are quieter than single-shot.
-  Pass: watchdog trips on a forced excursion; **record the noise
-  reduction** from oversampling — this is a "now possible" item, so
-  capture the before/after.
+- [x] **7.5a — DMA and hardware-oversampling operation.** F072 polling/DMA
+  instrumentation completed 419 equivalent thermistor reports plus a
+  581-block 1 ksample/s stress with no drops/errors/overruns. A standalone
+  H723 then produced 802 consecutive HW-OSR16 blocks (821,248 physical
+  conversions), queue high-water one, and no fault. A further 254 blocks
+  remained continuous while its 100 kHz/four-axis synthetic trajectory
+  benchmark returned status 0. Counts, CPU slices, timing error, graphs, and
+  limitations are archived in
+  [DMA ADC acquisition qualification](DMA_ADC_Qualification.md).
+- [ ] **7.5b — ADC watchdog and analog accuracy.** Arm the ADC-watchdog
+  trigger and force an out-of-range excursion without host polling. Capture
+  raw single-shot, software-OSR, and hardware-OSR codes from the same DC and
+  low-distortion waveform fixture. Pass: the watchdog trips locally and the
+  archived SINAD/ENOB calculation—not grounded/floating peak-to-peak data—
+  supports the claimed noise reduction.
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

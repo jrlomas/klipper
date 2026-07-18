@@ -1,0 +1,7 @@
+target,workload,clock_hz,trigger_rate_hz,physical_conversion_rate_hz,block_values,duration_s,blocks,reports,timer_invocations,retries,hardpath_ticks,hardpath_ticks_max,task_ticks,task_ticks_max,dropped,overruns,period_error_ppm,notes
+stm32f072,legacy_8x_thermistor,48000000,26.666667,26.666667,0,45.900,0,153,2448,1224,171819,111,0,0,0,0,,Legacy analog_in 8 samples per 300 ms; hardpath excludes report task
+stm32f072,dma_1ksps_osr8,48000000,1000,1000,64,37.184,581,,0,0,823144,1444,31758771,60184,0,0,0,High-rate software-OSR stress; one DMA publication per 64 raw samples
+stm32f072,dma_distributed_8x_thermistor,48000000,26.666667,26.666667,8,125.700,419,419,0,0,591711,1438,4214055,10320,0,0,4.444444,Eight samples distributed over each 300 ms legacy report interval
+rp2040,dma_1ksps_thermistor,12000000,1000,1000,64,7.808,122,0,0,0,7000,62,85419,704,0,0,0,SKR Pico GPIO27 thermistor; 200 MHz core and 12 MHz scheduler; direct UF2 image
+stm32h723,dma_hw_osr16_1ksps,520000000,1000,16000,64,51.328,802,802,0,0,220403,462,8752899,11387,0,0,0,PA0 floating-input functional soak; 16 hardware conversions per published sample
+stm32h723,dma_hw_osr16_with_solver_load,520000000,1000,16000,64,16.256,254,254,0,0,64291,305,2739748,11387,0,0,0,Concurrent 100 kHz four-axis synthetic trajectory benchmark completed status 0

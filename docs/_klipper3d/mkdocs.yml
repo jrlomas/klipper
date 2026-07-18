@@ -95,6 +95,7 @@ nav:
       - Machine_Time_White_Paper.md
       - Machine_Time_Qualification.md
       - Interrupt_vs_Polling.md
+      - DMA_ADC_Qualification.md
       - STM32G0B1_Helix_Qualification.md
       - Transport_Time_Synchronization.md
     - Atlas_Bring-up_Plan.md

@@ -13,7 +13,8 @@ Two paths are provided:
 
 !!! warning "Compile-checked, not hardware-validated here"
     The W5500 and native paths **build and link with the real ARM toolchain**;
-    native RMII is covered on STM32F407 and STM32F765, and its framing and
+    native RMII is covered on STM32F407, STM32F765, and the F767 reference
+    configuration, and its framing and
     stateful socket adapter pass host tests. Neither Ethernet transport has
     been run against a
     physical PHY in this project. Register, DMA, clock, and pin behavior
@@ -157,7 +158,9 @@ is split at one replaceable seam:
 * `src/stm32/eth_mac.c` is the **MAC/DMA half and console binding**:
   configurable AF11 pins and PHY reset, an HCLK-correct bounded MDIO path,
   PHY identity checks, IEEE 10/100 auto-negotiation and reconnect polling,
-  DMA descriptor rings with ownership barriers, a UID-derived local MAC,
+  DMA descriptor rings allocated from the shared non-cacheable arena,
+  IRQ-to-`acq_ring` RX publication with bounded overrun accounting, a
+  UID-derived local MAC,
   and the standard `console_sendf()` / `console_receive_buffer()` hooks.
 * `src/generic/nano_udp.c` is the **pluggable IP layer**: a minimal
   single-socket UDP/IP/ARP responder (ARP replies so a host can find
@@ -171,6 +174,12 @@ The small IP layer intentionally has no DHCP, gateway, VLAN, ICMP, TCP, or
 fragment reassembly. Configure a static address and place the host bridge on
 the same layer-2 subnet. A broader network stack is outside this deterministic
 single-socket console's scope.
+
+`eth_mac_get_status` reports link/ready state, RX/TX frames, RX-ring overruns,
+fatal DMA errors, ready-queue high-water, and shared pool size/use. ETH MAC and
+ETH DMA are exclusive `dma_resource` claims; descriptors and payload buffers
+are no longer a second static DMA arena. On F7 the same MPU policy therefore
+covers Ethernet and ADC cache coherency.
 
 ### Build configuration
 
@@ -207,9 +216,9 @@ normally should leave it off.
 
 ### Workstation evidence
 
-Commits `8c7d368c` and `3d75b65b` add persistent CI configurations for both
-native-RMII families and the W5500 console. With `arm-none-eabi-gcc` 13.2.1
-they compile and link as follows:
+Persistent CI configurations cover both native-RMII families, the F767
+reference image, and the W5500 console. With `arm-none-eabi-gcc` 13.2.1 the
+earlier isolated transports compile as follows:
 
 | configuration | session mode | text | data | bss |
 | --- | --- | ---: | ---: | ---: |
@@ -218,6 +227,12 @@ they compile and link as follows:
 | `stm32f765-rmii.config` | authenticated + pair FEC | 63,230 | 64 | 27,632 |
 
 These configurations are included automatically by `scripts/ci-build.sh`.
+
+The combined `stm32f767-nucleo-ethernet-adc.config` image has text 86,586,
+data 64, and BSS 36,920 bytes. Its single 16 KiB `.dma_buffer` is map-verified
+at non-cacheable SRAM `0x20020000`; Ethernet and ADC allocate from that region.
+This is build/map and ownership evidence. Frame traffic concurrent with ADC on
+the physical NUCLEO/PHY remains a live hardware gate.
 They establish configuration, compiler, linker, and flash/RAM-fit evidence;
 they do not establish electrical behavior or packet flow on a real PHY.
 

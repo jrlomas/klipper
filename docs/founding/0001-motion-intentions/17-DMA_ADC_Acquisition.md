@@ -1,16 +1,14 @@
 # FD-0001: Unified DMA and ADC Acquisition
 
-Status: Subscription/filter slice implemented. The generic ownership core,
-deterministic reference filter, merged logical subscriptions, Klippy raw and
-summary frontend, opt-in `MCU_adc` compatibility adapter, RP2040,
-STM32F072/G0B1/H723, and classic ESP32 backends compile. The ESP32 component
-and STM32F072 backends have passed initial live acquisition soaks. The full v1
-filtered subscription path has also passed its standalone STM32F072 hardware
-gate with the OpenAMS FPS sampling geometry. Further native-board hardware
-qualification, end-to-end FPS integration on its actual G0B1 target,
-safety-consumer migration, local safety consumers, and the general DMA
-resource manager remain open. This work precedes the STM32F767 Ethernet
-implementation.
+Status: Core architecture and workstation implementation complete; target
+qualification continuing. The generic ownership/resource core, deterministic
+filter, bounded Class-0/1/2 delivery, local safety actions, retained fault
+capture, automatic `MCU_adc` compatibility adapter, RP2040,
+STM32F0/G0/F4/F7/H7, classic ESP32, and shared F767 Ethernet allocation all
+compile and pass their host tests. STM32F072, STM32H723, RP2040, and classic
+ESP32 have live acquisition evidence. Physical waveform/SNR qualification,
+RP2040 motion/safety migration, G0B1/F767 target runs, and simultaneous live
+Ethernet/ADC remain hardware gates rather than software-completion claims.
 
 This document specifies the common HELIX primitives for DMA-backed peripheral
 acquisition and applies them first to ADC sampling on STM32, RP2040, and ESP32.
@@ -32,8 +30,7 @@ unifies lifecycle and evidence, not raw DMA registers.
 
 ## Implemented checkpoint (2026-07-17)
 
-The landed v1 subscription slice is deliberately smaller than the complete
-architecture below:
+The landed architecture now includes:
 
 * `generic/acq_block` enforces the generation-checked `FREE -> DMA_OWNED ->
   READY -> CONSUMER_OWNED -> FREE` lifecycle. A fixed, aligned two-block pool
@@ -46,14 +43,15 @@ architecture below:
   the linker places the arena outside DMA-inaccessible DTCM and one MPU region
   maps it as shareable, non-cacheable memory before D-cache is enabled.
 * `adc_stream` accepts one physical stream of one to four ascending channels,
-  at most 16 interleaved values per block, a scheduled machine-clock start,
+  at most 64 interleaved values per block, a scheduled machine-clock start,
   rational scan period, uncertainty, epoch, sequence, status, and explicit
   fault/drop counters. Class 0 faults shut down; Class 1/2 faults stop the
   stream and remain queryable.
 * RP2040 uses ADC FIFO/DREQ and chained DMA channels 10/11. STM32F072 and
-  STM32G0B1 use TIM3 TRGO plus DMA1 Channel 1; STM32H723 uses TIM3, ADC1,
-  DMAMUX request 9, DMA1 Stream 0, aligned blocks, and explicit D-cache
-  invalidation. STM32 starts with an immediate TRGO after arming the ADC so
+  STM32G0B1 use TIM3 TRGO plus circular DMA1 Channel 1 half/full blocks;
+  F4/F7 use native DMA double buffering; STM32H723 uses TIM3, ADC1, DMAMUX
+  request 9, DMA1 Stream 0, and non-cacheable aligned blocks in AXI SRAM.
+  STM32 starts with an immediate TRGO after arming the ADC so
   the first aperture agrees with the recorded machine-clock start instead of
   lagging it by one scan period. These four configurations cross-compile
   cleanly.
@@ -73,19 +71,26 @@ architecture below:
   partial filter instead of joining samples across a gap. Report schedules are
   rejected unless MCU task work is bounded to at most one summary per
   subscription per DMA block.
+* A bounded ready ring separates DMA publication from consumer work. Distinct
+  Class-0/1/2 report IDs have independent loss policy; Class 0 requires an
+  acknowledgement deadline and can invoke local HOLD, analog TRIGGER, or MCU
+  SHUTDOWN. Threshold debounce runs locally from the filtered result.
+* A seven-block pre/post capture window retains raw evidence around a command
+  or terminal fault. Sixteen-byte wire chunks carry blocks up to 64 values
+  without exceeding the protocol frame limit.
 * `klippy/extras/adc_stream_model.py` is the independent executable reference
   for scan phase, boxcar accumulation, rounding, decimation, and summary
   metadata. Five hundred seeded randomized schedules agree with a second
   direct implementation. The C filter has matching fixed vectors.
-* `MCU_adc.setup_adc_stream()` collects opted-in legacy consumers into one
-  uniform engine only when `ADC_STREAM_V1` and integer-compatible schedules
-  are available. It falls back before configuration if firmware is
-  unsupported, another non-migrated ADC consumer exists, or an explicit raw
-  stream owns the MCU. OpenAMS FPS is the first non-safety consumer: five
-  samples at 5 ms spacing become one Prompt filtered result every 100 ms.
-  The host chooses the largest bounded DMA block that divides every logical
-  report cycle, preventing report delivery from alternating between short and
-  long host intervals. Heaters remain deliberately unmigrated.
+* `[mcu] adc_stream_mode: auto` collects compatible legacy consumers into one
+  uniform engine when `ADC_STREAM_V1` and integer-compatible schedules are
+  available. It falls back before configuration if firmware or consumer
+  semantics are unsupported, an unmerged consumer exists, or an explicit raw
+  stream owns the MCU; `off` and `force` provide diagnostic control. Legacy
+  sample counts are distributed across each report interval to avoid a
+  continuous high-rate emulation, while `summary_mode=latest` preserves one
+  callback batch. Existing heater range debounce becomes a local shutdown
+  policy. OpenAMS FPS retains its explicit opt-out.
 
 Evidence at this checkpoint:
 
@@ -98,12 +103,16 @@ Evidence at this checkpoint:
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
 | STM32F072 v1 filtered gate | Standalone OAMS1 rev1.4.3 on PC5 with the FPS geometry: 5 ms physical scans, OSR 5, four filtered outputs per 100 ms Prompt report, raw output disabled. The first run exposed 16-scan DMA blocks crossing the 20-scan report boundary and producing an avoidable 80/160 ms host-delivery pattern. The adapter now selects 10-scan blocks. The corrected run delivered 250 consecutive epoch-1 summaries at steady 100 ms intervals from 5,000 physical scans, then stopped and restarted at summary sequence 0/epoch 2. A further 1,540 scans completed before clean stop; both status snapshots reported `dropped=0`, `status=0`. Summary machine-clock deltas were exactly 4,800,000 ticks at 48 MHz, each four-output report spanned 3,600,000 ticks, and the F0 backend truthfully reported its 240-tick inferred-start uncertainty. |
+| STM32F072 polling/DMA profile | The archived legacy 8x/300 ms schedule used 53.33 timer callbacks/s for 26.67 conversions/s. Its equivalent distributed DMA schedule used 3.33 block publications/s, delivered 419 consecutive reports, and had zero drops/errors/overruns. A separate 1 ksample/s DMA stress delivered 581 blocks with the same zero-fault result. Exact counters and graphs are in the qualification paper. |
+| STM32H723 hardware OSR | The MPU arena maps at DMA1-reachable AXI SRAM `0x24000000`. PA0 at 1 ktrigger/s and hardware OSR16 produced 802 consecutive 64-value blocks (821,248 physical conversions), zero drops/errors/overruns, and queue high-water one. A second 254-block run remained continuous while the 100 kHz/four-axis trajectory benchmark returned status 0. |
+| RP2040 live acquisition | Direct-boot SKR Pico, GPIO27 thermistor, 1 ksample/s: 122 consecutive 64-value blocks (7,808 samples), raw range 3,773..3,881, zero drops/errors/overruns, queue high-water one, correct 200 MHz core/12 MHz scheduler reporting, and clean commanded stop. The test also caught and corrected an erroneous 16 KiB qualification-image offset before the live run. |
+| F767 Ethernet reuse | The combined ADC/RMII image links with one 16 KiB MPU arena at `0x20020000`. Ethernet descriptors and payloads allocate from `dma_resource`, RX publication uses `acq_ring`, compiled claims cover MAC/DMA, and explicit status counters replace the prior parallel static arena. This is map/build evidence; the board/PHY live contention gate remains open. |
+| ESP32 placement guard | A fresh IDF 5.3.2 build places the shared arena in internal DRAM at `0x3ffb2800`; `DMA_ATTR` and `esp_ptr_dma_capable()` prevent DROM/PSRAM allocation. The earlier 47,072-scan Wi-Fi soak remains the live acquisition evidence. |
 
-This checkpoint does **not** claim heater/trigger safety migration, Class-0
-deadline/acknowledgement delivery, local safety callbacks, generalized DMA
-allocation, raw chunking beyond the existing bounded block, native-board
-analog accuracy, hardware oversampling, analog-watchdog coexistence, or
-Ethernet/ADC contention proof. Those remain gated below.
+This checkpoint does **not** claim native-board analog accuracy/SNR/ENOB,
+RP2040/G0B1/F767 live completion, ESP32 reconnect/cache-stall stress, external
+sample-aperture measurement, or live Ethernet/ADC contention. Those remain
+gated below and are not inferred from cross-builds.
 
 ## Why the existing ADC loop must change
 
@@ -662,14 +671,17 @@ measurement images because they perturb the ISR being measured.
 
 ### Phase 0 - baseline and reference model
 
-- [ ] Measure legacy timer invocations, conversion retries, CPU time, report
-  bandwidth, and motion jitter for representative thermistor and high-rate
-  oversampling configurations.
+- [x] Measure legacy timer invocations, conversion retries, hard-path CPU, and
+  report rate for a representative thermistor; measure low-rate and high-rate
+  DMA block/consumer cost with firmware instrumentation.
+- [ ] Correlate ADC sample aperture and motion jitter with external
+  instrumentation under simultaneous physical high-rate motion.
 - [x] Add a host reference model for scan ordering, boxcar accumulation,
   rounding, decimation, timestamps, epochs, and injected missing samples.
 - [x] Define v0 limits, status flags, ownership states, and stop-versus-shutdown
   failure behavior before live target testing.
-- [ ] Publish the full per-target capability and subscription policy model.
+- [x] Publish the per-target capability, ownership, fallback, timing-quality,
+  and subscription policy model.
 
 Gate: the baseline is reproducible and the reference model rejects every
 silent gap or channel-phase discontinuity.
@@ -682,19 +694,21 @@ silent gap or channel-phase discontinuity.
   pool/resource manager required by Ethernet and multiple engines.
 - [x] Implement ADC engine subscription merging, uniform scan planning,
   software filtering, and bounded Prompt/Telemetry summaries.
-- [ ] Add local consumers and generalized raw chunking/fault-window capture.
+- [x] Add local threshold/deadline consumers and generalized raw
+  chunking/fault-window capture.
 - [x] Add the v0 protocol dictionary/commands and Klippy `[adc_stream]` raw
   acquisition frontend.
 - [x] Add `MCU_adc` v1 capability negotiation, merged opt-in adaptation,
   split-ownership rejection, and automatic legacy fallback.
-- [ ] Qualify and enable automatic adaptation for the remaining legacy
-  consumers, especially heater-safety ADCs.
-- [ ] Add distinct Class-0/1/2 report IDs, their bounded queues, Class-0
+- [x] Enable capability-gated automatic adaptation for legacy `MCU_adc`
+  consumers, including local heater range debounce, while retaining atomic
+  fallback. Physical heater-fault injection remains a Phase-2 target gate.
+- [x] Add distinct Class-0/1/2 report IDs, their bounded queues, Class-0
   acknowledgement/deadline feedback, and local deadline-failure actions.
 - [x] Unit-test legal and stale block releases, interleaved multi-channel
   ordering, rational timestamps, sequence gaps, and bounded host-queue drops.
 - [x] Add seeded randomized filter/decimation/reference-model tests.
-- [ ] Add randomized wrap/ring-full/restart/class-starvation tests for every
+- [x] Add randomized wrap/ring-full/restart/class-starvation tests for every
   target loss policy.
 
 Gate: randomized simulated streams match the host reference bit-for-bit and no
@@ -704,6 +718,8 @@ injected discontinuity is reported as contiguous data.
 
 - [x] Implement FIFO/DREQ, chained ping-pong DMA, error capture, scan order,
   pacing divider, and inferred-start uncertainty; cross-build the RP2040 image.
+- [x] Run the direct-boot Pico raw thermistor continuity gate at 1 ksample/s,
+  including exact block count, profile counters, clean stop, and zero faults.
 - [ ] Migrate V0 thermistor monitoring through the compatibility adapter.
 - [ ] Test raw and decimated acquisition from DC, PWM+filter, and a known
   waveform while homing and high-rate motion execute.
@@ -726,11 +742,13 @@ equivalent or stronger.
   STM32F072 with the FPS schedule; prove periodic Prompt delivery, exact
   summary clocks, restart epoch/sequence, truthful uncertainty, raw-output
   suppression, and zero drops/faults.
-- [ ] Add circular/native-double-buffer variants, generalized resource maps,
+- [x] Add circular/native-double-buffer variants, generalized resource maps,
   and analog-watchdog coexistence.
-- [ ] Prove software OSR on F4/F7 and hardware OSR on a capable G0/G4/H7
-  target against the same offline reference.
-- [ ] Prove the M7 MPU arena and H7 DMA-reachable-memory selection with caches
+- [x] Cross-build the F4/F7 software-OSR reference and run hardware OSR16 on
+  H723 with exact counts and continuity.
+- [ ] Compare software and hardware OSR against the same known analog waveform
+  and archive SNR/SINAD evidence.
+- [x] Prove the M7 MPU arena and H7 DMA-reachable-memory selection with caches
   enabled.
 - [ ] Run STM32G0B1 and F767 live tests, including simultaneous motion/ADC and,
   once resumed, Ethernet/ADC DMA contention.
@@ -747,8 +765,9 @@ byte-identical between runs.
   retaining an explicitly exclusive legacy oneshot compatibility path.
 - [x] Implement ADC1-only conflict checks, non-overwriting internal DMA pool,
   cross-core block flow, pool-overflow reporting, and inferred timing.
-- [ ] Add a general I2S0 resource claimant, calibration metadata/voltage
-  conversion, and measured APB-lock/timing evidence.
+- [x] Add a general I2S0 resource claimant and calibration metadata/voltage
+  conversion.
+- [ ] Measure APB-lock/sample timing under Wi-Fi and cache-disabled load.
 - [ ] Test Wi-Fi reconnect, flash/cache-disabled intervals, pool exhaustion,
   raw telemetry throttling, and cross-core consumer delay.
 - [x] Run a component-mode WiFi/UDP acquisition soak: 47,072 GPIO32 scans at
@@ -767,20 +786,26 @@ both reproducible.
 
 - [x] Migrate OpenAMS FPS as the first non-safety Prompt consumer, with an
   explicit opt-out and automatic legacy fallback.
-- [ ] Migrate heaters, MCU temperature, ADC buttons, scaling, and analog
-  trigger consumers target by target.
-- [ ] Preserve legacy fallback for unsupported boards and add a per-MCU
+- [x] Route compatible heaters, MCU temperature, ADC buttons, scaling, and
+  other `MCU_adc` consumers through one capability-gated adapter; local analog
+  trigger is available as a Class-0 action.
+- [x] Preserve legacy fallback for unsupported boards and add a per-MCU
   diagnostic override.
-- [ ] Publish graphs comparing legacy polling versus DMA: ISR/timer rate, CPU
-  time, sample-period error, motion jitter, overrun behavior, SNR, and ENOB.
-- [ ] Archive exact images, configurations, raw captures, and analysis scripts.
+- [x] Publish reproducible graphs comparing legacy polling versus DMA event
+  rate, measured CPU slices, hard-path latency, timer error, and overrun
+  behavior.
+- [ ] Publish externally measured sample aperture/motion jitter and valid
+  waveform-derived SNR/SINAD/ENOB; do not infer them from a grounded or floating
+  input.
+- [x] Archive exact configurations, live counters, CSV source data, and the
+  dependency-free analysis script. Release images remain tied to their commits.
 
 Gate: existing safety behavior passes regression tests; the published data
 supports any efficiency or precision claim; unsupported MCUs do not regress.
 
 ### Phase 6 - unblock Ethernet
 
-- [ ] Reuse the proven DMA pool, resource manager, ownership barriers, block
+- [x] Reuse the proven DMA pool, resource manager, ownership barriers, block
   queues, counters, and IRQ publication rules in the F767 Ethernet driver.
 - [ ] Run ADC and Ethernet simultaneously to validate resource mapping,
   memory bandwidth, cache policy, priorities, and bounded task drain.

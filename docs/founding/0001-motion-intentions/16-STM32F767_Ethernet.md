@@ -1,8 +1,7 @@
 # FD-0001: STM32F767 Ethernet Reference Board Plan
 
-Status: Adopted implementation plan. Workstation inspection is complete;
-target implementation and NUCLEO-F767ZI hardware qualification have not
-started.
+Status: DMA/ADC and Ethernet IRQ foundation implemented and cross-built;
+NUCLEO-F767ZI hardware/network qualification pending board availability.
 
 The unified DMA ownership, block-stream, ADC acquisition, and oversampling
 substrate is specified in
@@ -272,10 +271,10 @@ while motion remains interrupt-driven and independent.
 
 ### Phase 1 - target and board definition
 
-- [ ] Add `MACH_STM32F767`, memory/clock constants, device selection, and
+- [x] Add `MACH_STM32F767`, memory/clock constants, device selection, and
   NUCLEO-F767ZI config.
 - [ ] Add HSE source selection, bypass sequencing, and bounded startup waits.
-- [ ] Build Linuxprocess, existing F7 targets, F767 serial bootstrap, and F767
+- [x] Build Linuxprocess, existing F7 targets, F767 serial bootstrap, and F767
   RMII configurations in CI without growing unrelated targets.
 - [ ] Record the exact board revision, MCU silicon revision, PHY ID/address,
   jumper state, and clock source.
@@ -285,11 +284,11 @@ clock-failure path is observable rather than a hang.
 
 ### Phase 2 - MPU and DMA foundation
 
-- [ ] Reuse the unified DMA arena, resource manager, block ownership helpers,
+- [x] Reuse the unified DMA arena, resource manager, block ownership helpers,
   MPU programming, and alignment assertions from FD-0001 doc 17.
-- [ ] Move Ethernet rings/buffers into it and enable F7 I/D cache outside the
+- [x] Move Ethernet rings/buffers into it and enable F7 I/D cache outside the
   arena.
-- [ ] Add ownership, wrap, exhaustion, and deliberate misalignment tests.
+- [x] Add ownership, wrap, exhaustion, and deliberate misalignment tests.
 
 Gate: sustained memory/cache stress produces byte-exact DMA frames with zero
 ownership violations, both with caches enabled and in a diagnostic cache-off
@@ -297,9 +296,9 @@ build.
 
 ### Phase 3 - Ethernet IRQ and network bring-up
 
-- [ ] Implement RX, TX-complete, and abnormal-condition IRQ service plus the
+- [x] Implement RX, TX-complete, and abnormal-condition IRQ service plus the
   bounded task drain.
-- [ ] Export ring high-water marks and complete DMA/MAC error counters.
+- [x] Export ring high-water marks and complete DMA/MAC error counters.
 - [ ] Add bootstrap `printer.cfg` provisioning and atomic network handover.
 - [ ] Run ARP, authenticated UDP/session, FEC-off and FEC-on, reconnect, peer
   rejection, malformed-frame, ring-exhaustion, and link-flap tests.
@@ -333,14 +332,15 @@ cross-connection, or unsafe continuation on a stale authenticated peer.
 
 ### Phase 6 - ADC DMA primitive
 
-- [ ] Reuse the `adc_stream` core and implement/qualify the STM32F7
+- [x] Reuse the `adc_stream` core and implement/cross-build the STM32F7
   timer/ADC/DMA backend, counters, and telemetry/local-consumer APIs defined in
   FD-0001 doc 17.
+- [ ] Qualify that backend on the physical F767 board.
 - [ ] Test exact sample rate and timestamp reconstruction with a signal
   generator or looped timer output.
 - [ ] Measure ENOB/noise improvement, block-processing cost, overrun behavior,
   and interference while Ethernet and worst-case motion run concurrently.
-- [ ] Connect the analog watchdog to the hardware-trigger framework without
+- [x] Connect the analog watchdog to the hardware-trigger framework without
   routing normal sample collection through trsync.
 
 Gate: continuous acquisition at the claimed rate loses no unreported block,

@@ -391,7 +391,12 @@ Details and constraints:
   inputs in this first implementation. An 8 KiB non-overwriting IDF pool
   absorbs bounded core-1 scheduling delays; pool exhaustion has its own status
   flag and stops the stream. Rates below IDF's 20 kconversion/s minimum use
-  software boxcar averaging. Start phase is explicitly inferred. On
+  software boxcar averaging. IDF line-fitting calibration is created per
+  channel when supported and publishes its scheme, reference voltage, and
+  raw-to-millivolt metadata. The shared HELIX DMA arena uses `DMA_ATTR` and an
+  `esp_ptr_dma_capable()` allocation guard; the current component map places it
+  at internal-DRAM address `0x3ffb2800`, not flash DROM or PSRAM. Start phase
+  is explicitly inferred. On
   2026-07-17 a Lolin32 component image delivered 47,072 GPIO32 scans at
   1 kscan/s in 2,942 consecutive 16-value blocks over WiFi/UDP with zero drops
   and zero status faults, then stopped cleanly. Modem mode compiles and links
@@ -701,9 +706,9 @@ variants with pinned ESP-IDF v5.3.2 and `xtensa-esp-elf` 13.2.0:
 
 | variant | configuration | application image | partition free |
 | --- | --- | ---: | ---: |
-| component | default, ADC stream enabled | `0xcc1e0` | 46% |
-| component-RMT | `sdkconfig.defaults.rmt`, ADC stream enabled | `0xccbb0` | 45% |
-| modem | `sdkconfig.defaults.modem`, ADC stream enabled | `0xc7e50` | 47% |
+| component | default, ADC stream enabled | `0xe49e0` | 39% |
+| component-RMT | `sdkconfig.defaults.rmt`, ADC stream enabled | `0xd0150` | 45% |
+| modem | `sdkconfig.defaults.modem`, ADC stream enabled | `0xcb510` | 46% |
 
 The first real builds exposed and fixed two issues that the stub path
 missed: disabled Kconfig booleans are absent from `sdkconfig.h`, and

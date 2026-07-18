@@ -6192,9 +6192,17 @@ cs_pin:
 ## ADC stream
 
 DMA-backed multi-channel ADC acquisition is available on selected RP2040,
-STM32F072, STM32G0B1, STM32H723, and classic ESP32 firmware builds. It is
-available for raw instrumentation and for bounded software-filtered logical
-subscriptions. It does not yet replace heater or analog trigger configuration.
+STM32F0/G0/F4/F7/H7, and classic ESP32 firmware builds. It supports raw
+instrumentation, bounded software-filtered logical subscriptions, hardware
+oversampling where the exact MCU advertises it, retained fault captures, and
+local Class-0 safety actions.
+
+Each `[mcu]` has an `adc_stream_mode` option. `auto` (the default) migrates
+compatible legacy ADC clients—including heater thresholds—onto one shared DMA
+schedule and falls back atomically before configuration when it cannot preserve
+their contract. `off` forces the legacy ADC implementation. `force` is a
+qualification mode that turns any incompatibility into a configuration error
+instead of falling back.
 
 ```
 [adc_stream example]
@@ -6208,8 +6216,16 @@ pins:
 #   Number of complete channel scans per second. Each scan contains one value
 #   from every configured pin. The default is 1000.
 #block_scans:
-#   Number of scans per MCU report. The maximum is floor(16 / channel_count)
-#   and that maximum is the default.
+#   Number of scans per MCU DMA block. The maximum is
+#   floor(ADC_STREAM_MAX_BLOCK_VALUES / channel_count), currently 64 values
+#   on the qualified targets, and that maximum is the default.
+#hardware_oversample: 1
+#   Hardware conversion count accumulated for each DMA value. This must be a
+#   power of two from 1 through 256 and is accepted only if the MCU advertises
+#   hardware oversampling. The default is 1.
+#hardware_shift:
+#   Right shift applied by the hardware accumulator. The default is
+#   log2(hardware_oversample), which returns an average at native scale.
 #traffic_class: telemetry
 #   The report importance: "critical", "prompt", or "telemetry". Critical
 #   acquisition faults shut down the MCU; prompt and telemetry faults stop
@@ -6224,6 +6240,11 @@ pins:
 #   Emit raw interleaved DMA blocks in addition to summaries. Disable this for
 #   routine filtered telemetry that does not need raw capture. The default is
 #   true for compatibility with dump_adc clients.
+#capture_pre_blocks: 0
+#capture_post_blocks: 0
+#   Retain bounded raw blocks around a commanded or fault-triggered capture.
+#   Each value is 0..7 and their sum must not exceed 7. Captures are chunked
+#   on the wire, so a 64-value block does not exceed one protocol frame.
 #input_div: 1
 #   Comma-separated input decimation values, one per channel. A value of N
 #   accepts one sample every N physical scans. The default is 1 for each.
@@ -6237,31 +6258,54 @@ pins:
 #   Comma-separated numbers of filtered values per summary. Defaults are the
 #   smallest values that bound output to at most one summary per DMA block.
 #summary_class: telemetry
-#   Static outbound summary class: "prompt" or "telemetry". Class 0 is not
-#   available until deadline acknowledgement and local failure actions land.
+#   Static outbound summary class: "scheduled" (Class 0), "prompt" (Class 1),
+#   or "telemetry" (Class 2). The default follows traffic_class.
+#summary_mode: aggregate
+#   "aggregate" combines all filtered values in a report interval. "latest"
+#   retains only the latest completed filtered batch, which is used by the
+#   legacy compatibility adapter to preserve one callback batch per report.
+#summary_deadline:
+#   Class-0 acknowledgement deadline in seconds. The Class-0 default is 0.050;
+#   prompt and telemetry default to zero. A missed deadline invokes the local
+#   safety_action without waiting for Python or the transport.
+#safety_action: none
+#   Local action after a deadline or threshold failure: "none", "hold",
+#   "trigger", or "shutdown". Class 0 defaults to "hold".
+#safety_low: 0
+#safety_high: 4294967295
+#safety_fault_count: 0
+#   Inclusive filtered-code limits and consecutive-failure debounce. A zero
+#   count disables threshold action.
+#safety_trigger_oid: 255
+#   Local analog-trigger object used when safety_action is "trigger". The
+#   default sentinel 255 means no trigger object.
 ```
 
-The `ADC_STREAM_START`, `ADC_STREAM_STOP`, and `ADC_STREAM_STATUS` commands
-select a stream with `SENSOR=<name>`. API clients may subscribe through
-`adc_stream/dump_adc` with the same sensor name. Every batch carries raw data,
-filtered summaries, sequence and summary-gap counters, epoch, discontinuity,
-MCU-drop, host-drop, capability, and timestamp-uncertainty metadata.
+The `ADC_STREAM_START`, `ADC_STREAM_STOP`, `ADC_STREAM_STATUS`, and
+`ADC_STREAM_CAPTURE` commands select a stream with `SENSOR=<name>`. API clients
+may subscribe through `adc_stream/dump_adc` with the same sensor name. Every
+batch carries raw data or summaries, sequence and gap counters, epoch,
+discontinuity, MCU/host drops, calibration and capability metadata, and
+timestamp uncertainty. Status also reports queue high-water, DMA/ADC errors,
+overruns, watchdog events, and optional qualification timing counters.
 
-Non-safety `MCU_adc` consumers may opt into the same engine through
-`setup_adc_stream()`. Helix merges opted consumers only when all active ADC
-users on that MCU are migrated and their periods have one integer uniform
-schedule. Otherwise it configures the unmodified legacy ADC path. OpenAMS FPS
-is the first migrated consumer; its `use_adc_stream: false` option forces the
-diagnostic legacy path. Heater ADCs remain legacy until their local safety
-contract is implemented and qualified.
+Helix merges compatible `MCU_adc` consumers only when all active ADC users on
+that MCU can share one integer schedule. It distributes each consumer's sample
+count across its report interval, preserving sample count, average, and report
+deadline without continuously sampling at the shortest legacy aperture.
+Consumers requiring burst timing or multi-batch semantics remain legacy.
+Legacy min/max debounce becomes a local shutdown threshold, so a heater does
+not depend on a host round trip for its existing out-of-range protection.
+OpenAMS FPS retains `use_adc_stream: false` as an explicit diagnostic opt-out.
 
-On classic ESP32, the stream uses ADC1 and the IDF continuous/I2S0 DMA engine.
-It cannot coexist on the same MCU with legacy heater or other `analog_in`
-inputs in this first implementation. Requested rates below IDF's minimum raw
-conversion rate use software boxcar averaging. ESP32 start time is marked
-inferred with a conservative uncertainty; it is not equivalent to an STM32
-timer-TRGO aperture. A driver-pool overflow stops the stream and is reported
-explicitly instead of overwriting samples.
+On classic ESP32, the stream uses ADC1 and the IDF continuous/I2S0 DMA engine;
+ADC2 is rejected for the Wi-Fi target. The stream and legacy ADC1 oneshot path
+remain mutually exclusive. Requested rates below IDF's minimum raw conversion
+rate use software boxcar averaging. ESP32 start time is marked inferred with a
+conservative uncertainty; it is not equivalent to an STM32 timer-TRGO
+aperture. Calibration metadata and IDF line-fitting voltage conversion are
+published when available. A driver-pool overflow stops the stream and is
+reported explicitly instead of overwriting samples.
 
 ## Common bus parameters
 

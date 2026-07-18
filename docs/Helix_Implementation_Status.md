@@ -110,31 +110,38 @@ pass.
   fixed the missing APP cache-bus enable, canonical window-stack bootstrap,
   and syscall-0 window spill required by ROM `setjmp`.  This is boot/console
   evidence, not motion, peripheral, ISR-jitter, or thermal qualification.
-* The unified ADC DMA layer now includes the v1 generic subscription/filter
-  slice. Up to eight logical consumers share one uniform scan schedule with
-  integer input decimation, 64-bit boxcar accumulation, deterministic
-  round-half-up shifting, output decimation, discontinuity reset, and distinct
-  Prompt/Telemetry summaries. The host reference passes 500 seeded randomized
-  schedules; the C vectors, summary decoder, and `MCU_adc` adapter regressions
-  pass. An opted adapter falls back before configuration if firmware lacks v1,
-  schedules are incompatible, another legacy ADC consumer exists, or an
-  explicit raw stream owns the MCU. OpenAMS FPS is migrated on that boundary;
-  heater ADCs are not. F072, G0B1, H723, RP2040, and a classic ESP32 component
-  image compile with the slice. The earlier F072 and ESP32 raw hardware soaks
-  remain valid backend evidence. A standalone OAMS1 F072 also passed the full
-  v1 software-filter path with the FPS schedule: 6,540 scans across a clean
-  stop/restart, exact 100 ms summary clocks, periodic host delivery, and zero
-  drops/faults. This gate found and corrected DMA-block/report-cycle
-  misalignment. End-to-end FPS qualification on its actual G0B1 target remains
-  open.
-* The generic DMA substrate now includes fixed-lifetime aligned allocation and
-  exclusive resource claims shared by ADC and future Ethernet consumers. ADC
-  backends claim their ADC, pacing timer, DMA channel/stream, and request line
-  instead of relying on unrelated register-state guesses. On STM32H723 the
-  linker now places the 2 KiB DMA arena in AXI SRAM at `0x24000000`; the prior
-  default was DMA-inaccessible DTCM. An MPU region makes only that arena
-  shareable and non-cacheable before D-cache is enabled. Host tests cover
-  allocation/conflicts and the F072, G0B1, and H723 images link cleanly.
+* The unified ADC DMA layer now implements the full generic ownership,
+  subscription, safety, and capture core. Up to eight consumers share one
+  uniform scan; bounded Class-0/1/2 queues, acknowledgement deadlines, local
+  HOLD/TRIGGER/SHUTDOWN, threshold debounce, 64-bit filtering, latest/aggregate
+  summaries, and seven-block raw fault windows all have deterministic and
+  randomized regressions. Raw 64-value blocks are chunked without exceeding a
+  frame. `[mcu] adc_stream_mode` provides `auto/off/force`; automatic migration
+  distributes each legacy sample count across its report interval and falls
+  back before either engine claims the ADC when semantics are incompatible.
+  Heater range debounce becomes a local shutdown policy rather than depending
+  on Python delivery.
+* The shared DMA resource layer now covers allocation, DMA-reachability,
+  peripheral/timer/channel/stream/DMAMUX ownership, and map-verified cache
+  policy. F0/G0 use circular half/full DMA, F4/F7 native double buffering,
+  RP2040 chained FIFO/DREQ DMA, H7 DMA1/DMAMUX, and classic ESP32 IDF continuous
+  ADC1/I2S0. F072/G0/H723/RP2040/F407/F767 and combined F767 RMII+ADC images
+  cross-build. A fresh IDF 5.3.2 build also passes; its shared arena is forced
+  into DMA-capable internal DRAM and runtime-checked after a map audit found an
+  orphan section in flash DROM.
+* Live F072 polling/DMA instrumentation records a 16x event-rate reduction for
+  the equivalent 8-sample/300 ms thermistor schedule (53.33 legacy callbacks/s
+  versus 3.33 DMA publications/s). The distributed run delivered 419 reports;
+  a separate 1 ksample/s stress delivered 581 blocks. Both had zero
+  drops/errors/overruns. The H723 hardware-OSR16 run delivered 802 consecutive
+  64-value blocks (821,248 physical conversions), also fault-free, and a second
+  run remained continuous through a 100 kHz/four-axis synthetic solver
+  benchmark. Exact data, limitations, and regenerated graphs are in
+  [DMA ADC acquisition qualification](DMA_ADC_Qualification.md). The direct
+  SKR Pico image also delivered 122 fault-free 64-value thermistor blocks at
+  1 ksample/s and reported its 200 MHz core correctly. RP2040 motion/safety
+  migration, G0B1/FPS, valid analog waveform/SNR, and live F767 Ethernet
+  contention remain physical gates, not implied passes.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
   image. The path includes configurable pins and reset, bounded MDIO,
