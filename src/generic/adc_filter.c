@@ -32,9 +32,11 @@ adc_filter_reset(struct adc_filter *f, uint8_t discontinuity)
 }
 
 int
-adc_filter_push(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
-                struct adc_filter_summary *result)
+adc_filter_push_ex(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
+                   struct adc_filter_summary *result,
+                   uint32_t *filtered_value, uint8_t *filtered_ready)
 {
+    *filtered_ready = 0;
     // input_div is phase-locked to the epoch, not to block boundaries.
     uint64_t raw_index = f->raw_index++;
     if (raw_index % f->config.input_div)
@@ -52,6 +54,8 @@ adc_filter_push(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
 
     struct adc_filter_summary *s = &f->summary;
     uint32_t output = value > UINT32_MAX ? UINT32_MAX : value;
+    *filtered_value = output;
+    *filtered_ready = 1;
     if (!s->count) {
         s->first_scan = scan_index;
         s->minimum = s->maximum = output;
@@ -71,4 +75,14 @@ adc_filter_push(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
     *result = *s;
     memset(s, 0, sizeof(*s));
     return 1;
+}
+
+int
+adc_filter_push(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
+                struct adc_filter_summary *result)
+{
+    uint32_t filtered_value;
+    uint8_t filtered_ready;
+    return adc_filter_push_ex(f, sample, scan_index, result,
+                              &filtered_value, &filtered_ready);
 }

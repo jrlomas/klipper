@@ -1660,6 +1660,21 @@ command_traj_stop_on_trigger(uint32_t *args)
 DECL_COMMAND(command_traj_stop_on_trigger,
              "traj_stop_on_trigger oid=%c trsync_oid=%c");
 
+// Bounded local failure action used by Class-0 sensor deadlines.  It stops all
+// trajectory steppers immediately and requires an explicit rebase before
+// motion can resume; it does not turn a recoverable sensor deadline into a
+// whole-MCU shutdown.
+void
+traj_local_hold_all(void)
+{
+    irqstatus_t flag = irq_save();
+    uint8_t oid;
+    struct traj_stepper *s;
+    foreach_oid(oid, s, command_config_traj_stepper)
+        trajq_halt(&s->tq, TQF_NEED_REBASE);
+    irq_restore(flag);
+}
+
 void
 traj_stepper_task(void)
 {

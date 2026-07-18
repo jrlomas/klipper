@@ -29,6 +29,7 @@ enum dma_resource_endpoint {
     DMA_RESOURCE_ESP32_ADC_POOL = 34,
     DMA_RESOURCE_ETH_MAC = 48,
     DMA_RESOURCE_ETH_DMA = 49,
+    DMA_RESOURCE_DMA2_STREAM0 = 64,
 };
 
 struct dma_pool_status {

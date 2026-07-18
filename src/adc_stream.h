@@ -15,6 +15,8 @@ enum adc_stream_capability {
     ADC_STREAM_CAP_INPUT_DECIMATION = 1u << 2,
     ADC_STREAM_CAP_SUMMARIES = 1u << 3,
     ADC_STREAM_CAP_PROMPT_REPORT = 1u << 4,
+    ADC_STREAM_CAP_SCHEDULED_REPORT = 1u << 5,
+    ADC_STREAM_CAP_LOCAL_SAFETY = 1u << 6,
 };
 
 struct adc_stream_backend_config {

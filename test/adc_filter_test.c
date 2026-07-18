@@ -13,8 +13,13 @@ main(int argc, char **argv)
     };
     assert(!adc_filter_configure(&f, &config));
     struct adc_filter_summary result;
+    uint32_t filtered_value = 0;
+    uint8_t filtered_ready = 0;
     for (uint32_t i = 0; i < 24; i++) {
-        int ready = adc_filter_push(&f, i * 3, i, &result);
+        int ready = adc_filter_push_ex(&f, i * 3, i, &result,
+                                       &filtered_value, &filtered_ready);
+        if (i == 6)
+            assert(filtered_ready && filtered_value == 9);
         if (i != 22)
             assert(!ready);
         else {

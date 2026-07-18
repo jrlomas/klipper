@@ -45,5 +45,10 @@ void adc_filter_reset(struct adc_filter *filter, uint8_t discontinuity);
 // Return one when a complete summary was copied to result, zero otherwise.
 int adc_filter_push(struct adc_filter *filter, uint16_t sample,
                     uint64_t scan_index, struct adc_filter_summary *result);
+// Extended form also reports each completed filtered value before report
+// decimation, allowing bounded local consumers and threshold checks.
+int adc_filter_push_ex(struct adc_filter *filter, uint16_t sample,
+                       uint64_t scan_index, struct adc_filter_summary *result,
+                       uint32_t *filtered_value, uint8_t *filtered_ready);
 
 #endif // generic/adc_filter.h

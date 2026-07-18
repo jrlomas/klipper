@@ -12,7 +12,8 @@ from . import bulk_sensor
 
 
 TRAFFIC_CLASSES = {"critical": 0, "prompt": 1, "telemetry": 2}
-SUMMARY_CLASSES = {"prompt": 1, "telemetry": 2}
+SUMMARY_CLASSES = {"scheduled": 0, "prompt": 1, "telemetry": 2}
+SAFETY_ACTIONS = {"none": 0, "hold": 1, "trigger": 2, "shutdown": 3}
 STATE_NAMES = {0: "stopped", 1: "armed", 2: "running", 3: "faulted"}
 SUMMARY_FORMAT = (
     "oid=%c sub=%c sequence=%u epoch=%u first_clock=%u last_clock=%u"
@@ -75,10 +76,37 @@ class ADCStream:
         self.raw_output = config.getboolean("raw_output", True)
         if not self.summaries_enabled and not self.raw_output:
             raise config.error("adc_stream must enable summaries or raw_output")
-        default_class = ("prompt" if self.traffic_class == 1
-                         else "telemetry")
+        default_class = ("scheduled" if self.traffic_class == 0 else
+                         "prompt" if self.traffic_class == 1 else
+                         "telemetry")
         self.summary_class = config.getchoice(
             "summary_class", SUMMARY_CLASSES, default=default_class)
+        default_deadline = .050 if self.summary_class == 0 else 0.
+        self.summary_deadline = config.getfloat(
+            "summary_deadline", default_deadline, minval=0.)
+        default_action = "hold" if self.summary_class == 0 else "none"
+        self.safety_action = config.getchoice(
+            "safety_action", SAFETY_ACTIONS, default=default_action)
+        self.safety_low = config.getint("safety_low", 0, minval=0)
+        self.safety_high = config.getint(
+            "safety_high", 0xffffffff, minval=0, maxval=0xffffffff)
+        self.safety_fault_count = config.getint(
+            "safety_fault_count", 0, minval=0, maxval=255)
+        self.safety_trigger_oid = config.getint(
+            "safety_trigger_oid", 0xff, minval=0, maxval=0xff)
+        if self.summary_class == 0 and not self.summary_deadline:
+            raise config.error(
+                "scheduled ADC summaries require summary_deadline")
+        if ((self.summary_deadline or self.safety_fault_count)
+                and not self.safety_action):
+            raise config.error(
+                "ADC deadline/threshold policy requires safety_action")
+        if self.safety_low > self.safety_high:
+            raise config.error("safety_low must not exceed safety_high")
+        if (self.safety_action == SAFETY_ACTIONS["trigger"]
+                and self.safety_trigger_oid == 0xff):
+            raise config.error(
+                "trigger safety action requires safety_trigger_oid")
         self.oid = self.mcu.create_oid()
         self.adc_max = 4095.
         self.period_ticks = 0
@@ -90,6 +118,10 @@ class ADCStream:
         self.state = "configuring"
         self.epoch = self.last_sequence = None
         self.sequence_gaps = self.host_drops = self.mcu_drops = 0
+        self.ready_highwater = self.dma_errors = self.adc_errors = 0
+        self.overruns = self.telemetry_drops = self.watchdog_events = 0
+        self.safety_events = 0
+        self.last_safety = None
         self.summary_sequences = [None] * len(self.pins)
         self.summary_epochs = [None] * len(self.pins)
         self.summary_gaps = 0
@@ -137,6 +169,16 @@ class ADCStream:
                     " report_class=%d" % (
                         self.oid, channel, channel, input_div, osr, shift,
                         report_div, self.summary_class))
+                deadline_ticks = self.mcu.seconds_to_clock(
+                    self.summary_deadline)
+                self.mcu.add_config_cmd(
+                    "adc_stream_set_safety oid=%d sub=%d"
+                    " deadline_ticks=%d fail_action=%d low=%d high=%d"
+                    " fault_count=%d trigger_oid=%d" % (
+                        self.oid, channel, deadline_ticks,
+                        self.safety_action, self.safety_low,
+                        self.safety_high, self.safety_fault_count,
+                        self.safety_trigger_oid))
         self.mcu.add_config_cmd(
             "adc_stream_set_options oid=%d raw_output=%d"
             % (self.oid, self.raw_output))
@@ -157,6 +199,8 @@ class ADCStream:
             "adc_stream_get_status oid=%c", cq=cq)
         self.capabilities_cmd = self.mcu.lookup_command(
             "adc_stream_get_capabilities oid=%c", cq=cq)
+        self.ack_cmd = self.mcu.lookup_command(
+            "adc_stream_ack oid=%c sub=%c sequence=%u", cq=cq)
         data_format = (
             "adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c"
             " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
@@ -170,7 +214,9 @@ class ADCStream:
         self.mcu.register_serial_response(
             self._handle_status,
             "adc_stream_status oid=%c state=%c class=%c channels=%c"
-            " block_values=%c epoch=%u sequence=%u dropped=%u status=%u",
+            " block_values=%c epoch=%u sequence=%u dropped=%u status=%u"
+            " ready_highwater=%c dma_errors=%u adc_errors=%u overruns=%u"
+            " telemetry_drops=%u watchdog_events=%u",
             self.oid)
         self.mcu.register_serial_response(
             self._handle_summary, "adc_stream_prompt " + SUMMARY_FORMAT,
@@ -178,6 +224,14 @@ class ADCStream:
         self.mcu.register_serial_response(
             self._handle_summary, "adc_stream_telemetry " + SUMMARY_FORMAT,
             self.oid)
+        self.mcu.register_serial_response(
+            self._handle_scheduled,
+            "adc_stream_scheduled " + SUMMARY_FORMAT + " deadline=%u",
+            self.oid)
+        self.mcu.register_serial_response(
+            self._handle_safety,
+            "adc_stream_safety oid=%c sub=%c event=%c action=%c"
+            " clock=%u status=%u count=%u", self.oid)
         self.mcu.register_serial_response(
             self._handle_capabilities,
             "adc_stream_capabilities oid=%c version=%c max_channels=%c"
@@ -263,6 +317,23 @@ class ADCStream:
                 self.host_drops += 1
             self.state = "running"
 
+    def _handle_scheduled(self, params):
+        # Store the safety-class sample before acknowledging it.  This makes
+        # the acknowledgement mean that Klippy actually accepted the record,
+        # rather than merely receiving its transport frame.
+        self._handle_summary(params)
+        if self.ack_cmd is not None and not self.mcu.is_fileoutput():
+            self.ack_cmd.send([self.oid, params["sub"], params["sequence"]])
+
+    def _handle_safety(self, params):
+        with self.lock:
+            self.safety_events = params["count"]
+            self.watchdog_events = max(self.watchdog_events, params["count"])
+            self.last_status |= params["status"]
+            self.last_safety = {
+                key: params[key] for key in (
+                    "sub", "event", "action", "clock", "status", "count")}
+
     def _handle_capabilities(self, params):
         with self.lock:
             self.capabilities = {
@@ -285,6 +356,9 @@ class ADCStream:
             self.last_status = params["status"]
             self.epoch = params["epoch"]
             self.last_sequence = params["sequence"]
+            for key in ("ready_highwater", "dma_errors", "adc_errors",
+                        "overruns", "telemetry_drops", "watchdog_events"):
+                setattr(self, key, params[key])
 
     def _process_batch(self, eventtime):
         with self.lock:
@@ -300,6 +374,14 @@ class ADCStream:
                 "summary_gaps": self.summary_gaps,
                 "host_drops": self.host_drops,
                 "mcu_drops": self.mcu_drops,
+                "ready_highwater": self.ready_highwater,
+                "dma_errors": self.dma_errors,
+                "adc_errors": self.adc_errors,
+                "overruns": self.overruns,
+                "telemetry_drops": self.telemetry_drops,
+                "watchdog_events": self.watchdog_events,
+                "safety_events": self.safety_events,
+                "last_safety": self.last_safety,
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
                 "capabilities": dict(self.capabilities),
@@ -318,6 +400,14 @@ class ADCStream:
                 "summary_gaps": self.summary_gaps,
                 "host_drops": self.host_drops,
                 "mcu_drops": self.mcu_drops,
+                "ready_highwater": self.ready_highwater,
+                "dma_errors": self.dma_errors,
+                "adc_errors": self.adc_errors,
+                "overruns": self.overruns,
+                "telemetry_drops": self.telemetry_drops,
+                "watchdog_events": self.watchdog_events,
+                "safety_events": self.safety_events,
+                "last_safety": self.last_safety,
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
                 "capabilities": dict(self.capabilities),

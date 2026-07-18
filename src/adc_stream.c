@@ -12,9 +12,13 @@
 #include "command.h" // DECL_COMMAND
 #include "compiler.h" // __aligned
 #include "generic/acq_block.h"
+#include "generic/acq_ring.h"
 #include "generic/adc_filter.h"
+#include "generic/adc_safety.h"
 #include "generic/dma_resource.h"
 #include "sched.h" // DECL_TASK
+#include "traj_local.h" // traj_local_hold_all
+#include "trigger_analog.h" // trigger_analog_update
 
 enum {
     ADC_STREAM_STOPPED = 0,
@@ -23,18 +27,26 @@ enum {
     ADC_STREAM_FAULTED,
 };
 
+struct adc_stream;
+
 struct adc_stream_subscription {
+    struct timer deadline_timer;
     struct adc_filter filter;
+    struct adc_safety safety;
+    struct adc_stream *stream;
+    struct trigger_analog *local_trigger;
     uint32_t sequence;
     uint8_t id;
     uint8_t channel;
     uint8_t report_class;
+    uint8_t deadline_armed;
 };
 
 struct adc_stream {
     struct timer start_timer;
     struct gpio_adc pins[ADC_STREAM_MAX_CHANNELS];
     struct acq_block blocks[ADC_STREAM_BLOCK_COUNT];
+    struct acq_ring ready_ring;
     struct adc_stream_backend_info info;
     struct adc_stream_subscription subscriptions[ADC_STREAM_MAX_SUBSCRIPTIONS];
     uint16_t *buffer;
@@ -43,6 +55,12 @@ struct adc_stream {
     uint32_t epoch;
     uint32_t dropped_blocks;
     uint32_t fault_status;
+    uint32_t dma_errors;
+    uint32_t adc_errors;
+    uint32_t overruns;
+    uint32_t telemetry_drops;
+    uint32_t watchdog_events;
+    uint32_t safety_clock;
     uint64_t raw_scan_count;
     uint8_t channel_count;
     uint8_t subscription_count;
@@ -50,13 +68,68 @@ struct adc_stream {
     uint8_t traffic_class;
     uint8_t oid;
     uint8_t raw_output;
-    volatile uint8_t ready_mask;
+    uint8_t safety_pending;
+    uint8_t safety_sub;
+    uint8_t safety_event;
+    uint8_t safety_action;
     volatile uint8_t state;
 };
 
 // The first implementation deliberately permits one physical ADC engine.
 static struct adc_stream *active_stream;
 static struct task_wake adc_stream_wake;
+
+static struct adc_stream_subscription *
+adc_stream_find_subscription(struct adc_stream *s, uint8_t id)
+{
+    for (uint8_t i = 0; i < s->subscription_count; i++)
+        if (s->subscriptions[i].id == id)
+            return &s->subscriptions[i];
+    return NULL;
+}
+
+static void
+adc_stream_apply_safety(struct adc_stream *s,
+                        struct adc_stream_subscription *sub,
+                        uint8_t event)
+{
+    s->watchdog_events++;
+    s->fault_status |= event == ADC_SAFETY_EVENT_THRESHOLD
+                       ? ACQ_STATUS_THRESHOLD : ACQ_STATUS_DEADLINE;
+    s->safety_pending = 1;
+    s->safety_sub = sub->id;
+    s->safety_event = event;
+    s->safety_action = sub->safety.config.fail_action;
+    s->safety_clock = timer_read_time();
+    sched_wake_task(&adc_stream_wake);
+    switch (sub->safety.config.fail_action) {
+    case ADC_SAFETY_HOLD:
+        traj_local_hold_all();
+        break;
+    case ADC_SAFETY_TRIGGER:
+        if (sub->local_trigger)
+            trigger_analog_note_error(sub->local_trigger, event);
+        else
+            try_shutdown("ADC safety trigger has no local consumer");
+        break;
+    case ADC_SAFETY_SHUTDOWN:
+        try_shutdown("ADC safety policy fired");
+        break;
+    }
+}
+
+static uint_fast8_t
+adc_stream_deadline_event(struct timer *timer)
+{
+    struct adc_stream_subscription *sub = container_of(
+        timer, struct adc_stream_subscription, deadline_timer);
+    sub->deadline_armed = 0;
+    uint8_t event = adc_safety_check_deadline(
+        &sub->safety, timer_read_time());
+    if (event)
+        adc_stream_apply_safety(sub->stream, sub, event);
+    return SF_DONE;
+}
 
 static uint_fast8_t
 adc_stream_start_event(struct timer *timer)
@@ -114,8 +187,7 @@ command_adc_stream_subscribe(uint32_t *args)
     if (s->state != ADC_STREAM_STOPPED)
         shutdown("ADC stream subscription change while active");
     if (s->subscription_count >= ADC_STREAM_MAX_SUBSCRIPTIONS
-        || channel >= s->channel_count || report_class < 1
-        || report_class > 2)
+        || channel >= s->channel_count || report_class > 2)
         shutdown("Invalid ADC stream subscription");
     for (uint8_t i = 0; i < s->subscription_count; i++)
         if (s->subscriptions[i].id == sub_id)
@@ -133,12 +205,41 @@ command_adc_stream_subscribe(uint32_t *args)
     sub->id = sub_id;
     sub->channel = channel;
     sub->report_class = report_class;
+    sub->stream = s;
+    sub->deadline_timer.func = adc_stream_deadline_event;
     s->subscription_count++;
 }
 DECL_COMMAND(command_adc_stream_subscribe,
              "adc_stream_subscribe oid=%c sub=%c channel=%c"
              " input_div=%hu osr=%hu shift=%c report_div=%hu"
              " report_class=%c");
+
+void
+command_adc_stream_set_safety(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    struct adc_stream_subscription *sub = adc_stream_find_subscription(
+        s, args[1]);
+    if (s->state != ADC_STREAM_STOPPED || !sub)
+        shutdown("Invalid ADC safety subscription");
+    struct adc_safety_config config = {
+        .deadline_ticks = args[2],
+        .fail_action = args[3],
+        .low = args[4],
+        .high = args[5],
+        .fault_count = args[6],
+    };
+    if (adc_safety_configure(&sub->safety, &config))
+        shutdown("Invalid ADC safety policy");
+    uint8_t trigger_oid = args[7];
+    if (trigger_oid != 0xff)
+        sub->local_trigger = trigger_analog_oid_lookup(trigger_oid);
+    if (config.fail_action == ADC_SAFETY_TRIGGER && !sub->local_trigger)
+        shutdown("ADC trigger action requires local trigger consumer");
+}
+DECL_COMMAND(command_adc_stream_set_safety,
+             "adc_stream_set_safety oid=%c sub=%c deadline_ticks=%u"
+             " fail_action=%c low=%u high=%u fault_count=%c trigger_oid=%c");
 
 void
 command_adc_stream_set_options(uint32_t *args)
@@ -164,6 +265,14 @@ adc_stream_stop(struct adc_stream *s)
         sched_del_timer(&s->start_timer);
     if (old_state == ADC_STREAM_RUNNING || old_state == ADC_STREAM_FAULTED)
         board_adc_stream_stop();
+    for (uint8_t i = 0; i < s->subscription_count; i++) {
+        struct adc_stream_subscription *sub = &s->subscriptions[i];
+        if (sub->deadline_armed) {
+            sched_del_timer(&sub->deadline_timer);
+            sub->deadline_armed = 0;
+        }
+        sub->safety.pending = 0;
+    }
 }
 
 void
@@ -185,8 +294,15 @@ command_adc_stream_start(uint32_t *args)
         // for each completed DMA block.
         if (report_scans < block_scans)
             shutdown("ADC subscription report rate exceeds block rate");
+        if (!s->subscriptions[i].report_class
+            && (!s->subscriptions[i].safety.config.deadline_ticks
+                || !s->subscriptions[i].safety.config.fail_action))
+            shutdown("Class-0 ADC subscription lacks deadline policy");
         adc_filter_reset(&s->subscriptions[i].filter, 0);
         s->subscriptions[i].sequence = 0;
+        s->subscriptions[i].safety.pending = 0;
+        s->subscriptions[i].safety.outside_count = 0;
+        s->subscriptions[i].deadline_armed = 0;
     }
     if (active_stream && active_stream != s)
         shutdown("ADC engine already claimed");
@@ -195,10 +311,12 @@ command_adc_stream_start(uint32_t *args)
 
     s->block_values = block_values;
     s->traffic_class = traffic_class;
-    s->ready_mask = 0;
+    acq_ring_init(&s->ready_ring, ADC_STREAM_BLOCK_COUNT);
     s->sequence = 0;
     s->dropped_blocks = 0;
     s->fault_status = 0;
+    s->dma_errors = s->adc_errors = s->overruns = 0;
+    s->telemetry_drops = s->watchdog_events = 0;
     s->raw_scan_count = 0;
     s->epoch++;
     for (uint8_t i = 0; i < ADC_STREAM_BLOCK_COUNT; i++) {
@@ -217,6 +335,18 @@ command_adc_stream_start(uint32_t *args)
     board_adc_stream_setup(&cfg, &s->info);
     if (!s->info.period_denominator || !s->info.period_numerator)
         shutdown("ADC stream backend rejected schedule");
+    for (uint8_t i = 0; i < s->subscription_count; i++) {
+        struct adc_stream_subscription *sub = &s->subscriptions[i];
+        if (sub->report_class)
+            continue;
+        struct adc_filter_config *fc = &sub->filter.config;
+        uint64_t report_ticks = (uint64_t)fc->input_div * fc->osr
+            * fc->report_div * s->info.period_numerator
+            / s->info.period_denominator;
+        if (!report_ticks
+            || sub->safety.config.deadline_ticks >= report_ticks)
+            shutdown("ADC Class-0 deadline overlaps next report");
+    }
 
     active_stream = s;
     s->state = ADC_STREAM_ARMED;
@@ -244,10 +374,17 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         || block_index >= ADC_STREAM_BLOCK_COUNT)
         return -1;
     struct acq_block *b = &s->blocks[block_index];
+    if (status & ACQ_STATUS_DMA_ERROR)
+        s->dma_errors++;
+    if (status & (ACQ_STATUS_PERIPHERAL_ERROR | ACQ_STATUS_SAMPLE_ERROR))
+        s->adc_errors++;
+    if (status & ACQ_STATUS_OVERRUN)
+        s->overruns++;
     if (b->state != ACQ_BLOCK_DMA_OWNED) {
         // The acquisition ring is exhausted. Stop immediately instead of
         // silently overwriting an unconsumed block.
         s->dropped_blocks++;
+        s->overruns++;
         s->fault_status |= ACQ_STATUS_OVERRUN | ACQ_STATUS_DISCONTINUITY;
         s->state = ADC_STREAM_FAULTED;
         board_adc_stream_stop_from_isr();
@@ -271,7 +408,14 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         s->state = ADC_STREAM_FAULTED;
         board_adc_stream_stop_from_isr();
     } else {
-        s->ready_mask |= 1u << block_index;
+        if (acq_ring_push(&s->ready_ring, block_index)) {
+            s->dropped_blocks++;
+            s->overruns++;
+            s->fault_status |= ACQ_STATUS_OVERRUN
+                               | ACQ_STATUS_DISCONTINUITY;
+            s->state = ADC_STREAM_FAULTED;
+            board_adc_stream_stop_from_isr();
+        }
     }
     // Every backend uses the two blocks in strict ping-pong order. Before the
     // just-completed DMA can wrap, the other block must have made the full
@@ -282,6 +426,7 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
     if (s->state != ADC_STREAM_FAULTED
         && next->state != ACQ_BLOCK_DMA_OWNED) {
         s->dropped_blocks++;
+        s->overruns++;
         s->fault_status |= ACQ_STATUS_OVERRUN | ACQ_STATUS_DISCONTINUITY;
         s->state = ADC_STREAM_FAULTED;
         board_adc_stream_stop_from_isr();
@@ -304,6 +449,12 @@ adc_stream_backend_fault(uint32_t status)
                && s->state != ADC_STREAM_ARMED))
         return;
     s->fault_status |= status | ACQ_STATUS_DISCONTINUITY;
+    if (status & ACQ_STATUS_DMA_ERROR)
+        s->dma_errors++;
+    if (status & (ACQ_STATUS_PERIPHERAL_ERROR | ACQ_STATUS_SAMPLE_ERROR))
+        s->adc_errors++;
+    if (status & ACQ_STATUS_OVERRUN)
+        s->overruns++;
     s->dropped_blocks++;
     s->state = ADC_STREAM_FAULTED;
     board_adc_stream_stop_from_isr();
@@ -330,7 +481,26 @@ adc_stream_send_summary(struct adc_stream *s,
     uint32_t sum_lo = summary->sum;
     uint32_t sum_hi = summary->sum >> 32;
     uint32_t sequence = sub->sequence++;
-    if (sub->report_class == 1)
+    if (sub->report_class == 0) {
+        uint32_t deadline = 0;
+        uint8_t event = adc_safety_begin_report(
+            &sub->safety, sequence, last_clock, &deadline);
+        if (event) {
+            adc_stream_apply_safety(s, sub, event);
+            return;
+        }
+        sub->deadline_timer.waketime = deadline;
+        sub->deadline_armed = 1;
+        sched_add_timer(&sub->deadline_timer);
+        sendf("adc_stream_scheduled oid=%c sub=%c sequence=%u epoch=%u"
+              " first_clock=%u last_clock=%u uncertainty=%u status=%u"
+              " count=%hu min=%u max=%u sum_lo=%u sum_hi=%u shift=%c"
+              " deadline=%u",
+              s->oid, sub->id, sequence, s->epoch,
+              first_clock, last_clock, s->info.uncertainty_ticks, status,
+              summary->count, summary->minimum, summary->maximum,
+              sum_lo, sum_hi, sub->filter.config.shift, deadline);
+    } else if (sub->report_class == 1)
         sendf("adc_stream_prompt oid=%c sub=%c sequence=%u epoch=%u"
               " first_clock=%u last_clock=%u uncertainty=%u status=%u"
               " count=%hu min=%u max=%u sum_lo=%u sum_hi=%u shift=%c",
@@ -354,7 +524,6 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
     struct acq_block *b = &s->blocks[block_index];
     uint16_t generation;
     irqstatus_t flag = irq_save();
-    s->ready_mask &= ~(1u << block_index);
     int ret = acq_block_consume(b, &generation);
     irq_restore(flag);
     if (ret)
@@ -370,8 +539,22 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
         for (uint8_t i = 0; i < s->subscription_count; i++) {
             struct adc_stream_subscription *sub = &s->subscriptions[i];
             struct adc_filter_summary summary;
+            uint32_t filtered_value;
+            uint8_t filtered_ready;
             uint16_t sample = samples[scan * s->channel_count + sub->channel];
-            if (adc_filter_push(&sub->filter, sample, scan_index, &summary))
+            int summary_ready = adc_filter_push_ex(
+                &sub->filter, sample, scan_index, &summary,
+                &filtered_value, &filtered_ready);
+            if (filtered_ready) {
+                if (sub->local_trigger)
+                    trigger_analog_update(sub->local_trigger,
+                                          filtered_value);
+                uint8_t event = adc_safety_check_value(
+                    &sub->safety, filtered_value);
+                if (event)
+                    adc_stream_apply_safety(s, sub, event);
+            }
+            if (summary_ready)
                 adc_stream_send_summary(s, sub, &summary, b->status);
         }
     }
@@ -402,31 +585,63 @@ adc_stream_task(void)
     struct adc_stream *s = active_stream;
     if (!s)
         return;
-    // Preserve acquisition order if both halves became ready before the task
-    // ran. With two blocks, sequence parity identifies the older half.
-    uint8_t mask = s->ready_mask;
-    if (mask == 3) {
-        uint8_t first = s->blocks[0].sequence < s->blocks[1].sequence ? 0 : 1;
-        adc_stream_send_block(s, first);
-        adc_stream_send_block(s, first ^ 1);
-    } else if (mask) {
-        adc_stream_send_block(s, mask & 1 ? 0 : 1);
+    uint8_t block_index;
+    for (;;) {
+        irqstatus_t flag = irq_save();
+        int ret = acq_ring_pop(&s->ready_ring, &block_index);
+        irq_restore(flag);
+        if (ret)
+            break;
+        adc_stream_send_block(s, block_index);
     }
     if (s->state == ADC_STREAM_FAULTED)
         sendf("adc_stream_fault oid=%c status=%u dropped=%u sequence=%u",
               s->oid, s->fault_status, s->dropped_blocks, s->sequence);
+    if (s->safety_pending) {
+        s->safety_pending = 0;
+        sendf("adc_stream_safety oid=%c sub=%c event=%c action=%c"
+              " clock=%u status=%u count=%u",
+              s->oid, s->safety_sub, s->safety_event, s->safety_action,
+              s->safety_clock, s->fault_status, s->watchdog_events);
+    }
 }
 DECL_TASK(adc_stream_task);
+
+void
+command_adc_stream_ack(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    struct adc_stream_subscription *sub = adc_stream_find_subscription(
+        s, args[1]);
+    if (!sub || sub->report_class)
+        return;
+    irqstatus_t flag = irq_save();
+    if (adc_safety_ack(&sub->safety, args[2])) {
+        irq_restore(flag);
+        return;
+    }
+    if (sub->deadline_armed) {
+        sched_del_timer(&sub->deadline_timer);
+        sub->deadline_armed = 0;
+    }
+    irq_restore(flag);
+}
+DECL_COMMAND(command_adc_stream_ack,
+             "adc_stream_ack oid=%c sub=%c sequence=%u");
 
 void
 command_adc_stream_get_status(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
     sendf("adc_stream_status oid=%c state=%c class=%c channels=%c"
-          " block_values=%c epoch=%u sequence=%u dropped=%u status=%u",
+          " block_values=%c epoch=%u sequence=%u dropped=%u status=%u"
+          " ready_highwater=%c dma_errors=%u adc_errors=%u overruns=%u"
+          " telemetry_drops=%u watchdog_events=%u",
           s->oid, s->state, s->traffic_class, s->channel_count,
           s->block_values, s->epoch,
-          s->sequence, s->dropped_blocks, s->fault_status);
+          s->sequence, s->dropped_blocks, s->fault_status,
+          s->ready_ring.highwater, s->dma_errors, s->adc_errors,
+          s->overruns, s->telemetry_drops, s->watchdog_events);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_status, HF_IN_SHUTDOWN,
                    "adc_stream_get_status oid=%c");
@@ -444,7 +659,8 @@ command_adc_stream_get_capabilities(uint32_t *args)
           ADC_FILTER_MAX_OSR,
           ADC_STREAM_CAP_RAW_BLOCKS | ADC_STREAM_CAP_SW_BOXCAR
           | ADC_STREAM_CAP_INPUT_DECIMATION | ADC_STREAM_CAP_SUMMARIES
-          | ADC_STREAM_CAP_PROMPT_REPORT,
+          | ADC_STREAM_CAP_PROMPT_REPORT | ADC_STREAM_CAP_SCHEDULED_REPORT
+          | ADC_STREAM_CAP_LOCAL_SAFETY,
           pool.size, pool.used, pool.claims);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_capabilities, HF_IN_SHUTDOWN,
@@ -467,4 +683,5 @@ DECL_CONSTANT("ADC_STREAM_MAX_OSR", ADC_FILTER_MAX_OSR);
 DECL_CONSTANT("ADC_STREAM_CAPS",
               ADC_STREAM_CAP_RAW_BLOCKS | ADC_STREAM_CAP_SW_BOXCAR
               | ADC_STREAM_CAP_INPUT_DECIMATION | ADC_STREAM_CAP_SUMMARIES
-              | ADC_STREAM_CAP_PROMPT_REPORT);
+              | ADC_STREAM_CAP_PROMPT_REPORT | ADC_STREAM_CAP_SCHEDULED_REPORT
+              | ADC_STREAM_CAP_LOCAL_SAFETY);
