@@ -22,12 +22,13 @@ class FakePrinter:
 
 
 class FakeMCU:
-    def __init__(self, stream=True):
+    def __init__(self, stream=True, mode="off"):
         self.callbacks = []
         self.commands = []
         self.responses = []
         self.next_oid = 0
         self.constants = {"ADC_MAX": 4095}
+        self._adc_stream_mode = mode
         if stream:
             self.constants.update({
                 "ADC_STREAM_V1": 1, "ADC_STREAM_MAX_CHANNELS": 4,
@@ -125,8 +126,27 @@ def test_unmigrated_consumer_prevents_split_adc_ownership():
                for command in commands) == 2
 
 
+def test_auto_mode_migrates_heater_thresholds_to_local_shutdown():
+    fake = FakeMCU(mode="auto")
+    heater = MODULE.MCU_adc(fake, {"pin": "PA2"})
+    heater.setup_adc_sample(.300, .001, 8, minval=.1, maxval=.9,
+                            range_check_count=4)
+    status = MODULE.MCU_adc(fake, {"pin": "PA3"})
+    status.setup_adc_sample(.100, .001, 1)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    assert not any(command.startswith("config_analog_in")
+                   for command in commands)
+    assert any("sub=0 deadline_ticks=0 fail_action=3" in command
+               and "fault_count=4" in command for command in commands)
+    assert any("sub=1 deadline_ticks=0 fail_action=0" in command
+               for command in commands)
+    assert any("traffic_class=0" in command for command in commands)
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
     test_unmigrated_consumer_prevents_split_adc_ownership()
+    test_auto_mode_migrates_heater_thresholds_to_local_shutdown()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

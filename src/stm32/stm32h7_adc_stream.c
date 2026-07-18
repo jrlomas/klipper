@@ -37,11 +37,8 @@ adc_dma_arm(uint8_t block)
     adc_dma_disable();
     DMA1->LIFCR = ADC_DMA_CLEAR;
     uint16_t *destination = &stream_cfg.buffer[
-        block * ADC_STREAM_MAX_BLOCK_VALUES];
-    // Each block occupies exactly one aligned M7 cache line. No CPU writes are
-    // permitted while DMA owns it, so invalidating cannot discard user data.
-    SCB_InvalidateDCache_by_Addr(destination,
-                                ADC_STREAM_MAX_BLOCK_VALUES * sizeof(uint16_t));
+        block * stream_cfg.block_values];
+    // The shared arena is MPU-mapped non-cacheable before D-cache starts.
     DMA1_Stream0->PAR = (uint32_t)&ADC1->DR;
     DMA1_Stream0->M0AR = (uint32_t)destination;
     DMA1_Stream0->NDTR = stream_cfg.block_values;
@@ -56,10 +53,6 @@ DMA1_Stream0_IRQHandler(void)
     adc_dma_disable();
     DMA1->LIFCR = ADC_DMA_CLEAR;
     uint8_t completed = dma_block;
-    uint16_t *completed_data = &stream_cfg.buffer[
-        completed * ADC_STREAM_MAX_BLOCK_VALUES];
-    SCB_InvalidateDCache_by_Addr(completed_data,
-                                ADC_STREAM_MAX_BLOCK_VALUES * sizeof(uint16_t));
     if (ADC1->ISR & ADC_ISR_OVR) {
         ADC1->ISR = ADC_ISR_OVR;
         status |= ACQ_STATUS_OVERRUN;
@@ -130,6 +123,12 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     armcm_enable_irq(DMA1_Stream0_IRQHandler, DMA1_Stream0_IRQn, 1);
 
     ADC1->SQR1 = sequence;
+    ADC1->CFGR2 = cfg->hardware_oversample > 1
+        ? ADC_CFGR2_ROVSE
+          | ((uint32_t)(cfg->hardware_oversample - 1)
+             << ADC_CFGR2_OVSR_Pos)
+          | ((uint32_t)cfg->hardware_shift << ADC_CFGR2_OVSS_Pos)
+        : 0;
     ADC1->ISR = ADC_ISR_OVR | ADC_ISR_EOC | ADC_ISR_EOS;
     ADC1->CFGR = (ADC1->CFGR
                   & ~(ADC_CFGR_DMNGT | ADC_CFGR_EXTSEL | ADC_CFGR_EXTEN))
@@ -140,6 +139,15 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     info->period_denominator = 1;
     info->uncertainty_ticks = CONFIG_CLOCK_FREQ / 1000000u * 15u;
     info->status = ACQ_STATUS_INFERRED_TIME;
+    info->max_conversion_rate = 40000;
+    info->capabilities = ADC_BACKEND_CAP_HARDWARE_PACED
+                         | ADC_BACKEND_CAP_INFERRED_START
+                         | ADC_BACKEND_CAP_HW_OVERSAMPLE;
+    info->max_hardware_oversample = 256;
+    info->resolution_bits = 16;
+    info->adc_count = 1;
+    info->watchdog_count = 0;
+    info->timing_quality = 1;
 }
 
 void

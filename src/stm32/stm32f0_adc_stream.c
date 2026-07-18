@@ -13,32 +13,18 @@
 #include "sched.h" // sched_shutdown
 
 #define ADC_DMA_CCR (DMA_CCR_MINC | DMA_CCR_PSIZE_0 | DMA_CCR_MSIZE_0 \
-                     | DMA_CCR_TCIE | DMA_CCR_TEIE)
+                     | DMA_CCR_CIRC | DMA_CCR_HTIE | DMA_CCR_TCIE \
+                     | DMA_CCR_TEIE)
 #define ADC_DMA_FLAGS (DMA_IFCR_CGIF1 | DMA_IFCR_CTCIF1 \
                        | DMA_IFCR_CHTIF1 | DMA_IFCR_CTEIF1)
 
-static struct adc_stream_backend_config stream_cfg;
-static uint8_t dma_block;
 static uint8_t owns_tim3;
-
-static void
-adc_dma_arm(uint8_t block)
-{
-    DMA1_Channel1->CCR = 0;
-    DMA1->IFCR = ADC_DMA_FLAGS;
-    DMA1_Channel1->CPAR = (uint32_t)&ADC1->DR;
-    DMA1_Channel1->CMAR = (uint32_t)&stream_cfg.buffer[
-        block * ADC_STREAM_MAX_BLOCK_VALUES];
-    DMA1_Channel1->CNDTR = stream_cfg.block_values;
-    DMA1_Channel1->CCR = ADC_DMA_CCR | DMA_CCR_EN;
-}
 
 void
 DMA1_Channel1_IRQHandler(void)
 {
     uint32_t isr = DMA1->ISR;
     uint32_t status = 0;
-    DMA1_Channel1->CCR = 0;
     DMA1->IFCR = ADC_DMA_FLAGS;
     if (isr & DMA_ISR_TEIF1)
         status |= ACQ_STATUS_DMA_ERROR;
@@ -46,17 +32,28 @@ DMA1_Channel1_IRQHandler(void)
         ADC1->ISR = ADC_ISR_OVR;
         status |= ACQ_STATUS_OVERRUN;
     }
-    uint8_t completed = dma_block;
-    if (adc_stream_block_complete(completed, status))
+    if (status) {
+        DMA1_Channel1->CCR = 0;
+        adc_stream_backend_fault(status);
         return;
-    dma_block = completed ^ 1;
-    adc_dma_arm(dma_block);
+    }
+    // In circular mode HT owns the first half and TC owns the second.  The
+    // DMA immediately proceeds into the peer half; generic ownership stops
+    // the stream before wrap if the consumer did not return it in time.
+    if ((isr & DMA_ISR_HTIF1) && adc_stream_block_complete(0, 0))
+        return;
+    if (isr & DMA_ISR_TCIF1)
+        adc_stream_block_complete(1, 0);
 }
 
 void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+#if CONFIG_MACH_STM32F0
+    if (cfg->hardware_oversample != 1 || cfg->hardware_shift)
+        shutdown("STM32F0 ADC lacks hardware oversampling");
+#endif
     if (dma_claim(DMA_RESOURCE_ADC1, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_TIM3, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_DMA1_CHANNEL1, 0, cfg->owner)
@@ -111,12 +108,22 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     TIM3->EGR = TIM_EGR_UG;
     TIM3->SR = 0;
 
-    stream_cfg = *cfg;
-    dma_block = 0;
-    adc_dma_arm(0);
+    DMA1_Channel1->CCR = 0;
+    DMA1->IFCR = ADC_DMA_FLAGS;
+    DMA1_Channel1->CPAR = (uint32_t)&ADC1->DR;
+    DMA1_Channel1->CMAR = (uint32_t)cfg->buffer;
+    DMA1_Channel1->CNDTR = 2u * cfg->block_values;
+    DMA1_Channel1->CCR = ADC_DMA_CCR;
     armcm_enable_irq(DMA1_Channel1_IRQHandler, DMA1_Channel1_IRQn, 1);
 
 #if CONFIG_MACH_STM32G0
+    uint8_t osr_bits = 0;
+    for (uint16_t ratio = cfg->hardware_oversample; ratio > 2; ratio >>= 1)
+        osr_bits++;
+    ADC1->CFGR2 = cfg->hardware_oversample > 1
+        ? ADC_CFGR2_OVSE | ((uint32_t)osr_bits << ADC_CFGR2_OVSR_Pos)
+          | ((uint32_t)cfg->hardware_shift << ADC_CFGR2_OVSS_Pos)
+        : 0;
     ADC1->ISR = ADC_ISR_CCRDY;
     ADC1->CHSELR = channel_mask;
     while (!(ADC1->ISR & ADC_ISR_CCRDY))
@@ -136,11 +143,24 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     info->period_denominator = 1;
     info->uncertainty_ticks = CONFIG_CLOCK_FREQ / 1000000u * 5u;
     info->status = ACQ_STATUS_INFERRED_TIME;
+    info->max_conversion_rate = 80000;
+    info->capabilities = ADC_BACKEND_CAP_HARDWARE_PACED
+                         | ADC_BACKEND_CAP_INFERRED_START;
+    info->max_hardware_oversample = 1;
+#if CONFIG_MACH_STM32G0
+    info->capabilities |= ADC_BACKEND_CAP_HW_OVERSAMPLE;
+    info->max_hardware_oversample = 256;
+#endif
+    info->resolution_bits = 12;
+    info->adc_count = 1;
+    info->watchdog_count = 0;
+    info->timing_quality = 1;
 }
 
 void
 board_adc_stream_start(void)
 {
+    DMA1_Channel1->CCR |= DMA_CCR_EN;
     TIM3->CNT = 0;
     TIM3->SR = 0;
     ADC1->CR |= ADC_CR_ADSTART;
@@ -172,6 +192,7 @@ board_adc_stream_stop(void)
 void
 board_adc_stream_block_released(uint8_t block_index)
 {
-    // The single DMA channel is armed for the next block by its completion
-    // ISR; ownership is checked by the generic ping-pong layer before wrap.
+    (void)block_index;
+    // Circular DMA retains both half-buffer addresses; generic ownership
+    // checks prevent a hardware wrap from overwriting an unreturned half.
 }

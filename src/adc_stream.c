@@ -12,6 +12,7 @@
 #include "command.h" // DECL_COMMAND
 #include "compiler.h" // __aligned
 #include "generic/acq_block.h"
+#include "generic/acq_capture.h"
 #include "generic/acq_ring.h"
 #include "generic/adc_filter.h"
 #include "generic/adc_safety.h"
@@ -26,6 +27,12 @@ enum {
     ADC_STREAM_RUNNING,
     ADC_STREAM_FAULTED,
 };
+
+#if CONFIG_MACH_STM32G0 || CONFIG_MACH_STM32H7
+#define ADC_STREAM_TARGET_CAPS ADC_STREAM_CAP_HW_OVERSAMPLE
+#else
+#define ADC_STREAM_TARGET_CAPS 0
+#endif
 
 struct adc_stream;
 
@@ -46,6 +53,7 @@ struct adc_stream {
     struct timer start_timer;
     struct gpio_adc pins[ADC_STREAM_MAX_CHANNELS];
     struct acq_block blocks[ADC_STREAM_BLOCK_COUNT];
+    struct acq_capture capture;
     struct acq_ring ready_ring;
     struct adc_stream_backend_info info;
     struct adc_stream_subscription subscriptions[ADC_STREAM_MAX_SUBSCRIPTIONS];
@@ -68,6 +76,8 @@ struct adc_stream {
     uint8_t traffic_class;
     uint8_t oid;
     uint8_t raw_output;
+    uint16_t hardware_oversample;
+    uint8_t hardware_shift;
     uint8_t safety_pending;
     uint8_t safety_sub;
     uint8_t safety_event;
@@ -102,6 +112,7 @@ adc_stream_apply_safety(struct adc_stream *s,
     s->safety_action = sub->safety.config.fail_action;
     s->safety_clock = timer_read_time();
     sched_wake_task(&adc_stream_wake);
+    acq_capture_trigger(&s->capture, 0);
     switch (sub->safety.config.fail_action) {
     case ADC_SAFETY_HOLD:
         traj_local_hold_all();
@@ -153,6 +164,7 @@ command_config_adc_stream(uint32_t *args)
     s->oid = args[0];
     s->state = ADC_STREAM_STOPPED;
     s->raw_output = 1;
+    s->hardware_oversample = 1;
     s->start_timer.func = adc_stream_start_event;
     s->buffer = dma_pool_alloc(
         ADC_STREAM_BLOCK_COUNT * ADC_STREAM_MAX_BLOCK_VALUES
@@ -252,6 +264,31 @@ command_adc_stream_set_options(uint32_t *args)
 DECL_COMMAND(command_adc_stream_set_options,
              "adc_stream_set_options oid=%c raw_output=%c");
 
+void
+command_adc_stream_set_hardware_oversample(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    uint16_t ratio = args[1];
+    uint8_t shift = args[2];
+    if (s->state != ADC_STREAM_STOPPED || !ratio || ratio > 256
+        || ratio & (ratio - 1) || shift > 8)
+        shutdown("Invalid ADC hardware oversample configuration");
+    s->hardware_oversample = ratio;
+    s->hardware_shift = shift;
+}
+DECL_COMMAND(command_adc_stream_set_hardware_oversample,
+             "adc_stream_set_hardware_oversample oid=%c ratio=%hu shift=%c");
+
+void
+command_adc_stream_arm_capture(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    if (acq_capture_arm(&s->capture, args[1], args[2]))
+        shutdown("Invalid ADC fault capture window");
+}
+DECL_COMMAND(command_adc_stream_arm_capture,
+             "adc_stream_arm_capture oid=%c pre_blocks=%c post_blocks=%c");
+
 static void
 adc_stream_stop(struct adc_stream *s)
 {
@@ -320,18 +357,20 @@ command_adc_stream_start(uint32_t *args)
     s->raw_scan_count = 0;
     s->epoch++;
     for (uint8_t i = 0; i < ADC_STREAM_BLOCK_COUNT; i++) {
-        acq_block_init(&s->blocks[i],
-                       &s->buffer[i * ADC_STREAM_MAX_BLOCK_VALUES]);
+        acq_block_init(&s->blocks[i], &s->buffer[i * block_values]);
         acq_block_dma_take(&s->blocks[i]);
     }
     struct adc_stream_backend_config cfg = {
         .pins = s->pins,
         .buffer = s->buffer,
         .requested_period_ticks = period_ticks,
+        .hardware_oversample = s->hardware_oversample,
         .channel_count = s->channel_count,
         .block_values = block_values,
+        .hardware_shift = s->hardware_shift,
         .owner = s->oid,
     };
+    s->info = (struct adc_stream_backend_info) { };
     board_adc_stream_setup(&cfg, &s->info);
     if (!s->info.period_denominator || !s->info.period_numerator)
         shutdown("ADC stream backend rejected schedule");
@@ -519,6 +558,42 @@ adc_stream_send_summary(struct adc_stream *s,
 }
 
 static void
+adc_stream_send_raw(struct adc_stream *s, uint8_t prompt,
+                    uint32_t sequence, uint32_t epoch, uint32_t status,
+                    const uint8_t *data, uint8_t size)
+{
+    uint64_t scan_offset = (uint64_t)sequence
+        * (s->block_values / s->channel_count);
+    uint32_t first_clock = s->first_clock
+        + scan_offset * s->info.period_numerator
+          / s->info.period_denominator;
+    // Keep the variable payload bounded well below a 64-byte protocol frame.
+    // Static class ID plus sequence and byte offset make every chunk
+    // independently retryable and unambiguously reassemblable.
+    for (uint8_t offset = 0; offset < size; offset += 16) {
+        uint8_t chunk = size - offset;
+        if (chunk > 16)
+            chunk = 16;
+        if (prompt)
+            sendf("adc_stream_data_prompt oid=%c sequence=%u epoch=%u"
+                  " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
+                  " channels=%c status=%u offset=%c total=%c values=%*s",
+                  s->oid, sequence, epoch, first_clock,
+                  s->info.period_numerator, s->info.period_denominator,
+                  s->info.uncertainty_ticks, s->channel_count, status,
+                  offset, size, chunk, &data[offset]);
+        else
+            sendf("adc_stream_data_telemetry oid=%c sequence=%u epoch=%u"
+                  " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
+                  " channels=%c status=%u offset=%c total=%c values=%*s",
+                  s->oid, sequence, epoch, first_clock,
+                  s->info.period_numerator, s->info.period_denominator,
+                  s->info.uncertainty_ticks, s->channel_count, status,
+                  offset, size, chunk, &data[offset]);
+    }
+}
+
+static void
 adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
 {
     struct acq_block *b = &s->blocks[block_index];
@@ -528,6 +603,9 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
     irq_restore(flag);
     if (ret)
         return;
+
+    acq_capture_push(&s->capture, b->sequence, b->epoch, b->status,
+                     b->data, b->item_count * sizeof(uint16_t));
 
     if (b->status & ACQ_STATUS_DISCONTINUITY)
         for (uint8_t i = 0; i < s->subscription_count; i++)
@@ -561,14 +639,9 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
     s->raw_scan_count += scans;
 
     if (s->raw_output)
-        sendf("adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c"
-              " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
-              " channels=%c status=%u values=%*s",
-              s->oid, b->sequence, b->epoch, s->traffic_class,
-              b->first_machine_clock,
-              b->period_numerator, b->period_denominator,
-              b->uncertainty_ticks, s->channel_count, b->status,
-              b->item_count * sizeof(uint16_t), b->data);
+        adc_stream_send_raw(s, 0, b->sequence, b->epoch, b->status,
+                            (const uint8_t *)b->data,
+                            b->item_count * sizeof(uint16_t));
 
     flag = irq_save();
     if (!acq_block_release(b, generation)
@@ -594,9 +667,11 @@ adc_stream_task(void)
             break;
         adc_stream_send_block(s, block_index);
     }
-    if (s->state == ADC_STREAM_FAULTED)
+    if (s->state == ADC_STREAM_FAULTED) {
+        acq_capture_trigger(&s->capture, 1);
         sendf("adc_stream_fault oid=%c status=%u dropped=%u sequence=%u",
               s->oid, s->fault_status, s->dropped_blocks, s->sequence);
+    }
     if (s->safety_pending) {
         s->safety_pending = 0;
         sendf("adc_stream_safety oid=%c sub=%c event=%c action=%c"
@@ -604,6 +679,10 @@ adc_stream_task(void)
               s->oid, s->safety_sub, s->safety_event, s->safety_action,
               s->safety_clock, s->fault_status, s->watchdog_events);
     }
+    struct acq_capture_record record;
+    while (!acq_capture_pop(&s->capture, &record))
+        adc_stream_send_raw(s, 1, record.sequence, record.epoch,
+                            record.status, record.data, record.size);
 }
 DECL_TASK(adc_stream_task);
 
@@ -654,14 +733,20 @@ command_adc_stream_get_capabilities(uint32_t *args)
     dma_pool_get_status(&pool);
     sendf("adc_stream_capabilities oid=%c version=%c max_channels=%c"
           " max_subscriptions=%c max_osr=%hu caps=%u dma_pool=%hu"
-          " dma_used=%hu dma_claims=%c",
+          " dma_used=%hu dma_claims=%c backend_caps=%u max_rate=%u"
+          " max_hw_osr=%hu resolution=%c adc_count=%c watchdogs=%c"
+          " timing_quality=%c",
           s->oid, 1, ADC_STREAM_MAX_CHANNELS, ADC_STREAM_MAX_SUBSCRIPTIONS,
           ADC_FILTER_MAX_OSR,
           ADC_STREAM_CAP_RAW_BLOCKS | ADC_STREAM_CAP_SW_BOXCAR
           | ADC_STREAM_CAP_INPUT_DECIMATION | ADC_STREAM_CAP_SUMMARIES
           | ADC_STREAM_CAP_PROMPT_REPORT | ADC_STREAM_CAP_SCHEDULED_REPORT
-          | ADC_STREAM_CAP_LOCAL_SAFETY,
-          pool.size, pool.used, pool.claims);
+          | ADC_STREAM_CAP_LOCAL_SAFETY | ADC_STREAM_CAP_FAULT_CAPTURE
+          | ADC_STREAM_TARGET_CAPS,
+          pool.size, pool.used, pool.claims, s->info.capabilities,
+          s->info.max_conversion_rate, s->info.max_hardware_oversample,
+          s->info.resolution_bits, s->info.adc_count,
+          s->info.watchdog_count, s->info.timing_quality);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_capabilities, HF_IN_SHUTDOWN,
                    "adc_stream_get_capabilities oid=%c");
@@ -684,4 +769,5 @@ DECL_CONSTANT("ADC_STREAM_CAPS",
               ADC_STREAM_CAP_RAW_BLOCKS | ADC_STREAM_CAP_SW_BOXCAR
               | ADC_STREAM_CAP_INPUT_DECIMATION | ADC_STREAM_CAP_SUMMARIES
               | ADC_STREAM_CAP_PROMPT_REPORT | ADC_STREAM_CAP_SCHEDULED_REPORT
-              | ADC_STREAM_CAP_LOCAL_SAFETY);
+              | ADC_STREAM_CAP_LOCAL_SAFETY
+              | ADC_STREAM_CAP_FAULT_CAPTURE | ADC_STREAM_TARGET_CAPS);

@@ -13,6 +13,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_adc/adc_continuous.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "soc/soc_caps.h"
 #include "autoconf.h" // CONFIG_CLOCK_FREQ
 #include "adc_stream.h"
@@ -42,6 +44,8 @@ static uint8_t run_requested;
 static uint8_t stream_claimed;
 static TaskHandle_t stream_task_handle;
 static volatile uint8_t driver_overflow;
+static volatile uint8_t calibration_scheme;
+static volatile uint16_t calibration_zero_mv, calibration_full_mv;
 
 static int8_t
 pin_to_channel(uint32_t pin)
@@ -72,6 +76,8 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (cfg->hardware_oversample != 1 || cfg->hardware_shift)
+        shutdown("ESP32 ADC uses software oversampling");
     if (dma_claim(DMA_RESOURCE_ESP32_ADC1, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_ESP32_I2S0, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_ESP32_ADC_POOL, 0, cfg->owner))
@@ -122,6 +128,15 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     info->uncertainty_ticks = timer_from_us(2000)
                               + cfg->requested_period_ticks / 2;
     info->status = ACQ_STATUS_INFERRED_TIME;
+    info->max_conversion_rate = ESP32_ADC_MAX_CONVERSIONS;
+    info->capabilities = ADC_BACKEND_CAP_INFERRED_START
+                         | ADC_BACKEND_CAP_SAMPLE_TAGS
+                         | ADC_BACKEND_CAP_CALIBRATION;
+    info->max_hardware_oversample = 1;
+    info->resolution_bits = SOC_ADC_DIGI_MAX_BITWIDTH;
+    info->adc_count = 1;
+    info->watchdog_count = 0;
+    info->timing_quality = 0;
 }
 
 void
@@ -176,8 +191,26 @@ pool_overflow_callback(adc_continuous_handle_t handle,
 static int
 start_driver(const struct adc_stream_backend_config *cfg,
              const uint8_t *channels, uint32_t conversion_hz,
-             adc_continuous_handle_t *handle)
+             adc_continuous_handle_t *handle, adc_cali_handle_t *cali)
 {
+    adc_cali_line_fitting_config_t cal_cfg = {
+        .unit_id = ADC_UNIT_1,
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = SOC_ADC_DIGI_MAX_BITWIDTH,
+        .default_vref = 1100,
+    };
+    int zero_mv = 0, full_mv = 0;
+    if (adc_cali_create_scheme_line_fitting(&cal_cfg, cali) == ESP_OK
+        && adc_cali_raw_to_voltage(*cali, 0, &zero_mv) == ESP_OK
+        && adc_cali_raw_to_voltage(*cali, (1 << SOC_ADC_DIGI_MAX_BITWIDTH) - 1,
+                                   &full_mv) == ESP_OK) {
+        __atomic_store_n(&calibration_zero_mv, zero_mv, __ATOMIC_RELEASE);
+        __atomic_store_n(&calibration_full_mv, full_mv, __ATOMIC_RELEASE);
+        __atomic_store_n(&calibration_scheme, 1, __ATOMIC_RELEASE);
+    } else if (*cali) {
+        adc_cali_delete_scheme_line_fitting(*cali);
+        *cali = NULL;
+    }
     adc_continuous_handle_cfg_t handle_cfg = {
         .max_store_buf_size = ESP32_ADC_POOL_BYTES,
         .conv_frame_size = ESP32_ADC_FRAME_BYTES,
@@ -209,6 +242,10 @@ start_driver(const struct adc_stream_backend_config *cfg,
         || adc_continuous_start(*handle) != ESP_OK) {
         adc_continuous_deinit(*handle);
         *handle = NULL;
+        if (*cali) {
+            adc_cali_delete_scheme_line_fitting(*cali);
+            *cali = NULL;
+        }
         return -1;
     }
     return 0;
@@ -246,8 +283,9 @@ adc_stream_task(void *arg)
             continue;
 
         adc_continuous_handle_t handle = NULL;
+        adc_cali_handle_t cali = NULL;
         driver_overflow = 0;
-        if (start_driver(&cfg, channels, conversion_hz, &handle)) {
+        if (start_driver(&cfg, channels, conversion_hz, &handle, &cali)) {
             publish_fault(ACQ_STATUS_PERIPHERAL_ERROR);
             continue;
         }
@@ -326,8 +364,7 @@ adc_stream_task(void *arg)
                 if (__atomic_load_n(&setup_sequence, __ATOMIC_ACQUIRE)
                     != local_sequence)
                     goto stop;
-                memcpy(&cfg.buffer[
-                           block_index * ADC_STREAM_MAX_BLOCK_VALUES],
+                memcpy(&cfg.buffer[block_index * cfg.block_values],
                        local_block, block_pos * sizeof(uint16_t));
                 ready_sequence[block_index] = block_sequence++;
                 __atomic_fetch_or(&ready_mask, 1u << block_index,
@@ -343,8 +380,22 @@ adc_stream_task(void *arg)
 stop:
         adc_continuous_stop(handle);
         adc_continuous_deinit(handle);
+        if (cali)
+            adc_cali_delete_scheme_line_fitting(cali);
     }
 }
+
+void
+command_adc_stream_get_calibration(uint32_t *args)
+{
+    sendf("adc_stream_calibration oid=%c scheme=%c zero_mv=%hu"
+          " full_mv=%hu attenuation=%c",
+          args[0], __atomic_load_n(&calibration_scheme, __ATOMIC_ACQUIRE),
+          __atomic_load_n(&calibration_zero_mv, __ATOMIC_ACQUIRE),
+          __atomic_load_n(&calibration_full_mv, __ATOMIC_ACQUIRE), 12);
+}
+DECL_COMMAND_FLAGS(command_adc_stream_get_calibration, HF_IN_SHUTDOWN,
+                   "adc_stream_get_calibration oid=%c");
 
 void
 esp32_adc_stream_poll(void)

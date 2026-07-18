@@ -43,6 +43,8 @@ def make_stream(max_pending=16):
     stream.sample_rate = 1000.
     stream.lock = threading.Lock()
     stream.pending = []
+    stream.pending_captures = []
+    stream.raw_chunks = {}
     stream.pending_summaries = []
     stream.last_values = [None, None]
     stream.max_pending = max_pending
@@ -60,6 +62,7 @@ def make_stream(max_pending=16):
     stream.oversamples = [4, 2]
     stream.filter_shifts = [2, 1]
     stream.capabilities = {}
+    stream.calibration = {"scheme": 0}
     stream.last_status = stream.last_uncertainty = 0
     stream.state = "armed"
     return stream
@@ -71,7 +74,8 @@ def message(sequence, values, first_clock=1_000_000, period_num=1000):
         "channels": 2, "values": payload, "epoch": 7,
         "sequence": sequence, "first_clock": first_clock,
         "period_num": period_num, "period_den": 1,
-        "uncertainty": 5, "status": 0,
+        "uncertainty": 5, "status": 0, "offset": 0,
+        "total": len(payload),
     }
 
 
@@ -92,6 +96,22 @@ def test_sequence_gaps_and_host_queue_drops_are_explicit():
     assert stream.sequence_gaps == 2
     assert stream.host_drops == 1
     assert len(stream.pending) == 3
+
+
+def test_raw_chunks_reassemble_only_when_contiguous():
+    stream = make_stream()
+    full = message(0, [0, 4095, 2048, 1024])
+    payload = full["values"]
+    second = dict(full, values=payload[4:], offset=4)
+    first = dict(full, values=payload[:4], offset=0)
+    stream._handle_data(second)
+    assert not stream.pending
+    stream._handle_data(first)
+    assert len(stream.pending) == 2
+    assert not stream.raw_chunks
+    capture = message(1, [1, 2, 3, 4])
+    stream._handle_capture_data(capture)
+    assert len(stream.pending_captures) == 2
 
 
 def test_summary_decode_uses_filter_scale_and_tracks_gaps():
@@ -119,11 +139,18 @@ def test_capability_contract_is_exposed():
     stream._handle_capabilities({
         "version": 1, "max_channels": 4, "max_subscriptions": 8,
         "max_osr": 256, "caps": 31, "dma_pool": 512,
-        "dma_used": 64, "dma_claims": 3,
+        "dma_used": 64, "dma_claims": 3, "backend_caps": 5,
+        "max_rate": 500000, "max_hw_osr": 1, "resolution": 12,
+        "adc_count": 1, "watchdogs": 0, "timing_quality": 0,
     })
     assert stream.capabilities["version"] == 1
     assert stream.capabilities["caps"] == 31
     assert stream.capabilities["dma_used"] == 64
+    stream._handle_calibration({
+        "scheme": 1, "zero_mv": 80, "full_mv": 3100,
+        "attenuation": 12,
+    })
+    assert stream.calibration["full_mv"] == 3100
 
 
 def test_status_exposes_ring_and_error_counters():
@@ -168,6 +195,7 @@ def test_safety_event_is_observable():
 if __name__ == "__main__":
     test_interleaved_scans_get_scan_period_timestamps()
     test_sequence_gaps_and_host_queue_drops_are_explicit()
+    test_raw_chunks_reassemble_only_when_contiguous()
     test_summary_decode_uses_filter_scale_and_tracks_gaps()
     test_capability_contract_is_exposed()
     test_status_exposes_ring_and_error_counters()

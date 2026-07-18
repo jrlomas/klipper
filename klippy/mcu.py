@@ -769,6 +769,8 @@ class MCU_adc:
         if all_adcs is None:
             all_adcs = self._mcu._helix_all_adcs = []
         all_adcs.append(self)
+        if getattr(self._mcu, "_adc_stream_mode", "off") != "off":
+            self.setup_adc_stream(report_class=2)
     def get_mcu(self):
         return self._mcu
     def setup_adc_sample(self, report_time, sample_time=0., sample_count=1,
@@ -887,6 +889,10 @@ class MCUADCStreamManager:
         if adc not in self._adcs:
             self._adcs.append(adc)
     def _fallback(self, reason):
+        if getattr(self._mcu, "_adc_stream_mode", "off") == "force":
+            raise self._mcu.get_printer().config_error(
+                "MCU '%s' ADC DMA adapter required but unavailable: %s"
+                % (self._mcu.get_name(), reason))
         logging.info("MCU '%s' ADC DMA adapter disabled: %s; using legacy ADC",
                      self._mcu.get_name(), reason)
         for adc in self._adcs:
@@ -906,6 +912,9 @@ class MCUADCStreamManager:
         subscribe_format = (
             "adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu"
             " osr=%hu shift=%c report_div=%hu report_class=%c")
+        safety_format = (
+            "adc_stream_set_safety oid=%c sub=%c deadline_ticks=%u"
+            " fail_action=%c low=%u high=%u fault_count=%c trigger_oid=%c")
         if (self._mcu.get_constants().get("ADC_STREAM_V1") != 1
                 or self._mcu.try_lookup_command(subscribe_format) is None):
             self._fallback("firmware does not advertise ADC_STREAM_V1")
@@ -920,11 +929,14 @@ class MCUADCStreamManager:
         if any(not adc._sample_count for adc in self._adcs):
             self._fallback("consumer has no sampling schedule")
             return
-        if any(adc._batch_num != 1 or adc._range_check_count
-               or adc._min_sample > 0. or adc._max_sample < 1.
-               for adc in self._adcs):
+        if any(adc._batch_num != 1 for adc in self._adcs):
             self._fallback(
-                "consumer requires unsupported legacy batch or range semantics")
+                "consumer requires unsupported legacy batch semantics")
+            return
+        has_safety = any(adc._range_check_count for adc in self._adcs)
+        if (has_safety
+                and self._mcu.try_lookup_command(safety_format) is None):
+            self._fallback("firmware lacks local ADC threshold safety")
             return
         sample_times = [adc._sample_time for adc in self._adcs]
         if any(value <= 0. for value in sample_times):
@@ -950,9 +962,14 @@ class MCUADCStreamManager:
                 self._fallback("report decimation exceeds firmware limit")
                 return
             actual_report = filtered_period * report_div
-            if abs(actual_report - adc._report_time) > max(
-                    1.e-9, adc._report_time * 1.e-6):
-                self._fallback("report periods are not integer-compatible")
+            # Legacy ADC reports are commonly specified as a rest interval
+            # that is not an integer multiple of the sample burst (for
+            # example 8x1ms every 300ms).  The merged engine is continuous;
+            # choose the nearest complete filtered result and bound the
+            # change to one result period instead of silently falling back to
+            # per-sample polling.
+            if abs(actual_report - adc._report_time) > filtered_period:
+                self._fallback("report period quantization exceeds one result")
                 return
             schedules.append((input_div, osr, report_div))
 
@@ -984,15 +1001,31 @@ class MCUADCStreamManager:
                 " input_div=%d osr=%d shift=0 report_div=%d report_class=%d"
                 % (self._oid, sub, sub, input_div, osr, report_div,
                    adc._adc_stream_class))
+            adc_max = adc._sample_count * int(
+                self._mcu.get_constants().get("ADC_MAX", 4095))
+            if adc._range_check_count:
+                low = max(0, min(0xffffffff,
+                    int(adc._min_sample * adc_max)))
+                high = max(0, min(0xffffffff,
+                    int(math.ceil(adc._max_sample * adc_max))))
+                action, fault_count = 3, adc._range_check_count
+            else:
+                low, high, action, fault_count = 0, 0xffffffff, 0, 0
+            self._mcu.add_config_cmd(
+                "adc_stream_set_safety oid=%d sub=%d deadline_ticks=0"
+                " fail_action=%d low=%d high=%d fault_count=%d"
+                " trigger_oid=255" % (
+                    self._oid, sub, action, low, high, fault_count))
         self._mcu.add_config_cmd(
             "adc_stream_set_options oid=%d raw_output=0" % (self._oid,))
         start_clock = self._mcu.get_query_slot(self._oid)
         period_ticks = max(1, self._mcu.seconds_to_clock(base_time))
         self._mcu.add_config_cmd(
             "adc_stream_start oid=%d clock=%d period_ticks=%d"
-            " block_values=%d traffic_class=2" % (
+            " block_values=%d traffic_class=%d" % (
                 self._oid, start_clock, period_ticks,
-                block_scans * len(self._adcs)), is_init=True)
+                block_scans * len(self._adcs), 0 if has_safety else 2),
+            is_init=True)
         for message in ("adc_stream_prompt ", "adc_stream_telemetry "):
             self._mcu.register_serial_response(
                 self._handle_summary, message + ADC_STREAM_SUMMARY_FORMAT,
@@ -1867,6 +1900,12 @@ class MCU:
         if self._hw_endstop_trigger and self._hw_endstop_observer:
             raise config.error("hardware_endstop_observer requires"
                                " hardware_endstop_trigger: False")
+        # Capability-gated migration of legacy MCU_adc clients onto the
+        # merged DMA engine.  Auto falls back atomically; force is useful for
+        # qualification because it makes any incompatibility explicit.
+        self._adc_stream_mode = config.getchoice(
+            'adc_stream_mode', {'off': 'off', 'auto': 'auto',
+                                'force': 'force'}, 'auto')
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():

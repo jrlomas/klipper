@@ -41,6 +41,13 @@ class ADCStream:
         if len(self.channel_names) != len(self.pins):
             raise config.error("channel_names must match the number of pins")
         self.sample_rate = config.getfloat("sample_rate", 1000., above=0.)
+        self.hardware_oversample = config.getint(
+            "hardware_oversample", 1, minval=1, maxval=256)
+        if self.hardware_oversample & (self.hardware_oversample - 1):
+            raise config.error("hardware_oversample must be a power of two")
+        default_hw_shift = self.hardware_oversample.bit_length() - 1
+        self.hardware_shift = config.getint(
+            "hardware_shift", default_hw_shift, minval=0, maxval=8)
         max_scans = 16 // len(self.pins)
         self.block_scans = config.getint(
             "block_scans", max_scans, minval=1, maxval=max_scans)
@@ -74,6 +81,13 @@ class ADCStream:
             raise config.error("report_div values must be between 1 and 4096")
         self.summaries_enabled = config.getboolean("summaries", True)
         self.raw_output = config.getboolean("raw_output", True)
+        self.capture_pre_blocks = config.getint(
+            "capture_pre_blocks", 0, minval=0, maxval=7)
+        self.capture_post_blocks = config.getint(
+            "capture_post_blocks", 0, minval=0, maxval=7)
+        if self.capture_pre_blocks + self.capture_post_blocks > 7:
+            raise config.error(
+                "capture_pre_blocks + capture_post_blocks must be <= 7")
         if not self.summaries_enabled and not self.raw_output:
             raise config.error("adc_stream must enable summaries or raw_output")
         default_class = ("scheduled" if self.traffic_class == 0 else
@@ -113,6 +127,8 @@ class ADCStream:
         self.start_cmd = self.stop_cmd = self.query_cmd = None
         self.lock = threading.Lock()
         self.pending = []
+        self.pending_captures = []
+        self.raw_chunks = {}
         self.pending_summaries = []
         self.last_values = [None] * len(self.pins)
         self.state = "configuring"
@@ -127,6 +143,7 @@ class ADCStream:
         self.summary_gaps = 0
         self.last_status = self.last_uncertainty = 0
         self.capabilities = {}
+        self.calibration = {"scheme": 0}
         self.mcu.register_config_callback(self._build_config)
 
         self.batch_helper = bulk_sensor.BatchBulkHelper(
@@ -145,6 +162,9 @@ class ADCStream:
         gcode.register_mux_command(
             "ADC_STREAM_STATUS", "SENSOR", self.name,
             self.cmd_ADC_STREAM_STATUS, desc=self.cmd_ADC_STREAM_STATUS_help)
+        gcode.register_mux_command(
+            "ADC_STREAM_CAPTURE", "SENSOR", self.name,
+            self.cmd_ADC_STREAM_CAPTURE, desc=self.cmd_ADC_STREAM_CAPTURE_help)
 
     def _build_config(self):
         if self.mcu.try_lookup_command("config_adc_stream oid=%c") is None:
@@ -152,9 +172,19 @@ class ADCStream:
                 "MCU for adc_stream '%s' lacks DMA ADC stream support"
                 % (self.name,))
         self.adc_max = float(self.mcu.get_constants().get("ADC_MAX", 4095))
+        caps = self.mcu.get_constants().get("ADC_STREAM_CAPS", 0)
+        if self.hardware_oversample > 1 and not caps & (1 << 8):
+            raise self.printer.config_error(
+                "MCU for adc_stream '%s' lacks hardware oversampling"
+                % (self.name,))
+        self.adc_max *= self.hardware_oversample / float(
+            1 << self.hardware_shift)
         self.period_ticks = max(
             1, self.mcu.seconds_to_clock(1. / self.sample_rate))
         self.mcu.add_config_cmd("config_adc_stream oid=%d" % (self.oid,))
+        self.mcu.add_config_cmd(
+            "adc_stream_set_hardware_oversample oid=%d ratio=%d shift=%d"
+            % (self.oid, self.hardware_oversample, self.hardware_shift))
         for pin in self.pins:
             self.mcu.add_config_cmd(
                 "adc_stream_add_channel oid=%d pin=%s" % (self.oid, pin))
@@ -182,6 +212,11 @@ class ADCStream:
         self.mcu.add_config_cmd(
             "adc_stream_set_options oid=%d raw_output=%d"
             % (self.oid, self.raw_output))
+        if self.capture_pre_blocks or self.capture_post_blocks:
+            self.mcu.add_config_cmd(
+                "adc_stream_arm_capture oid=%d pre_blocks=%d post_blocks=%d"
+                % (self.oid, self.capture_pre_blocks,
+                   self.capture_post_blocks))
         start_clock = self.mcu.get_query_slot(self.oid)
         block_values = self.block_scans * len(self.pins)
         self.mcu.add_config_cmd(
@@ -199,14 +234,29 @@ class ADCStream:
             "adc_stream_get_status oid=%c", cq=cq)
         self.capabilities_cmd = self.mcu.lookup_command(
             "adc_stream_get_capabilities oid=%c", cq=cq)
+        self.calibration_cmd = None
+        cal_format = "adc_stream_get_calibration oid=%c"
+        if self.mcu.try_lookup_command(cal_format) is not None:
+            self.calibration_cmd = self.mcu.lookup_command(cal_format, cq=cq)
+            self.mcu.register_serial_response(
+                self._handle_calibration,
+                "adc_stream_calibration oid=%c scheme=%c zero_mv=%hu"
+                " full_mv=%hu attenuation=%c", self.oid)
+        self.capture_cmd = self.mcu.lookup_command(
+            "adc_stream_arm_capture oid=%c pre_blocks=%c post_blocks=%c",
+            cq=cq)
         self.ack_cmd = self.mcu.lookup_command(
             "adc_stream_ack oid=%c sub=%c sequence=%u", cq=cq)
         data_format = (
-            "adc_stream_data_telemetry oid=%c sequence=%u epoch=%u class=%c"
+            "adc_stream_data_telemetry oid=%c sequence=%u epoch=%u"
             " first_clock=%u period_num=%u period_den=%u uncertainty=%u"
-            " channels=%c status=%u values=%*s")
+            " channels=%c status=%u offset=%c total=%c values=%*s")
         self.mcu.register_serial_response(
             self._handle_data, data_format, self.oid)
+        self.mcu.register_serial_response(
+            self._handle_capture_data, data_format.replace(
+                "adc_stream_data_telemetry", "adc_stream_data_prompt"),
+            self.oid)
         self.mcu.register_serial_response(
             self._handle_fault,
             "adc_stream_fault oid=%c status=%u dropped=%u sequence=%u",
@@ -236,12 +286,41 @@ class ADCStream:
             self._handle_capabilities,
             "adc_stream_capabilities oid=%c version=%c max_channels=%c"
             " max_subscriptions=%c max_osr=%hu caps=%u dma_pool=%hu"
-            " dma_used=%hu dma_claims=%c", self.oid)
+            " dma_used=%hu dma_claims=%c backend_caps=%u max_rate=%u"
+            " max_hw_osr=%hu resolution=%c adc_count=%c watchdogs=%c"
+            " timing_quality=%c", self.oid)
         self.state = "armed"
 
-    def _handle_data(self, params):
+    def _handle_capture_data(self, params):
+        self._handle_data(params, capture=True)
+
+    def _handle_data(self, params, capture=False):
         channels = params["channels"]
         payload = bytes(params["values"])
+        offset, total = params["offset"], params["total"]
+        key = (capture, params["epoch"], params["sequence"])
+        if (not total or total > 2 * 16 or offset + len(payload) > total
+                or offset % 2 or len(payload) % 2):
+            logging.warning("adc_stream %s received malformed raw chunk",
+                            self.name)
+            self.last_status |= 1 << 3
+            return
+        chunks = self.raw_chunks.setdefault(key, {})
+        chunks[offset] = payload
+        cursor, assembled = 0, bytearray()
+        for chunk_offset, chunk in sorted(chunks.items()):
+            if chunk_offset != cursor:
+                return
+            assembled.extend(chunk)
+            cursor += len(chunk)
+        if cursor != total:
+            if len(self.raw_chunks) > 16:
+                oldest = next(iter(self.raw_chunks))
+                del self.raw_chunks[oldest]
+                self.host_drops += 1
+            return
+        del self.raw_chunks[key]
+        payload = bytes(assembled)
         if (channels != len(self.pins) or not channels
                 or len(payload) % (2 * channels)):
             logging.warning("adc_stream %s received malformed block", self.name)
@@ -267,12 +346,13 @@ class ADCStream:
             values = raw[offset:offset + channels]
             samples.append([ptime] + [value / self.adc_max for value in values])
         with self.lock:
-            room = self.max_pending - len(self.pending)
+            destination = self.pending_captures if capture else self.pending
+            room = self.max_pending - len(destination)
             if room < len(samples):
                 drop = len(samples) - max(0, room)
                 self.host_drops += drop
                 del samples[:drop]
-            self.pending.extend(samples)
+            destination.extend(samples)
             if raw:
                 self.last_values = [v / self.adc_max for v in raw[-channels:]]
             self.last_status = params["status"]
@@ -340,7 +420,14 @@ class ADCStream:
                 key: params[key] for key in (
                     "version", "max_channels", "max_subscriptions",
                     "max_osr", "caps", "dma_pool", "dma_used",
-                    "dma_claims")}
+                    "dma_claims", "backend_caps", "max_rate",
+                    "max_hw_osr", "resolution", "adc_count",
+                    "watchdogs", "timing_quality")}
+
+    def _handle_calibration(self, params):
+        with self.lock:
+            self.calibration = {key: params[key] for key in (
+                "scheme", "zero_mv", "full_mv", "attenuation")}
 
     def _handle_fault(self, params):
         with self.lock:
@@ -363,9 +450,11 @@ class ADCStream:
     def _process_batch(self, eventtime):
         with self.lock:
             data, self.pending = self.pending, []
+            captures, self.pending_captures = self.pending_captures, []
             summaries, self.pending_summaries = self.pending_summaries, []
             result = {
                 "data": data,
+                "captures": captures,
                 "summaries": summaries,
                 "state": self.state,
                 "epoch": self.epoch,
@@ -385,11 +474,20 @@ class ADCStream:
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
                 "capabilities": dict(self.capabilities),
+                "calibration": dict(self.calibration),
             }
         return result
 
     def get_status(self, eventtime):
         with self.lock:
+            voltages = None
+            if self.calibration.get("scheme"):
+                zero = self.calibration["zero_mv"] / 1000.
+                span = (self.calibration["full_mv"]
+                        - self.calibration["zero_mv"]) / 1000.
+                voltages = dict(zip(self.channel_names, [
+                    None if value is None else zero + value * span
+                    for value in self.last_values]))
             return {
                 "state": self.state,
                 "sample_rate": self.sample_rate,
@@ -411,6 +509,8 @@ class ADCStream:
                 "status": self.last_status,
                 "uncertainty": self.last_uncertainty,
                 "capabilities": dict(self.capabilities),
+                "calibration": dict(self.calibration),
+                "voltages": voltages,
             }
 
     def _start(self):
@@ -439,6 +539,8 @@ class ADCStream:
         if self.query_cmd is not None and not self.mcu.is_fileoutput():
             self.query_cmd.send([self.oid])
             self.capabilities_cmd.send([self.oid])
+            if self.calibration_cmd is not None:
+                self.calibration_cmd.send([self.oid])
         status = self.get_status(self.printer.get_reactor().monotonic())
         gcmd.respond_info(
             "adc_stream %s: state=%s rate=%.3fHz epoch=%s sequence=%s"
@@ -447,6 +549,17 @@ class ADCStream:
                status["epoch"], status["sequence"], status["sequence_gaps"],
                status["summary_gaps"],
                status["host_drops"], status["mcu_drops"], status["status"]))
+
+    cmd_ADC_STREAM_CAPTURE_help = "Arm bounded pre/post ADC fault capture"
+    def cmd_ADC_STREAM_CAPTURE(self, gcmd):
+        pre = gcmd.get_int("PRE", self.capture_pre_blocks,
+                           minval=0, maxval=7)
+        post = gcmd.get_int("POST", self.capture_post_blocks,
+                            minval=0, maxval=7)
+        if pre + post > 7:
+            raise gcmd.error("PRE + POST must be <= 7")
+        if self.capture_cmd is not None and not self.mcu.is_fileoutput():
+            self.capture_cmd.send([self.oid, pre, post])
 
 
 def load_config_prefix(config):

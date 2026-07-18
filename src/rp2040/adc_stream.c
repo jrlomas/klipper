@@ -33,7 +33,7 @@ adc_dma_rearm(uint8_t block)
     dma_channel_hw_t *dma = &dma_hw->ch[channel];
     dma->read_addr = (uint32_t)&adc_hw->fifo;
     dma->write_addr = (uint32_t)&stream_cfg.buffer[
-        block * ADC_STREAM_MAX_BLOCK_VALUES];
+        block * stream_cfg.block_values];
     dma->transfer_count = stream_cfg.block_values;
     // AL1_CTRL is a non-triggering alias. Keep the channel armed until the
     // peer's CHAIN_TO event starts it.
@@ -67,6 +67,8 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (cfg->hardware_oversample != 1 || cfg->hardware_shift)
+        shutdown("RP2040 ADC lacks hardware oversampling");
     if (dma_claim(DMA_RESOURCE_RP2040_ADC, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_RP2040_DMA10, DREQ_ADC, cfg->owner)
         || dma_claim(DMA_RESOURCE_RP2040_DMA11, DREQ_ADC, cfg->owner))
@@ -134,6 +136,14 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     info->period_denominator = 1024; // 256 fractional steps * 4 ADC clocks/tick
     info->uncertainty_ticks = 24; // conversion aperture/start inferred, <=2us
     info->status = ACQ_STATUS_INFERRED_TIME;
+    info->max_conversion_rate = 500000;
+    info->capabilities = ADC_BACKEND_CAP_HARDWARE_PACED
+                         | ADC_BACKEND_CAP_INFERRED_START;
+    info->max_hardware_oversample = 1;
+    info->resolution_bits = 12;
+    info->adc_count = 1;
+    info->watchdog_count = 0;
+    info->timing_quality = 0;
 }
 
 void

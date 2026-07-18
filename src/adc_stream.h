@@ -17,6 +17,18 @@ enum adc_stream_capability {
     ADC_STREAM_CAP_PROMPT_REPORT = 1u << 4,
     ADC_STREAM_CAP_SCHEDULED_REPORT = 1u << 5,
     ADC_STREAM_CAP_LOCAL_SAFETY = 1u << 6,
+    ADC_STREAM_CAP_FAULT_CAPTURE = 1u << 7,
+    ADC_STREAM_CAP_HW_OVERSAMPLE = 1u << 8,
+};
+
+enum adc_stream_backend_capability {
+    ADC_BACKEND_CAP_HARDWARE_PACED = 1u << 0,
+    ADC_BACKEND_CAP_INFERRED_START = 1u << 1,
+    ADC_BACKEND_CAP_NATIVE_DBM = 1u << 2,
+    ADC_BACKEND_CAP_HW_OVERSAMPLE = 1u << 3,
+    ADC_BACKEND_CAP_SAMPLE_TAGS = 1u << 4,
+    ADC_BACKEND_CAP_CALIBRATION = 1u << 5,
+    ADC_BACKEND_CAP_WATCHDOG_WITH_DMA = 1u << 6,
 };
 
 struct adc_stream_backend_config {
@@ -26,8 +38,10 @@ struct adc_stream_backend_config {
     // interleaved in channel order and block_values is an exact multiple of
     // channel_count.
     uint32_t requested_period_ticks;
+    uint16_t hardware_oversample;
     uint8_t channel_count;
     uint8_t block_values;
+    uint8_t hardware_shift;
     uint8_t owner;
 };
 
@@ -38,6 +52,15 @@ struct adc_stream_backend_info {
     uint32_t period_denominator;
     uint32_t uncertainty_ticks;
     uint32_t status;
+    uint32_t max_conversion_rate;
+    uint32_t capabilities;
+    uint16_t max_hardware_oversample;
+    uint8_t resolution_bits;
+    uint8_t adc_count;
+    uint8_t watchdog_count;
+    // 0=inferred period/phase, 1=hardware-paced period with inferred start,
+    // 2=hardware-captured first aperture.
+    uint8_t timing_quality;
 };
 
 // Called by a board DMA ISR after it has made a completed half-buffer visible

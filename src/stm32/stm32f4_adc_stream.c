@@ -11,6 +11,7 @@
 #include "generic/dma_resource.h"
 #include "internal.h" // peripheral registers
 #include "sched.h" // sched_shutdown
+#include "stm32/adc_watchdog.h"
 
 #define ADC_DMA_CR ((0u << DMA_SxCR_CHSEL_Pos) | DMA_SxCR_MINC \
                     | DMA_SxCR_PSIZE_0 | DMA_SxCR_MSIZE_0 \
@@ -55,6 +56,8 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (cfg->hardware_oversample != 1 || cfg->hardware_shift)
+        shutdown("STM32F4/F7 ADC lacks hardware oversampling");
     if (dma_claim(DMA_RESOURCE_ADC1, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_TIM3, 0, cfg->owner)
         || dma_claim(DMA_RESOURCE_DMA2_STREAM0, 0, cfg->owner))
@@ -67,6 +70,7 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
         shutdown("TIM3 already claimed");
 
     uint32_t sequence = (cfg->channel_count - 1) << ADC_SQR1_L_Pos;
+    uint32_t channel_mask = 0;
     uint32_t sqr3 = 0;
     static const uint8_t positions[] = {
         ADC_SQR3_SQ1_Pos, ADC_SQR3_SQ2_Pos,
@@ -76,6 +80,7 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
         if (cfg->pins[i].adc != ADC1 || cfg->pins[i].chan > 18)
             shutdown("STM32F4/F7 stream requires ADC1 channels");
         sqr3 |= cfg->pins[i].chan << positions[i];
+        channel_mask |= 1u << cfg->pins[i].chan;
     }
 
     uint32_t pclk = get_pclock_frequency(TIM3_BASE);
@@ -107,7 +112,7 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     DMA2_Stream0->PAR = (uint32_t)&ADC1->DR;
     DMA2_Stream0->M0AR = (uint32_t)&cfg->buffer[0];
     DMA2_Stream0->M1AR = (uint32_t)&cfg->buffer[
-        ADC_STREAM_MAX_BLOCK_VALUES];
+        cfg->block_values];
     DMA2_Stream0->NDTR = cfg->block_values;
     DMA2_Stream0->FCR = 0;
     DMA2_Stream0->CR = ADC_DMA_CR;
@@ -117,15 +122,26 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     ADC1->SQR2 = 0;
     ADC1->SQR3 = sqr3;
     ADC1->SR = 0;
-    ADC1->CR1 = cfg->channel_count > 1 ? ADC_CR1_SCAN : 0;
+    ADC1->CR1 = (cfg->channel_count > 1 ? ADC_CR1_SCAN : 0)
+        | stm32_adc_watchdog_stream_configure(ADC1, channel_mask);
     // EXTSEL=8 is TIM3_TRGO on the F4/F7 regular conversion table.
     ADC1->CR2 = ADC_CR2_ADON | ADC_CR2_DMA | ADC_CR2_DDS
                 | (8u << ADC_CR2_EXTSEL_Pos) | ADC_CR2_EXTEN_0;
 
     info->period_numerator = actual_period;
     info->period_denominator = 1;
-    info->uncertainty_ticks = 0;
-    info->status = 0;
+    info->uncertainty_ticks = CONFIG_CLOCK_FREQ / 1000000u * 5u;
+    info->status = ACQ_STATUS_INFERRED_TIME;
+    info->max_conversion_rate = 1000000;
+    info->capabilities = ADC_BACKEND_CAP_HARDWARE_PACED
+                         | ADC_BACKEND_CAP_INFERRED_START
+                         | ADC_BACKEND_CAP_NATIVE_DBM
+                         | ADC_BACKEND_CAP_WATCHDOG_WITH_DMA;
+    info->max_hardware_oversample = 1;
+    info->resolution_bits = 12;
+    info->adc_count = 1;
+    info->watchdog_count = 1;
+    info->timing_quality = 1;
 }
 
 void
@@ -151,6 +167,7 @@ board_adc_stream_stop(void)
 {
     board_adc_stream_stop_from_isr();
     ADC1->CR2 &= ~(ADC_CR2_DMA | ADC_CR2_DDS | ADC_CR2_EXTEN);
+    stm32_adc_watchdog_stream_stopped(ADC1);
 }
 
 void
