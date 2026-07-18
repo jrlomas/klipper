@@ -221,6 +221,10 @@ void ip_host_session_diag(const ip_host_session* h, ip_host_diag* out) {
     out->framing_v2 = s.framing == HostSession::Framing::V2 ? 1 : 0;
 }
 
+uint32_t ip_host_session_sequence_rebases(const ip_host_session* h) {
+    return h ? h->session.sequence_rebases : 0;
+}
+
 // ---- datagram transport ----
 
 struct ip_datagram_tx {

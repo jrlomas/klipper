@@ -95,6 +95,20 @@ place:
 * Ack/nak frames and the sync byte are unchanged; sequence numbering
   and the retransmit window are unchanged.
 
+### Retained-sequence bootstrap
+
+An application may deliberately retain its command sequence across USB or
+datagram transport reconfiguration so that a transient link reset does not
+replay already accepted commands. A fresh `HostSession`, however, starts at
+sequence zero. The empty ack/nak wire shape cannot distinguish the retained
+peer saying "I expect N" from a peer reporting that the first frame was
+corrupt. The host therefore retransmits normally after the first future nak
+and adopts N only when the same independently CRC/BCH-valid future nak repeats
+before any traffic from the new session has been accepted. Adoption rebases
+the still-pending window without changing payload order, is disabled after the
+first accepted frame, and increments the `sequence_rebases` diagnostic. It is
+never a mid-session recovery mechanism.
+
 ## What FEC does and does not fix on WiFi — two layers
 
 An honest design must state this: on a UDP/WiFi path, the 802.11 MAC

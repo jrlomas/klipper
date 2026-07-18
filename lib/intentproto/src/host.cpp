@@ -34,6 +34,9 @@ void HostSession::init(WriteFn write_fn, void* wuser,
     deadline_set = false;
     deadline = 0;
     nak_pending = false;
+    bootstrap_sync = true;
+    bootstrap_nak_seq = 0;
+    bootstrap_nak_count = 0;
     rx_state = RxState::Length;
     rx_pos = 0;
     framing = desired == Framing::Legacy ? Framing::Legacy
@@ -43,6 +46,7 @@ void HostSession::init(WriteFn write_fn, void* wuser,
     v2_frames_rx = 0;
     retransmits = 0;
     naks = 0;
+    sequence_rebases = 0;
     rx_crc_errors = 0;
     rx_bch_errors = 0;
     rx_framing_errors = 0;
@@ -72,6 +76,39 @@ void HostSession::xmit(uint64_t seq) {
     }
     if (write)
         write(f, total, write_user);
+}
+
+// Move the unacknowledged payload window to start at the sequence a retained
+// peer expects.  Payloads are copied because the old and new modulo windows
+// may overlap.  This is only called during bootstrap, before any frame from
+// this HostSession has been accepted by the peer.
+void HostSession::rebase_window(uint64_t seq) {
+    const size_t count = inflight();
+    uint8_t saved_payloads[HOST_WINDOW][MESSAGE_MAX];
+    uint8_t saved_len[HOST_WINDOW];
+    TrafficClass saved_classes[HOST_WINDOW];
+    for (size_t i = 0; i < count; i++) {
+        const size_t old = (receive_seq + i) % HOST_WINDOW;
+        saved_len[i] = payload_len[old];
+        saved_classes[i] = classes[old];
+        memcpy(saved_payloads[i], payloads[old], saved_len[i]);
+    }
+    receive_seq = seq;
+    send_seq = seq + count;
+    last_ack_seq = seq;
+    for (size_t i = 0; i < count; i++) {
+        const size_t next = (seq + i) % HOST_WINDOW;
+        payload_len[next] = saved_len[i];
+        classes[next] = saved_classes[i];
+        memcpy(payloads[next], saved_payloads[i], saved_len[i]);
+    }
+    deadline_set = false;
+    nak_pending = false;
+    bootstrap_sync = false;
+    bootstrap_nak_count = 0;
+    sequence_rebases++;
+    for (uint64_t s = receive_seq; s != send_seq; s++)
+        xmit(s);
 }
 
 bool HostSession::send_command(const uint8_t* payload, size_t len,
@@ -204,6 +241,22 @@ void HostSession::on_rx(const uint8_t* data, size_t len) {
                 // Rewound ack: the device nacked a corrupt frame.
                 naks++;
                 if (inflight()) {
+                    // There is no distinct wire opcode for a corrupt-frame
+                    // nak and a retained peer saying "I expect sequence N".
+                    // One repeated future nak disambiguates them: a clean
+                    // retransmit resolves corruption, while a stale sequence
+                    // peer repeats N.  Adoption is bootstrap-only.
+                    uint8_t wire_seq = seq_nibble & MESSAGE_SEQ_MASK;
+                    if (plen == 0 && bootstrap_sync
+                        && bootstrap_nak_count
+                        && bootstrap_nak_seq == wire_seq) {
+                        rebase_window(rseq);
+                        break;
+                    }
+                    if (plen == 0 && bootstrap_sync) {
+                        bootstrap_nak_seq = wire_seq;
+                        bootstrap_nak_count = 1;
+                    }
                     nak_pending = true;
                     note_probe_reject();
                 }
@@ -212,6 +265,14 @@ void HostSession::on_rx(const uint8_t* data, size_t len) {
                 receive_seq = rseq;
                 deadline_set = false;   // clock restarts on oldest
                 nak_pending = false;
+                bootstrap_sync = false;
+                bootstrap_nak_count = 0;
+            } else if (plen != 0) {
+                // Any valid response proves that this host's sequence space
+                // is already accepted, even if an earlier frame drained the
+                // window before this response arrived.
+                bootstrap_sync = false;
+                bootstrap_nak_count = 0;
             }
             if (plen == 0) {
                 // Empty frame: pure ack — a duplicate of one we

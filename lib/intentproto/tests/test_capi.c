@@ -240,6 +240,7 @@ static void test_host_loopback(void) {
     ip_host_session_diag(g_host, &diag);
     CHECK(diag.retransmits == 0);
     CHECK(diag.naks == 0);
+    CHECK(ip_host_session_sequence_rebases(g_host) == 0);
 
     ip_class_stats cs;
     ip_host_session_class_stats(g_host, IP_CLASS_SCHEDULED, &cs);

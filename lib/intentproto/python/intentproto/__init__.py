@@ -126,6 +126,7 @@ typedef struct ip_host_diag {
     int framing_v2;
 } ip_host_diag;
 void ip_host_session_diag(const ip_host_session *h, ip_host_diag *out);
+uint32_t ip_host_session_sequence_rebases(const ip_host_session *h);
 
 typedef struct ip_datagram_tx ip_datagram_tx;
 typedef struct ip_datagram_rx ip_datagram_rx;
@@ -628,6 +629,8 @@ class HostSession(object):
         out = self._ffi.new("ip_host_diag *")
         self._lib.ip_host_session_diag(self._h, out)
         return {"retransmits": out.retransmits, "naks": out.naks,
+                "sequence_rebases":
+                    self._lib.ip_host_session_sequence_rebases(self._h),
                 "rx_crc_errors": out.rx_crc_errors,
                 "rx_bch_errors": out.rx_bch_errors,
                 "rx_framing_errors": out.rx_framing_errors,

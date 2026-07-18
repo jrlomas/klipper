@@ -22,6 +22,7 @@ SRCS := src/proto.cpp src/dict.cpp src/host.cpp src/hmac.cpp src/bch.cpp \
 	src/sha512.cpp src/ed25519.cpp src/segment.cpp \
 	src/capi.cpp boot/bootcore.cpp
 HDRS := $(wildcard include/intentproto/*.hpp) include/intentproto/capi.h
+EMBEDDED_OBJS := $(addprefix $(BUILD)/,$(notdir $(SRCS:.cpp=.o)))
 TESTS := test_proto test_host test_hmac test_bch test_datagram \
 	test_datagram_carrier \
 	test_negotiate test_extdesc test_wide test_bootcore test_session_sec \
@@ -94,7 +95,7 @@ embedded: | $(BUILD)
 			arm-none-eabi-g++ $(CXXFLAGS) $(CPPFLAGS) -mcpu=cortex-m0 -mthumb \
 				-ffunction-sections -fdata-sections -c $$f \
 				-o $(BUILD)/$$(basename $$f .cpp).o || exit 1; \
-		done && arm-none-eabi-size $(BUILD)/*.o | grep -v test; \
+		done && arm-none-eabi-size $(EMBEDDED_OBJS); \
 	else \
 		echo "arm-none-eabi-g++ not found; skipping embedded build"; \
 	fi

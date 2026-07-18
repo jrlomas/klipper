@@ -92,6 +92,15 @@ struct HostSession {
     uint64_t deadline;      // now + rto when the oldest frame was seen
     bool nak_pending;       // device asked for an immediate retransmit
 
+    // Bootstrap sequence adoption.  A running application deliberately
+    // retains its command sequence across a transient transport reconnect;
+    // a newly-created host starts at zero.  Since a future empty ack is also
+    // how the library device reports a corrupt first frame, adoption requires
+    // the same future sequence twice with no accepted traffic in between.
+    bool bootstrap_sync;
+    uint8_t bootstrap_nak_seq;
+    uint8_t bootstrap_nak_count;
+
     // Frame receive state machine (device -> host bytes).
     enum class RxState : uint8_t { Sync, Length, Body };
     RxState rx_state;
@@ -107,6 +116,7 @@ struct HostSession {
     // Diagnostics.
     uint32_t retransmits;
     uint32_t naks;
+    uint32_t sequence_rebases;
     uint32_t rx_crc_errors;
     uint32_t rx_bch_errors; // uncorrectable v2 frames (dropped)
     uint32_t rx_framing_errors;
@@ -169,6 +179,7 @@ struct HostSession {
     // ---- internal helpers (public struct, library use) ----
     void xmit(uint64_t seq);
     void note_probe_reject();
+    void rebase_window(uint64_t seq);
 };
 
 } // namespace intentproto

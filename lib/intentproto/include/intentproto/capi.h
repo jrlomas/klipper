@@ -40,7 +40,7 @@
  * against the runtime intentproto_abi_version() and refuses a MAJOR
  * mismatch. */
 #define INTENTPROTO_ABI_VERSION_MAJOR 1
-#define INTENTPROTO_ABI_VERSION_MINOR 2
+#define INTENTPROTO_ABI_VERSION_MINOR 3
 #define INTENTPROTO_ABI_VERSION_PATCH 0
 #define INTENTPROTO_ABI_VERSION                                         \
     ((INTENTPROTO_ABI_VERSION_MAJOR << 16)                             \
@@ -228,6 +228,8 @@ typedef struct ip_host_diag {
     int framing_v2;    /* tx framing has latched to v2 */
 } ip_host_diag;
 void ip_host_session_diag(const ip_host_session *h, ip_host_diag *out);
+/* Added in ABI 1.3 without extending ip_host_diag's caller-owned layout. */
+uint32_t ip_host_session_sequence_rebases(const ip_host_session *h);
 
 /* ================================================================
  * Datagram transport binding (datagram.hpp, FD-0001 doc 07)

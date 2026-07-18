@@ -76,6 +76,23 @@ static void host_response(const uint8_t* payload, size_t len, void*) {
 
 static intentproto::HostSession g_host;
 
+// Queue a valid legacy empty frame carrying the peer's next expected
+// sequence.  The application-side protocol uses this same wire shape for
+// both ack and nak, so bootstrap reconnect must disambiguate by behavior.
+static void queue_empty_peer_frame(uint8_t seq) {
+    uint8_t frame[intentproto::MESSAGE_MIN] = {
+        intentproto::MESSAGE_MIN,
+        (uint8_t)(intentproto::MESSAGE_DEST
+                  | (seq & intentproto::MESSAGE_SEQ_MASK)),
+        0, 0, intentproto::MESSAGE_SYNC
+    };
+    uint16_t crc = intentproto::crc16_ccitt(
+        frame, intentproto::MESSAGE_MIN - intentproto::TRAILER_SIZE);
+    frame[intentproto::MESSAGE_MIN - 3] = (uint8_t)(crc >> 8);
+    frame[intentproto::MESSAGE_MIN - 2] = (uint8_t)crc;
+    device_write(frame, sizeof(frame), nullptr);
+}
+
 // Deliver queued host bytes to the device (optionally not).
 static void pump_h2d() {
     intentproto::rx(g_h2d, g_h2d_len);
@@ -206,6 +223,60 @@ static void test_corrupt_frame_nak_retransmit() {
     CHECK(g_host.inflight() == 0);
 }
 
+static void test_bootstrap_sequence_adoption() {
+    g_h2d_len = g_d2h_len = 0;
+    g_host.init(host_write, nullptr, host_response, nullptr);
+    CHECK(send_set_value(6, 600));
+    CHECK(g_h2d_len >= intentproto::MESSAGE_MIN);
+    CHECK((g_h2d[1] & intentproto::MESSAGE_SEQ_MASK) == 0);
+    drop_h2d();
+
+    // First future nak could mean that sequence zero was corrupted.  The
+    // host requests a normal retransmit and does not rebase yet.
+    queue_empty_peer_frame(8);
+    pump_d2h();
+    CHECK(g_host.sequence_rebases == 0);
+    CHECK(g_host.need_retransmit(0, 1000000));
+    CHECK((g_h2d[2] & intentproto::MESSAGE_SEQ_MASK) == 0);
+    drop_h2d();
+
+    // A retained peer repeats the same expectation after the clean retry.
+    // The host now moves its pending payload to sequence eight and sends it.
+    queue_empty_peer_frame(8);
+    pump_d2h();
+    CHECK(g_host.sequence_rebases == 1);
+    CHECK(g_host.receive_seq == 8 && g_host.send_seq == 9);
+    CHECK(g_host.inflight() == 1);
+    CHECK(g_h2d_len >= intentproto::MESSAGE_MIN);
+    CHECK((g_h2d[1] & intentproto::MESSAGE_SEQ_MASK) == 8);
+    drop_h2d();
+
+    queue_empty_peer_frame(9);
+    pump_d2h();
+    CHECK(g_host.inflight() == 0);
+}
+
+static void test_no_mid_session_sequence_adoption() {
+    g_h2d_len = g_d2h_len = 0;
+    g_host.init(host_write, nullptr, host_response, nullptr);
+    CHECK(send_set_value(7, 700));
+    drop_h2d();
+    queue_empty_peer_frame(1);       // accept sequence zero
+    pump_d2h();
+    CHECK(g_host.inflight() == 0);
+
+    CHECK(send_set_value(7, 701));
+    drop_h2d();
+    queue_empty_peer_frame(8);
+    pump_d2h();
+    CHECK(g_host.need_retransmit(0, 1000000));
+    drop_h2d();
+    queue_empty_peer_frame(8);
+    pump_d2h();
+    CHECK(g_host.sequence_rebases == 0);
+    CHECK(g_host.receive_seq == 1 && g_host.send_seq == 2);
+}
+
 int main() {
     intentproto::Config cfg;
     cfg.write = device_write;
@@ -217,6 +288,8 @@ int main() {
     test_window_limit();
     test_dropped_frame_retransmit();
     test_corrupt_frame_nak_retransmit();
+    test_bootstrap_sequence_adoption();
+    test_no_mid_session_sequence_adoption();
 
     if (g_failures) {
         printf("%d FAILURE(S)\n", g_failures);

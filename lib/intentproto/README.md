@@ -20,6 +20,12 @@ library's two load-bearing decisions on real code:
    on the first valid v2 frame; the host probes after
    `session_enable_v2()` and falls back to legacy automatically
    (`v2_rejected`) when a legacy peer keeps nak'ing the probe.
+   A newly-created host can also attach to an application that retained its
+   command sequence across a transport reconnect: one future nak triggers the
+   ordinary corruption retry, and only a second identical valid nak before any
+   accepted traffic rebases the pending bootstrap window. Sequence adoption is
+   disabled permanently after the first accepted frame and is counted in
+   `sequence_rebases` diagnostics.
    `send_command()` records a traffic class per in-flight frame for
    the datagram transport binding, with per-class `ClassStats`.
 2. **Annotation-style static registration** instead of code

@@ -89,6 +89,7 @@ def main():
     assert not host.need_retransmit(1000000, 1)
     diag = host.diag()
     assert diag["retransmits"] == 0 and diag["naks"] == 0, diag
+    assert diag["sequence_rebases"] == 0, diag
     stats = host.class_stats(intentproto.CLASS_SCHEDULED)
     assert stats["tx_msgs"] >= 1, stats
 
