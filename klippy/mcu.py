@@ -957,10 +957,17 @@ class MCUADCStreamManager:
             schedules.append((input_div, osr, report_div))
 
         max_block_scans = 16 // len(self._adcs)
-        block_scans = min(
-            [max_block_scans]
-            + [input_div * osr * report_div
-               for input_div, osr, report_div in schedules])
+        report_scans = [input_div * osr * report_div
+                        for input_div, osr, report_div in schedules]
+        # End every logical reporting cycle on a DMA block boundary.  A block
+        # that merely fits below report_scans can otherwise make summaries
+        # arrive in alternating short/long bursts (for example, 16-scan DMA
+        # blocks around a 20-scan report cycle).  Prefer the largest bounded
+        # divisor so IRQ load stays low while delivery remains periodic.
+        block_scans = min([max_block_scans] + report_scans)
+        while block_scans > 1 and any(
+                cycle % block_scans for cycle in report_scans):
+            block_scans -= 1
         if block_scans < 1:
             self._fallback("no bounded block schedule fits")
             return

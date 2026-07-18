@@ -121,7 +121,11 @@ pass.
   explicit raw stream owns the MCU. OpenAMS FPS is migrated on that boundary;
   heater ADCs are not. F072, G0B1, H723, RP2040, and a classic ESP32 component
   image compile with the slice. The earlier F072 and ESP32 raw hardware soaks
-  remain valid backend evidence; filtered FPS hardware qualification remains
+  remain valid backend evidence. A standalone OAMS1 F072 also passed the full
+  v1 software-filter path with the FPS schedule: 6,540 scans across a clean
+  stop/restart, exact 100 ms summary clocks, periodic host delivery, and zero
+  drops/faults. This gate found and corrected DMA-block/report-cycle
+  misalignment. End-to-end FPS qualification on its actual G0B1 target remains
   open.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765

@@ -4,10 +4,13 @@ Status: Subscription/filter slice implemented. The generic ownership core,
 deterministic reference filter, merged logical subscriptions, Klippy raw and
 summary frontend, opt-in `MCU_adc` compatibility adapter, RP2040,
 STM32F072/G0B1/H723, and classic ESP32 backends compile. The ESP32 component
-and STM32F072 backends have passed initial live acquisition soaks. Further
-native-board hardware qualification, safety-consumer migration, local safety
-consumers, and the general DMA resource manager remain open. This work
-precedes the STM32F767 Ethernet implementation.
+and STM32F072 backends have passed initial live acquisition soaks. The full v1
+filtered subscription path has also passed its standalone STM32F072 hardware
+gate with the OpenAMS FPS sampling geometry. Further native-board hardware
+qualification, end-to-end FPS integration on its actual G0B1 target,
+safety-consumer migration, local safety consumers, and the general DMA
+resource manager remain open. This work precedes the STM32F767 Ethernet
+implementation.
 
 This document specifies the common HELIX primitives for DMA-backed peripheral
 acquisition and applies them first to ADC sampling on STM32, RP2040, and ESP32.
@@ -73,7 +76,9 @@ architecture below:
   unsupported, another non-migrated ADC consumer exists, or an explicit raw
   stream owns the MCU. OpenAMS FPS is the first non-safety consumer: five
   samples at 5 ms spacing become one Prompt filtered result every 100 ms.
-  Heaters remain deliberately unmigrated.
+  The host chooses the largest bounded DMA block that divides every logical
+  report cycle, preventing report delivery from alternating between short and
+  long host intervals. Heaters remain deliberately unmigrated.
 
 Evidence at this checkpoint:
 
@@ -84,6 +89,7 @@ Evidence at this checkpoint:
 | ESP32 builds | component, component-RMT, and modem images compile and link with IDF 5.3.2 |
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
+| STM32F072 v1 filtered gate | Standalone OAMS1 rev1.4.3 on PC5 with the FPS geometry: 5 ms physical scans, OSR 5, four filtered outputs per 100 ms Prompt report, raw output disabled. The first run exposed 16-scan DMA blocks crossing the 20-scan report boundary and producing an avoidable 80/160 ms host-delivery pattern. The adapter now selects 10-scan blocks. The corrected run delivered 250 consecutive epoch-1 summaries at steady 100 ms intervals from 5,000 physical scans, then stopped and restarted at summary sequence 0/epoch 2. A further 1,540 scans completed before clean stop; both status snapshots reported `dropped=0`, `status=0`. Summary machine-clock deltas were exactly 4,800,000 ticks at 48 MHz, each four-output report spanned 3,600,000 ticks, and the F0 backend truthfully reported its 240-tick inferred-start uncertainty. |
 
 This checkpoint does **not** claim heater/trigger safety migration, Class-0
 deadline/acknowledgement delivery, local safety callbacks, generalized DMA
@@ -708,6 +714,10 @@ equivalent or stronger.
   streams, exact channel interleaving, restart epoch, zero drops/faults, and
   clean stop. The measured 48 MHz clock was within about 22 ppm of nominal;
   the exact OAMS1 build configuration is retained in the CI compile matrix.
+- [x] Run the v1 software-filter/subscription hardware gate on standalone
+  STM32F072 with the FPS schedule; prove periodic Prompt delivery, exact
+  summary clocks, restart epoch/sequence, truthful uncertainty, raw-output
+  suppression, and zero drops/faults.
 - [ ] Add circular/native-double-buffer variants, generalized resource maps,
   and analog-watchdog coexistence.
 - [ ] Prove software OSR on F4/F7 and hardware OSR on a capable G0/G4/H7

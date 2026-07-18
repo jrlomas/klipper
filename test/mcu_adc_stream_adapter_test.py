@@ -84,6 +84,8 @@ def test_opted_consumer_uses_one_filtered_dma_subscription():
     assert any("input_div=1 osr=5 shift=0 report_div=4" in command
                for command in commands)
     assert "adc_stream_set_options oid=0 raw_output=0" in commands
+    assert any("block_values=10 traffic_class=2" in command
+               for command in commands)
     assert not any(command.startswith("config_analog_in")
                    for command in commands)
 
