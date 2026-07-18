@@ -14,7 +14,8 @@ adc_filter_configure(struct adc_filter *f,
     if (!config->input_div || !config->osr || !config->report_div
         || config->osr > ADC_FILTER_MAX_OSR
         || config->report_div > ADC_FILTER_MAX_REPORT_DIV
-        || config->shift > 31)
+        || config->shift > 31
+        || config->summary_mode > ADC_FILTER_SUMMARY_LATEST)
         return -1;
     memset(f, 0, sizeof(*f));
     f->config = *config;
@@ -56,6 +57,22 @@ adc_filter_push_ex(struct adc_filter *f, uint16_t sample, uint64_t scan_index,
     uint32_t output = value > UINT32_MAX ? UINT32_MAX : value;
     *filtered_value = output;
     *filtered_ready = 1;
+    if (f->config.summary_mode == ADC_FILTER_SUMMARY_LATEST) {
+        if (++f->report_count < f->config.report_div)
+            return 0;
+        f->report_count = 0;
+        *result = (struct adc_filter_summary) {
+            .sum = output,
+            .first_scan = scan_index,
+            .last_scan = scan_index,
+            .minimum = output,
+            .maximum = output,
+            .count = 1,
+            .flags = f->pending_flags,
+        };
+        f->pending_flags = 0;
+        return 1;
+    }
     if (!s->count) {
         s->first_scan = scan_index;
         s->minimum = s->maximum = output;

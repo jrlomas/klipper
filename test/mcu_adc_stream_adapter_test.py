@@ -34,6 +34,7 @@ class FakeMCU:
                 "ADC_STREAM_V1": 1, "ADC_STREAM_MAX_CHANNELS": 4,
                 "ADC_STREAM_MAX_SUBSCRIPTIONS": 8,
                 "ADC_STREAM_MAX_OSR": 256,
+                "ADC_STREAM_MAX_BLOCK_VALUES": 64,
             })
     def register_config_callback(self, callback):
         self.callbacks.append(callback)
@@ -82,17 +83,17 @@ def test_opted_consumer_uses_one_filtered_dma_subscription():
     commands = [command for command, _ in fake.commands]
     assert commands[0] == "config_adc_stream oid=0"
     assert "adc_stream_add_channel oid=0 pin=PA2" in commands
-    assert any("input_div=1 osr=5 shift=0 report_div=4" in command
+    assert any("input_div=1 osr=5 shift=0 report_div=1" in command
                for command in commands)
     assert "adc_stream_set_options oid=0 raw_output=0" in commands
-    assert any("block_values=10 traffic_class=2" in command
+    assert any("block_values=5 traffic_class=2" in command
                for command in commands)
     assert not any(command.startswith("config_analog_in")
                    for command in commands)
 
     manager = fake._helix_adc_stream_manager
     manager._handle_summary({
-        "sub": 0, "count": 4, "sum_lo": 5 * 4 * 2048,
+        "sub": 0, "count": 1, "sum_lo": 5 * 2048,
         "sum_hi": 0, "last_clock": 200000, "status": 0,
     })
     assert received == [(.2, 2048 / 4095.)]
@@ -142,6 +143,16 @@ def test_auto_mode_migrates_heater_thresholds_to_local_shutdown():
     assert any("sub=1 deadline_ticks=0 fail_action=0" in command
                for command in commands)
     assert any("traffic_class=0" in command for command in commands)
+    # The legacy 8x1ms/300ms heater burst and 1x1ms/100ms observer become
+    # evenly distributed 37.5ms and 100ms samples on a common 12.5ms scan.
+    # Their report cycles both end on the selected eight-scan block boundary.
+    assert any("sub=0 channel=0 input_div=3 osr=8 shift=0 report_div=1"
+               in command for command in commands)
+    assert any("sub=1 channel=1 input_div=8 osr=1 shift=0 report_div=1"
+               in command for command in commands)
+    assert any("period_ticks=12500 block_values=16 traffic_class=0"
+               in command for command in commands)
+    assert sum("summary_mode=1" in command for command in commands) == 2
 
 
 if __name__ == "__main__":

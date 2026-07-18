@@ -5,7 +5,7 @@
 #include "board/gpio.h" // struct gpio_adc
 
 #define ADC_STREAM_MAX_CHANNELS 4
-#define ADC_STREAM_MAX_BLOCK_VALUES 16
+#define ADC_STREAM_MAX_BLOCK_VALUES 64
 #define ADC_STREAM_BLOCK_COUNT 2
 #define ADC_STREAM_MAX_SUBSCRIPTIONS 8
 

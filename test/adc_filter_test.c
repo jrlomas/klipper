@@ -40,6 +40,20 @@ main(int argc, char **argv)
     assert(adc_filter_push(&f, 100, 22, &result));
     assert(result.flags == ADC_FILTER_FLAG_DISCONTINUITY);
 
+    config = (struct adc_filter_config) {
+        .input_div = 1, .osr = 2, .report_div = 3, .shift = 1,
+        .summary_mode = ADC_FILTER_SUMMARY_LATEST,
+    };
+    assert(!adc_filter_configure(&f, &config));
+    const uint16_t latest_values[] = {10, 20, 30, 40, 50, 60};
+    for (uint32_t i = 0; i < 6; i++) {
+        int ready = adc_filter_push(&f, latest_values[i], i, &result);
+        assert(ready == (i == 5));
+    }
+    assert(result.count == 1 && result.sum == 55);
+    assert(result.minimum == 55 && result.maximum == 55);
+    assert(result.first_scan == 5 && result.last_scan == 5);
+
     config.osr = 0;
     assert(adc_filter_configure(&f, &config) < 0);
     (void)argc;

@@ -39,6 +39,31 @@ main(void)
     assert(!adc_safety_configure(&safety, &cfg));
     cfg.fault_count = 0;
     assert(adc_safety_configure(&safety, &cfg));
+
+    // Seeded acknowledgement/starvation sequence including clock wrap.
+    cfg.deadline_ticks = 100;
+    cfg.fail_action = ADC_SAFETY_HOLD;
+    assert(!adc_safety_configure(&safety, &cfg));
+    uint32_t clock = UINT32_MAX - 500, random = 0xadc00001;
+    uint32_t deadlines = 0;
+    for (uint32_t sequence = 0; sequence < 10000; sequence++) {
+        uint32_t report_deadline;
+        assert(!adc_safety_begin_report(
+            &safety, sequence, clock, &report_deadline));
+        random = random * 1664525u + 1013904223u;
+        if ((random & 15) == 0) {
+            clock = report_deadline;
+            assert(adc_safety_check_deadline(&safety, clock)
+                   == ADC_SAFETY_EVENT_UNACKED);
+            deadlines++;
+        } else {
+            clock += random % 99;
+            assert(!adc_safety_check_deadline(&safety, clock));
+            assert(!adc_safety_ack(&safety, sequence));
+        }
+        clock += 7;
+    }
+    assert(deadlines > 500);
     puts("PASS: ADC threshold and Class-0 deadline safety policy");
     return 0;
 }

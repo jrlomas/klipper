@@ -14,6 +14,7 @@ from . import bulk_sensor
 TRAFFIC_CLASSES = {"critical": 0, "prompt": 1, "telemetry": 2}
 SUMMARY_CLASSES = {"scheduled": 0, "prompt": 1, "telemetry": 2}
 SAFETY_ACTIONS = {"none": 0, "hold": 1, "trigger": 2, "shutdown": 3}
+SUMMARY_MODES = {"aggregate": 0, "latest": 1}
 STATE_NAMES = {0: "stopped", 1: "armed", 2: "running", 3: "faulted"}
 SUMMARY_FORMAT = (
     "oid=%c sub=%c sequence=%u epoch=%u first_clock=%u last_clock=%u"
@@ -48,7 +49,9 @@ class ADCStream:
         default_hw_shift = self.hardware_oversample.bit_length() - 1
         self.hardware_shift = config.getint(
             "hardware_shift", default_hw_shift, minval=0, maxval=8)
-        max_scans = 16 // len(self.pins)
+        max_values = self.mcu.get_constants().get(
+            "ADC_STREAM_MAX_BLOCK_VALUES", 64)
+        max_scans = max_values // len(self.pins)
         self.block_scans = config.getint(
             "block_scans", max_scans, minval=1, maxval=max_scans)
         self.traffic_class = config.getchoice(
@@ -95,6 +98,8 @@ class ADCStream:
                          "telemetry")
         self.summary_class = config.getchoice(
             "summary_class", SUMMARY_CLASSES, default=default_class)
+        self.summary_mode = config.getchoice(
+            "summary_mode", SUMMARY_MODES, default="aggregate")
         default_deadline = .050 if self.summary_class == 0 else 0.
         self.summary_deadline = config.getfloat(
             "summary_deadline", default_deadline, minval=0.)
@@ -136,6 +141,9 @@ class ADCStream:
         self.sequence_gaps = self.host_drops = self.mcu_drops = 0
         self.ready_highwater = self.dma_errors = self.adc_errors = 0
         self.overruns = self.telemetry_drops = self.watchdog_events = 0
+        self.publications = self.publication_ticks = 0
+        self.publication_ticks_max = self.consumers = 0
+        self.consumer_ticks = self.consumer_ticks_max = 0
         self.safety_events = 0
         self.last_safety = None
         self.summary_sequences = [None] * len(self.pins)
@@ -199,6 +207,10 @@ class ADCStream:
                     " report_class=%d" % (
                         self.oid, channel, channel, input_div, osr, shift,
                         report_div, self.summary_class))
+                self.mcu.add_config_cmd(
+                    "adc_stream_set_subscription_options oid=%d sub=%d"
+                    " summary_mode=%d" % (
+                        self.oid, channel, self.summary_mode))
                 deadline_ticks = self.mcu.seconds_to_clock(
                     self.summary_deadline)
                 self.mcu.add_config_cmd(
@@ -266,7 +278,10 @@ class ADCStream:
             "adc_stream_status oid=%c state=%c class=%c channels=%c"
             " block_values=%c epoch=%u sequence=%u dropped=%u status=%u"
             " ready_highwater=%c dma_errors=%u adc_errors=%u overruns=%u"
-            " telemetry_drops=%u watchdog_events=%u",
+            " telemetry_drops=%u watchdog_events=%u"
+            " publications=%u publication_ticks=%u"
+            " publication_ticks_max=%u consumers=%u consumer_ticks=%u"
+            " consumer_ticks_max=%u",
             self.oid)
         self.mcu.register_serial_response(
             self._handle_summary, "adc_stream_prompt " + SUMMARY_FORMAT,
@@ -299,7 +314,7 @@ class ADCStream:
         payload = bytes(params["values"])
         offset, total = params["offset"], params["total"]
         key = (capture, params["epoch"], params["sequence"])
-        if (not total or total > 2 * 16 or offset + len(payload) > total
+        if (not total or total > 2 * 64 or offset + len(payload) > total
                 or offset % 2 or len(payload) % 2):
             logging.warning("adc_stream %s received malformed raw chunk",
                             self.name)
@@ -444,7 +459,10 @@ class ADCStream:
             self.epoch = params["epoch"]
             self.last_sequence = params["sequence"]
             for key in ("ready_highwater", "dma_errors", "adc_errors",
-                        "overruns", "telemetry_drops", "watchdog_events"):
+                        "overruns", "telemetry_drops", "watchdog_events",
+                        "publications", "publication_ticks",
+                        "publication_ticks_max", "consumers",
+                        "consumer_ticks", "consumer_ticks_max"):
                 setattr(self, key, params[key])
 
     def _process_batch(self, eventtime):
@@ -469,6 +487,12 @@ class ADCStream:
                 "overruns": self.overruns,
                 "telemetry_drops": self.telemetry_drops,
                 "watchdog_events": self.watchdog_events,
+                "publications": self.publications,
+                "publication_ticks": self.publication_ticks,
+                "publication_ticks_max": self.publication_ticks_max,
+                "consumers": self.consumers,
+                "consumer_ticks": self.consumer_ticks,
+                "consumer_ticks_max": self.consumer_ticks_max,
                 "safety_events": self.safety_events,
                 "last_safety": self.last_safety,
                 "status": self.last_status,
@@ -504,6 +528,12 @@ class ADCStream:
                 "overruns": self.overruns,
                 "telemetry_drops": self.telemetry_drops,
                 "watchdog_events": self.watchdog_events,
+                "publications": self.publications,
+                "publication_ticks": self.publication_ticks,
+                "publication_ticks_max": self.publication_ticks_max,
+                "consumers": self.consumers,
+                "consumer_ticks": self.consumer_ticks,
+                "consumer_ticks_max": self.consumer_ticks_max,
                 "safety_events": self.safety_events,
                 "last_safety": self.last_safety,
                 "status": self.last_status,

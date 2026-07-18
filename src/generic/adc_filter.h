@@ -10,6 +10,11 @@ enum adc_filter_flags {
     ADC_FILTER_FLAG_DISCONTINUITY = 1u << 0,
 };
 
+enum adc_filter_summary_mode {
+    ADC_FILTER_SUMMARY_AGGREGATE = 0,
+    ADC_FILTER_SUMMARY_LATEST = 1,
+};
+
 struct adc_filter_config {
     // Take one sample every input_div physical scans, accumulate osr accepted
     // samples, round and right-shift the accumulator, then summarize
@@ -18,6 +23,7 @@ struct adc_filter_config {
     uint16_t osr;
     uint16_t report_div;
     uint8_t shift;
+    uint8_t summary_mode;
 };
 
 struct adc_filter_summary {
@@ -36,6 +42,7 @@ struct adc_filter {
     uint64_t accumulator;
     uint64_t raw_index;
     uint16_t osr_count;
+    uint16_t report_count;
     uint8_t pending_flags;
 };
 

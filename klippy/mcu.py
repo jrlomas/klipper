@@ -938,42 +938,49 @@ class MCUADCStreamManager:
                 and self._mcu.try_lookup_command(safety_format) is None):
             self._fallback("firmware lacks local ADC threshold safety")
             return
-        sample_times = [adc._sample_time for adc in self._adcs]
-        if any(value <= 0. for value in sample_times):
+        if any(adc._sample_time <= 0. or adc._report_time <= 0.
+               for adc in self._adcs):
             self._fallback(
                 "consumer requires legacy immediate conversion timing")
             return
-        base_time = min(sample_times)
-        schedules = []
+        # Legacy analog_in takes a short burst and then rests.  A uniform DMA
+        # engine cannot express arbitrary per-channel burst gaps without
+        # reprogramming the shared ADC.  Preserve the number of samples, the
+        # report deadline, and the average by distributing those samples
+        # evenly across each report interval.  This eliminates the otherwise
+        # wasteful 1kscan/s continuous emulation of an 8ms/300ms thermistor
+        # burst and makes the schedule exactly phase-lockable across clients.
+        desired_ticks = []
         for adc in self._adcs:
-            input_div = int(adc._sample_time / base_time + .5)
-            if (not 1 <= input_div <= 0xffff
-                    or abs(input_div * base_time - adc._sample_time)
-                    > max(1.e-9, adc._sample_time * 1.e-6)):
-                self._fallback("sample periods are not integer-compatible")
+            ticks = max(1, self._mcu.seconds_to_clock(
+                adc._report_time / adc._sample_count))
+            if self._mcu.seconds_to_clock(adc._sample_time) > ticks:
+                self._fallback("sample aperture exceeds distributed interval")
+                return
+            actual_report = ticks * adc._sample_count
+            requested_report = self._mcu.seconds_to_clock(adc._report_time)
+            if abs(actual_report - requested_report) > adc._sample_count:
+                self._fallback("report period cannot be represented in ticks")
+                return
+            desired_ticks.append(ticks)
+        base_ticks = desired_ticks[0]
+        for ticks in desired_ticks[1:]:
+            base_ticks = math.gcd(base_ticks, ticks)
+        schedules = []
+        for adc, ticks in zip(self._adcs, desired_ticks):
+            input_div = ticks // base_ticks
+            if not 1 <= input_div <= 0xffff:
+                self._fallback("distributed sample divisor exceeds limit")
                 return
             osr = adc._sample_count
             if osr > self._mcu.get_constants().get("ADC_STREAM_MAX_OSR", 0):
                 self._fallback("oversample count exceeds firmware limit")
                 return
-            filtered_period = base_time * input_div * osr
-            report_div = max(1, int(adc._report_time / filtered_period + .5))
-            if report_div > 4096:
-                self._fallback("report decimation exceeds firmware limit")
-                return
-            actual_report = filtered_period * report_div
-            # Legacy ADC reports are commonly specified as a rest interval
-            # that is not an integer multiple of the sample burst (for
-            # example 8x1ms every 300ms).  The merged engine is continuous;
-            # choose the nearest complete filtered result and bound the
-            # change to one result period instead of silently falling back to
-            # per-sample polling.
-            if abs(actual_report - adc._report_time) > filtered_period:
-                self._fallback("report period quantization exceeds one result")
-                return
-            schedules.append((input_div, osr, report_div))
+            schedules.append((input_div, osr, 1))
 
-        max_block_scans = 16 // len(self._adcs)
+        max_block_values = self._mcu.get_constants().get(
+            "ADC_STREAM_MAX_BLOCK_VALUES", 16)
+        max_block_scans = max_block_values // len(self._adcs)
         report_scans = [input_div * osr * report_div
                         for input_div, osr, report_div in schedules]
         # End every logical reporting cycle on a DMA block boundary.  A block
@@ -1001,6 +1008,9 @@ class MCUADCStreamManager:
                 " input_div=%d osr=%d shift=0 report_div=%d report_class=%d"
                 % (self._oid, sub, sub, input_div, osr, report_div,
                    adc._adc_stream_class))
+            self._mcu.add_config_cmd(
+                "adc_stream_set_subscription_options oid=%d sub=%d"
+                " summary_mode=1" % (self._oid, sub))
             adc_max = adc._sample_count * int(
                 self._mcu.get_constants().get("ADC_MAX", 4095))
             if adc._range_check_count:
@@ -1019,7 +1029,7 @@ class MCUADCStreamManager:
         self._mcu.add_config_cmd(
             "adc_stream_set_options oid=%d raw_output=0" % (self._oid,))
         start_clock = self._mcu.get_query_slot(self._oid)
-        period_ticks = max(1, self._mcu.seconds_to_clock(base_time))
+        period_ticks = base_ticks
         self._mcu.add_config_cmd(
             "adc_stream_start oid=%d clock=%d period_ticks=%d"
             " block_values=%d traffic_class=%d" % (

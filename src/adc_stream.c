@@ -69,6 +69,8 @@ struct adc_stream {
     uint32_t telemetry_drops;
     uint32_t watchdog_events;
     uint32_t safety_clock;
+    uint32_t publication_count, publication_ticks, publication_ticks_max;
+    uint32_t consumer_count, consumer_ticks, consumer_ticks_max;
     uint64_t raw_scan_count;
     uint8_t channel_count;
     uint8_t subscription_count;
@@ -227,6 +229,20 @@ DECL_COMMAND(command_adc_stream_subscribe,
              " report_class=%c");
 
 void
+command_adc_stream_set_subscription_options(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    struct adc_stream_subscription *sub = adc_stream_find_subscription(
+        s, args[1]);
+    if (s->state != ADC_STREAM_STOPPED || !sub || args[2] > 1)
+        shutdown("Invalid ADC subscription options");
+    sub->filter.config.summary_mode = args[2];
+}
+DECL_COMMAND(command_adc_stream_set_subscription_options,
+             "adc_stream_set_subscription_options oid=%c sub=%c"
+             " summary_mode=%c");
+
+void
 command_adc_stream_set_safety(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
@@ -354,6 +370,9 @@ command_adc_stream_start(uint32_t *args)
     s->fault_status = 0;
     s->dma_errors = s->adc_errors = s->overruns = 0;
     s->telemetry_drops = s->watchdog_events = 0;
+    s->publication_count = s->publication_ticks = 0;
+    s->publication_ticks_max = 0;
+    s->consumer_count = s->consumer_ticks = s->consumer_ticks_max = 0;
     s->raw_scan_count = 0;
     s->epoch++;
     for (uint8_t i = 0; i < ADC_STREAM_BLOCK_COUNT; i++) {
@@ -412,6 +431,18 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
     if (!s || s->state != ADC_STREAM_RUNNING
         || block_index >= ADC_STREAM_BLOCK_COUNT)
         return -1;
+#if CONFIG_ADC_PROFILE
+    uint32_t profile_start = timer_read_time();
+    s->publication_count++;
+#define ADC_PUBLICATION_DONE() do {                                  \
+        uint32_t elapsed = timer_read_time() - profile_start;         \
+        s->publication_ticks += elapsed;                              \
+        if (elapsed > s->publication_ticks_max)                       \
+            s->publication_ticks_max = elapsed;                       \
+    } while (0)
+#else
+#define ADC_PUBLICATION_DONE() do { } while (0)
+#endif
     struct acq_block *b = &s->blocks[block_index];
     if (status & ACQ_STATUS_DMA_ERROR)
         s->dma_errors++;
@@ -430,6 +461,7 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         sched_wake_task(&adc_stream_wake);
         if (!s->traffic_class)
             try_shutdown("Critical ADC stream overrun");
+        ADC_PUBLICATION_DONE();
         return -1;
     }
     uint32_t sequence = s->sequence++;
@@ -477,6 +509,8 @@ adc_stream_block_complete(uint8_t block_index, uint32_t status)
         try_shutdown("Critical ADC acquisition fault");
     if (!s->traffic_class && s->state == ADC_STREAM_FAULTED)
         try_shutdown("Critical ADC stream overrun");
+    ADC_PUBLICATION_DONE();
+#undef ADC_PUBLICATION_DONE
     return s->state == ADC_STREAM_FAULTED ? -1 : 0;
 }
 
@@ -665,7 +699,17 @@ adc_stream_task(void)
         irq_restore(flag);
         if (ret)
             break;
+#if CONFIG_ADC_PROFILE
+        uint32_t profile_start = timer_read_time();
+#endif
         adc_stream_send_block(s, block_index);
+#if CONFIG_ADC_PROFILE
+        uint32_t elapsed = timer_read_time() - profile_start;
+        s->consumer_count++;
+        s->consumer_ticks += elapsed;
+        if (elapsed > s->consumer_ticks_max)
+            s->consumer_ticks_max = elapsed;
+#endif
     }
     if (s->state == ADC_STREAM_FAULTED) {
         acq_capture_trigger(&s->capture, 1);
@@ -715,12 +759,17 @@ command_adc_stream_get_status(uint32_t *args)
     sendf("adc_stream_status oid=%c state=%c class=%c channels=%c"
           " block_values=%c epoch=%u sequence=%u dropped=%u status=%u"
           " ready_highwater=%c dma_errors=%u adc_errors=%u overruns=%u"
-          " telemetry_drops=%u watchdog_events=%u",
+          " telemetry_drops=%u watchdog_events=%u publications=%u"
+          " publication_ticks=%u publication_ticks_max=%u consumers=%u"
+          " consumer_ticks=%u consumer_ticks_max=%u",
           s->oid, s->state, s->traffic_class, s->channel_count,
           s->block_values, s->epoch,
           s->sequence, s->dropped_blocks, s->fault_status,
           s->ready_ring.highwater, s->dma_errors, s->adc_errors,
-          s->overruns, s->telemetry_drops, s->watchdog_events);
+          s->overruns, s->telemetry_drops, s->watchdog_events,
+          s->publication_count, s->publication_ticks,
+          s->publication_ticks_max, s->consumer_count, s->consumer_ticks,
+          s->consumer_ticks_max);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_status, HF_IN_SHUTDOWN,
                    "adc_stream_get_status oid=%c");

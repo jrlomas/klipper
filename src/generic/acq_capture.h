@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define ACQ_CAPTURE_MAX_RECORDS 8
-#define ACQ_CAPTURE_MAX_BYTES 32
+#define ACQ_CAPTURE_MAX_BYTES 128
 
 struct acq_capture_record {
     uint32_t sequence;

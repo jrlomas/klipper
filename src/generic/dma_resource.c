@@ -10,6 +10,10 @@
 #endif
 #include "compiler.h" // __aligned, __section
 #include "generic/dma_resource.h"
+#ifdef CONFIG_MACH_ESP32
+#include "esp_attr.h" // DMA_ATTR
+#include "esp_memory_utils.h" // esp_ptr_dma_capable
+#endif
 
 #define DMA_MAX_ALLOCATIONS 12
 #define DMA_MAX_CLAIMS 16
@@ -30,8 +34,17 @@ struct dma_claim_record {
 
 // The linker gives this section a power-of-two-aligned, fixed extent.  M7
 // targets map it non-cacheable with one MPU region before enabling D-cache.
+#ifdef CONFIG_MACH_ESP32
+// ESP-IDF's default orphan-section placement maps an otherwise unknown
+// read/write section into flash DROM.  Use the IDF's DMA attribute so this
+// arena is guaranteed to reside in byte-addressable internal DRAM (and never
+// PSRAM or flash) before handing any pointer to a peripheral driver.
+static uint8_t dma_pool[CONFIG_DMA_POOL_SIZE]
+    DMA_ATTR __aligned(CONFIG_DMA_POOL_SIZE);
+#else
 static uint8_t dma_pool[CONFIG_DMA_POOL_SIZE]
     __section(".dma_buffer") __aligned(CONFIG_DMA_POOL_SIZE);
+#endif
 static struct dma_allocation allocations[DMA_MAX_ALLOCATIONS];
 static struct dma_claim_record claims[DMA_MAX_CLAIMS];
 static uint16_t pool_used, pool_highwater;
@@ -54,6 +67,15 @@ dma_pool_alloc(uint16_t size, uint16_t alignment,
     uint16_t offset = (pool_used + alignment - 1) & ~(alignment - 1);
     if ((uint32_t)offset + size > CONFIG_DMA_POOL_SIZE)
         return NULL;
+    void *buffer = &dma_pool[offset];
+#ifdef CONFIG_MACH_ESP32
+    // Keep a runtime assertion at the allocation boundary as well as the
+    // linker attribute.  This makes a future IDF linker-layout change fail
+    // closed during configuration instead of giving a peripheral a DROM or
+    // PSRAM pointer.
+    if (!esp_ptr_dma_capable(buffer))
+        return NULL;
+#endif
     struct dma_allocation *allocation = &allocations[allocation_count++];
     allocation->offset = offset;
     allocation->size = size;
@@ -63,8 +85,8 @@ dma_pool_alloc(uint16_t size, uint16_t alignment,
     pool_used = offset + size;
     if (pool_used > pool_highwater)
         pool_highwater = pool_used;
-    memset(&dma_pool[offset], 0, size);
-    return &dma_pool[offset];
+    memset(buffer, 0, size);
+    return buffer;
 }
 
 int

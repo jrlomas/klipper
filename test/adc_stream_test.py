@@ -52,6 +52,9 @@ def make_stream(max_pending=16):
     stream.sequence_gaps = stream.host_drops = stream.mcu_drops = 0
     stream.ready_highwater = stream.dma_errors = stream.adc_errors = 0
     stream.overruns = stream.telemetry_drops = stream.watchdog_events = 0
+    stream.publications = stream.publication_ticks = 0
+    stream.publication_ticks_max = stream.consumers = 0
+    stream.consumer_ticks = stream.consumer_ticks_max = 0
     stream.safety_events = 0
     stream.last_safety = None
     stream.oid = 9
@@ -160,12 +163,17 @@ def test_status_exposes_ring_and_error_counters():
         "sequence": 99, "ready_highwater": 2, "dma_errors": 5,
         "adc_errors": 6, "overruns": 7, "telemetry_drops": 8,
         "watchdog_events": 9,
+        "publications": 10, "publication_ticks": 11,
+        "publication_ticks_max": 12, "consumers": 13,
+        "consumer_ticks": 14, "consumer_ticks_max": 15,
     })
     status = stream.get_status(0.)
     assert status["state"] == "running"
     assert status["ready_highwater"] == 2
     assert status["dma_errors"] == 5
     assert status["watchdog_events"] == 9
+    assert status["publications"] == 10
+    assert status["consumer_ticks_max"] == 15
 
 
 def test_scheduled_summary_is_stored_then_acknowledged():

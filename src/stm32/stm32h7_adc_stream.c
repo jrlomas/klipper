@@ -144,7 +144,11 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                          | ADC_BACKEND_CAP_INFERRED_START
                          | ADC_BACKEND_CAP_HW_OVERSAMPLE;
     info->max_hardware_oversample = 256;
-    info->resolution_bits = 16;
+    // The shared H7 ADC setup deliberately selects 12-bit conversions (and
+    // ADC_MAX remains 4095).  Hardware oversampling may retain additional
+    // accumulator bits when the requested shift is smaller than log2(OSR),
+    // but that does not change the converter's native resolution.
+    info->resolution_bits = 12;
     info->adc_count = 1;
     info->watchdog_count = 0;
     info->timing_quality = 1;

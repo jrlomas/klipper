@@ -100,12 +100,21 @@ config WANT_ADC_STREAM
     bool
     depends on WANT_ADC && HAVE_ADC_STREAM
     default y
+config ADC_PROFILE
+    bool "Instrument ADC scheduler/DMA timing" if LOW_LEVEL_OPTIONS
+    depends on WANT_ADC
+    default n
+    help
+        Add timer reads and counters to legacy ADC events and DMA publication
+        paths for qualification images. Leave disabled in production because
+        the measurement itself perturbs the code being measured.
 config NEED_DMA_RESOURCE
     bool
     default y if WANT_ADC_STREAM || WANT_ETHERNET_RMII
 config DMA_POOL_SIZE
     int
     depends on NEED_DMA_RESOURCE
+    default 16384 if WANT_ETHERNET_RMII
     default 512 if HAVE_LIMITED_CODE_SIZE
     default 2048
 config DMA_RAM_START

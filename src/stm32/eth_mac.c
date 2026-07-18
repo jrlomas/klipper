@@ -29,10 +29,14 @@
 
 #include <string.h> // memcpy
 #include "autoconf.h" // CONFIG_MACH_STM32F4
+#include "board/armcm_boot.h" // armcm_enable_irq
+#include "board/irq.h" // irq_save
 #include "board/gpio.h" // gpio_out_setup
 #include "board/misc.h" // timer_read_time
 #include "command.h" // command_encoder
 #include "generic/armcm_timer.h" // udelay
+#include "generic/acq_ring.h"
+#include "generic/dma_resource.h"
 #include "sched.h" // DECL_TASK
 #include "internal.h" // gpio_peripheral, ETH
 #include "generic/nano_udp.h" // nano_udp_input
@@ -69,13 +73,44 @@ struct eth_desc {
 #define ETH_TX_RING 2
 #define ETH_BUF_SZ  1524 // one MTU + headroom, 4-byte aligned
 
-static struct eth_desc rx_ring[ETH_RX_RING] __attribute__((aligned(16)));
-static struct eth_desc tx_ring[ETH_TX_RING] __attribute__((aligned(16)));
-static uint8_t rx_buf[ETH_RX_RING][ETH_BUF_SZ] __attribute__((aligned(4)));
-static uint8_t tx_buf[ETH_TX_RING][ETH_BUF_SZ] __attribute__((aligned(4)));
-static uint8_t rx_idx, tx_idx;
+static struct eth_desc *rx_ring, *tx_ring;
+static uint8_t *rx_buf, *tx_buf;
+static struct acq_ring rx_ready;
+static struct task_wake eth_wake;
+static uint8_t rx_publish_idx, tx_idx;
 static uint8_t eth_ready, eth_link_up;
 static uint32_t eth_link_poll_next;
+static uint32_t eth_rx_frames, eth_tx_frames, eth_rx_overruns;
+static uint32_t eth_dma_errors;
+
+static void
+eth_publish_ready(void)
+{
+    for (;;) {
+        struct eth_desc *d = &rx_ring[rx_publish_idx];
+        if (d->status & ETH_DESC_OWN)
+            return;
+        if (acq_ring_push(&rx_ready, rx_publish_idx)) {
+            eth_rx_overruns++;
+            return;
+        }
+        rx_publish_idx = (rx_publish_idx + 1) % ETH_RX_RING;
+    }
+}
+
+void
+ETH_IRQHandler(void)
+{
+    uint32_t status = ETH->DMASR;
+    ETH->DMASR = status;
+    if (status & ETH_DMASR_FBES)
+        eth_dma_errors++;
+    if (status & ETH_DMASR_RBUS)
+        eth_rx_overruns++;
+    if (status & ETH_DMASR_RS)
+        eth_publish_ready();
+    sched_wake_task(&eth_wake);
+}
 
 /****************************************************************
  * MDIO / PHY management
@@ -269,16 +304,17 @@ eth_ring_init(void)
     for (int i = 0; i < ETH_RX_RING; i++) {
         rx_ring[i].status = ETH_DESC_OWN;
         rx_ring[i].control = ETH_RDES1_RCH | ETH_BUF_SZ;
-        rx_ring[i].buf1 = (uint32_t)(uintptr_t)rx_buf[i];
+        rx_ring[i].buf1 = (uint32_t)(uintptr_t)&rx_buf[i * ETH_BUF_SZ];
         rx_ring[i].buf2 = (uint32_t)(uintptr_t)&rx_ring[(i + 1) % ETH_RX_RING];
     }
     for (int i = 0; i < ETH_TX_RING; i++) {
         tx_ring[i].status = ETH_TDES0_TCH; // CPU owns; chained
         tx_ring[i].control = 0;
-        tx_ring[i].buf1 = (uint32_t)(uintptr_t)tx_buf[i];
+        tx_ring[i].buf1 = (uint32_t)(uintptr_t)&tx_buf[i * ETH_BUF_SZ];
         tx_ring[i].buf2 = (uint32_t)(uintptr_t)&tx_ring[(i + 1) % ETH_TX_RING];
     }
-    rx_idx = tx_idx = 0;
+    rx_publish_idx = tx_idx = 0;
+    acq_ring_init(&rx_ready, ETH_RX_RING);
 }
 
 static int
@@ -314,6 +350,10 @@ eth_mac_init(void)
     eth_ring_init();
     ETH->DMARDLAR = (uint32_t)(uintptr_t)rx_ring;
     ETH->DMATDLAR = (uint32_t)(uintptr_t)tx_ring;
+    ETH->DMAIER = ETH_DMAIER_NISE | ETH_DMAIER_AISE
+                  | ETH_DMAIER_RIE | ETH_DMAIER_TIE
+                  | ETH_DMAIER_RBUIE | ETH_DMAIER_FBEIE;
+    armcm_enable_irq(ETH_IRQHandler, ETH_IRQn, 2);
 
     // Start at the most common mode; eth_phy_poll() applies the negotiated
     // result as soon as link completes and again after reconnects.
@@ -342,10 +382,11 @@ eth_mac_emit(const uint8_t *frame, uint32_t len)
         return; // ring full - drop; the frame layer's ARQ recovers
     if (len > ETH_BUF_SZ)
         return;
-    memcpy(tx_buf[tx_idx], frame, len);
+    memcpy(&tx_buf[tx_idx * ETH_BUF_SZ], frame, len);
     d->control = len & 0x1FFF;
     __DMB(); // publish buffer + descriptor fields before DMA ownership
     d->status = ETH_TDES0_TCH | ETH_TDES0_FS | ETH_TDES0_LS | ETH_DESC_OWN;
+    eth_tx_frames++;
     tx_idx = (tx_idx + 1) % ETH_TX_RING;
     // Kick the transmit DMA out of any suspended state
     ETH->DMASR = ETH_DMASR_TBUS;
@@ -358,6 +399,7 @@ eth_mac_emit(const uint8_t *frame, uint32_t len)
 void
 eth_mac_task(void)
 {
+    (void)sched_check_wake(&eth_wake);
     if (!eth_ready)
         return;
     uint32_t now = timer_read_time();
@@ -366,9 +408,13 @@ eth_mac_task(void)
         eth_phy_poll();
     }
     for (;;) {
-        struct eth_desc *d = &rx_ring[rx_idx];
-        if (d->status & ETH_DESC_OWN)
-            break; // DMA still owns it - nothing ready
+        uint8_t index;
+        irqstatus_t flag = irq_save();
+        int ret = acq_ring_pop(&rx_ready, &index);
+        irq_restore(flag);
+        if (ret)
+            break;
+        struct eth_desc *d = &rx_ring[index];
         __DMB(); // DMA has returned status and the associated frame buffer
         if (!(d->status & ETH_RDES0_ES)) {
             uint32_t flen = (d->status & ETH_RDES0_FL_MASK)
@@ -376,13 +422,16 @@ eth_mac_task(void)
             if (flen > 4)
                 nano_udp_input((const uint8_t *)(uintptr_t)d->buf1
                                , flen - 4 /* strip FCS */);
+            eth_rx_frames++;
         }
         __DMB();
         d->status = ETH_DESC_OWN; // hand the descriptor back to the DMA
-        rx_idx = (rx_idx + 1) % ETH_RX_RING;
         // Clear RX-buffer-unavailable and resume if the DMA suspended
         ETH->DMASR = ETH_DMASR_RBUS;
         ETH->DMARPDR = 0;
+        flag = irq_save();
+        eth_publish_ready();
+        irq_restore(flag);
     }
 }
 DECL_TASK(eth_mac_task);
@@ -415,6 +464,41 @@ eth_load_psk(void)
     return len;
 }
 
+static int
+eth_dma_storage_init(void)
+{
+    const uint8_t owner = 0xfe;
+    uint8_t desc_caps = DMA_POOL_DESCRIPTOR | DMA_POOL_DMA_REACHABLE
+                        | DMA_POOL_NONCACHEABLE;
+    uint8_t buf_caps = DMA_POOL_BUFFER | DMA_POOL_DMA_REACHABLE
+                       | DMA_POOL_NONCACHEABLE;
+    if (dma_claim(DMA_RESOURCE_ETH_MAC, 0, owner)
+        || dma_claim(DMA_RESOURCE_ETH_DMA, 0, owner))
+        return -1;
+    rx_ring = dma_pool_alloc(sizeof(*rx_ring) * ETH_RX_RING, 32,
+                             desc_caps, owner);
+    tx_ring = dma_pool_alloc(sizeof(*tx_ring) * ETH_TX_RING, 32,
+                             desc_caps, owner);
+    rx_buf = dma_pool_alloc(ETH_RX_RING * ETH_BUF_SZ, 32, buf_caps, owner);
+    tx_buf = dma_pool_alloc(ETH_TX_RING * ETH_BUF_SZ, 32, buf_caps, owner);
+    return !rx_ring || !tx_ring || !rx_buf || !tx_buf ? -1 : 0;
+}
+
+void
+command_eth_mac_get_status(uint32_t *args)
+{
+    (void)args;
+    struct dma_pool_status pool;
+    dma_pool_get_status(&pool);
+    sendf("eth_mac_status ready=%c link=%c rx=%u tx=%u overruns=%u"
+          " dma_errors=%u ready_highwater=%c dma_pool=%hu dma_used=%hu",
+          eth_ready, eth_link_up, eth_rx_frames, eth_tx_frames,
+          eth_rx_overruns, eth_dma_errors, rx_ready.highwater,
+          pool.size, pool.used);
+}
+DECL_COMMAND_FLAGS(command_eth_mac_get_status, HF_IN_SHUTDOWN,
+                   "eth_mac_get_status");
+
 void
 console_sendf(const struct command_encoder *ce, va_list args)
 {
@@ -437,6 +521,8 @@ eth_mac_setup(void)
         // safe to report a missing mandatory network credential.
         return;
 #endif
+    if (eth_dma_storage_init())
+        return;
     eth_mac_address_init();
     nano_udp_setup(eth_mac_addr, CONFIG_RMII_IP, CONFIG_RMII_UDP_PORT,
                    eth_mac_emit);
