@@ -16,6 +16,7 @@ LABELS = {
     "legacy_8x_thermistor": "F072 legacy thermistor",
     "dma_1ksps_osr8": "F072 DMA 1 kscan/s",
     "dma_distributed_8x_thermistor": "F072 DMA thermistor",
+    "dma_mcu_adc_thermistor_restart": "RP2040 migrated thermistor",
     "dma_hw_osr16_1ksps": "H723 DMA HW-OSR16",
     "dma_hw_osr16_with_solver_load": "H723 DMA + solver load",
 }

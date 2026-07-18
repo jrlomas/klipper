@@ -78,6 +78,7 @@ scripts/analyze_adc_dma.py
 | F072 DMA, 1 ksample/s, SW OSR8 | 1,000 | 15.625 | 29.516 us | 30.083 us | 0.04612% | 1.77937% |
 | F072 DMA, distributed 8/300 ms | 26.67 | 3.333 | 29.421 us | 29.958 us | 0.00981% | 0.06984% |
 | RP2040 DMA, 1 ksample/s | 1,000 | 15.625 | 4.781 us | 5.167 us | 0.00747% | 0.09117% |
+| RP2040 migrated thermistor + host restart | 800 | 13.333 | 5.093 us | 5.417 us | 0.00679% | 0.22089% |
 | H723 DMA, 1 ksample/s, HW OSR16 | 16,000 | 15.625 | 0.528 us | 0.888 us | 0.00083% | 0.03279% |
 | H723 DMA plus solver load | 16,000 | 15.625 | 0.487 us | 0.587 us | 0.00076% | 0.03241% |
 
@@ -190,6 +191,25 @@ jumper plus RESET sequence, and the corrected direct UF2 image was flashed.
 The retained test configuration now locks that boot choice. Physical
 DC/PWM/waveform accuracy and motion-concurrency fixtures remain separate open
 gates; this thermistor run is functional continuity evidence, not SNR data.
+
+The forced `MCU_adc` migration gate then exercised the normal Klippy consumer,
+not the raw qualification helper. The first attempt truthfully failed because
+the 37.5 ms distributed sample interval exceeded the RP2040 ADC divider. The
+firmware now advertises 16,384 scheduler ticks per channel as its maximum scan
+period; the host selected the largest exact common divisor, a 15,000-tick
+(800 scan/s) cadence, and `input_div=30` retained eight accepted samples and
+one report every 300 ms. Two successive Klippy processes reported the GPIO27
+thermistor at 27.8..27.9 C. The second process stopped and rearmed the retained
+DMA engine at epoch 2 rather than failing on a pending asynchronous abort.
+
+After 659 epoch-2 blocks (39,540 conversions, 49.425 s), status reported zero
+drops, DMA/ADC errors, overruns, telemetry drops, or watchdog events and ready
+high-water one. Publication cost was 40,276 scheduler ticks total, 65 maximum;
+consumer cost was 1,310,157 ticks total, 2,188 maximum. A third independently
+created `HostSession` attached to the still-running application, adopted its
+retained sequence only after the guarded repeated-NAK bootstrap, and read the
+same status without resetting or cycling USB. This validates compatibility
+migration and restart lifecycle, but still is not analog-accuracy evidence.
 
 ### ESP32
 

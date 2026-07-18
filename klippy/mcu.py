@@ -878,6 +878,22 @@ ADC_STREAM_SUMMARY_FORMAT = (
     " sum_lo=%u sum_hi=%u shift=%c")
 
 
+def _largest_common_divisor_at_most(values, limit):
+    """Return the slowest exact base cadence bounded by a backend limit."""
+    common = values[0]
+    for value in values[1:]:
+        common = math.gcd(common, value)
+    if not limit or common <= limit:
+        return common
+    # Backend limits are intentionally small hardware counter ranges (the
+    # RP2040 bound is 16384 ticks/channel), so this bounded configuration-time
+    # search is clearer and less error-prone than a factorization routine.
+    for candidate in range(limit, 0, -1):
+        if common % candidate == 0:
+            return candidate
+    return 1
+
+
 class MCUADCStreamManager:
     """Merge explicitly opted legacy ADC consumers onto one DMA scan engine."""
     def __init__(self, mcu):
@@ -963,9 +979,11 @@ class MCUADCStreamManager:
                 self._fallback("report period cannot be represented in ticks")
                 return
             desired_ticks.append(ticks)
-        base_ticks = desired_ticks[0]
-        for ticks in desired_ticks[1:]:
-            base_ticks = math.gcd(base_ticks, ticks)
+        max_ticks_per_channel = self._mcu.get_constants().get(
+            "ADC_STREAM_MAX_SCAN_TICKS_PER_CHANNEL", 0)
+        max_scan_ticks = max_ticks_per_channel * len(self._adcs)
+        base_ticks = _largest_common_divisor_at_most(
+            desired_ticks, max_scan_ticks)
         schedules = []
         for adc, ticks in zip(self._adcs, desired_ticks):
             input_div = ticks // base_ticks

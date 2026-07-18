@@ -6204,6 +6204,12 @@ their contract. `off` forces the legacy ADC implementation. `force` is a
 qualification mode that turns any incompatibility into a configuration error
 instead of falling back.
 
+Backends advertise hardware pacing bounds. When a legacy consumer requests a
+slower interval than a divider can directly represent (notably RP2040
+`ADC_DIV`), the adapter selects the slowest exact bounded scan period and uses
+phase-locked `input_div` decimation. The requested sample count and report
+interval therefore remain exact; the MCU never silently clips the divider.
+
 ```
 [adc_stream example]
 pins:

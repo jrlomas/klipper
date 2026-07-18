@@ -7,8 +7,9 @@ capture, automatic `MCU_adc` compatibility adapter, RP2040,
 STM32F0/G0/F4/F7/H7, classic ESP32, and shared F767 Ethernet allocation all
 compile and pass their host tests. STM32F072, STM32H723, RP2040, and classic
 ESP32 have live acquisition evidence. Physical waveform/SNR qualification,
-RP2040 motion/safety migration, G0B1/F767 target runs, and simultaneous live
-Ethernet/ADC remain hardware gates rather than software-completion claims.
+RP2040 physical motion/jitter and heater-fault injection, G0B1/F767 target
+runs, and simultaneous live Ethernet/ADC remain hardware gates rather than
+software-completion claims.
 
 This document specifies the common HELIX primitives for DMA-backed peripheral
 acquisition and applies them first to ADC sampling on STM32, RP2040, and ESP32.
@@ -106,13 +107,15 @@ Evidence at this checkpoint:
 | STM32F072 polling/DMA profile | The archived legacy 8x/300 ms schedule used 53.33 timer callbacks/s for 26.67 conversions/s. Its equivalent distributed DMA schedule used 3.33 block publications/s, delivered 419 consecutive reports, and had zero drops/errors/overruns. A separate 1 ksample/s DMA stress delivered 581 blocks with the same zero-fault result. Exact counters and graphs are in the qualification paper. |
 | STM32H723 hardware OSR | The MPU arena maps at DMA1-reachable AXI SRAM `0x24000000`. PA0 at 1 ktrigger/s and hardware OSR16 produced 802 consecutive 64-value blocks (821,248 physical conversions), zero drops/errors/overruns, and queue high-water one. A second 254-block run remained continuous while the 100 kHz/four-axis trajectory benchmark returned status 0. |
 | RP2040 live acquisition | Direct-boot SKR Pico, GPIO27 thermistor, 1 ksample/s: 122 consecutive 64-value blocks (7,808 samples), raw range 3,773..3,881, zero drops/errors/overruns, queue high-water one, correct 200 MHz core/12 MHz scheduler reporting, and clean commanded stop. The test also caught and corrected an erroneous 16 KiB qualification-image offset before the live run. |
+| RP2040 `MCU_adc` migration/restart | Forced compatibility migration of the connected GPIO27 thermistor selected an exact 800 scan/s hardware cadence, `input_div=30`, OSR8, 300 ms reports, and 60-value DMA blocks instead of overflowing `ADC_DIV`. Two successive Klippy hosts both reported 27.8..27.9 C; the second reinitialized the still-running DMA engine at epoch 2. Final status after 659 blocks: zero drops, DMA/ADC errors, overruns, telemetry drops, or watchdog events; ready high-water one; publication max 65 scheduler ticks and consumer max 2,188 ticks. A third fresh `HostSession` adopted the retained USB sequence and queried the counters without a cable cycle. |
 | F767 Ethernet reuse | The combined ADC/RMII image links with one 16 KiB MPU arena at `0x20020000`. Ethernet descriptors and payloads allocate from `dma_resource`, RX publication uses `acq_ring`, compiled claims cover MAC/DMA, and explicit status counters replace the prior parallel static arena. This is map/build evidence; the board/PHY live contention gate remains open. |
 | ESP32 placement guard | A fresh IDF 5.3.2 build places the shared arena in internal DRAM at `0x3ffb2800`; `DMA_ATTR` and `esp_ptr_dma_capable()` prevent DROM/PSRAM allocation. The earlier 47,072-scan Wi-Fi soak remains the live acquisition evidence. |
 
 This checkpoint does **not** claim native-board analog accuracy/SNR/ENOB,
-RP2040/G0B1/F767 live completion, ESP32 reconnect/cache-stall stress, external
-sample-aperture measurement, or live Ethernet/ADC contention. Those remain
-gated below and are not inferred from cross-builds.
+RP2040 physical motion/jitter or heater-fault injection, G0B1/F767 live
+completion, ESP32 reconnect/cache-stall stress, external sample-aperture
+measurement, or live Ethernet/ADC contention. Those remain gated below and
+are not inferred from cross-builds.
 
 ## Why the existing ADC loop must change
 
@@ -529,6 +532,15 @@ per-sample error bit but no channel tag, so the configured round-robin order
 and exact sample count are part of continuity. A FIFO overflow invalidates
 channel phase until the stream is restarted with a new epoch.
 
+`ADC_DIV` is a 16.8 fixed-point counter clocked at 48 MHz, so its slowest
+conversion is about 1.365 ms. Firmware advertises the equivalent bound as
+`ADC_STREAM_MAX_SCAN_TICKS_PER_CHANNEL=16384`. The compatibility adapter does
+not ask the backend to clip slower thermistor schedules: it chooses the
+largest exact common scan divisor below that bound and increases each
+subscription's phase-locked `input_div`. Thus physical DMA acquisition may be
+faster than the legacy burst cadence while its accepted sample count, boxcar,
+threshold evaluation, and report interval remain exact and deterministic.
+
 ### ESP32
 
 The continuous driver supplies frames at the configured digital-controller
@@ -720,7 +732,8 @@ injected discontinuity is reported as contiguous data.
   pacing divider, and inferred-start uncertainty; cross-build the RP2040 image.
 - [x] Run the direct-boot Pico raw thermistor continuity gate at 1 ksample/s,
   including exact block count, profile counters, clean stop, and zero faults.
-- [ ] Migrate V0 thermistor monitoring through the compatibility adapter.
+- [x] Migrate V0 thermistor monitoring through the compatibility adapter,
+  including exact slow-cadence decimation and live host restart.
 - [ ] Test raw and decimated acquisition from DC, PWM+filter, and a known
   waveform while homing and high-rate motion execute.
 - [ ] Compare interrupt count, CPU budget, sample timing, and motion jitter to

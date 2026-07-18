@@ -1,18 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="940" height="436" viewBox="0 0 940 436" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="490" viewBox="0 0 940 490" role="img">
 <rect width="100%%" height="100%%" fill="#0f172a"/>
 <style>text{font-family:system-ui,sans-serif;fill:#e2e8f0}.title{font-size:22px;font-weight:700}.sub{font-size:13px;fill:#94a3b8}.label{font-size:13px}.value{font-size:12px;font-weight:650}.grid{stroke:#334155;stroke-width:1}</style>
 <text class="title" x="24" y="34">Mean hard-path service time</text>
 <text class="sub" x="24" y="57">Instrumentation is internal timer accounting; no diagnostic GPIO is toggled in the measured path.</text>
-<line class="grid" x1="245.0" y1="75" x2="245.0" y2="408"/>
-<text class="sub" text-anchor="middle" x="245.0" y="426">0</text>
-<line class="grid" x1="401.2" y1="75" x2="401.2" y2="408"/>
-<text class="sub" text-anchor="middle" x="401.2" y="426">7.38</text>
-<line class="grid" x1="557.5" y1="75" x2="557.5" y2="408"/>
-<text class="sub" text-anchor="middle" x="557.5" y="426">14.8</text>
-<line class="grid" x1="713.8" y1="75" x2="713.8" y2="408"/>
-<text class="sub" text-anchor="middle" x="713.8" y="426">22.1</text>
-<line class="grid" x1="870.0" y1="75" x2="870.0" y2="408"/>
-<text class="sub" text-anchor="middle" x="870.0" y="426">29.5</text>
+<line class="grid" x1="245.0" y1="75" x2="245.0" y2="462"/>
+<text class="sub" text-anchor="middle" x="245.0" y="480">0</text>
+<line class="grid" x1="401.2" y1="75" x2="401.2" y2="462"/>
+<text class="sub" text-anchor="middle" x="401.2" y="480">7.38</text>
+<line class="grid" x1="557.5" y1="75" x2="557.5" y2="462"/>
+<text class="sub" text-anchor="middle" x="557.5" y="480">14.8</text>
+<line class="grid" x1="713.8" y1="75" x2="713.8" y2="462"/>
+<text class="sub" text-anchor="middle" x="713.8" y="480">22.1</text>
+<line class="grid" x1="870.0" y1="75" x2="870.0" y2="462"/>
+<text class="sub" text-anchor="middle" x="870.0" y="480">29.5</text>
 <text class="label" x="24" y="100">F072 legacy thermistor</text>
 <rect x="245" y="82" width="30.96" height="24" rx="3" fill="#60a5fa"/>
 <text class="value" x="282.96" y="99">1.462 us/event</text>
@@ -25,10 +25,13 @@
 <text class="label" x="24" y="262">dma_1ksps_thermistor</text>
 <rect x="245" y="244" width="101.25" height="24" rx="3" fill="#60a5fa"/>
 <text class="value" x="353.25" y="261">4.781 us/event</text>
-<text class="label" x="24" y="316">H723 DMA HW-OSR16</text>
-<rect x="245" y="298" width="11.19" height="24" rx="3" fill="#60a5fa"/>
-<text class="value" x="263.19" y="315">0.5285 us/event</text>
-<text class="label" x="24" y="370">H723 DMA + solver load</text>
-<rect x="245" y="352" width="10.31" height="24" rx="3" fill="#60a5fa"/>
-<text class="value" x="262.31" y="369">0.4868 us/event</text>
+<text class="label" x="24" y="316">RP2040 migrated thermistor</text>
+<rect x="245" y="298" width="107.85" height="24" rx="3" fill="#60a5fa"/>
+<text class="value" x="359.85" y="315">5.093 us/event</text>
+<text class="label" x="24" y="370">H723 DMA HW-OSR16</text>
+<rect x="245" y="352" width="11.19" height="24" rx="3" fill="#60a5fa"/>
+<text class="value" x="263.19" y="369">0.5285 us/event</text>
+<text class="label" x="24" y="424">H723 DMA + solver load</text>
+<rect x="245" y="406" width="10.31" height="24" rx="3" fill="#60a5fa"/>
+<text class="value" x="262.31" y="423">0.4868 us/event</text>
 </svg>

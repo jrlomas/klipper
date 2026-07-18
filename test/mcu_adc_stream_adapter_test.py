@@ -22,7 +22,7 @@ class FakePrinter:
 
 
 class FakeMCU:
-    def __init__(self, stream=True, mode="off"):
+    def __init__(self, stream=True, mode="off", max_scan_ticks=0):
         self.callbacks = []
         self.commands = []
         self.responses = []
@@ -36,6 +36,9 @@ class FakeMCU:
                 "ADC_STREAM_MAX_OSR": 256,
                 "ADC_STREAM_MAX_BLOCK_VALUES": 64,
             })
+            if max_scan_ticks:
+                self.constants["ADC_STREAM_MAX_SCAN_TICKS_PER_CHANNEL"] = (
+                    max_scan_ticks)
     def register_config_callback(self, callback):
         self.callbacks.append(callback)
     def add_config_cmd(self, command, is_init=False):
@@ -155,9 +158,26 @@ def test_auto_mode_migrates_heater_thresholds_to_local_shutdown():
     assert sum("summary_mode=1" in command for command in commands) == 2
 
 
+def test_backend_period_limit_uses_exact_input_decimation():
+    # A 5-sample/100ms consumer asks for a 20ms scan, but this synthetic
+    # backend can pace at most 3ms.  The adapter chooses the largest exact
+    # divisor (2.5ms) and decimates by eight before each 5x OSR report.  The
+    # requested 100ms report interval remains exact.
+    fake = FakeMCU(mode="force", max_scan_ticks=3000)
+    adc = MODULE.MCU_adc(fake, {"pin": "gpio27"})
+    adc.setup_adc_sample(.100, .005, 5)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    assert any("input_div=8 osr=5 shift=0 report_div=1" in command
+               for command in commands)
+    assert any("period_ticks=2500 block_values=40 traffic_class=2"
+               in command for command in commands)
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
     test_unmigrated_consumer_prevents_split_adc_ownership()
     test_auto_mode_migrates_heater_thresholds_to_local_shutdown()
+    test_backend_period_limit_uses_exact_input_decimation()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

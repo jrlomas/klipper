@@ -22,6 +22,12 @@
 #define ADC_DMA_CH1 11
 #define ADC_DMA_MASK ((1u << ADC_DMA_CH0) | (1u << ADC_DMA_CH1))
 
+// ADC_DIV is 16.8 fixed point and clk_adc is four times the 12MHz machine
+// clock.  The host uses this limit to introduce deterministic input
+// decimation when a requested scan is slower than the hardware divider can
+// represent.  A complete scan has one conversion per configured channel.
+DECL_CONSTANT("ADC_STREAM_MAX_SCAN_TICKS_PER_CHANNEL", 16384);
+
 static struct adc_stream_backend_config stream_cfg;
 static uint8_t stream_active;
 static uint32_t dma_ctrl[2];
@@ -94,11 +100,15 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
 
     if (!is_enabled_pclock(RESETS_RESET_DMA_BITS))
         enable_pclock(RESETS_RESET_DMA_BITS);
-    if ((dma_hw->ch[ADC_DMA_CH0].ctrl_trig
-         | dma_hw->ch[ADC_DMA_CH1].ctrl_trig)
-        & DMA_CH0_CTRL_TRIG_BUSY_BITS)
-        shutdown("RP2040 ADC DMA channels busy");
+    // A host process may reconnect and replay init commands while the MCU and
+    // its configured ADC stream remain alive.  Resource ownership proves
+    // these channels are ours; complete any earlier asynchronous abort before
+    // reprogramming them instead of treating an idempotent restart as a
+    // hardware conflict.  RP2040 requires CHAN_ABORT to be polled until the
+    // requested bits clear.
     dma_hw->abort = ADC_DMA_MASK;
+    while (dma_hw->abort & ADC_DMA_MASK)
+        ;
     dma_hw->inte1 &= ~ADC_DMA_MASK;
     dma_hw->ints1 = ADC_DMA_MASK;
 
@@ -157,14 +167,17 @@ void
 board_adc_stream_stop_from_isr(void)
 {
     adc_hw->cs &= ~ADC_CS_START_MANY_BITS;
-    dma_hw->abort = ADC_DMA_MASK;
     dma_hw->inte1 &= ~ADC_DMA_MASK;
+    dma_hw->abort = ADC_DMA_MASK;
 }
 
 void
 board_adc_stream_stop(void)
 {
     board_adc_stream_stop_from_isr();
+    while (dma_hw->abort & ADC_DMA_MASK)
+        ;
+    dma_hw->ints1 = ADC_DMA_MASK;
     stream_active = 0;
 }
 
