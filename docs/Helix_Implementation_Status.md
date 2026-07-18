@@ -127,6 +127,14 @@ pass.
   drops/faults. This gate found and corrected DMA-block/report-cycle
   misalignment. End-to-end FPS qualification on its actual G0B1 target remains
   open.
+* The generic DMA substrate now includes fixed-lifetime aligned allocation and
+  exclusive resource claims shared by ADC and future Ethernet consumers. ADC
+  backends claim their ADC, pacing timer, DMA channel/stream, and request line
+  instead of relying on unrelated register-state guesses. On STM32H723 the
+  linker now places the 2 KiB DMA arena in AXI SRAM at `0x24000000`; the prior
+  default was DMA-inaccessible DTCM. An MPU region makes only that arena
+  shareable and non-cacheable before D-cache is enabled. Host tests cover
+  allocation/conflicts and the F072, G0B1, and H723 images link cleanly.
 * `arm-none-eabi-gcc` 13.2.1 builds the native-RMII console as an
   authenticated STM32F407 image and as an authenticated, pair-FEC STM32F765
   image. The path includes configurable pins and reset, bounded MDIO,

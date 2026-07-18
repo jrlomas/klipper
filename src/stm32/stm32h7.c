@@ -12,6 +12,9 @@
 #include "command.h" // DECL_CONSTANT_STR
 #include "internal.h" // get_pclock_frequency
 #include "sched.h" // sched_main
+#if CONFIG_NEED_DMA_RESOURCE
+#include "stm32/dma_mpu.h"
+#endif
 
 
 /****************************************************************
@@ -149,6 +152,9 @@ clock_setup(void)
         }
     }
 
+#if CONFIG_NEED_DMA_RESOURCE
+    stm32_dma_mpu_init();
+#endif
     SCB_EnableICache();
     SCB_EnableDCache();
 

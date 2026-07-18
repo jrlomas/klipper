@@ -13,6 +13,7 @@
 #include "compiler.h" // __aligned
 #include "generic/acq_block.h"
 #include "generic/adc_filter.h"
+#include "generic/dma_resource.h"
 #include "sched.h" // DECL_TASK
 
 enum {
@@ -36,6 +37,7 @@ struct adc_stream {
     struct acq_block blocks[ADC_STREAM_BLOCK_COUNT];
     struct adc_stream_backend_info info;
     struct adc_stream_subscription subscriptions[ADC_STREAM_MAX_SUBSCRIPTIONS];
+    uint16_t *buffer;
     uint32_t first_clock;
     uint32_t sequence;
     uint32_t epoch;
@@ -53,9 +55,6 @@ struct adc_stream {
 };
 
 // The first implementation deliberately permits one physical ADC engine.
-// Align the double buffer for M7 cache-line maintenance.
-static uint16_t adc_stream_buffer[
-    ADC_STREAM_BLOCK_COUNT * ADC_STREAM_MAX_BLOCK_VALUES] __aligned(32);
 static struct adc_stream *active_stream;
 static struct task_wake adc_stream_wake;
 
@@ -82,6 +81,13 @@ command_config_adc_stream(uint32_t *args)
     s->state = ADC_STREAM_STOPPED;
     s->raw_output = 1;
     s->start_timer.func = adc_stream_start_event;
+    s->buffer = dma_pool_alloc(
+        ADC_STREAM_BLOCK_COUNT * ADC_STREAM_MAX_BLOCK_VALUES
+            * sizeof(*s->buffer), 32,
+        DMA_POOL_BUFFER | DMA_POOL_DMA_REACHABLE | DMA_POOL_NONCACHEABLE,
+        s->oid);
+    if (!s->buffer)
+        shutdown("ADC stream DMA pool exhausted");
 }
 DECL_COMMAND(command_config_adc_stream, "config_adc_stream oid=%c");
 
@@ -197,15 +203,16 @@ command_adc_stream_start(uint32_t *args)
     s->epoch++;
     for (uint8_t i = 0; i < ADC_STREAM_BLOCK_COUNT; i++) {
         acq_block_init(&s->blocks[i],
-                       &adc_stream_buffer[i * ADC_STREAM_MAX_BLOCK_VALUES]);
+                       &s->buffer[i * ADC_STREAM_MAX_BLOCK_VALUES]);
         acq_block_dma_take(&s->blocks[i]);
     }
     struct adc_stream_backend_config cfg = {
         .pins = s->pins,
-        .buffer = adc_stream_buffer,
+        .buffer = s->buffer,
         .requested_period_ticks = period_ticks,
         .channel_count = s->channel_count,
         .block_values = block_values,
+        .owner = s->oid,
     };
     board_adc_stream_setup(&cfg, &s->info);
     if (!s->info.period_denominator || !s->info.period_numerator)
@@ -428,13 +435,17 @@ void
 command_adc_stream_get_capabilities(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    struct dma_pool_status pool;
+    dma_pool_get_status(&pool);
     sendf("adc_stream_capabilities oid=%c version=%c max_channels=%c"
-          " max_subscriptions=%c max_osr=%hu caps=%u",
+          " max_subscriptions=%c max_osr=%hu caps=%u dma_pool=%hu"
+          " dma_used=%hu dma_claims=%c",
           s->oid, 1, ADC_STREAM_MAX_CHANNELS, ADC_STREAM_MAX_SUBSCRIPTIONS,
           ADC_FILTER_MAX_OSR,
           ADC_STREAM_CAP_RAW_BLOCKS | ADC_STREAM_CAP_SW_BOXCAR
           | ADC_STREAM_CAP_INPUT_DECIMATION | ADC_STREAM_CAP_SUMMARIES
-          | ADC_STREAM_CAP_PROMPT_REPORT);
+          | ADC_STREAM_CAP_PROMPT_REPORT,
+          pool.size, pool.used, pool.claims);
 }
 DECL_COMMAND_FLAGS(command_adc_stream_get_capabilities, HF_IN_SHUTDOWN,
                    "adc_stream_get_capabilities oid=%c");

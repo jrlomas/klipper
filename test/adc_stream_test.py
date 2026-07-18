@@ -97,10 +97,12 @@ def test_capability_contract_is_exposed():
     stream = make_stream()
     stream._handle_capabilities({
         "version": 1, "max_channels": 4, "max_subscriptions": 8,
-        "max_osr": 256, "caps": 31,
+        "max_osr": 256, "caps": 31, "dma_pool": 512,
+        "dma_used": 64, "dma_claims": 3,
     })
     assert stream.capabilities["version"] == 1
     assert stream.capabilities["caps"] == 31
+    assert stream.capabilities["dma_used"] == 64
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@
 #include "command.h" // DECL_CONSTANT_STR
 #include "internal.h" // enable_pclock
 #include "sched.h" // sched_main
+#if CONFIG_NEED_DMA_RESOURCE
+#include "stm32/dma_mpu.h"
+#endif
 
 
 /****************************************************************
@@ -165,6 +168,12 @@ armcm_main(void)
     DWT->LAR = 0xC5ACCE55;
 
     clock_setup();
+
+#if CONFIG_NEED_DMA_RESOURCE
+    stm32_dma_mpu_init();
+    SCB_EnableICache();
+    SCB_EnableDCache();
+#endif
 
     sched_main();
 }

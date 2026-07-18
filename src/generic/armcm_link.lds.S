@@ -13,6 +13,11 @@ MEMORY
 {
   rom (rx) : ORIGIN = CONFIG_FLASH_APPLICATION_ADDRESS , LENGTH = CONFIG_FLASH_SIZE
   ram (rwx) : ORIGIN = CONFIG_RAM_START , LENGTH = CONFIG_RAM_SIZE
+#if CONFIG_NEED_DMA_RESOURCE && (CONFIG_MACH_STM32F7 || CONFIG_MACH_STM32H7)
+  // F7 DTCM and H7 DTCM at the normal RAM origin are not reachable by the
+  // peripheral DMA engines.  Reserve the fixed arena in SRAM1/AXI SRAM.
+  dma_ram (rw) : ORIGIN = CONFIG_DMA_RAM_START , LENGTH = CONFIG_DMA_POOL_SIZE
+#endif
 }
 
 SECTIONS
@@ -46,6 +51,21 @@ SECTIONS
         . = ALIGN(4);
         _data_end = .;
     } > ram
+
+#if CONFIG_NEED_DMA_RESOURCE
+    .dma_buffer (NOLOAD) :
+    {
+        . = ALIGN(CONFIG_DMA_POOL_SIZE);
+        _dma_buffer_start = .;
+        KEEP(*(.dma_buffer))
+        . = ALIGN(32);
+        _dma_buffer_end = .;
+#if CONFIG_MACH_STM32F7 || CONFIG_MACH_STM32H7
+    } > dma_ram
+#else
+    } > ram
+#endif
+#endif
 
     .bss (NOLOAD) :
     {

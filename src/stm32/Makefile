@@ -49,6 +49,8 @@ src-$(CONFIG_MACH_STM32G0) += stm32/stm32g0.c
 src-$(CONFIG_MACH_STM32G4) += stm32/stm32g4.c ../lib/stm32g4/system_stm32g4xx.c
 src-$(CONFIG_MACH_STM32H7) += stm32/stm32h7.c ../lib/stm32h7/system_stm32h7xx.c
 src-$(CONFIG_MACH_STM32L4) += stm32/stm32l4.c ../lib/stm32l4/system_stm32l4xx.c
+src-$(CONFIG_NEED_DMA_RESOURCE) += $(if $(filter y,$(CONFIG_MACH_STM32F7) \
+	$(CONFIG_MACH_STM32H7)),stm32/dma_mpu.c)
 timer-src-y := generic/armcm_timer.c
 timer-src-$(CONFIG_MACH_STM32F0) := generic/timer_irq.c stm32/stm32f0_timer.c
 timer-src-$(CONFIG_MACH_STM32G0) := generic/timer_irq.c stm32/stm32f0_timer.c

@@ -100,6 +100,20 @@ config WANT_ADC_STREAM
     bool
     depends on WANT_ADC && HAVE_ADC_STREAM
     default y
+config NEED_DMA_RESOURCE
+    bool
+    default y if WANT_ADC_STREAM || WANT_ETHERNET_RMII
+config DMA_POOL_SIZE
+    int
+    depends on NEED_DMA_RESOURCE
+    default 512 if HAVE_LIMITED_CODE_SIZE
+    default 2048
+config DMA_RAM_START
+    hex
+    depends on NEED_DMA_RESOURCE
+    default 0x24000000 if MACH_STM32H7
+    default 0x20020000 if MACH_STM32F7
+    default 0
 config WANT_SPI
     bool
     depends on HAVE_GPIO && HAVE_GPIO_SPI

@@ -26,6 +26,7 @@ struct adc_stream_backend_config {
     uint32_t requested_period_ticks;
     uint8_t channel_count;
     uint8_t block_values;
+    uint8_t owner;
 };
 
 struct adc_stream_backend_info {

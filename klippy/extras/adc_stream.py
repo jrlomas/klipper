@@ -181,7 +181,8 @@ class ADCStream:
         self.mcu.register_serial_response(
             self._handle_capabilities,
             "adc_stream_capabilities oid=%c version=%c max_channels=%c"
-            " max_subscriptions=%c max_osr=%hu caps=%u", self.oid)
+            " max_subscriptions=%c max_osr=%hu caps=%u dma_pool=%hu"
+            " dma_used=%hu dma_claims=%c", self.oid)
         self.state = "armed"
 
     def _handle_data(self, params):
@@ -267,7 +268,8 @@ class ADCStream:
             self.capabilities = {
                 key: params[key] for key in (
                     "version", "max_channels", "max_subscriptions",
-                    "max_osr", "caps")}
+                    "max_osr", "caps", "dma_pool", "dma_used",
+                    "dma_claims")}
 
     def _handle_fault(self, params):
         with self.lock:

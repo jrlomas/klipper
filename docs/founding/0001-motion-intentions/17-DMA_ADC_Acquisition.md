@@ -38,6 +38,13 @@ architecture below:
 * `generic/acq_block` enforces the generation-checked `FREE -> DMA_OWNED ->
   READY -> CONSUMER_OWNED -> FREE` lifecycle. A fixed, aligned two-block pool
   never overwrites an unconsumed generation.
+* `generic/dma_resource` provides a fixed configuration-time DMA arena,
+  power-of-two-aligned buffer/descriptor allocations, and exclusive compiled
+  claims for peripherals, timers, DMA channels/streams, and DMAMUX requests.
+  The ADC engine now allocates its ping-pong storage from this shared arena and
+  every implemented backend declares its complete resource set. On M7 targets
+  the linker places the arena outside DMA-inaccessible DTCM and one MPU region
+  maps it as shareable, non-cacheable memory before D-cache is enabled.
 * `adc_stream` accepts one physical stream of one to four ascending channels,
   at most 16 interleaved values per block, a scheduled machine-clock start,
   rational scan period, uncertainty, epoch, sequence, status, and explicit
@@ -86,6 +93,7 @@ Evidence at this checkpoint:
 | --- | --- |
 | Ownership, filter, adapter, and host decode tests | Fixed C vectors, 500 seeded randomized schedules, legal/stale block transitions, interleaved timestamps, summary scaling/gaps, merged FPS scheduling, split-ownership rejection, automatic legacy fallback, and bounded host drops pass |
 | Native builds | RP2040, STM32F072, STM32G0B1, and STM32H723 pass clean isolated builds |
+| DMA resource and M7 placement | Alignment, exhaustion, idempotent ownership, conflict, release, and status tests pass. F072/G0/H723 isolated images link with the shared manager. The H723 map proves the 2 KiB arena at DMA1-reachable AXI SRAM `0x24000000` rather than DTCM `0x20000000`; MPU setup covers exactly that power-of-two region. |
 | ESP32 builds | component, component-RMT, and modem images compile and link with IDF 5.3.2 |
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
@@ -670,7 +678,7 @@ silent gap or channel-phase discontinuity.
 
 - [x] Implement the fixed-lifetime v0 block pool, generation-checked ownership
   state machine, counters, and no-overwrite failure path.
-- [ ] Generalize allocation and peripheral/DMA resource claims into the shared
+- [x] Generalize allocation and peripheral/DMA resource claims into the shared
   pool/resource manager required by Ethernet and multiple engines.
 - [x] Implement ADC engine subscription merging, uniform scan planning,
   software filtering, and bounded Prompt/Telemetry summaries.

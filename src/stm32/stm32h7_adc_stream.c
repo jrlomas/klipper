@@ -8,6 +8,7 @@
 #include "board/armcm_boot.h" // armcm_enable_irq
 #include "command.h" // shutdown
 #include "generic/acq_block.h" // ACQ_STATUS_*
+#include "generic/dma_resource.h"
 #include "internal.h" // peripheral registers
 #include "sched.h" // sched_shutdown
 
@@ -73,6 +74,11 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (dma_claim(DMA_RESOURCE_ADC1, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_TIM3, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_DMA1_STREAM0, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_DMAMUX1_REQUEST0, 9, cfg->owner))
+        shutdown("STM32H7 ADC stream resource conflict");
     uint32_t sequence = cfg->channel_count - 1;
     static const uint8_t positions[] = {
         ADC_SQR1_SQ1_Pos, ADC_SQR1_SQ2_Pos,

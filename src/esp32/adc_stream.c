@@ -19,6 +19,7 @@
 #include "board/misc.h" // timer_from_us
 #include "command.h" // shutdown
 #include "generic/acq_block.h" // ACQ_STATUS_*
+#include "generic/dma_resource.h"
 #include "internal.h" // architecture helpers
 #include "sched.h" // sched_shutdown
 
@@ -71,6 +72,10 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (dma_claim(DMA_RESOURCE_ESP32_ADC1, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_ESP32_I2S0, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_ESP32_ADC_POOL, 0, cfg->owner))
+        shutdown("ESP32 ADC stream resource conflict");
     if (esp32_adc_legacy_is_active())
         shutdown("ESP32 ADC1 already claimed by legacy ADC input");
     if (!cfg->channel_count || cfg->channel_count > ADC_STREAM_MAX_CHANNELS)

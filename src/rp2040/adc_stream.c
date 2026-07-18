@@ -8,6 +8,7 @@
 #include "board/armcm_boot.h" // armcm_enable_irq
 #include "command.h" // shutdown
 #include "generic/acq_block.h" // ACQ_STATUS_*
+#include "generic/dma_resource.h"
 #include "hardware/regs/adc.h"
 #include "hardware/regs/dma.h"
 #include "hardware/regs/dreq.h"
@@ -66,6 +67,10 @@ void
 board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
                        struct adc_stream_backend_info *info)
 {
+    if (dma_claim(DMA_RESOURCE_RP2040_ADC, 0, cfg->owner)
+        || dma_claim(DMA_RESOURCE_RP2040_DMA10, DREQ_ADC, cfg->owner)
+        || dma_claim(DMA_RESOURCE_RP2040_DMA11, DREQ_ADC, cfg->owner))
+        shutdown("RP2040 ADC stream resource conflict");
     if (cfg->channel_count > 4)
         shutdown("RP2040 ADC stream channel limit");
     uint32_t mask = 0;

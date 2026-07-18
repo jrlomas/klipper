@@ -74,6 +74,7 @@ start_test helix_host "Test Helix workstation host paths"
 for TEST in \
     test/helix_flash_test.py \
     test/acq_block_test.py \
+    test/dma_resource_test.py \
     test/adc_filter_test.py \
     test/adc_stream_test.py \
     test/mcu_adc_stream_adapter_test.py \
