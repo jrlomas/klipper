@@ -51,15 +51,26 @@ class LinkManager:
         profile = PROFILES[profile_name]
         self._run(['ip', 'link', 'set', 'dev', interface, 'down'])
         argv = ['ip', 'link', 'set', 'dev', interface, 'type', 'can',
-                'bitrate', str(profile['nominal']), 'restart-ms', '100']
+                'bitrate', str(profile['nominal'])]
         if profile['fd']:
             argv.extend(['dbitrate', str(profile['data']), 'fd', 'on'])
         else:
             argv.extend(['fd', 'off'])
         self._run(argv)
+        # Automatic bus-off restart is an optional SocketCAN driver feature.
+        # In particular, gs_usb adapters may support CAN and CAN FD while
+        # rejecting CAN_CTRLMODE_RESTART_MS.  Keep that optional transaction
+        # separate so its rejection cannot undo otherwise valid bus timing.
+        automatic_restart = True
+        try:
+            self._run(['ip', 'link', 'set', 'dev', interface, 'type', 'can',
+                       'restart-ms', '100'], capture=True)
+        except ManagerError:
+            automatic_restart = False
         self._run(['ip', 'link', 'set', 'dev', interface, 'txqueuelen',
                    '1024'])
         self._run(['ip', 'link', 'set', 'dev', interface, 'up'])
+        return automatic_restart
 
     def _readback(self, interface):
         output = self._run(['ip', '-details', '-json', 'link', 'show', 'dev',
@@ -75,7 +86,7 @@ class LinkManager:
         if profile_name not in PROFILES:
             raise ManagerError('unsupported CAN profile')
         try:
-            self._configure(interface, profile_name)
+            automatic_restart = self._configure(interface, profile_name)
             readback = self._readback(interface)
             info = readback.get('linkinfo', {}).get('info_data', {})
             actual_nominal = info.get('bittiming', {}).get('bitrate')
@@ -99,7 +110,8 @@ class LinkManager:
                   or int(readback.get('mtu', 0)) != 16):
                 raise ManagerError('Classical CAN mode missing from readback')
             return {'ok': True, 'profile': profile_name,
-                    'interface': interface, 'readback': readback}
+                    'interface': interface, 'readback': readback,
+                    'automatic_restart': automatic_restart}
         except Exception as original:
             if profile_name != 'CLASSIC_1M':
                 try:

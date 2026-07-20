@@ -45,8 +45,10 @@ def main():
     result = manager.apply('helixcan0', 'FD_8M_BRS')
     assert result['ok'] and result['profile'] == 'FD_8M_BRS'
     assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
-            'bitrate', '1000000', 'restart-ms', '100', 'dbitrate',
-            '8000000', 'fd', 'on'] in calls
+            'bitrate', '1000000', 'dbitrate', '8000000', 'fd', 'on'] in calls
+    assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
+            'restart-ms', '100'] in calls
+    assert result['automatic_restart'] is True
 
     maintenance_calls = []
     def maintenance_runner(argv, **kwargs):
@@ -62,7 +64,7 @@ def main():
         'helixcan0', 'CLASSIC_500K')
     assert result['ok'] and result['profile'] == 'CLASSIC_500K'
     assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
-            'bitrate', '500000', 'restart-ms', '100', 'fd', 'off'] \
+            'bitrate', '500000', 'fd', 'off'] \
         in maintenance_calls
     assert manager_module.PROFILES['CLASSIC_125K']['nominal'] == 125000
     assert manager_module.PROFILES['CLASSIC_250K']['nominal'] == 250000
@@ -91,6 +93,26 @@ def main():
     else:
         raise AssertionError('failed profile was accepted')
     assert any(command[-2:] == ['fd', 'off'] for command in failed)
+
+    no_restart_calls = []
+    def no_restart_runner(argv, **kwargs):
+        no_restart_calls.append(argv)
+        if argv[-2:] == ['restart-ms', '100']:
+            return Result(95, stderr='Operation not supported')
+        if '-json' in argv:
+            return Result(stdout=json.dumps([{
+                'ifname': 'helixcan0', 'mtu': 16,
+                'linkinfo': {'info_data': {
+                    'ctrlmode': [],
+                    'bittiming': {'bitrate': 1000000}}}}]))
+        return Result()
+    result = manager_module.LinkManager(no_restart_runner).apply(
+        'helixcan0', 'CLASSIC_1M')
+    assert result['ok'] and result['automatic_restart'] is False
+    assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'type', 'can',
+            'bitrate', '1000000', 'fd', 'off'] in no_restart_calls
+    assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'up'] \
+        in no_restart_calls
     print('PASS: CAN manager uses fixed argv and rolls FD failure back')
 
 
