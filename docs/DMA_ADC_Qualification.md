@@ -166,6 +166,21 @@ live hardware-OSR16 run produced 802 blocks and 51,328 published samples from
 native 12-bit converter resolution; retained oversampling accumulator bits do
 not falsely change that native-resolution field.
 
+The first live G0 OSR16 run also showed why digital continuity alone is not an
+analog qualification. The EBB36 PA3 thermistor remained near ambient, but the
+EBB36 and bridge internal-temperature channels both moved from the 30 C range
+to about 50 C. Hardware oversampling changes one slow conversion into a burst
+of back-to-back conversions; the G0 internal temperature source cannot settle
+through the 39.5-cycle aperture used for external pins. The stream setup also
+must not erase the ADC `CKMODE` selected before calibration. The corrected G0
+path preserves `CKMODE`, keeps external channels at 39.5 cycles, and selects a
+160.5-cycle aperture for internal channel 12. With OSR16 and the existing
+eight-value software average still enabled, a clean simultaneous restart read
+34.6 C on the EBB36, 31.0 C on the bridge, and 25.2 C on PA3, with Klipper
+Ready and no stream fault or fallback. These values restore agreement with the
+pre-DMA temperature range; they are a sanity check, not a calibrated accuracy
+claim.
+
 The F767 Ethernet build uses the same manager—not a parallel descriptor
 allocator—for four RX descriptors/buffers, two TX descriptors/buffers, and ADC
 storage. Its 16 KiB non-cacheable arena is at `0x20020000`; compiled claims

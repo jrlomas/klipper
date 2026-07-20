@@ -52,8 +52,12 @@ stm32g0_adc_setup(void)
 #if CONFIG_MACH_STM32G0
     #define CR_FLAGS ADC_CR_ADVREGEN
     ADC_TypeDef *adc = ADC1;
-    // 101: 39.5 ADC clock cycles
-    adc->SMPR = 5 << ADC_SMPR_SMP1_Pos;
+    // External channels use 39.5 ADC clock cycles.  The internal temperature
+    // sensor has a substantially higher source impedance and must use a
+    // longer aperture, especially when the hardware oversampler performs
+    // conversions back-to-back.  Route channel 12 to SMP2 at 160.5 cycles.
+    adc->SMPR = (5 << ADC_SMPR_SMP1_Pos)
+                | (7 << ADC_SMPR_SMP2_Pos) | ADC_SMPR_SMPSEL12;
     adc->CFGR2 = 2 << ADC_CFGR2_CKMODE_Pos; // 16Mhz
 
     // Enable voltage regulator

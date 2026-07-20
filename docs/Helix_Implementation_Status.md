@@ -126,7 +126,12 @@ pass.
   Automatic consumers also expose power-of-two hardware oversampling with a
   native-scale shift; the EBB36 hotend/internal-temperature pair and USB
   CAN-FD bridge internal temperature are live at 16x hardware plus 8x software
-  averaging in forced DMA mode.
+  averaging in forced DMA mode. The first G0 run exposed a real analog
+  qualification failure: both internal sensors stepped from the 30 C range to
+  about 50 C while the external PA3 thermistor stayed correct. The G0 backend
+  now preserves the calibrated ADC clock and assigns channel 12 a 160.5-cycle
+  sample aperture. A clean simultaneous rerun reported EBB36 34.6 C, bridge
+  31.0 C, hotend 25.2 C, and no ADC fault or fallback.
   Heater range debounce becomes a local shutdown policy rather than depending
   on Python delivery.
 * The shared DMA resource layer now covers allocation, DMA-reachability,

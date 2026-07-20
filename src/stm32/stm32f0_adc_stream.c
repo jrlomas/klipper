@@ -135,10 +135,16 @@ board_adc_stream_setup(const struct adc_stream_backend_config *cfg,
     uint8_t osr_bits = 0;
     for (uint16_t ratio = cfg->hardware_oversample; ratio > 2; ratio >>= 1)
         osr_bits++;
-    ADC1->CFGR2 = cfg->hardware_oversample > 1
+    // gpio_adc_setup() selected a synchronous ADC clock before calibration.
+    // Preserve that clock selection when configuring the independent
+    // oversampler fields.  Clearing CKMODE here selects the asynchronous
+    // kernel clock and can violate both the ADC clock limit and the internal
+    // temperature sensor's minimum acquisition time.
+    uint32_t cfgr2 = ADC1->CFGR2 & ADC_CFGR2_CKMODE;
+    ADC1->CFGR2 = cfgr2 | (cfg->hardware_oversample > 1
         ? ADC_CFGR2_OVSE | ((uint32_t)osr_bits << ADC_CFGR2_OVSR_Pos)
           | ((uint32_t)cfg->hardware_shift << ADC_CFGR2_OVSS_Pos)
-        : 0;
+        : 0);
     ADC1->ISR = ADC_ISR_CCRDY;
     ADC1->CHSELR = channel_mask;
     while (!(ADC1->ISR & ADC_ISR_CCRDY))
