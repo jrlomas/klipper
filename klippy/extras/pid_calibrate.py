@@ -28,7 +28,7 @@ class PIDCalibrate:
             raise gcmd.error(str(e))
         self.printer.lookup_object('toolhead').get_last_move_time()
         mcu_control = getattr(heater, 'mcu_heater_control', None)
-        default_method = 'ADAPTIVE' if mcu_control is not None else 'LEGACY'
+        default_method = 'SYMMETRIC' if mcu_control is not None else 'LEGACY'
         method = gcmd.get('METHOD', default_method).strip().upper()
         rule = gcmd.get('RULE', 'ZN').strip().upper()
         if rule not in ('ZN', 'TL'):
