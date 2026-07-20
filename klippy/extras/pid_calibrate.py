@@ -183,7 +183,10 @@ class PIDCalibrate:
         pheaters.set_temperature(heater, center, True)
         bias_raw = gcmd.get('BIAS', 'AUTO').strip().upper()
         if bias_raw == 'AUTO':
-            bias = heater.last_pwm_value
+            settle_time = gcmd.get_float(
+                'SETTLE_TIME', 60., minval=5., maxval=300.)
+            bias = self._measure_holding_bias(
+                heater, center, settle_time, gcmd)
         else:
             try:
                 bias = float(bias_raw)
@@ -211,7 +214,10 @@ class PIDCalibrate:
             heater.set_control(old_control)
             heater.set_temp(0.)
         if not test.completed or self.printer.is_shutdown():
-            raise gcmd.error('heater sine test interrupted')
+            raise gcmd.error(
+                'heater sine test interrupted%s' % (
+                    '' if test.abort_reason is None
+                    else ': %s' % test.abort_reason))
         try:
             metrics = thermal_sine_metrics(test.samples, period, amplitude)
         except ValueError as exc:
@@ -440,22 +446,36 @@ class ControlHeaterSine:
         self.duration = (cycles + warmup_cycles) * period
         self.started = None
         self.done = self.completed = False
+        self.abort_reason = None
         self.samples = []
 
-    def deactivate(self):
-        self.heater.set_pwm(0., 0.)
+    def _finish(self, read_time, completed=False, reason=None):
+        self.heater.set_pwm(read_time, 0.)
+        self.heater.alter_target(0.)
         self.done = True
+        self.completed = completed
+        self.abort_reason = reason
+
+    def deactivate(self):
+        if self.done:
+            self.heater.set_pwm(0., 0.)
+            return
+        self._finish(0., reason='controller deactivated')
 
     def temperature_update(self, read_time, temp, target_temp):
         if self.done:
             return
         if self.started is None:
             self.started = read_time
+        if target_temp <= 0.:
+            self._finish(read_time, reason='target cleared')
+            return
+        if temp >= self.manual_ceiling:
+            self._finish(read_time, reason='manual temperature ceiling reached')
+            return
         elapsed = read_time - self.started
         if elapsed >= self.duration:
-            self.heater.set_pwm(read_time, 0.)
-            self.heater.alter_target(0.)
-            self.done = self.completed = True
+            self._finish(read_time, completed=True)
             return
         phase = 2. * math.pi * elapsed / self.period
         output = self.bias + self.amplitude * math.sin(phase)

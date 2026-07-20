@@ -151,6 +151,28 @@ def test_thermal_sine_controller_finishes_off():
         control.temperature_update(stamp, 100., 100.)
     assert control.done and control.completed
     assert heater.power == 0. and heater.target == 0.
+    control.deactivate()
+    assert control.completed and control.abort_reason is None
+
+
+def test_thermal_sine_controller_aborts_off():
+    heater = FakeHeater()
+    ceiling = pid_calibrate.ControlHeaterSine(
+        heater, 100., 110., .2, .05, 10., 2, 1)
+    ceiling.temperature_update(0., 100., 100.)
+    ceiling.temperature_update(.1, 110., 100.)
+    assert ceiling.done and not ceiling.completed
+    assert ceiling.abort_reason == 'manual temperature ceiling reached'
+    assert heater.power == 0. and heater.target == 0.
+
+    heater = FakeHeater()
+    cleared = pid_calibrate.ControlHeaterSine(
+        heater, 100., 110., .2, .05, 10., 2, 1)
+    cleared.temperature_update(0., 100., 100.)
+    cleared.temperature_update(.1, 100., 0.)
+    assert cleared.done and not cleared.completed
+    assert cleared.abort_reason == 'target cleared'
+    assert heater.power == 0. and heater.target == 0.
 
 
 def main():
@@ -160,6 +182,7 @@ def main():
     test_thermal_sine_fit_absorbs_gain_and_phase()
     test_thermal_sine_fit_separates_operating_point_drift()
     test_thermal_sine_controller_finishes_off()
+    test_thermal_sine_controller_aborts_off()
     print('PASS: adaptive relay power converges and tuning rules are finite')
 
 
