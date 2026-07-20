@@ -82,6 +82,10 @@ def main():
                 "fault": control.get("fault", 0),
                 "mcu_samples": control.get("samples", ""),
                 "mcu_temperature_c": control.get("mcu_temperature", ""),
+                "mcu_temperature_estimate_c": control.get(
+                    "mcu_temperature_estimate", ""),
+                "mcu_temperature_valid": control.get(
+                    "mcu_temperature_valid", ""),
                 "loop_clock": control.get("loop_clock", ""),
                 "loop_clock_frequency": control.get(
                     "loop_clock_frequency", ""),

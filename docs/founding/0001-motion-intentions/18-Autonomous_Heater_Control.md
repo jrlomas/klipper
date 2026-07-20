@@ -246,6 +246,13 @@ visible through ordinary heater status. A distinct unsolicited fault event is
 reserved for a local safety trip so the host does not wait for the next
 telemetry query before shutting down coordinated motion.
 
+The MCU converts ADC error with a tangent linearized at the current target;
+that estimate is useful to the local controller near its setpoint but is not a
+global thermistor conversion. Status therefore exposes the raw
+`mcu_temperature_estimate` plus `mcu_temperature_valid`; `mcu_temperature` is
+`null` while idle or more than 5 C from the tangent's target. The ordinary
+heater `temperature` remains the full host-side sensor conversion.
+
 `HEATER_CONTROL_STATUS HEATER=<name>` performs an immediate state and timing
 query and reports the same fields.
 `HEATER_CONTROL_CLEAR HEATER=<name>` clears a latched fault only with the

@@ -55,6 +55,13 @@ at 300.000539 ms with 2.796 us standard deviation and a recorded range of
 299.982 through 300.049 ms. This is loop-repeatability evidence, not a claim
 that a heater needs microsecond response.
 
+The firmware's temperature field is a local tangent around the active target,
+not a replacement for the nonlinear thermistor model. Helix marks it invalid
+when idle or more than 5 C from target and returns `null` rather than displaying
+a stale post-test value. Hard sensor-range and maximum-temperature decisions
+continue to use exact precomputed ADC thresholds and do not depend on that
+display estimate.
+
 ## Test method
 
 Each capture began with the heater idle, commanded one step, sampled the

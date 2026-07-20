@@ -92,6 +92,7 @@ class MCUHeaterControl:
         self.output = 0.
         self.samples = 0
         self.last_temp = 0.
+        self.last_temp_valid = False
         self.last_sample_clock = 0
         self.last_run_clock = 0
         self.clock_frequency = 0
@@ -272,6 +273,10 @@ class MCUHeaterControl:
         self.output = params['output'] / float(OUTPUT_ONE)
         self.samples = params['samples']
         self.last_temp = params['temp_mdeg'] / 1000.
+        target = self.heater.target_temp
+        self.last_temp_valid = (
+            self.state in (2, 3, 4) and target > 0.
+            and abs(self.last_temp - target) <= 5.)
         self.last_sample_clock = params['last_sample']
         self.last_run_clock = params['last_run']
         self.heater.last_pwm_value = self.output
@@ -365,7 +370,13 @@ class MCUHeaterControl:
             'fault': self.fault,
             'power': self.output,
             'samples': self.samples,
-            'mcu_temperature': self.last_temp,
+            # Firmware uses a target-local thermistor tangent, not the full
+            # nonlinear host sensor model. Never present a stale or distant
+            # tangent estimate as an independently measured temperature.
+            'mcu_temperature': (self.last_temp
+                                if self.last_temp_valid else None),
+            'mcu_temperature_estimate': self.last_temp,
+            'mcu_temperature_valid': self.last_temp_valid,
             'last_sample_clock': self.last_sample_clock,
             'loop_clock': self.last_run_clock,
             'loop_clock_frequency': self.clock_frequency,
@@ -387,10 +398,14 @@ class MCUHeaterControl:
     cmd_HEATER_CONTROL_STATUS_help = "Report the MCU heater controller state"
     def cmd_HEATER_CONTROL_STATUS(self, gcmd):
         status = self.query()
+        estimate = ("%.3f" % status['mcu_temperature']
+                    if status['mcu_temperature_valid'] else
+                    "n/a (local tangent %.3f)" % (
+                        status['mcu_temperature_estimate'],))
         gcmd.respond_info(
-            "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%.3f" % (
+            "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s" % (
                 self.name, status['state'], status['fault'], status['power'],
-                status['samples'], status['mcu_temperature']))
+                status['samples'], estimate))
 
     cmd_HEATER_CONTROL_CLEAR_help = "Clear a latched MCU heater fault"
     def cmd_HEATER_CONTROL_CLEAR(self, gcmd):
