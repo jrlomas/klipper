@@ -83,6 +83,9 @@ class MCUHeaterControl:
         self.active_profile_source = 'base'
         self.active_profile_raw_pid = self.base_pid
         self.active_profile_clamped = ()
+        self.mcu_control_algo = heater.control
+        self.host_control = None
+        self.control_mode = 'mcu'
         self._commands_ready = False
         self.set_target_cmd = self.set_profile_cmd = None
         self.manual_cmd = self.manual_guard_cmd = None
@@ -115,6 +118,10 @@ class MCUHeaterControl:
             'HEATER_CONTROL_CLEAR', 'HEATER', self.name,
             self.cmd_HEATER_CONTROL_CLEAR,
             desc=self.cmd_HEATER_CONTROL_CLEAR_help)
+        gcode.register_mux_command(
+            'HELIX_HEATER_CONTROL_MODE', 'HEATER', self.name,
+            self.cmd_HELIX_HEATER_CONTROL_MODE,
+            desc=self.cmd_HELIX_HEATER_CONTROL_MODE_help)
         self.profile_manager.register_commands(gcode)
 
     def _q20(self, value, option):
@@ -371,7 +378,7 @@ class MCUHeaterControl:
     def get_status(self):
         variance = (self.loop_dt_m2 / self.loop_dt_count
                     if self.loop_dt_count else 0.)
-        return {
+        status = {
             'state': HC_STATE_NAMES.get(self.state, 'unknown'),
             'fault': self.fault,
             'power': self.output,
@@ -404,7 +411,14 @@ class MCUHeaterControl:
             'pid_profile_model': self.profile_manager.model.kind,
             'pid_profile_generation': self.profile_manager.store.data[
                 'generation'],
+            'control_mode': self.control_mode,
         }
+        if self.control_mode == 'host' and self.host_control is not None:
+            host_status = self.host_control.get_status()
+            status['mcu_execution_state'] = status['state']
+            status.update(host_status)
+            status['control_mode'] = 'host'
+        return status
 
     cmd_HEATER_CONTROL_STATUS_help = "Report the MCU heater controller state"
     def cmd_HEATER_CONTROL_STATUS(self, gcmd):
@@ -432,6 +446,48 @@ class MCUHeaterControl:
             raise gcmd.error(
                 "MCU heater fault remains latched (0x%x)" % status['fault'])
         gcmd.respond_info("%s MCU heater fault cleared" % (self.name,))
+
+    cmd_HELIX_HEATER_CONTROL_MODE_help = (
+        "Select guarded MCU or host PID execution for qualification")
+    def cmd_HELIX_HEATER_CONTROL_MODE(self, gcmd):
+        if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
+            raise gcmd.error('HELIX_HEATER_CONTROL_MODE requires CONFIRM=YES')
+        if self.heater.target_temp or self.heater.last_pwm_value:
+            raise gcmd.error(
+                'Set the heater target and output to zero before changing '
+                'control mode')
+        mode = gcmd.get('MODE').strip().upper()
+        if mode == 'HOST':
+            if self.control_mode == 'host':
+                raise gcmd.error('%s is already in host PID mode' % self.name)
+            target = gcmd.get_float(
+                'TARGET', minval=self.heater.min_temp,
+                maxval=self.heater.max_temp)
+            selection = self.profile_manager.select(target)
+            gains = selection['gains']
+            from . import heaters
+            self.host_control = heaters.ControlPID.from_gains(
+                self.heater,
+                tuple(gains[name] for name in heater_profiles.GAIN_NAMES))
+            self.heater.set_control(self.host_control)
+            self.control_mode = 'host'
+            gcmd.respond_info(
+                '%s control mode=host target_profile=%.3f source=%s '
+                'Kp=%.6f Ki=%.6f Kd=%.6f' % (
+                    self.name, target, selection['source'], gains['kp'],
+                    gains['ki'], gains['kd']))
+            return
+        if mode == 'MCU':
+            if self.control_mode == 'mcu':
+                raise gcmd.error('%s is already in MCU PID mode' % self.name)
+            self.set_manual_guard(0.)
+            self.set_manual_output(0.)
+            self.heater.set_control(self.mcu_control_algo)
+            self.host_control = None
+            self.control_mode = 'mcu'
+            gcmd.respond_info('%s control mode=mcu' % self.name)
+            return
+        raise gcmd.error('MODE must be HOST or MCU')
 
 
 class HeaterProfileManager:

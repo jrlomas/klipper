@@ -20,6 +20,9 @@ class FakeHeater:
     def get_pwm_delay(self):
         return 0.
 
+    def get_smooth_time(self):
+        return 1.
+
     def set_pwm(self, read_time, value):
         self.power = value
 
@@ -92,6 +95,15 @@ def test_symmetric_convergence_and_wrong_initial_bias():
     assert all(value > 0. for value in low + high)
 
 
+def test_host_comparison_controller_uses_identical_gains():
+    heater = FakeHeater()
+    gains = (17.947990989340383, 2.03725, 45.583426633920496)
+    control = pid_calibrate.heaters.ControlPID.from_gains(heater, gains)
+    assert abs(control.Kp * 255. - gains[0]) < 1.e-12
+    assert abs(control.Ki * 255. - gains[1]) < 1.e-12
+    assert abs(control.Kd * 255. - gains[2]) < 1.e-12
+
+
 def test_thermal_sine_fit_absorbs_gain_and_phase():
     period = 20.
     amplitude, phase = 2.5, math.radians(-37.)
@@ -144,6 +156,7 @@ def test_thermal_sine_controller_finishes_off():
 def main():
     test_adaptive_convergence()
     test_symmetric_convergence_and_wrong_initial_bias()
+    test_host_comparison_controller_uses_identical_gains()
     test_thermal_sine_fit_absorbs_gain_and_phase()
     test_thermal_sine_fit_separates_operating_point_drift()
     test_thermal_sine_controller_finishes_off()

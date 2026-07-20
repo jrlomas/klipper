@@ -257,11 +257,21 @@ PID_SETTLE_SLOPE = .1
 
 class ControlPID:
     def __init__(self, heater, config):
+        gains = (config.getfloat('pid_Kp'), config.getfloat('pid_Ki'),
+                 config.getfloat('pid_Kd'))
+        self._init_gains(heater, gains)
+
+    @classmethod
+    def from_gains(cls, heater, gains):
+        control = cls.__new__(cls)
+        control._init_gains(heater, gains)
+        return control
+
+    def _init_gains(self, heater, gains):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
-        self.Kp = config.getfloat('pid_Kp') / PID_PARAM_BASE
-        self.Ki = config.getfloat('pid_Ki') / PID_PARAM_BASE
-        self.Kd = config.getfloat('pid_Kd') / PID_PARAM_BASE
+        self.Kp, self.Ki, self.Kd = [gain / PID_PARAM_BASE
+                                     for gain in gains]
         self.min_deriv_time = heater.get_smooth_time()
         self.temp_integ_max = 0.
         if self.Ki:
