@@ -276,6 +276,10 @@ config WANT_HEATER_HOLD
     bool
     depends on WANT_ADC
     default y if !HAVE_LIMITED_CODE_SIZE
+config WANT_HEATER_CONTROL
+    bool
+    depends on WANT_ADC_STREAM
+    default y if !HAVE_LIMITED_CODE_SIZE
 config WANT_BOOTLOADER
     bool
     depends on HAVE_BOOTLOADER_REQUEST
@@ -600,6 +604,9 @@ config WANT_TRIGGER_SOURCE
 config WANT_HEATER_HOLD
     bool "Support autonomous heater failsafe hold"
     depends on WANT_ADC
+config WANT_HEATER_CONTROL
+    bool "Support host-configured autonomous heater PID"
+    depends on WANT_ADC_STREAM
 config WANT_BOOTLOADER
     bool "Support in-band bootloader entry (enter_bootloader)"
     depends on HAVE_BOOTLOADER_REQUEST

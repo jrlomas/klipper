@@ -883,6 +883,16 @@ above the supplied MINIMUM and/or at or below the supplied MAXIMUM.
 [TARGET=<target_temperature>]`: Sets the target temperature for a
 heater. If a target temperature is not supplied, the target is 0.
 
+#### HEATER_CONTROL_STATUS
+`HEATER_CONTROL_STATUS HEATER=<heater_name>`: Query an MCU-autonomous
+`helix_pid` controller. Reports controller state, fault bits, applied power,
+local sample count, and locally estimated temperature.
+
+#### HEATER_CONTROL_CLEAR
+`HEATER_CONTROL_CLEAR HEATER=<heater_name>`: Clear a latched local
+`helix_pid` fault. The heater target must first be set to zero. Clearing a
+fault does not restore the previous target.
+
 ### [idle_timeout]
 
 The idle_timeout module is automatically loaded.

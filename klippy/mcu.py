@@ -652,6 +652,14 @@ class MCU_pwm:
         self._set_cmd = None
     def get_mcu(self):
         return self._mcu
+    def get_pin(self):
+        return self._pin
+    def get_invert(self):
+        return self._invert
+    def get_cycle_time(self):
+        return self._cycle_time
+    def is_hardware_pwm(self):
+        return self._hardware_pwm
     def setup_max_duration(self, max_duration):
         self._max_duration = max_duration
     def setup_cycle_time(self, cycle_time, hardware_pwm=False):
@@ -913,10 +921,17 @@ class MCUADCStreamManager:
         self._mcu = mcu
         self._adcs = []
         self._oid = None
+        self._adc_to_sub = {}
         self._mcu.register_config_callback(self._build_config)
     def add_adc(self, adc):
         if adc not in self._adcs:
             self._adcs.append(adc)
+    def get_local_binding(self, adc):
+        sub = self._adc_to_sub.get(adc)
+        if self._oid is None or sub is None:
+            raise self._mcu.get_printer().config_error(
+                "ADC DMA stream did not configure the autonomous consumer")
+        return self._oid, sub
     def _fallback(self, reason):
         if getattr(self._mcu, "_adc_stream_mode", "off") == "force":
             raise self._mcu.get_printer().config_error(
@@ -1091,6 +1106,7 @@ class MCUADCStreamManager:
                 "adc_stream_add_channel oid=%d pin=%s"
                 % (self._oid, adc._pin))
         for sub, (adc, schedule) in enumerate(zip(self._adcs, schedules)):
+            self._adc_to_sub[adc] = sub
             input_div, osr, report_div = schedule
             self._mcu.add_config_cmd(
                 "adc_stream_subscribe oid=%d sub=%d channel=%d"

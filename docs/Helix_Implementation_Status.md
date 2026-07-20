@@ -138,6 +138,19 @@ pass.
   run remained Ready at EBB36 34.0 C, bridge 31.4 C, and hotend 26.1 C.
   Heater range debounce becomes a local shutdown policy rather than depending
   on Python delivery.
+* `control: helix_pid` now moves the complete fixed-period feedback loop onto
+  the sensor/heater MCU. It consumes the pre-EWMA firmware boxcar, uses
+  derivative-on-measurement, a configurable derivative filter, and
+  conditional-integration anti-windup, and owns software PWM exclusively.
+  The host uploads ordinary Klipper gains and target-local sensor calibration,
+  supervises with liveness pings, and retains autotune/system identification.
+  Host silence changes the observable state to autonomous without refreshing
+  PWM; raw sensor range, hard ceiling, sample deadline, the configured
+  `verify_heater` progress/error policy, max power, bounded autonomous
+  duration, and firmware-shutdown-off remain independent. Fixed-
+  point tests, command encoding, and RP2040 build pass. Cold live and heated
+  physical gates remain open, as recorded in
+  [FD-0001 doc 18](founding/0001-motion-intentions/18-Autonomous_Heater_Control.md).
 * The shared DMA resource layer now covers allocation, DMA-reachability,
   peripheral/timer/channel/stream/DMAMUX ownership, and map-verified cache
   policy. F0/G0 use circular half/full DMA, F4/F7 native double buffering,

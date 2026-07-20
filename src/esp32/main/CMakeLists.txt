@@ -56,7 +56,7 @@ set(KLIPPER_CORE_SRCS
     spicmds.c spi_software.c i2ccmds.c i2c_software.c pwmcmds.c
     buttons.c tmcuart.c neopixel.c
     # trajectory intention queue (FD-0001)
-    trajq.c traj_stepper.c execlog.c timesync.c heater_hold.c)
+    trajq.c traj_stepper.c execlog.c timesync.c heater_hold.c heater_control.c)
 list(TRANSFORM KLIPPER_CORE_SRCS PREPEND ${KLIPPER_ROOT}/src/)
 set(KLIPPER_GENERIC_SRCS
     ${KLIPPER_ROOT}/src/generic/crc16_ccitt.c
@@ -66,6 +66,7 @@ set(KLIPPER_GENERIC_SRCS
     ${KLIPPER_ROOT}/src/generic/acq_ring.c
     ${KLIPPER_ROOT}/src/generic/adc_filter.c
     ${KLIPPER_ROOT}/src/generic/adc_safety.c
+    ${KLIPPER_ROOT}/src/generic/heater_control_math.c
     ${KLIPPER_ROOT}/src/generic/dma_resource.c
     ${KLIPPER_ROOT}/src/generic/timer_irq.c
     ${KLIPPER_ROOT}/src/generic/udp_console.c)

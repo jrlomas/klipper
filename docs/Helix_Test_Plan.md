@@ -724,6 +724,15 @@ a faster stop — test both the latency and the things polling could not do.
   low-distortion waveform fixture. Pass: the watchdog trips locally and the
   archived SINAD/ENOB calculation—not grounded/floating peak-to-peak data—
   supports the claimed noise reduction.
+- [ ] **7.5c — MCU-autonomous heater control.** Configure `helix_pid` first
+  on the bed at a low target, then on the hotend under supervision. Compare
+  rise, overshoot, settling, duty, and disturbance recovery to host PID. Stop
+  Klippy while holding and verify the MCU retains its target, reports
+  `autonomous`, accepts a returning ping, and turns off at the configured
+  duration. Interrupt ADC delivery and exercise sensor/ceiling faults.
+  Pass: every cutoff is local and latched; no host PWM command owns the pin;
+  guarded `PID_CALIBRATE` preserves `control: helix_pid`. Detailed gates and
+  safety contract are in [FD-0001 doc 18](founding/0001-motion-intentions/18-Autonomous_Heater_Control.md).
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.
@@ -1408,7 +1417,7 @@ reviewer can find the code behind a test:
 | 0 protocol/host | doc 02, 10, [Protocol v2](Protocol_v2.md) | `lib/intentproto`, `chelper/segfit.c`, `klippy/extras/trajectory_queuing.py` |
 | 3 machine time | doc 01 | `klippy/extras/timesync`, MCU beacon |
 | 4–6 motion/backends | doc 02, 04 | `src/trajq.c`, `src/traj_stepper.c`, `config_traj_pwm` |
-| 7 triggers | doc 09 | `src/trigger_source.c`, stm32 comp/exti/adc |
+| 7 triggers/acquisition/control | doc 09, 17, 18 | `src/trigger_source.c`, `src/adc_stream.c`, `src/heater_control.c` |
 | 8 recovery | doc 08 | `klippy/extras/failure_recovery.py`, `src/execlog.c`, `src/heater_hold.c` |
 | 9 transports | doc 07, 12 | UDP/CAN/Ethernet bindings, `src/esp32` |
 | 10 security | doc 07, 11 | session-sec, Ed25519, bootloader |

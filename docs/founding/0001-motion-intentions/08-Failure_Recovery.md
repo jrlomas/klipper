@@ -199,6 +199,12 @@ hold_max_temp: 110            # hard ceiling while holding
 hold_max_duration: 3600       # seconds of autonomous hold, then off
 ```
 
+This takeover policy is distinct from the continuously MCU-owned
+[`helix_pid` controller](18-Autonomous_Heater_Control.md). A heater may use
+one or the other, never both: `hold` takes over a host-controlled pin only
+after failure, while `helix_pid` executes the normal feedback loop locally and
+already has a bounded host-loss state.
+
 `hold` means: on entering pause-and-hold, the heater's board keeps the
 heater at its last commanded target (clamped to `hold_max_temp`)
 **autonomously** — the host may be gone, so this requires a new,

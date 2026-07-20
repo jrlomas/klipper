@@ -40,6 +40,8 @@ src-$(CONFIG_WANT_TRAJECTORY_PWM) += traj_pwm.c
 src-$(CONFIG_WANT_TRACE) += trace.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += trigger_source.c
 src-$(CONFIG_WANT_HEATER_HOLD) += heater_hold.c
+src-$(CONFIG_WANT_HEATER_CONTROL) += heater_control.c \
+    generic/heater_control_math.c
 src-$(CONFIG_WANT_SYSCALL_API) += generic/board_syscall.c
 src-$(CONFIG_WANT_SELF_TEST) += self_test.c
 src-$(CONFIG_WANT_BOOTLOADER) += bootloader_entry.c

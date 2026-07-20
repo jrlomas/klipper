@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2025  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import os, logging, threading
+import math, os, logging, threading
 
 
 ######################################################################
@@ -50,7 +50,8 @@ class Heater:
         self.last_pwm_value = 0.
         self.autonomous_hold = None
         # Setup control algorithm sub-class
-        algos = {'watermark': ControlBangBang, 'pid': ControlPID}
+        algos = {'watermark': ControlBangBang, 'pid': ControlPID,
+                 'helix_pid': ControlHelixPID}
         algo = config.getchoice('control', algos)
         self.control = algo(self, config)
         # Setup output heater pin
@@ -61,6 +62,12 @@ class Heater:
                                          maxval=self.pwm_delay)
         self.mcu_pwm.setup_cycle_time(pwm_cycle_time)
         self.mcu_pwm.setup_max_duration(MAX_HEAT_TIME)
+        self.mcu_heater_control = None
+        if isinstance(self.control, ControlHelixPID):
+            from . import heater_control
+            self.mcu_heater_control = heater_control.MCUHeaterControl(
+                config, self)
+            self.control.attach_controller(self.mcu_heater_control)
         # Load additional modules
         self.printer.load_object(config, "verify_heater %s" % (short_name,))
         self.printer.load_object(config, "pid_calibrate")
@@ -71,6 +78,12 @@ class Heater:
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
     def set_pwm(self, read_time, value):
+        if (self.mcu_heater_control is not None
+                and not getattr(self.control, 'is_mcu_control', False)):
+            # Host-side calibration/test controllers request duty, but the
+            # MCU still owns the physical PWM and its independent cutoffs.
+            self.mcu_heater_control.set_manual_output(value)
+            return
         if self.autonomous_hold is not None:
             # An engaged/expired MCU holder owns the physical pin until an
             # explicit release.  In addition, discard historical PID output
@@ -118,6 +131,10 @@ class Heater:
     def _handle_shutdown(self):
         self.verify_mainthread_time = -999.
     def setup_autonomous_hold(self, hold):
+        if self.mcu_heater_control is not None:
+            raise self.printer.config_error(
+                "failure_policy: hold is incompatible with control:"
+                " helix_pid; the latter already owns autonomous control")
         self.autonomous_hold = hold
         # The bounded holder replaces the legacy host-refresh watchdog.
         self.mcu_pwm.setup_max_duration(0.)
@@ -137,6 +154,11 @@ class Heater:
                 % (degrees, self.min_temp, self.max_temp))
         with self.lock:
             self.target_temp = degrees
+            target_changed = getattr(self.control, 'target_changed', None)
+            if target_changed is not None:
+                target_changed(degrees)
+            elif self.mcu_heater_control is not None:
+                self.mcu_heater_control.set_manual_guard(degrees)
     def get_temp(self, eventtime):
         est_print_time = self.mcu_pwm.get_mcu().estimated_print_time(eventtime)
         quell_time = est_print_time - QUELL_STALE_TIME
@@ -153,11 +175,22 @@ class Heater:
             old_control = self.control
             self.control = control
             self.target_temp = 0.
+            deactivate = getattr(old_control, 'deactivate', None)
+            if deactivate is not None:
+                deactivate()
+            activate = getattr(control, 'activate', None)
+            if activate is not None:
+                activate(0.)
         return old_control
     def alter_target(self, target_temp):
         if target_temp:
             target_temp = max(self.min_temp, min(self.max_temp, target_temp))
         self.target_temp = target_temp
+        target_changed = getattr(self.control, 'target_changed', None)
+        if target_changed is not None:
+            target_changed(target_temp)
+        elif self.mcu_heater_control is not None:
+            self.mcu_heater_control.set_manual_guard(target_temp)
     def stats(self, eventtime):
         est_print_time = self.mcu_pwm.get_mcu().estimated_print_time(eventtime)
         if not self.printer.is_shutdown():
@@ -174,8 +207,15 @@ class Heater:
             target_temp = self.target_temp
             smoothed_temp = self.smoothed_temp
             last_pwm_value = self.last_pwm_value
-        return {'temperature': round(smoothed_temp, 2), 'target': target_temp,
-                'power': last_pwm_value}
+        status = {'temperature': round(smoothed_temp, 2),
+                  'target': target_temp, 'power': last_pwm_value}
+        if self.mcu_heater_control is not None:
+            status['mcu_control'] = self.mcu_heater_control.get_status()
+        else:
+            control_status = getattr(self.control, 'get_status', None)
+            if control_status is not None:
+                status['control_stats'] = control_status()
+        return status
     cmd_SET_HEATER_TEMPERATURE_help = "Sets a heater temperature"
     def cmd_SET_HEATER_TEMPERATURE(self, gcmd):
         temp = gcmd.get_float('TARGET', 0.)
@@ -227,8 +267,26 @@ class ControlPID:
         self.prev_temp = AMBIENT_TEMP
         self.prev_temp_time = 0.
         self.prev_temp_deriv = 0.
+        self.loop_samples = 0
+        self.loop_clock = 0.
+        self.loop_dt_count = 0
+        self.loop_dt_mean = self.loop_dt_m2 = 0.
+        self.loop_dt_min = self.loop_dt_max = None
         self.prev_temp_integ = 0.
     def temperature_update(self, read_time, temp, target_temp):
+        self.loop_samples += 1
+        loop_clock = self.heater.printer.get_reactor().monotonic()
+        if self.loop_clock:
+            dt = loop_clock - self.loop_clock
+            self.loop_dt_count += 1
+            delta = dt - self.loop_dt_mean
+            self.loop_dt_mean += delta / self.loop_dt_count
+            self.loop_dt_m2 += delta * (dt - self.loop_dt_mean)
+            self.loop_dt_min = (dt if self.loop_dt_min is None
+                                else min(self.loop_dt_min, dt))
+            self.loop_dt_max = (dt if self.loop_dt_max is None
+                                else max(self.loop_dt_max, dt))
+        self.loop_clock = loop_clock
         time_diff = read_time - self.prev_temp_time
         # Calculate change of temperature
         temp_diff = temp - self.prev_temp
@@ -257,6 +315,65 @@ class ControlPID:
         temp_diff = target_temp - smoothed_temp
         return (abs(temp_diff) > PID_SETTLE_DELTA
                 or abs(self.prev_temp_deriv) > PID_SETTLE_SLOPE)
+    def get_status(self):
+        variance = (self.loop_dt_m2 / self.loop_dt_count
+                    if self.loop_dt_count else 0.)
+        return {
+            'state': 'host',
+            'samples': self.loop_samples,
+            'loop_clock': self.loop_clock,
+            'loop_clock_frequency': 1.,
+            'loop_clock_source': 'host',
+            'loop_dt_count': self.loop_dt_count,
+            'loop_dt_mean': self.loop_dt_mean,
+            'loop_dt_stddev': math.sqrt(max(0., variance)),
+            'loop_dt_min': self.loop_dt_min or 0.,
+            'loop_dt_max': self.loop_dt_max or 0.,
+        }
+
+
+######################################################################
+# MCU-executed PID control
+######################################################################
+
+class ControlHelixPID:
+    is_mcu_control = True
+    def __init__(self, heater, config):
+        self.heater = heater
+        # Consume and validate the standard PID fields here.  The helper
+        # converts them to fixed-period MCU coefficients after the sensor and
+        # PWM objects are available.
+        config.getfloat('pid_Kp')
+        config.getfloat('pid_Ki')
+        config.getfloat('pid_Kd')
+        self.controller = None
+        self.prev_temp = AMBIENT_TEMP
+        self.prev_time = 0.
+        self.temp_deriv = 0.
+    def attach_controller(self, controller):
+        self.controller = controller
+    def target_changed(self, target_temp):
+        if self.controller is not None:
+            self.controller.set_target(target_temp)
+    def deactivate(self):
+        if self.controller is not None:
+            self.controller.set_target(0.)
+            self.controller.set_manual_guard(0.)
+            self.controller.set_manual_output(0.)
+    def activate(self, target_temp):
+        if self.controller is not None:
+            self.controller.set_manual_guard(0.)
+            self.controller.set_target(target_temp)
+    def temperature_update(self, read_time, temp, target_temp):
+        if self.prev_time:
+            dt = read_time - self.prev_time
+            if dt > 0.:
+                self.temp_deriv = (temp - self.prev_temp) / dt
+        self.prev_temp = temp
+        self.prev_time = read_time
+    def check_busy(self, eventtime, smoothed_temp, target_temp):
+        return (abs(target_temp - smoothed_temp) > PID_SETTLE_DELTA
+                or abs(self.temp_deriv) > PID_SETTLE_SLOPE)
 
 
 ######################################################################

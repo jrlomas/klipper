@@ -1,0 +1,6 @@
+# Host configuration and command-encoding regression for MCU-local PID.
+DICTIONARY klipper.dict
+CONFIG heater_control.cfg
+
+M140 S60
+M140 S0

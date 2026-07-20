@@ -42,6 +42,8 @@ struct adc_stream_subscription {
     struct adc_safety safety;
     struct adc_stream *stream;
     struct trigger_analog *local_trigger;
+    adc_stream_local_callback local_callback;
+    void *local_context;
     uint32_t sequence;
     uint8_t id;
     uint8_t channel;
@@ -91,6 +93,8 @@ struct adc_stream {
 static struct adc_stream *active_stream;
 static struct task_wake adc_stream_wake;
 
+void command_config_adc_stream(uint32_t *args);
+
 static struct adc_stream_subscription *
 adc_stream_find_subscription(struct adc_stream *s, uint8_t id)
 {
@@ -98,6 +102,22 @@ adc_stream_find_subscription(struct adc_stream *s, uint8_t id)
         if (s->subscriptions[i].id == id)
             return &s->subscriptions[i];
     return NULL;
+}
+
+int
+adc_stream_bind_local(uint8_t stream_oid, uint8_t subscription,
+                      adc_stream_local_callback callback, void *context)
+{
+    struct adc_stream *s = oid_lookup(
+        stream_oid, command_config_adc_stream);
+    struct adc_stream_subscription *sub = adc_stream_find_subscription(
+        s, subscription);
+    if (s->state != ADC_STREAM_STOPPED || !sub || !callback
+        || sub->local_callback)
+        return -1;
+    sub->local_callback = callback;
+    sub->local_context = context;
+    return 0;
 }
 
 static void
@@ -672,6 +692,11 @@ adc_stream_send_block(struct adc_stream *s, uint8_t block_index)
                 &sub->filter, sample, scan_index, &summary,
                 &filtered_value, &filtered_ready);
             if (filtered_ready) {
+                if (sub->local_callback)
+                    sub->local_callback(sub->local_context, filtered_value,
+                                        b->first_machine_clock
+                                        + scan * b->period_numerator
+                                          / b->period_denominator);
                 if (sub->local_trigger)
                     trigger_analog_update(sub->local_trigger,
                                           filtered_value);

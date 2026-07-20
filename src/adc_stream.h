@@ -63,6 +63,15 @@ struct adc_stream_backend_info {
     uint8_t timing_quality;
 };
 
+typedef void (*adc_stream_local_callback)(void *context, uint32_t value,
+                                          uint32_t clock);
+
+// Bind one firmware-local consumer to a filtered subscription.  The callback
+// runs from adc_stream_task(), never from the DMA ISR.  It receives the exact
+// boxcar result before any telemetry-only EWMA is applied.
+int adc_stream_bind_local(uint8_t stream_oid, uint8_t subscription,
+                          adc_stream_local_callback callback, void *context);
+
 // Called by a board DMA ISR after it has made a completed half-buffer visible
 // to the CPU (including any required cache maintenance).
 int adc_stream_block_complete(uint8_t block_index, uint32_t status);

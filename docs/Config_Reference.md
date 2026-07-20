@@ -1463,8 +1463,11 @@ sensor_pin:
 #   be smoothed to reduce the impact of measurement noise. The default
 #   is 1 seconds.
 control:
-#   Control algorithm (either pid or watermark). This parameter must
-#   be provided.
+#   Control algorithm (pid, helix_pid, or watermark). This parameter must
+#   be provided. 'helix_pid' uses the PID values below but executes the
+#   feedback loop and PWM on the sensor/heater MCU. It requires an ADC
+#   temperature sensor, software PWM, and the sensor and heater pin on the
+#   same MCU. See FD-0001 doc 18.
 pid_Kp:
 pid_Ki:
 pid_Kd:
@@ -1477,6 +1480,22 @@ pid_Kd:
 #   off and 1.0 being full on. Consider using the PID_CALIBRATE
 #   command to obtain these parameters. The pid_Kp, pid_Ki, and pid_Kd
 #   parameters must be provided for PID heaters.
+#pid_derivative_filter: 1.0
+#   Time constant in seconds for derivative-on-measurement filtering when
+#   control is helix_pid. The default is smooth_time.
+#heater_control_host_timeout: 5.0
+#   Host-silence interval after which a helix_pid controller reports itself
+#   autonomous while retaining its target and PID state. This is liveness
+#   observability, not a PWM refresh deadline. The default is 5 seconds and
+#   must be greater than 1 second.
+#heater_control_autonomous_max_duration: 3600
+#   Maximum seconds that helix_pid may continue after host silence before the
+#   MCU latches the heater off. The firmware represents this as an exact
+#   number of controller samples. The default is 3600 seconds.
+#heater_control_sample_deadline:
+#   Maximum interval between local filtered ADC samples before helix_pid
+#   latches the heater off. The default is the greater of 1 second or three
+#   sensor report periods. It must exceed one report period.
 #max_delta: 2.0
 #   On 'watermark' controlled heaters this is the number of degrees in
 #   Celsius above the target temperature before disabling the heater
@@ -1514,7 +1533,9 @@ max_temp:
 #   enforced on the micro-controller. On engage, the holder takes exclusive
 #   ownership of the software-PWM GPIO, cancels pending host PWM, and rejects
 #   in-flight host updates. Host PWM resumes only after explicit release. The
-#   default is 'off'.
+#   default is 'off'. It is incompatible with control: helix_pid because that
+#   controller already has exclusive MCU ownership and its own bounded host-
+#   loss policy.
 #hold_max_temp: 110
 #   Only used when failure_policy is 'hold'. Ceiling temperature (in
 #   Celsius) the autonomous holder will maintain and never exceed. Must
