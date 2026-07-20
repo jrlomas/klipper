@@ -23,7 +23,7 @@ class FakePrinter:
 
 class FakeMCU:
     def __init__(self, stream=True, mode="off", max_scan_ticks=0,
-                 channel_order=None):
+                 channel_order=None, hardware_oversample=1):
         self.callbacks = []
         self.commands = []
         self.responses = []
@@ -37,6 +37,7 @@ class FakeMCU:
             }
         self.enumerations = {"adc_stream_channel": channel_order}
         self._adc_stream_mode = mode
+        self._adc_stream_hardware_oversample = hardware_oversample
         if stream:
             self.constants.update({
                 "ADC_STREAM_V1": 1, "ADC_STREAM_MAX_CHANNELS": 4,
@@ -225,6 +226,18 @@ def test_old_firmware_without_order_metadata_falls_back_safely():
                for command in commands) == 2
 
 
+def test_auto_mode_configures_hardware_oversampling_at_native_scale():
+    fake = FakeMCU(mode="force", hardware_oversample=16)
+    fake.constants["ADC_STREAM_CAPS"] = 1 << 8
+    adc = MODULE.MCU_adc(fake, {"pin": "PA3"})
+    adc.setup_adc_sample(.300, .001, 8)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    assert ("adc_stream_set_hardware_oversample oid=0 ratio=16 shift=4"
+            in commands)
+    assert any("osr=8 shift=0" in command for command in commands)
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
@@ -233,4 +246,5 @@ if __name__ == "__main__":
     test_backend_period_limit_uses_exact_input_decimation()
     test_auto_mode_sorts_rp2040_consumers_by_physical_channel()
     test_old_firmware_without_order_metadata_falls_back_safely()
+    test_auto_mode_configures_hardware_oversampling_at_native_scale()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

@@ -123,6 +123,10 @@ pass.
   without changing logical sensor identity, with safe fallback for older
   multi-channel firmware lacking the metadata. The SKR Pico's real
   GPIO27/internal-temperature/GPIO26 construction order is live-verified.
+  Automatic consumers also expose power-of-two hardware oversampling with a
+  native-scale shift; the EBB36 hotend/internal-temperature pair and USB
+  CAN-FD bridge internal temperature are live at 16x hardware plus 8x software
+  averaging in forced DMA mode.
   Heater range debounce becomes a local shutdown policy rather than depending
   on Python delivery.
 * The shared DMA resource layer now covers allocation, DMA-reachability,

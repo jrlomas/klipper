@@ -949,6 +949,10 @@ class MCUADCStreamManager:
         if getattr(self._mcu, "_helix_explicit_adc_stream", False):
             self._fallback("an explicit adc_stream section owns the engine")
             return
+        hardware_oversample = getattr(
+            self._mcu, "_adc_stream_hardware_oversample", 1)
+        hardware_oversample_format = (
+            "adc_stream_set_hardware_oversample oid=%c ratio=%hu shift=%c")
         subscribe_format = (
             "adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu"
             " osr=%hu shift=%c report_div=%hu report_class=%c")
@@ -958,6 +962,13 @@ class MCUADCStreamManager:
         if (self._mcu.get_constants().get("ADC_STREAM_V1") != 1
                 or self._mcu.try_lookup_command(subscribe_format) is None):
             self._fallback("firmware does not advertise ADC_STREAM_V1")
+            return
+        if (hardware_oversample > 1
+                and (not self._mcu.get_constants().get(
+                         "ADC_STREAM_CAPS", 0) & (1 << 8)
+                     or self._mcu.try_lookup_command(
+                         hardware_oversample_format) is None)):
+            self._fallback("firmware lacks hardware ADC oversampling")
             return
         max_channels = self._mcu.get_constants().get(
             "ADC_STREAM_MAX_CHANNELS", 0)
@@ -1041,6 +1052,15 @@ class MCUADCStreamManager:
             return
         self._oid = self._mcu.create_oid()
         self._mcu.add_config_cmd("config_adc_stream oid=%d" % (self._oid,))
+        if hardware_oversample > 1:
+            # Automatic consumers retain native ADC scale so existing
+            # thermistor calibration and local safety thresholds are
+            # unchanged.  Their normal software sample_count average remains
+            # a separate, later filter stage.
+            self._mcu.add_config_cmd(
+                "adc_stream_set_hardware_oversample oid=%d ratio=%d shift=%d"
+                % (self._oid, hardware_oversample,
+                   hardware_oversample.bit_length() - 1))
         for adc in self._adcs:
             self._mcu.add_config_cmd(
                 "adc_stream_add_channel oid=%d pin=%s"
@@ -1080,6 +1100,13 @@ class MCUADCStreamManager:
                 self._oid, start_clock, period_ticks,
                 block_scans * len(self._adcs), 0 if has_safety else 2),
             is_init=True)
+        logging.info(
+            "MCU '%s' ADC DMA adapter configured: pins=%s"
+            " hardware_oversample=%d software_osr=%s period_ticks=%d",
+            self._mcu.get_name(), ",".join(adc._pin for adc in self._adcs),
+            hardware_oversample,
+            ",".join(str(schedule[1]) for schedule in schedules),
+            period_ticks)
         for message in ("adc_stream_prompt ", "adc_stream_telemetry "):
             self._mcu.register_serial_response(
                 self._handle_summary, message + ADC_STREAM_SUMMARY_FORMAT,
@@ -1960,6 +1987,12 @@ class MCU:
         self._adc_stream_mode = config.getchoice(
             'adc_stream_mode', {'off': 'off', 'auto': 'auto',
                                 'force': 'force'}, 'auto')
+        self._adc_stream_hardware_oversample = config.getint(
+            'adc_stream_hardware_oversample', 1, minval=1, maxval=256)
+        if (self._adc_stream_hardware_oversample
+                & (self._adc_stream_hardware_oversample - 1)):
+            raise config.error(
+                "adc_stream_hardware_oversample must be a power of two")
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():

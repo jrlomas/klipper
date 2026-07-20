@@ -6204,6 +6204,15 @@ their contract. `off` forces the legacy ADC implementation. `force` is a
 qualification mode that turns any incompatibility into a configuration error
 instead of falling back.
 
+```
+#adc_stream_hardware_oversample: 1
+#   Hardware conversion count for each DMA value used by automatically
+#   migrated ADC clients. It must be a power of two from 1 through 256 and
+#   requires MCU support. Automatic mode always shifts the accumulated value
+#   back to native ADC scale, preserving existing calibration and thresholds.
+#   The default is 1 (disabled).
+```
+
 For merged legacy clients, firmware advertises each ADC pin's physical scan
 rank and the host orders channels by that rank while retaining the matching
 logical subscription and callback. Thus the order of heater and temperature
