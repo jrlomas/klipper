@@ -52,6 +52,9 @@ class PIDCalibrate:
                                 .45 * min(bias, max_power - bias))
             power_delta = gcmd.get_float(
                 'POWER_DELTA', default_delta, above=0.)
+            ceiling = gcmd.get_float(
+                'CEILING', min(target + 20., heater.max_temp),
+                above=target, maxval=heater.max_temp)
             if (bias - power_delta <= 0.
                     or bias + power_delta >= max_power):
                 pheaters.set_temperature(heater, 0.)
@@ -59,7 +62,7 @@ class PIDCalibrate:
                     'BIAS %.6f +/- POWER_DELTA %.6f must remain inside '
                     '0..max_power' % (bias, power_delta))
             calibrate = ControlSymmetricAutoTune(
-                heater, target, bias, power_delta, tolerance, rule)
+                heater, target, bias, power_delta, tolerance, rule, ceiling)
         elif method == 'LEGACY':
             calibrate = ControlAutoTune(heater, target, rule)
         else:
@@ -655,10 +658,11 @@ class ControlSymmetricAutoTune:
     AMPLITUDE_TOLERANCE = .20
 
     def __init__(self, heater, target, bias, relay_delta, tolerance=.02,
-                 rule='ZN'):
+                 rule='ZN', ceiling=None):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
         self.calibrate_temp = target
+        self.manual_ceiling = (target + 20. if ceiling is None else ceiling)
         self.temp_high = target + self.SWITCH_AMPLITUDE
         self.temp_low = target - self.SWITCH_AMPLITUDE
         self.tolerance = tolerance
@@ -786,6 +790,9 @@ class ControlSymmetricAutoTune:
             self.started = True
             self.heating = temp < self.calibrate_temp
             self.last_switch_time = read_time
+        if temp >= self.manual_ceiling:
+            self._finish(read_time, 'manual temperature ceiling reached')
+            return
         if len(self.peaks) > ADAPTIVE_MAX_PEAKS:
             self._finish(read_time, 'calibration did not converge')
             return
