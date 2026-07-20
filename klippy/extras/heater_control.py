@@ -242,9 +242,12 @@ class MCUHeaterControl:
 
     def _ping_event(self, eventtime):
         if self.ping_cmd is not None and not self.printer.is_shutdown():
+            # Liveness must precede synchronous observability queries.  A
+            # delayed query response must not make a healthy controller enter
+            # autonomous mode merely because telemetry is slow.
+            self.ping_cmd.send([self.oid])
             self._handle_state(self.query_cmd.send([self.oid]))
             self._handle_timing(self.timing_cmd.send([self.oid]))
-            self.ping_cmd.send([self.oid])
         return eventtime + 1.
 
     def _handle_state(self, params):

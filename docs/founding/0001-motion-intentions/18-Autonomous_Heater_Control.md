@@ -94,7 +94,9 @@ PID is never the safety mechanism. The MCU enforces, independently:
 
 1. the configured valid ADC interval;
 2. the hard `max_temp` ADC threshold;
-3. a sample deadline if DMA/filter delivery stops;
+3. a sample deadline if DMA/filter delivery stops while the controller is
+   active, autonomous, or in guarded-manual mode; the deadline is disarmed in
+   inactive `ready` state because there is no output to cut off;
 4. `max_power` at the PWM owner;
 5. the configured `verify_heater` heating-gain and accumulated-error policy,
    evaluated locally while a target is active;
@@ -121,7 +123,9 @@ latter already owns the loop continuously.
 ## Host loss and recovery
 
 The host sends a low-rate liveness ping for observability, not to refresh PWM.
-After `heater_control_host_timeout`, an active controller changes from
+The firmware measures host silence from the controller callback's current MCU
+execution clock, not from a possibly buffered acquisition timestamp. After
+`heater_control_host_timeout`, an active controller changes from
 `active` to `autonomous` without changing its target or PID state. After
 `heater_control_autonomous_max_duration`, it latches off. A returning host
 ping changes a healthy autonomous controller back to `active`.

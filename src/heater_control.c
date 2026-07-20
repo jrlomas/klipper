@@ -172,10 +172,29 @@ heater_control_set_output(struct heater_control *h, uint16_t output)
 }
 
 static void
+heater_control_disarm_deadline(struct heater_control *h)
+{
+    if (!h->deadline_armed)
+        return;
+    sched_del_timer(&h->sample_timer);
+    h->deadline_armed = 0;
+}
+
+static void
+heater_control_arm_deadline(struct heater_control *h, uint32_t clock)
+{
+    heater_control_disarm_deadline(h);
+    h->sample_timer.waketime = clock + h->sample_deadline_ticks;
+    h->deadline_armed = 1;
+    sched_add_timer(&h->sample_timer);
+}
+
+static void
 heater_control_fault(struct heater_control *h, uint8_t reason)
 {
     h->fault |= reason;
     h->state = HC_FAULT;
+    heater_control_disarm_deadline(h);
     heater_control_set_output(h, 0);
     heater_control_log(EL_FAULT, h, timer_read_time(), reason, h->last_adc);
     h->fault_event_pending = 1;
@@ -226,11 +245,6 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
     h->last_sample_clock = clock;
     h->last_adc = adc;
     h->sample_count++;
-    if (h->deadline_armed)
-        sched_del_timer(&h->sample_timer);
-    h->sample_timer.waketime = clock + h->sample_deadline_ticks;
-    h->deadline_armed = 1;
-    sched_add_timer(&h->sample_timer);
 
     if (adc < h->min_valid_adc || adc > h->max_valid_adc) {
         heater_control_fault(h, HC_FAULT_SENSOR_RANGE);
@@ -242,6 +256,11 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
     }
     if (h->state == HC_FAULT || h->state == HC_DISABLED)
         return;
+    if (h->state == HC_ACTIVE || h->state == HC_AUTONOMOUS
+        || h->state == HC_MANUAL)
+        heater_control_arm_deadline(h, h->last_run_clock);
+    else
+        heater_control_disarm_deadline(h);
 
     uint32_t control_adc = h->state == HC_MANUAL
                            ? h->manual_guard_adc : h->target_adc;
@@ -259,7 +278,7 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
         heater_control_fault(h, HC_FAULT_HEATING_RATE);
         return;
     }
-    uint32_t silence = clock - h->last_host_clock;
+    uint32_t silence = h->last_run_clock - h->last_host_clock;
     if (h->state == HC_ACTIVE && silence > h->host_timeout_ticks) {
         h->state = HC_AUTONOMOUS;
         h->autonomous_samples = 0;
@@ -269,6 +288,7 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
         h->manual_output_q16 = 0;
         h->manual_guard_adc = 0;
         h->state = HC_READY;
+        heater_control_disarm_deadline(h);
         heater_control_set_output(h, 0);
         heater_control_log(EL_HEATER, h, clock, h->last_adc, h->state);
         return;
@@ -379,6 +399,7 @@ command_heater_control_set_target(uint32_t *args)
     if (!target_adc) {
         h->target_adc = 0;
         h->state = h->fault ? HC_FAULT : HC_READY;
+        heater_control_disarm_deadline(h);
         heater_pid_reset(&h->pid_state);
         heater_verify_reset(&h->verify_state, 0);
         heater_control_set_output(h, 0);
@@ -391,6 +412,7 @@ command_heater_control_set_target(uint32_t *args)
     h->slope_q16 = args[3];
     h->last_host_clock = timer_read_time();
     h->state = HC_ACTIVE;
+    heater_control_arm_deadline(h, h->last_host_clock);
     heater_verify_reset(&h->verify_state, 1);
 }
 DECL_COMMAND(command_heater_control_set_target,
@@ -421,6 +443,7 @@ command_heater_control_set_manual(uint32_t *args)
         return;
     h->manual_output_q16 = args[1];
     h->state = HC_MANUAL;
+    heater_control_arm_deadline(h, h->last_host_clock);
     if (h->sample_count)
         heater_control_set_output(h, h->manual_output_q16);
 }
