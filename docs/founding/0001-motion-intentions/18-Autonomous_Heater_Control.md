@@ -149,15 +149,92 @@ System identification remains on the host because it is rare, numerical, and
 benefits from complete recorded data. During `PID_CALIBRATE`, the host asks the
 same MCU controller for guarded manual duty. ADC validity, deadline, ceiling,
 and maximum output remain local. The host analyzes the temperature/power
-trace, writes the resulting gains to `printer.cfg`, and a restart activates
-the new fixed-point profile. Calibration preserves `control: helix_pid`
-instead of silently reverting the heater to host PID.
+trace. A single tune may update the base `printer.cfg` gains, but Helix also
+stores its evidence as a candidate in an atomic, versioned host registry.
+Candidate gains are not activated merely because an autotune completed.
+Calibration preserves `control: helix_pid` instead of silently reverting the
+heater to host PID.
+
+The original Klipper relay drives full power and uses a fixed peak count.
+Kalico/Danger-Klipper improves the experiment by adapting relay power until
+the oscillation is centered on the requested operating point and recent power
+estimates converge. Helix adopts that power-balanced method as the default for
+`helix_pid`, retains `METHOD=LEGACY` for controlled comparison, records the
+relay powers and peaks, and offers both classic Ziegler-Nichols (`RULE=ZN`)
+and the less aggressive Tyreus-Luyben (`RULE=TL`) conversion from Ku/Tu. No
+rule is declared universally superior: candidates are compared on overshoot,
+settling, steady variance, duty variance, and disturbance recovery.
 
 This separation also leaves room for better identification than the original
 relay/Ziegler-Nichols method without expanding firmware complexity. Candidate
 methods include conservative IMC/SIMC tuning and plant identification for a
 later local MPC, but they must be compared on measured overshoot, recovery,
 disturbance rejection, and noise sensitivity before becoming defaults.
+
+## Characterization registry and gain model
+
+Every run records heater, target, optional context temperature, method,
+firmware identity, gains, extrema, duration, relay powers, and peak evidence.
+Its state is `candidate`, `validated`, or `rejected`. Only validated points
+participate in scheduling.
+
+With target temperature alone, Kp, Ki, and Kd are three piecewise-linear
+curves—not a three-dimensional surface. Exact points are used directly and
+intermediate targets interpolate between adjacent points. With an explicitly
+configured ambient/chamber sensor and at least three non-collinear validated
+points, each gain may instead use a bounded plane:
+
+```text
+gain = a + b*target + c*context_temperature
+```
+
+The model never extrapolates beyond observed target/context ranges and clamps
+every result to configured ratios around the base gains. Missing context,
+insufficient points, invalid data, or an out-of-hull request falls back to the
+base profile. The host uploads one selected gain set; the MCU does not evaluate
+an unconstrained model in its safety loop. Gain changes retain the prior output
+contribution and clear derivative history, providing a bumpless transition
+before the new target is applied.
+
+Management is deliberately explicit. Status and coefficient commands are
+read-only. Validation/rejection and clearing require confirmation. A retrain
+runs an ascending target list, preserves old data if any tune fails, and only
+replaces old records after the complete sequence succeeds. Its new runs still
+require validation.
+
+## Oversampling, dither, and effective resolution
+
+ADC oversampling and actuator dithering are separate. For uncorrelated noise,
+N conversions can ideally add `0.5*log2(N)` effective bits; 128x therefore has
+a 3.5-bit ceiling. A 12-bit accumulator shifted by three can retain a 16-bit
+code representation (0..65520), but it cannot claim more than 15.5 ideal ENOB
+and will usually achieve less. The default shift returns native 12-bit scale
+for compatibility; retained-bit mode is opt-in and scales sensor conversion,
+target, and local safety thresholds together.
+
+Natural ADC/front-end noise may already provide useful sub-LSB dither. Helix
+does not add deliberate dither until raw-code histograms show stuck codes and
+an experiment proves a benefit. It reports raw-code standard deviation, code
+occupancy, peak-to-peak noise, lag-one correlation, and a gain-versus-OSR
+curve. A stuck code cannot establish resolution because it supplies no
+sub-code information. A sine
+fixture additionally reports residual SINAD/ENOB. Correlated reference drift,
+settling error, INL, and DNL cannot be averaged away.
+
+The software PWM already maps 16-bit duty into millions of timer ticks at the
+normal heater cycle, so output quantization is not presently limiting. Pulse-
+density or sigma-delta heater dithering would add switching and spectral
+energy without evidence of benefit and remains disabled pending measurement.
+
+The installed system also admits a useful test without an external waveform
+source. After PID stabilization, `HELIX_HEATER_SINE_TEST` applies a slow,
+biased open-loop PWM sine under an MCU-local temperature ceiling. A least-
+squares fit absorbs the thermal plant's amplitude attenuation and phase lag;
+all remaining harmonics, drift, noise, airflow, sensor error, and ADC error
+form the residual. The resulting SINAD is intentionally called thermal-chain
+SINAD or effective control resolution. It answers how well the real installed
+system follows a known excitation, but cannot isolate ADC ENOB because the
+heater, mechanics, and thermistor are inside the measurement path.
 
 ## Commands and observability
 
@@ -176,6 +253,11 @@ target at zero. The ordinary heater status includes an `mcu_control` object so
 Mainsail, Moonraker, and Atlas can display whether control is `active`,
 `autonomous`, `manual`, or `fault`.
 
+`HELIX_PID_PROFILE_STATUS`, `HELIX_PID_PROFILE_COEFFICIENTS`,
+`HELIX_PID_PROFILE_VALIDATE`, `HELIX_PID_PROFILE_CLEAR`, and
+`HELIX_PID_PROFILE_RETRAIN` expose the characterization lifecycle. Destructive
+commands require `CONFIRM=YES`.
+
 ## Qualification gates
 
 - [x] Fixed-point proportional response, bounds, derivative-on-measurement,
@@ -183,19 +265,26 @@ Mainsail, Moonraker, and Atlas can display whether control is `active`,
 - [x] Host configuration and command encoding against an RP2040 data
   dictionary.
 - [x] RP2040 firmware build with ADC DMA and autonomous controller enabled.
-- [ ] Cold live configuration on Pico and EBB36 with both outputs confirmed
+- [x] Cold live configuration on Pico and EBB36 with both outputs confirmed
   inactive and state/sample telemetry advancing.
-- [ ] Low-temperature bed step test: compare host PID and MCU PID rise,
+- [x] Low-temperature bed step test: compare host PID and MCU PID rise,
   overshoot, settling, duty, and disturbance recovery.
-- [ ] Hotend step test at the active material temperature with operator and
+- [x] Hotend step test at 100 C with operator and
   emergency stop present.
-- [ ] Host-process loss while holding: target and duty remain bounded until
-  reconnection; duration expiry turns output off.
+- [x] Host-process loss while holding: target and duty remain bounded until
+  reconnection and state transitions active/autonomous/active.
+- [ ] Autonomous-duration expiry turns output off.
 - [ ] ADC stream interruption: sample deadline latches output off.
 - [ ] Sensor open/short and ceiling tests with independent temperature
   evidence.
-- [ ] `PID_CALIBRATE` guarded-manual run, profile save, restart, and
-  coefficient activation.
+- [x] Legacy `PID_CALIBRATE` guarded-manual run completes with target zero,
+  local safety active, and finite coefficients.
+- [ ] Adaptive autotune candidate storage, validation, interpolated profile
+  activation, restart, and intermediate-target comparison.
+- [ ] Raw 1x..128x DC/sine capture establishes measured ENOB, correlation,
+  useful dither, and the retained-bit shift limit.
+- [ ] Guarded PWM-sine runs at multiple periods establish installed thermal-
+  chain gain, phase, distortion, noise floor, and effective control resolution.
 
 Until the physical gates pass, `helix_pid` is implemented and workstation-
 verified but not the default controller.

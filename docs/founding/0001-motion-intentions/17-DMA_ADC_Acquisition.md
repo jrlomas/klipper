@@ -403,6 +403,17 @@ filter parameters, not an invented effective resolution. ENOB improvement is
 claimed only from measured noise/SINAD data with the sensor front end and
 sample rate stated. Analog antialias filtering remains a hardware requirement.
 
+Automatic consumers default to shifting the hardware accumulator back to
+native ADC scale. `adc_stream_hardware_shift` may retain fractional-code bits
+while scaling every host conversion and local safety threshold consistently.
+For a 12-bit ADC, OSR128 with shift 3 occupies codes 0..65520 and has a 15.5-bit
+ideal ENOB ceiling. The dependency-free `scripts/analyze_adc_enob.py` reports
+that ceiling separately from measured DC noise-limited/noise-free bits, code
+occupancy, lag-one correlation, and sine-fit residual SINAD/ENOB. A stuck DC
+code is explicitly unresolved, not credited as perfect resolution. This
+distinction prevents a
+16-bit transport representation from being advertised as a 16-bit ADC.
+
 ### Layer 6: analog watchdog integration
 
 The existing STM32 watchdog backend temporarily owns an ADC and free-runs one

@@ -1,0 +1,5 @@
+heater,target_c,controller,initial_c,duration_s,stable_entry_s,overshoot_c,steady_mean_error_c,steady_stddev_c,steady_peak_to_peak_c,steady_rmse_c,steady_mean_power,steady_power_stddev,loop_dt_mean_s,loop_dt_stddev_s,loop_dt_min_s,loop_dt_max_s
+bed,60,legacy_host,26.61,217.953073,127.760947,0.70,0.424250,0.201908,0.69,0.469846,0.573517,0.154414,,,,
+bed,60,mcu_autonomous,30.15,195.408178,105.203562,0.71,0.511500,0.168308,0.61,0.538479,0.567923,0.088016,0.300000017,0.000000176,0.299999,0.300001
+hotend,100,legacy_host,26.97,118.271834,28.057848,1.17,-0.000250,0.105218,0.34,0.105218,0.130602,0.042630,,,,
+hotend,100,mcu_autonomous,27.72,117.264690,27.057395,1.21,-0.000250,0.006253,0.04,0.006258,0.128546,0.004178,0.300000539,0.000002796,0.299982,0.300049

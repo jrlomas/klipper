@@ -723,7 +723,10 @@ a faster stop — test both the latency and the things polling could not do.
   raw single-shot, software-OSR, and hardware-OSR codes from the same DC and
   low-distortion waveform fixture. Pass: the watchdog trips locally and the
   archived SINAD/ENOB calculation—not grounded/floating peak-to-peak data—
-  supports the claimed noise reduction.
+  supports the claimed noise reduction. Capture OSR 1, 2, 4, 8, 16, 32, 64,
+  and 128 with accumulator bits retained; plot measured ENOB versus the ideal
+  `0.5*log2(OSR)` ceiling and inspect raw-code histograms plus autocorrelation
+  before considering deliberate dither.
 - [ ] **7.5c — MCU-autonomous heater control.** Configure `helix_pid` first
   on the bed at a low target, then on the hotend under supervision. Compare
   rise, overshoot, settling, duty, and disturbance recovery to host PID. Stop
@@ -731,7 +734,9 @@ a faster stop — test both the latency and the things polling could not do.
   `autonomous`, accepts a returning ping, and turns off at the configured
   duration. Interrupt ADC delivery and exercise sensor/ceiling faults.
   Pass: every cutoff is local and latched; no host PWM command owns the pin;
-  guarded `PID_CALIBRATE` preserves `control: helix_pid`. Detailed gates and
+  guarded adaptive `PID_CALIBRATE` preserves `control: helix_pid`; candidates
+  remain inactive until validation; exact/interpolated gains reach the MCU
+  without an output discontinuity. Detailed gates and
   safety contract are in [FD-0001 doc 18](founding/0001-motion-intentions/18-Autonomous_Heater_Control.md).
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.

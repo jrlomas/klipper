@@ -49,6 +49,13 @@ int32_t heater_control_adc_error_mdeg(uint32_t adc, uint32_t target_adc,
 
 void heater_pid_reset(struct heater_pid_state *state);
 
+// Retain the current output across a gain change, while clearing the filtered
+// derivative so the new Kd cannot amplify history accumulated under another
+// profile.  The next update resumes normal conditional integration.
+void heater_pid_reconfigure(struct heater_pid_state *state,
+                            const struct heater_pid_config *config,
+                            int32_t error_mdeg);
+
 // Run one deterministic, fixed-period PID update.  The derivative is taken
 // from the measurement (not the error), preventing target changes from
 // producing derivative kick.  Returns a Q16 duty in [0, max_output].

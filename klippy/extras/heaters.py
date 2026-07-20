@@ -158,7 +158,8 @@ class Heater:
             if target_changed is not None:
                 target_changed(degrees)
             elif self.mcu_heater_control is not None:
-                self.mcu_heater_control.set_manual_guard(degrees)
+                ceiling = getattr(self.control, 'manual_ceiling', None)
+                self.mcu_heater_control.set_manual_guard(degrees, ceiling)
     def get_temp(self, eventtime):
         est_print_time = self.mcu_pwm.get_mcu().estimated_print_time(eventtime)
         quell_time = est_print_time - QUELL_STALE_TIME
@@ -190,7 +191,8 @@ class Heater:
         if target_changed is not None:
             target_changed(target_temp)
         elif self.mcu_heater_control is not None:
-            self.mcu_heater_control.set_manual_guard(target_temp)
+            ceiling = getattr(self.control, 'manual_ceiling', None)
+            self.mcu_heater_control.set_manual_guard(target_temp, ceiling)
     def stats(self, eventtime):
         est_print_time = self.mcu_pwm.get_mcu().estimated_print_time(eventtime)
         if not self.printer.is_shutdown():

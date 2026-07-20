@@ -73,6 +73,7 @@ struct heater_control {
     uint32_t last_adc;
     uint32_t target_adc;
     uint32_t manual_guard_adc;
+    uint32_t manual_ceiling_adc;
     int32_t target_mdeg;
     int32_t slope_q16;
     int32_t manual_guard_mdeg;
@@ -214,8 +215,9 @@ heater_control_sample_timeout(struct timer *timer)
 static uint8_t
 heater_control_too_hot(struct heater_control *h, uint32_t adc)
 {
-    return h->invert_sense ? adc >= h->max_temp_adc
-                           : adc <= h->max_temp_adc;
+    uint32_t ceiling = (h->state == HC_MANUAL && h->manual_ceiling_adc
+                        ? h->manual_ceiling_adc : h->max_temp_adc);
+    return h->invert_sense ? adc >= ceiling : adc <= ceiling;
 }
 
 static void
@@ -287,6 +289,7 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
     if (h->state == HC_MANUAL && silence > h->host_timeout_ticks) {
         h->manual_output_q16 = 0;
         h->manual_guard_adc = 0;
+        h->manual_ceiling_adc = 0;
         h->state = HC_READY;
         heater_control_disarm_deadline(h);
         heater_control_set_output(h, 0);
@@ -420,6 +423,23 @@ DECL_COMMAND(command_heater_control_set_target,
              " target_mdeg=%i slope_q16=%i");
 
 void
+command_heater_control_set_profile(uint32_t *args)
+{
+    struct heater_control *h = oid_lookup(
+        args[0], command_config_heater_control);
+    h->pid_config.kp_q20 = args[1];
+    h->pid_config.ki_step_q20 = args[2];
+    h->pid_config.kd_step_q20 = args[3];
+    h->pid_config.derivative_alpha_q15 = args[4];
+    int32_t error_mdeg = h->target_adc ? heater_control_adc_error_mdeg(
+        h->last_adc, h->target_adc, h->slope_q16) : 0;
+    heater_pid_reconfigure(&h->pid_state, &h->pid_config, error_mdeg);
+}
+DECL_COMMAND(command_heater_control_set_profile,
+             "heater_control_set_profile oid=%c kp_q20=%i"
+             " ki_step_q20=%i kd_step_q20=%i d_alpha_q15=%hu");
+
+void
 command_heater_control_set_manual_guard(uint32_t *args)
 {
     struct heater_control *h = oid_lookup(
@@ -427,11 +447,12 @@ command_heater_control_set_manual_guard(uint32_t *args)
     h->manual_guard_adc = args[1];
     h->manual_guard_mdeg = args[2];
     h->manual_guard_slope_q16 = args[3];
+    h->manual_ceiling_adc = args[4];
     heater_verify_reset(&h->verify_state, !!h->manual_guard_adc);
 }
 DECL_COMMAND(command_heater_control_set_manual_guard,
              "heater_control_set_manual_guard oid=%c guard_adc=%u"
-             " guard_mdeg=%i slope_q16=%i");
+             " guard_mdeg=%i slope_q16=%i ceiling_adc=%u");
 
 void
 command_heater_control_set_manual(uint32_t *args)
@@ -555,3 +576,4 @@ heater_control_shutdown(void)
 DECL_SHUTDOWN(heater_control_shutdown);
 
 DECL_CONSTANT("HEATER_CONTROL_V1", 1);
+DECL_CONSTANT("HEATER_CONTROL_V2", 1);

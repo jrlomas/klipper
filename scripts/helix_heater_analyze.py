@@ -91,8 +91,14 @@ def plot(series, output, title):
     power.set_ylim(-2., 102.)
     power.grid(alpha=.25)
     figure.tight_layout()
-    figure.savefig(output, format="svg", metadata={"Creator": "Helix"})
+    figure.savefig(output, format="svg",
+                   metadata={"Creator": "Helix", "Date": None})
     plt.close(figure)
+    # Matplotlib emits path-data lines with trailing spaces. Keep generated
+    # evidence compatible with the repository whitespace gate.
+    path = Path(output)
+    path.write_text("\n".join(
+        line.rstrip() for line in path.read_text().splitlines()) + "\n")
 
 
 def main():

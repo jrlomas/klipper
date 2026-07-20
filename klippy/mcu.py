@@ -915,6 +915,15 @@ def _largest_common_divisor_at_most(values, limit):
     return 1
 
 
+def _adc_hardware_scale(adc_max, ratio, shift):
+    scale = ratio / float(1 << shift)
+    scaled_max = adc_max * scale
+    if scaled_max > 0xffff:
+        raise ValueError(
+            "hardware ADC oversample result exceeds the 16-bit stream")
+    return scale
+
+
 class MCUADCStreamManager:
     """Merge explicitly opted legacy ADC consumers onto one DMA scan engine."""
     def __init__(self, mcu):
@@ -932,6 +941,8 @@ class MCUADCStreamManager:
             raise self._mcu.get_printer().config_error(
                 "ADC DMA stream did not configure the autonomous consumer")
         return self._oid, sub
+    def get_hardware_scale(self):
+        return getattr(self, '_hardware_scale', 1.)
     def _fallback(self, reason):
         if getattr(self._mcu, "_adc_stream_mode", "off") == "force":
             raise self._mcu.get_printer().config_error(
@@ -979,6 +990,17 @@ class MCUADCStreamManager:
             return
         hardware_oversample = getattr(
             self._mcu, "_adc_stream_hardware_oversample", 1)
+        hardware_shift = getattr(
+            self._mcu, "_adc_stream_hardware_shift",
+            hardware_oversample.bit_length() - 1)
+        try:
+            hardware_scale = _adc_hardware_scale(
+                int(self._mcu.get_constants().get("ADC_MAX", 4095)),
+                hardware_oversample, hardware_shift)
+        except ValueError as exc:
+            self._fallback(str(exc))
+            return
+        self._hardware_scale = hardware_scale
         hardware_oversample_format = (
             "adc_stream_set_hardware_oversample oid=%c ratio=%hu shift=%c")
         filter_format = (
@@ -1093,14 +1115,10 @@ class MCUADCStreamManager:
         self._oid = self._mcu.create_oid()
         self._mcu.add_config_cmd("config_adc_stream oid=%d" % (self._oid,))
         if hardware_oversample > 1:
-            # Automatic consumers retain native ADC scale so existing
-            # thermistor calibration and local safety thresholds are
-            # unchanged.  Their normal software sample_count average remains
-            # a separate, later filter stage.
             self._mcu.add_config_cmd(
                 "adc_stream_set_hardware_oversample oid=%d ratio=%d shift=%d"
                 % (self._oid, hardware_oversample,
-                   hardware_oversample.bit_length() - 1))
+                   hardware_shift))
         for adc in self._adcs:
             self._mcu.add_config_cmd(
                 "adc_stream_add_channel oid=%d pin=%s"
@@ -1122,7 +1140,7 @@ class MCUADCStreamManager:
                 "adc_stream_set_subscription_options oid=%d sub=%d"
                 " summary_mode=1" % (self._oid, sub))
             scale_count = 1 if adc._adc_stream_normalized else osr
-            adc_max = scale_count * int(
+            adc_max = scale_count * hardware_scale * int(
                 self._mcu.get_constants().get("ADC_MAX", 4095))
             if adc._range_check_count:
                 low = max(0, min(0xffffffff,
@@ -1149,10 +1167,11 @@ class MCUADCStreamManager:
             is_init=True)
         logging.info(
             "MCU '%s' ADC DMA adapter configured: pins=%s"
-            " hardware_oversample=%d software_windows=%s alpha_q15=%s"
+            " hardware_oversample=%d hardware_shift=%d hardware_scale=%.3f"
+            " software_windows=%s alpha_q15=%s"
             " period_ticks=%d",
             self._mcu.get_name(), ",".join(adc._pin for adc in self._adcs),
-            hardware_oversample,
+            hardware_oversample, hardware_shift, hardware_scale,
             ",".join(str(schedule[1]) for schedule in schedules),
             ",".join(str(adc._adc_stream_alpha_q15)
                      for adc in self._adcs),
@@ -1176,7 +1195,8 @@ class MCUADCStreamManager:
         filter_count = (1 if adc._adc_stream_normalized
                         else adc._adc_stream_filter_count)
         denominator = params["count"] * filter_count
-        adc_max = float(self._mcu.get_constants().get("ADC_MAX", 4095))
+        adc_max = (float(self._mcu.get_constants().get("ADC_MAX", 4095))
+                   * self._hardware_scale)
         value = total / (denominator * adc_max)
         read_clock = self._mcu.clock32_to_clock64(params["last_clock"])
         read_time = self._mcu.clock_to_print_time(read_clock)
@@ -2045,6 +2065,15 @@ class MCU:
                 & (self._adc_stream_hardware_oversample - 1)):
             raise config.error(
                 "adc_stream_hardware_oversample must be a power of two")
+        default_adc_shift = (
+            self._adc_stream_hardware_oversample.bit_length() - 1)
+        self._adc_stream_hardware_shift = config.getint(
+            'adc_stream_hardware_shift', default_adc_shift,
+            minval=0, maxval=8)
+        if self._adc_stream_hardware_shift > default_adc_shift:
+            raise config.error(
+                "adc_stream_hardware_shift cannot exceed log2 of the "
+                "hardware oversample ratio")
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():

@@ -894,6 +894,48 @@ loop cadence statistics.
 `helix_pid` fault. The heater target must first be set to zero. Clearing a
 fault does not restore the previous target.
 
+#### HELIX_PID_PROFILE_STATUS
+`HELIX_PID_PROFILE_STATUS HEATER=<heater_name> [RUNS=20]`: Show the profile
+store generation, fitted-model type, active gain source, run counts, and the
+most recent characterization records with target, context, method, gains,
+sample count, and validation state.
+
+#### HELIX_PID_PROFILE_COEFFICIENTS
+`HELIX_PID_PROFILE_COEFFICIENTS HEATER=<heater_name>`: Show the exact
+piecewise-curve points or fitted surface coefficients, characterized ranges,
+and gain bounds used by the host scheduler.
+
+#### HELIX_PID_PROFILE_VALIDATE
+`HELIX_PID_PROFILE_VALIDATE HEATER=<heater_name> RUN=<run_id>
+[STATUS=VALIDATED|REJECTED] CONFIRM=YES`: Promote a measured candidate into
+the schedulable model or reject it. A tune is never activated merely because
+it completed.
+
+#### HELIX_PID_PROFILE_CLEAR
+`HELIX_PID_PROFILE_CLEAR HEATER=<heater_name> CONFIRM=YES`: Atomically remove
+all stored characterization runs for one heater. Its target must be zero.
+The configured base PID remains available and becomes the scheduling fallback.
+
+#### HELIX_PID_PROFILE_RETRAIN
+`HELIX_PID_PROFILE_RETRAIN HEATER=<heater_name>
+TARGETS=<t1,t2,...> [REPLACE=0|1] [CONFIRM=YES]`: Run guarded adaptive relay
+calibration at unique ascending temperatures and store one candidate per
+target without changing the printer.cfg base gains. `REPLACE=1` requires
+confirmation and removes older runs only after every requested tune succeeds.
+New runs remain candidates until explicitly validated.
+
+#### HELIX_HEATER_SINE_TEST
+`HELIX_HEATER_SINE_TEST HEATER=<heater_name> CENTER=<temperature>
+CEILING=<temperature> [BIAS=AUTO|<duty>] [AMPLITUDE=<duty>]
+[PERIOD=60] [CYCLES=4] [WARMUP_CYCLES=2] [WRITE_FILE=1]`: Stabilize at
+`CENTER`, then drive a guarded open-loop PWM sine around the measured or
+specified bias. The MCU enforces `CEILING`, ADC validity, sample deadline, and
+maximum output. Helix fits temperature amplitude and phase at the commanded
+frequency and reports installed thermal-chain gain, residual RMS, SINAD, and
+effective control bits. This is an end-to-end heater/thermistor/ADC result,
+not isolated ADC ENOB. The default raw capture is
+`/tmp/helix-heater-sine-<heater_name>.csv`.
+
 ### [idle_timeout]
 
 The idle_timeout module is automatically loaded.
@@ -1241,12 +1283,17 @@ in the config file.
 
 #### PID_CALIBRATE
 `PID_CALIBRATE HEATER=<config_name> TARGET=<temperature>
-[WRITE_FILE=1]`: Perform a PID calibration test. The specified heater
+[WRITE_FILE=1] [METHOD=ADAPTIVE|LEGACY] [TOLERANCE=<power_delta>]
+[RULE=ZN|TL] [STORE=0|1] [SAVE_BASE=0|1]`: Perform a PID calibration test. The specified heater
 will be enabled until the specified target temperature is reached, and
 then the heater will be turned off and on for several cycles. If the
 WRITE_FILE parameter is enabled, then the file /tmp/heattest.txt will
 be created with a log of all temperature samples taken during the
-test.
+test. `ADAPTIVE` balances relay power until recent power estimates converge;
+it is the default for `helix_pid`, while `LEGACY` preserves the original
+fixed full-power relay. `ZN` selects classic Ziegler-Nichols gains and `TL`
+selects the more conservative Tyreus-Luyben rule. Helix tunes are stored as
+candidates by default. `SAVE_BASE=0` leaves printer.cfg gains unchanged.
 
 ### [print_stats]
 

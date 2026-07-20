@@ -47,6 +47,18 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, per-node FIFO/protocol errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Counters are cumulative; compare deltas when diagnosing a particular print. |
 | `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]` | Drain motion and place the bus on an allowlisted Classical CAN maintenance profile before stopping Klipper to flash a bridge or node. |
 
+### MCU-autonomous heater control — `control: helix_pid`
+| Command | Summary |
+| --- | --- |
+| `HEATER_CONTROL_STATUS HEATER=<name>` | Query local state, fault, output, sample count, temperature, and loop cadence. |
+| `HEATER_CONTROL_CLEAR HEATER=<name>` | Clear a latched local heater fault with target zero. |
+| `HELIX_PID_PROFILE_STATUS HEATER=<name>` | List candidate, validated, and rejected characterization runs. |
+| `HELIX_PID_PROFILE_COEFFICIENTS HEATER=<name>` | Show bounded curve or target/context surface coefficients and measured hull. |
+| `HELIX_PID_PROFILE_VALIDATE HEATER=<name> RUN=<id> STATUS=<VALIDATED\|REJECTED> CONFIRM=YES` | Change a candidate's explicit validation state. |
+| `HELIX_PID_PROFILE_CLEAR HEATER=<name> CONFIRM=YES` | Clear one heater's stored characterization registry. |
+| `HELIX_PID_PROFILE_RETRAIN HEATER=<name> TARGETS=<t1,t2,...>` | Run ascending adaptive relay tunes without changing the base profile. |
+| `HELIX_HEATER_SINE_TEST HEATER=<name> CENTER=<C> CEILING=<C>` | Apply a guarded PWM sine and measure installed thermal-chain gain, phase, residual, and SINAD. |
+
 ### Structured trace — `[atlas_trace]`
 | Command | Summary |
 | --- | --- |
@@ -94,6 +106,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `[mcu] hardware_endstop_trigger: False` | Force the legacy polled endstop path on a board (default: use hardware edge interrupts when the firmware supports them). |
 | `[mcu] hardware_endstop_observer: True` | Commissioning only: timestamp GPIO edges through a passive ISR while the legacy poller remains the stop owner. |
 | `[heater_*] failure_policy: hold` | Keep a heater at its target through a fault (`hold_max_temp`, `hold_max_duration`). |
+| `[heater_*] control: helix_pid` | Run PID and safety on the heater-owning MCU, with bounded validated gain scheduling and guarded system-identification tests. |
 
 ## Firmware capabilities (Kconfig)
 
@@ -108,6 +121,7 @@ on where code size allows and off on `HAVE_LIMITED_CODE_SIZE` boards.
 | `WANT_TRAJECTORY_PWM` | The sampled PWM/DAC actuator backend (a non-stepper actuator — the same door a future BLDC/FOC backend uses). |
 | `WANT_TRIGGER_SOURCE` | Hardware-event trigger sources — edge interrupts, comparators, ADC watchdogs, input capture. |
 | `WANT_HEATER_HOLD` | The autonomous heater failsafe hold. |
+| `WANT_HEATER_CONTROL` | MCU-local PID, safety, manual-test ceiling, dynamic profiles, and control telemetry. |
 | `WANT_SYSCALL_API` | The unified cross-family board syscall table (advertised as `BOARD_SYSCALL_ABI`/`CAPS`). |
 | `WANT_SIGNED_IMAGES` | Ed25519 signature verification of firmware images in the bootloader (where it fits). |
 | `WANT_SELF_TEST` | The built-in self-test commands (`run_self_test`): the live verification gates / diagnostics driven by `HELIX_SELF_TEST`. |

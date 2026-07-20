@@ -4,7 +4,9 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging, math
+import json, logging, math, os
+
+from . import heater_profiles
 
 
 GAIN_SHIFT = 20
@@ -70,11 +72,18 @@ class MCUHeaterControl:
         self.verify_gain_time = verify.getfloat(
             'check_gain_time', default_gain_time, minval=1.)
 
-        self.kp = config.getfloat('pid_Kp', minval=0.) / 255.
-        self.ki = config.getfloat('pid_Ki', minval=0.) / 255.
-        self.kd = config.getfloat('pid_Kd', minval=0.) / 255.
+        self.base_pid = (
+            config.getfloat('pid_Kp', minval=0.),
+            config.getfloat('pid_Ki', minval=0.),
+            config.getfloat('pid_Kd', minval=0.))
+        self.kp, self.ki, self.kd = [value / 255.
+                                     for value in self.base_pid]
+        self.profile_manager = HeaterProfileManager(config, self)
+        self.active_pid = self.base_pid
+        self.active_profile_source = 'base'
         self._commands_ready = False
-        self.set_target_cmd = self.manual_cmd = self.manual_guard_cmd = None
+        self.set_target_cmd = self.set_profile_cmd = None
+        self.manual_cmd = self.manual_guard_cmd = None
         self.ping_cmd = None
         self.query_cmd = self.timing_cmd = self.clear_cmd = None
         self.state = 1
@@ -103,6 +112,7 @@ class MCUHeaterControl:
             'HEATER_CONTROL_CLEAR', 'HEATER', self.name,
             self.cmd_HEATER_CONTROL_CLEAR,
             desc=self.cmd_HEATER_CONTROL_CLEAR_help)
+        self.profile_manager.register_commands(gcode)
 
     def _q20(self, value, option):
         result = int(value * (1 << GAIN_SHIFT) + .5)
@@ -112,12 +122,14 @@ class MCUHeaterControl:
         return result
 
     def _temp_to_adc(self, temp):
-        adc_max = int(self.mcu.get_constant_float('ADC_MAX'))
+        adc_max = int(self.mcu.get_constant_float('ADC_MAX')
+                      * self.manager.get_hardware_scale())
         value = self.adc_convert.calc_adc(temp)
         return max(0, min(adc_max, int(value * adc_max + .5)))
 
     def _target_parameters(self, temp):
-        adc_max = float(self.mcu.get_constant_float('ADC_MAX'))
+        adc_max = (float(self.mcu.get_constant_float('ADC_MAX'))
+                   * self.manager.get_hardware_scale())
         delta = min(.5, max(.05, .25 * (self.heater.max_temp
                                         - self.heater.min_temp)))
         lower = max(self.heater.min_temp, temp - delta)
@@ -142,9 +154,10 @@ class MCUHeaterControl:
         return target_adc, int(temp * 1000. + .5), slope_q16
 
     def _build_config(self):
-        if self.mcu.get_constants().get('HEATER_CONTROL_V1') != 1:
+        if self.mcu.get_constants().get('HEATER_CONTROL_V2') != 1:
             raise self.printer.config_error(
-                "MCU '%s' lacks HEATER_CONTROL_V1" % (self.mcu.get_name(),))
+                "MCU '%s' lacks HEATER_CONTROL_V2 dynamic profiles" % (
+                    self.mcu.get_name(),))
         stream_oid, subscription = self.manager.get_local_binding(self.mcu_adc)
         # Clock conversion is only valid after MCU identify/configuration.
         self.clock_frequency = self.mcu.seconds_to_clock(1.)
@@ -201,11 +214,14 @@ class MCUHeaterControl:
         self.set_target_cmd = self.mcu.lookup_command(
             "heater_control_set_target oid=%c target_adc=%u"
             " target_mdeg=%i slope_q16=%i", cq=cq)
+        self.set_profile_cmd = self.mcu.lookup_command(
+            "heater_control_set_profile oid=%c kp_q20=%i"
+            " ki_step_q20=%i kd_step_q20=%i d_alpha_q15=%hu", cq=cq)
         self.manual_cmd = self.mcu.lookup_command(
             "heater_control_set_manual oid=%c output=%hu", cq=cq)
         self.manual_guard_cmd = self.mcu.lookup_command(
             "heater_control_set_manual_guard oid=%c guard_adc=%u"
-            " guard_mdeg=%i slope_q16=%i", cq=cq)
+            " guard_mdeg=%i slope_q16=%i ceiling_adc=%u", cq=cq)
         self.ping_cmd = self.mcu.lookup_command(
             "heater_control_ping oid=%c", cq=cq)
         self.clear_cmd = self.mcu.lookup_command(
@@ -291,9 +307,28 @@ class MCUHeaterControl:
         if temp <= 0.:
             self.set_target_cmd.send([self.oid, 0, 0, 0])
             return
+        selection = self.profile_manager.select(temp)
+        gains = selection['gains']
+        self._set_profile(gains)
+        self.active_profile_source = selection['source']
         target_adc, target_mdeg, slope_q16 = self._target_parameters(temp)
         self.set_target_cmd.send(
             [self.oid, target_adc, target_mdeg, slope_q16])
+
+    def _set_profile(self, gains):
+        requested = tuple(float(gains[name])
+                          for name in heater_profiles.GAIN_NAMES)
+        if requested == self.active_pid or self.set_profile_cmd is None:
+            self.active_pid = requested
+            return
+        kp, ki, kd = [value / 255. for value in requested]
+        alpha_q15 = max(1, min(ALPHA_ONE,
+                               int(self.derivative_alpha * ALPHA_ONE + .5)))
+        self.set_profile_cmd.send([
+            self.oid, self._q20(kp, 'pid_Kp'),
+            self._q20(ki * self.period, 'pid_Ki'),
+            self._q20(kd / self.period, 'pid_Kd'), alpha_q15])
+        self.active_pid = requested
 
     def set_manual_output(self, value):
         if self.manual_cmd is None:
@@ -303,15 +338,18 @@ class MCUHeaterControl:
         self.output = output / float(OUTPUT_ONE)
         self.heater.last_pwm_value = self.output
 
-    def set_manual_guard(self, temp):
+    def set_manual_guard(self, temp, ceiling=None):
         if self.manual_guard_cmd is None:
             return
         if temp <= 0.:
-            self.manual_guard_cmd.send([self.oid, 0, 0, 0])
+            self.manual_guard_cmd.send([self.oid, 0, 0, 0, 0])
             return
         target_adc, target_mdeg, slope_q16 = self._target_parameters(temp)
+        if ceiling is None:
+            ceiling = self.heater.max_temp
+        ceiling_adc = self._temp_to_adc(ceiling)
         self.manual_guard_cmd.send(
-            [self.oid, target_adc, target_mdeg, slope_q16])
+            [self.oid, target_adc, target_mdeg, slope_q16, ceiling_adc])
 
     def query(self):
         if self.query_cmd is not None:
@@ -338,6 +376,12 @@ class MCUHeaterControl:
             'loop_dt_min': self.loop_dt_min or 0.,
             'loop_dt_max': self.loop_dt_max or 0.,
             'host_configured': self._commands_ready,
+            'pid_gains': dict(zip(heater_profiles.GAIN_NAMES,
+                                  self.active_pid)),
+            'pid_profile_source': self.active_profile_source,
+            'pid_profile_model': self.profile_manager.model.kind,
+            'pid_profile_generation': self.profile_manager.store.data[
+                'generation'],
         }
 
     cmd_HEATER_CONTROL_STATUS_help = "Report the MCU heater controller state"
@@ -359,3 +403,230 @@ class MCUHeaterControl:
             raise gcmd.error(
                 "MCU heater fault remains latched (0x%x)" % status['fault'])
         gcmd.respond_info("%s MCU heater fault cleared" % (self.name,))
+
+
+class HeaterProfileManager:
+    """Host policy and G-Code interface for one MCU-controlled heater."""
+    def __init__(self, config, controller):
+        self.printer = config.get_printer()
+        self.controller = controller
+        self.heater = controller.heater
+        self.name = controller.name
+        config_dir = os.path.dirname(os.path.abspath(
+            self.printer.get_start_args()['config_file']))
+        path = config.get('heater_pid_profile_path',
+                          'helix_heater_profiles.json')
+        if not os.path.isabs(path):
+            path = os.path.join(config_dir, path)
+        store = self.printer.lookup_object('heater_profile_store', None)
+        if store is None:
+            try:
+                store = heater_profiles.HeaterProfileStore(path)
+            except ValueError as exc:
+                raise config.error(str(exc))
+            self.printer.add_object('heater_profile_store', store)
+            store.path = os.path.abspath(path)
+        elif store.path != os.path.abspath(path):
+            raise config.error(
+                'All helix_pid heaters must use one heater_pid_profile_path')
+        self.store = store
+        self.enabled = config.getboolean('heater_pid_gain_schedule', True)
+        self.min_ratio = config.getfloat(
+            'heater_pid_gain_min_ratio', .25, above=0.)
+        self.max_ratio = config.getfloat(
+            'heater_pid_gain_max_ratio', 4., above=self.min_ratio)
+        self.context_sensor_name = config.get(
+            'heater_pid_context_sensor', None)
+        self.model = None
+        self._rebuild()
+
+    def _rebuild(self):
+        self.model = heater_profiles.HeaterGainModel(
+            self.store.runs(self.name), self.controller.base_pid,
+            (self.min_ratio, self.max_ratio))
+
+    def register_commands(self, gcode):
+        commands = [
+            ('HELIX_PID_PROFILE_STATUS', self.cmd_STATUS,
+             'Show stored Helix PID characterization runs'),
+            ('HELIX_PID_PROFILE_COEFFICIENTS', self.cmd_COEFFICIENTS,
+             'Show the fitted Helix PID gain model'),
+            ('HELIX_PID_PROFILE_VALIDATE', self.cmd_VALIDATE,
+             'Validate or reject a stored Helix PID run'),
+            ('HELIX_PID_PROFILE_CLEAR', self.cmd_CLEAR,
+             'Clear stored Helix PID characterization data'),
+            ('HELIX_PID_PROFILE_RETRAIN', self.cmd_RETRAIN,
+             'Run PID calibration at an ascending target series'),
+        ]
+        for command, callback, desc in commands:
+            gcode.register_mux_command(
+                command, 'HEATER', self.name, callback, desc=desc)
+
+    def _context_temp(self):
+        if not self.context_sensor_name:
+            return None
+        sensor = self.printer.lookup_object(self.context_sensor_name, None)
+        if sensor is None:
+            return None
+        status = sensor.get_status(self.printer.get_reactor().monotonic())
+        value = status.get('temperature')
+        return None if value is None else float(value)
+
+    def select(self, target):
+        if not self.enabled:
+            return {'gains': dict(zip(heater_profiles.GAIN_NAMES,
+                                      self.controller.base_pid)),
+                    'source': 'disabled', 'model': self.model.kind}
+        return self.model.select(target, self._context_temp())
+
+    def record_tune(self, target, gains, calibrate, method='relay_zn'):
+        samples = getattr(calibrate, 'temp_samples', [])
+        peaks = getattr(calibrate, 'peaks', [])
+        record = {
+            'target': float(target),
+            'context_temp': self._context_temp(),
+            'gains': dict(zip(heater_profiles.GAIN_NAMES,
+                              [float(value) for value in gains])),
+            'method': method,
+            'firmware': self.printer.get_start_args().get(
+                'software_version', 'unknown'),
+            'evidence': {
+                'sample_count': len(samples),
+                'peak_count': len(peaks),
+                'peaks': [[float(temp), float(stamp)]
+                          for temp, stamp in peaks],
+                'pwm_transitions': len(getattr(
+                    calibrate, 'pwm_samples', [])),
+                'start_temp': float(samples[0][1]) if samples else None,
+                'minimum_temp': min([sample[1] for sample in samples])
+                                if samples else None,
+                'maximum_temp': max([sample[1] for sample in samples])
+                                if samples else None,
+                'duration': (float(samples[-1][0] - samples[0][0])
+                             if len(samples) > 1 else 0.),
+                'relay_powers': [float(value) for value in getattr(
+                    calibrate, 'powers', [])],
+                'ultimate': getattr(calibrate, 'ultimate', None),
+            },
+        }
+        result = self.store.add_run(self.name, record)
+        self._rebuild()
+        return result
+
+    def _require_confirmation(self, gcmd, expected='YES'):
+        if gcmd.get('CONFIRM', '').strip().upper() != expected:
+            raise gcmd.error('Destructive operation requires CONFIRM=%s'
+                             % (expected,))
+
+    def _run_lines(self, limit=None):
+        records = self.store.runs(self.name)
+        if limit is not None:
+            records = records[-limit:]
+        lines = []
+        for run in records:
+            gains = run.get('gains', {})
+            lines.append(
+                '%s status=%s target=%.2fC context=%s method=%s '
+                'Kp=%.3f Ki=%.3f Kd=%.3f samples=%d peaks=%d' % (
+                    run.get('id', '?'), run.get('status', 'candidate'),
+                    run.get('target', 0.),
+                    ('n/a' if run.get('context_temp') is None else
+                     '%.2fC' % run['context_temp']),
+                    run.get('method', 'unknown'), gains.get('kp', 0.),
+                    gains.get('ki', 0.), gains.get('kd', 0.),
+                    run.get('evidence', {}).get('sample_count', 0),
+                    run.get('evidence', {}).get('peak_count', 0)))
+        return lines
+
+    def cmd_STATUS(self, gcmd):
+        limit = gcmd.get_int('RUNS', 20, minval=1, maxval=200)
+        records = self.store.runs(self.name)
+        counts = {state: len([run for run in records
+                              if run.get('status') == state])
+                  for state in ('candidate', 'validated', 'rejected')}
+        lines = [
+            '%s PID profiles: generation=%d model=%s runs=%d '
+            'candidate=%d validated=%d rejected=%d active=%s' % (
+                self.name, self.store.data['generation'], self.model.kind,
+                len(records), counts['candidate'], counts['validated'],
+                counts['rejected'], self.controller.active_profile_source)]
+        lines.extend(self._run_lines(limit) or ['No stored runs'])
+        gcmd.respond_info('\n'.join(lines))
+
+    def cmd_COEFFICIENTS(self, gcmd):
+        gcmd.respond_info('%s PID gain model:\n%s' % (
+            self.name, json.dumps(self.model.status(), sort_keys=True,
+                                  indent=2)))
+
+    def cmd_VALIDATE(self, gcmd):
+        run_id = gcmd.get('RUN')
+        status = gcmd.get('STATUS', 'VALIDATED').strip().lower()
+        if status not in ('validated', 'rejected'):
+            raise gcmd.error('STATUS must be VALIDATED or REJECTED')
+        self._require_confirmation(gcmd)
+        try:
+            record = self.store.set_status(self.name, run_id, status)
+        except KeyError:
+            raise gcmd.error("Unknown heater run '%s'" % (run_id,))
+        except (OSError, ValueError) as exc:
+            raise gcmd.error('Unable to update PID characterization: %s'
+                             % (exc,))
+        self._rebuild()
+        gcmd.respond_info('%s run %s marked %s; model=%s' % (
+            self.name, record['id'], status, self.model.kind))
+
+    def cmd_CLEAR(self, gcmd):
+        self._require_confirmation(gcmd)
+        if self.heater.target_temp:
+            raise gcmd.error('Set the heater target to zero before clearing')
+        try:
+            changed = self.store.clear(self.name)
+        except (OSError, ValueError) as exc:
+            raise gcmd.error('Unable to clear PID characterization: %s'
+                             % (exc,))
+        self._rebuild()
+        gcmd.respond_info('%s PID characterization data %s' % (
+            self.name, 'cleared' if changed else 'was already empty'))
+
+    def cmd_RETRAIN(self, gcmd):
+        if self.heater.target_temp:
+            raise gcmd.error('Set the heater target to zero before retraining')
+        targets_raw = gcmd.get('TARGETS')
+        try:
+            targets = [float(item.strip())
+                       for item in targets_raw.split(',') if item.strip()]
+        except ValueError:
+            raise gcmd.error('TARGETS must be comma-separated temperatures')
+        if not targets or targets != sorted(set(targets)):
+            raise gcmd.error('TARGETS must be unique and ascending')
+        if any(target < self.heater.min_temp
+               or target > self.heater.max_temp for target in targets):
+            raise gcmd.error('A retrain target is outside the heater range')
+        replace = gcmd.get_int('REPLACE', 0, minval=0, maxval=1)
+        if replace:
+            self._require_confirmation(gcmd)
+        before = set(run.get('id') for run in self.store.runs(self.name))
+        gcode = self.printer.lookup_object('gcode')
+        for pos, target in enumerate(targets):
+            gcmd.respond_info('Retraining %s at %.2fC (%d/%d)' % (
+                self.name, target, pos + 1, len(targets)))
+            gcode.run_script_from_command(
+                'PID_CALIBRATE HEATER=%s TARGET=%.3f STORE=1 SAVE_BASE=0' % (
+                    self.name, target))
+        after = self.store.runs(self.name)
+        new_ids = [run.get('id') for run in after
+                   if run.get('id') not in before]
+        if len(new_ids) != len(targets):
+            raise gcmd.error('Retrain did not produce one run per target; '
+                             'existing data was preserved')
+        if replace:
+            try:
+                self.store.remove_except(self.name, new_ids)
+            except (OSError, ValueError) as exc:
+                raise gcmd.error(
+                    'Retrain succeeded, but old data could not be removed: %s'
+                    % (exc,))
+        self._rebuild()
+        gcmd.respond_info(
+            '%s retrain complete: %d candidate runs; validate them before '
+            'the model may schedule their gains' % (self.name, len(new_ids)))

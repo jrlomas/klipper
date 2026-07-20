@@ -74,6 +74,27 @@ test_anti_windup_and_recovery(void)
 }
 
 static void
+test_bumpless_reconfigure(void)
+{
+    struct heater_pid_config cfg = {
+        .kp_q20 = Q20(.020), .ki_step_q20 = Q20(.005),
+        .kd_step_q20 = 0,
+        .derivative_alpha_q15 = HEATER_CONTROL_ALPHA_ONE,
+        .max_output = HEATER_CONTROL_OUTPUT_ONE,
+    };
+    struct heater_pid_state state;
+    heater_pid_reset(&state);
+    uint16_t before = heater_pid_update(&state, &cfg, 100000, 10000);
+    cfg.kp_q20 = Q20(.010);
+    heater_pid_reconfigure(&state, &cfg, 10000);
+    uint16_t after = heater_pid_update(&state, &cfg, 100000, 10000);
+    // The integral is retargeted so changing Kp does not collapse duty.  The
+    // only increase is the ordinary next-sample Ki contribution (about 5%).
+    assert(after >= before && after - before < 3400);
+    assert(state.derivative_mdeg == 0);
+}
+
+static void
 test_verify_heater_progress_and_stall(void)
 {
     struct heater_verify_config cfg = {
@@ -113,6 +134,7 @@ main(void)
     test_proportional_and_bounds();
     test_derivative_on_measurement();
     test_anti_windup_and_recovery();
+    test_bumpless_reconfigure();
     test_verify_heater_progress_and_stall();
     puts("PASS: autonomous heater controller fixed-point math");
     return 0;

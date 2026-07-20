@@ -1496,6 +1496,25 @@ pid_Kd:
 #   Maximum interval between local filtered ADC samples before helix_pid
 #   latches the heater off. The default is the greater of 1 second or three
 #   sensor report periods. It must exceed one report period.
+#heater_pid_profile_path: helix_heater_profiles.json
+#   Versioned JSON file used for immutable PID characterization runs. Relative
+#   paths are resolved beside printer.cfg. All helix_pid heaters must share
+#   one path. The file is atomically replaced with mode 0600.
+#heater_pid_gain_schedule: true
+#   If true, validated characterization runs may select exact or interpolated
+#   gains when a non-zero target is set. Candidate and rejected runs are never
+#   scheduled. Extrapolation outside the characterized range is forbidden and
+#   falls back to pid_Kp/pid_Ki/pid_Kd. The default is true.
+#heater_pid_gain_min_ratio: 0.25
+#heater_pid_gain_max_ratio: 4.0
+#   Lower and upper bounds for a scheduled gain relative to the corresponding
+#   printer.cfg base gain. Bounds apply after fitting/interpolation.
+#heater_pid_context_sensor:
+#   Optional full object name (for example "temperature_sensor chamber") used
+#   as the second independent variable of a gain surface. Without this option,
+#   target temperature produces three one-dimensional gain curves. A surface
+#   is fitted only from at least three non-collinear validated points; missing
+#   or out-of-range context falls back to the base gains.
 #max_delta: 2.0
 #   On 'watermark' controlled heaters this is the number of degrees in
 #   Celsius above the target temperature before disabling the heater
@@ -6234,6 +6253,14 @@ instead of falling back.
 #   accumulated value back to native ADC scale, preserving existing
 #   calibration and thresholds. Once configured, acquisition continues on the
 #   MCU without host participation. The default is 1 (disabled).
+#adc_stream_hardware_shift:
+#   Right shift applied to each automatic hardware-oversample accumulator.
+#   The default is log2(adc_stream_hardware_oversample), retaining native ADC
+#   scale. A smaller shift preserves fractional-code resolution and scales all
+#   host conversion, local target, and safety thresholds consistently. The
+#   resulting full-scale value must fit the 16-bit acquisition transport. For
+#   a 12-bit ADC at 128x, shift 3 gives a 0..65520 representation and a 15.5-bit
+#   ideal ENOB ceiling; actual ENOB must be measured.
 ```
 
 ADC-backed temperature sections also accept these per-consumer options:

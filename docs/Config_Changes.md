@@ -13,6 +13,18 @@ All dates in this document are approximate.
 
 ## Changes
 
+20260719: `control: helix_pid` gained versioned characterization runs,
+candidate validation, bounded target/context gain models, dynamic bumpless MCU
+profile activation, and management G-Code. Its default autotune is now a
+power-balanced adaptive relay; `METHOD=LEGACY` retains the original test.
+`[mcu]` also gained `adc_stream_hardware_shift` so hardware-oversample
+fractional bits may be retained without changing thermistor or safety scaling.
+The default shift remains native-scale compatible. New `HEATER_CONTROL_V2`
+firmware is required by `helix_pid`.
+Guarded manual tests now carry a distinct MCU-local temperature ceiling, and
+`HELIX_HEATER_SINE_TEST` measures installed thermal-chain gain, phase, and
+SINAD without treating that system result as isolated ADC ENOB.
+
 20260715: Digital `[output_pin]` sections gained the optional
 `machine_time: True` setting. It schedules `SET_PIN` edges in the primary
 MCU's shared machine-clock domain and may be combined with `[multi_pin]` for

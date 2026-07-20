@@ -43,6 +43,24 @@ gain_term(int32_t gain_q20, int32_t value_mdeg)
     return (int64_t)gain_q20 * value_mdeg / 1000;
 }
 
+void
+heater_pid_reconfigure(struct heater_pid_state *state,
+                       const struct heater_pid_config *config,
+                       int32_t error_mdeg)
+{
+    if (!state->initialized)
+        return;
+    int64_t max_q20 = (int64_t)config->max_output << 4;
+    int64_t integral = state->output_q20
+                       - gain_term(config->kp_q20, error_mdeg);
+    if (integral < 0)
+        integral = 0;
+    else if (integral > max_q20)
+        integral = max_q20;
+    state->integral_q20 = integral;
+    state->derivative_mdeg = 0;
+}
+
 uint16_t
 heater_pid_update(struct heater_pid_state *state,
                   const struct heater_pid_config *config,
