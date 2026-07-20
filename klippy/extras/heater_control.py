@@ -81,6 +81,8 @@ class MCUHeaterControl:
         self.profile_manager = HeaterProfileManager(config, self)
         self.active_pid = self.base_pid
         self.active_profile_source = 'base'
+        self.active_profile_raw_pid = self.base_pid
+        self.active_profile_clamped = ()
         self._commands_ready = False
         self.set_target_cmd = self.set_profile_cmd = None
         self.manual_cmd = self.manual_guard_cmd = None
@@ -316,6 +318,10 @@ class MCUHeaterControl:
         gains = selection['gains']
         self._set_profile(gains)
         self.active_profile_source = selection['source']
+        self.active_profile_raw_pid = tuple(
+            selection['raw_gains'][name]
+            for name in heater_profiles.GAIN_NAMES)
+        self.active_profile_clamped = tuple(selection['clamped_gains'])
         target_adc, target_mdeg, slope_q16 = self._target_parameters(temp)
         self.set_target_cmd.send(
             [self.oid, target_adc, target_mdeg, slope_q16])
@@ -389,6 +395,11 @@ class MCUHeaterControl:
             'host_configured': self._commands_ready,
             'pid_gains': dict(zip(heater_profiles.GAIN_NAMES,
                                   self.active_pid)),
+            'pid_profile_raw_gains': dict(zip(
+                heater_profiles.GAIN_NAMES, self.active_profile_raw_pid)),
+            'pid_profile_bounded': bool(self.active_profile_clamped),
+            'pid_profile_clamped_gains': list(
+                self.active_profile_clamped),
             'pid_profile_source': self.active_profile_source,
             'pid_profile_model': self.profile_manager.model.kind,
             'pid_profile_generation': self.profile_manager.store.data[
@@ -403,9 +414,12 @@ class MCUHeaterControl:
                     "n/a (local tangent %.3f)" % (
                         status['mcu_temperature_estimate'],))
         gcmd.respond_info(
-            "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s" % (
+            "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
+            "profile=%s bounded=%s" % (
                 self.name, status['state'], status['fault'], status['power'],
-                status['samples'], estimate))
+                status['samples'], estimate, status['pid_profile_source'],
+                (','.join(status['pid_profile_clamped_gains'])
+                 if status['pid_profile_bounded'] else 'no')))
 
     cmd_HEATER_CONTROL_CLEAR_help = "Clear a latched MCU heater fault"
     def cmd_HEATER_CONTROL_CLEAR(self, gcmd):
@@ -565,6 +579,17 @@ class HeaterProfileManager:
                 self.name, self.store.data['generation'], self.model.kind,
                 len(records), counts['candidate'], counts['validated'],
                 counts['rejected'], self.controller.active_profile_source)]
+        if self.controller.active_profile_clamped:
+            lines.append(
+                'Active selection bounded gains=%s raw=%s applied=%s' % (
+                    ','.join(self.controller.active_profile_clamped),
+                    json.dumps(dict(zip(
+                        heater_profiles.GAIN_NAMES,
+                        self.controller.active_profile_raw_pid)),
+                        sort_keys=True),
+                    json.dumps(dict(zip(
+                        heater_profiles.GAIN_NAMES,
+                        self.controller.active_pid)), sort_keys=True)))
         lines.extend(self._run_lines(limit) or ['No stored runs'])
         gcmd.respond_info('\n'.join(lines))
 

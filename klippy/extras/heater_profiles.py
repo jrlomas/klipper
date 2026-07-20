@@ -284,17 +284,29 @@ class HeaterGainModel:
             for point in self.points]}
 
     def _bounded(self, gains):
+        raw = {name: float(gains[name]) for name in GAIN_NAMES}
         bounded = {}
         for name in GAIN_NAMES:
             base = self.base_gains[name]
             lower, upper = base * self.min_ratio, base * self.max_ratio
-            bounded[name] = max(lower, min(upper, float(gains[name])))
-        return bounded
+            bounded[name] = max(lower, min(upper, raw[name]))
+        clamped = [name for name in GAIN_NAMES
+                   if abs(bounded[name] - raw[name]) > 1.e-12]
+        return bounded, raw, clamped
+
+    def _selection(self, gains, source, **metadata):
+        bounded, raw, clamped = self._bounded(gains)
+        result = {'gains': bounded, 'raw_gains': raw,
+                  'clamped_gains': clamped, 'bounded': bool(clamped),
+                  'source': source, 'model': self.kind}
+        result.update(metadata)
+        return result
 
     def select(self, target, context_temp=None):
         target = float(target)
         fallback = {'gains': dict(self.base_gains), 'source': 'base',
-                    'model': self.kind}
+                    'model': self.kind, 'raw_gains': dict(self.base_gains),
+                    'clamped_gains': [], 'bounded': False}
         if not self.points or self.target_range is None:
             return fallback
         if self.kind == 'base':
@@ -313,14 +325,12 @@ class HeaterGainModel:
             gains = {name: coef[0] + coef[1] * target
                      + coef[2] * context_temp
                      for name, coef in self.coefficients.items()}
-            return {'gains': self._bounded(gains), 'source': 'surface',
-                    'model': self.kind}
+            return self._selection(gains, 'surface')
         points = sorted(self.points, key=lambda point: point['target'])
         exact = [point for point in points
                  if abs(point['target'] - target) < 1.e-9]
         if exact:
-            return {'gains': self._bounded(exact[0]), 'source': 'exact',
-                    'model': self.kind}
+            return self._selection(exact[0], 'exact')
         if len(points) < 2:
             return fallback
         for lower, upper in zip(points, points[1:]):
@@ -330,9 +340,9 @@ class HeaterGainModel:
                 gains = {name: lower[name]
                          + fraction * (upper[name] - lower[name])
                          for name in GAIN_NAMES}
-                return {'gains': self._bounded(gains), 'source': 'linear',
-                        'model': self.kind,
-                        'bracket': [lower['target'], upper['target']]}
+                return self._selection(
+                    gains, 'linear',
+                    bracket=[lower['target'], upper['target']])
         return fallback
 
     def status(self):

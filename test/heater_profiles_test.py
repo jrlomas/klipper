@@ -100,7 +100,12 @@ def test_gain_bounds():
     model = heater_profiles.HeaterGainModel(
         [run(100, 1000, 1000, 1000, 'validated')],
         (20, 2, 100), gain_ratio=(.5, 2.))
-    assert model.select(100)['gains'] == {'kp': 40., 'ki': 4., 'kd': 200.}
+    selected = model.select(100)
+    assert selected['gains'] == {'kp': 40., 'ki': 4., 'kd': 200.}
+    assert selected['raw_gains'] == {
+        'kp': 1000., 'ki': 1000., 'kd': 1000.}
+    assert selected['bounded']
+    assert selected['clamped_gains'] == ['kp', 'ki', 'kd']
 
 
 def test_underdetermined_context_never_becomes_target_curve():
