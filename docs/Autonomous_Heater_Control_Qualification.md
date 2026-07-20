@@ -23,9 +23,30 @@ They establish that local execution is at least competitive and materially
 more repeatable on the hotend; they do not establish a universal performance
 ratio for every heater.
 
+Release qualification then moved the hotend operating point to 260 C. The
+original zero-to-power adaptive relay failed its convergence gate at 200 C. A
+new symmetric relay first measured the holding bias, then adapted independent
+`B-Delta` and `B+Delta` outputs. At 260 C it converged in seven cycles to
+`B=0.6984`, `Delta=0.0896`, `Ku=0.15485`, and `Tu=16.0004 s`. The validated
+Tyreus-Luyben profile held the final 60 seconds with -0.0033 C mean error,
+0.0223 C standard deviation, and 0.09 C peak-to-peak variation.
+
+All future hotend qualification in this plan uses 260 C unless a test is
+explicitly labeled as a lower-temperature developmental baseline. This keeps
+identification and control evidence at the ABS operating point that matters.
+
+An equal-gain host comparison at 260 C was intentionally less dramatic than
+the earlier 100 C result: host and MCU standard deviations were 0.02225 C and
+0.02233 C respectively. That is a tie at the installed measurement floor, not
+a failure. It shows that the MCU's durable advantage is autonomous safety and
+local ownership; better steady thermal variance is workload- and plant-
+dependent and is not claimed universally.
+
 ![Bed heater comparison](img/heater-control-bed60.svg)
 
 ![Hotend comparison](img/heater-control-hotend100.svg)
+
+![260 C MCU and host comparison](img/heater-control-hotend260-mcu-vs-host.svg)
 
 ## Why move the loop
 
@@ -85,6 +106,12 @@ The complete raw captures are retained as:
 - [MCU bed 60 C](evidence/heater_control/mcu-bed60.csv)
 - [legacy hotend 100 C](evidence/heater_control/legacy-hotend100.csv)
 - [MCU hotend 100 C](evidence/heater_control/mcu-hotend100.csv)
+- [MCU hotend 260 C, symmetric profile](evidence/heater_control/mcu-hotend260-symmetric-hold.csv)
+- [MCU hotend 260 C metrics](evidence/heater_control/mcu-hotend260-symmetric-hold.json)
+- [MCU hotend 260 C plot](img/heater-control-hotend260-symmetric-hold.svg)
+- [host hotend 260 C, identical gains](evidence/heater_control/host-hotend260-symmetric-gains-hold.csv)
+- [260 C comparison metrics](evidence/heater_control/hotend260-mcu-vs-host.json)
+- [260 C symmetric tune record](evidence/heater_control/hotend260-symmetric-tune.json)
 
 The plots and metrics are reproducible with
 `scripts/helix_heater_analyze.py`.
@@ -97,6 +124,8 @@ The plots and metrics are reproducible with
 | Bed, 60 C | MCU | 0.71 C | +0.512 C | 0.1683 C | 0.61 C | 0.0880 |
 | Hotend, 100 C | Host | 1.17 C | -0.00025 C | 0.1052 C | 0.34 C | 0.0426 |
 | Hotend, 100 C | MCU | 1.21 C | -0.00025 C | 0.00625 C | 0.04 C | 0.00418 |
+| Hotend, 260 C | Host, same gains | 1.66 C | -0.00092 C | 0.02225 C | 0.11 C | 0.00852 |
+| Hotend, 260 C | MCU | 1.53 C | -0.00325 C | 0.02233 C | 0.09 C | 0.00691 |
 
 The bed result is mixed: local execution reduced variation, while its positive
 steady offset and RMSE were slightly higher. The hotend result is much
@@ -104,6 +133,13 @@ stronger: mean error and overshoot stayed comparable while both temperature
 and actuator variation fell by roughly an order of magnitude. The honest
 conclusion is improved repeatability, not universally better values for every
 metric.
+
+At 260 C the two controllers are thermally indistinguishable in steady state.
+The MCU used slightly less actuator variation and peak-to-peak temperature,
+but those differences are too small for a broad superiority claim. The loop-
+timing fields from these captures are not compared: MCU counters accumulated
+startup and manual-test phases, while host counters began at the qualification
+mode switch.
 
 ## Host-loss behavior
 
@@ -121,13 +157,28 @@ benefits from complete traces. During identification, however, the MCU still
 owns the ADC validity, ceiling, sample-deadline, and maximum-output guards.
 
 The original fixed full-power relay remains available as `METHOD=LEGACY`.
-Helix also implements a power-balanced adaptive relay inspired by the
+Helix also retains a zero-to-power adaptive relay inspired by the
 [Kalico PID calibration design](https://docs.kalico.gg/PID.html): it adjusts
 relay power until oscillations are centered around the operating point and
 recent power estimates converge. The resulting ultimate gain and period may
 be converted using classic Ziegler-Nichols or the less aggressive
 Tyreus-Luyben rule. A completed run is only a candidate; it cannot change live
 behavior until explicitly validated.
+
+That one-sided method converged at 100 C and 120 C, but failed honestly at
+200 C: after the complete 60-peak budget, recent high-side estimates still
+spanned 0.064 duty against a 0.02 limit. High-temperature loss put the relay
+near the upper rail, coupling its bias and excitation amplitude.
+
+`METHOD=SYMMETRIC` fixes that coupling. The ordinary controller first holds
+the requested target and averages its duty. The relay then alternates around
+that bias. Heating/cooling duration asymmetry and midpoint error update `B`;
+measured oscillation amplitude updates `Delta`. Convergence requires stable
+recent bias and amplitude estimates, centered extrema, balanced half cycles,
+and rail margin. Ultimate gain uses the actual symmetric relay amplitude,
+`Ku = 4*Delta/(pi*a)`. After physical qualification at 260 C, this is the
+default method for `helix_pid`; `METHOD=ADAPTIVE` remains available for
+controlled reproduction of the older algorithm.
 
 Validated runs form bounded gain curves over target temperature. When a
 context sensor is configured and the measurements span a non-degenerate area,
@@ -136,11 +187,14 @@ inside the measured convex hull and configured gain bounds. Everything else
 falls back to the base profile. The host selects the profile and uploads one
 gain set; the MCU never evaluates an unconstrained model in its control loop.
 
-The existing guarded legacy autotune at 100 C completed and produced finite
-coefficients (`Kp=41.191`, `Ki=3.923`, `Kd=108.128`) while returning the target
-to zero. It predated the profile registry and therefore is not presented as a
-stored or validated run. Physical adaptive autotune, candidate validation,
-interpolation, and dynamic activation remain open qualification gates.
+Validated physical points now exist at 60 C for the bed and 100, 120, and
+260 C for the hotend. Candidate inactivity, explicit validation, restart
+persistence, exact selection, 100-to-120 C interpolation, no-extrapolation
+fallback, and applied-gain clamp visibility were exercised. The 260 C run
+`56f9ef65923838a5` produced raw TL gains `17.948/0.510/45.583`; the configured
+0.25x base floor bounded Ki to 2.03725, and both raw and applied values were
+reported before the hold test. Context-surface fitting and a held, bumpless
+profile transition remain separate gates.
 
 ## Oversampling, noise, and the information ceiling
 
@@ -180,16 +234,57 @@ thermal-chain frequency response and SINAD comparison against the ideal PWM
 command. This is effective control resolution, not isolated ADC ENOB, because
 the thermal plant is intentionally part of the experiment.
 
+The first 260 C attempt exposed a transient-bias defect: `BIAS=AUTO` sampled
+one PWM value immediately after setpoint entry and the open-loop hotend drifted
+to 272.6 C. The run was rejected and Klippy was stopped before the independent
+280 C guard. AUTO bias now averages a closed-loop settling window, explicit
+bias retains the same settling phase, the controller terminates itself at the
+manual ceiling, and target-clear is an abort condition. The corrected 30 s
+run measured bias 0.69297; the matched 60 s run used that value and independently
+remeasured 0.69101, only 0.00196 duty apart.
+
+A console command submitted through the same synchronous G-code request may
+wait behind this intentionally blocking experiment. Qualification therefore
+uses an out-of-band emergency-stop path or the physical stop, in addition to
+the independent MCU ceiling; it does not rely on a queued console `M112`.
+
+| 260 C excitation | Gain | Phase | Drift | Residual RMS | Thermal-chain SINAD |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 30 s, +/-0.03 duty | 12.156 C/duty | -111.75 deg | +0.211 C/min | 0.0365 C | 16.98 dB |
+| 60 s, +/-0.03 duty | 28.843 C/duty | -93.49 deg | +0.420 C/min | 0.0666 C | 19.27 dB |
+
+The 60 s response has 2.37x the gain of the 30 s response, directly showing
+the installed hotend's low-pass thermal behavior. Raw captures and plots are
+[30 s data](evidence/heater_control/mcu-hotend260-sine-p30.csv),
+[60 s data](evidence/heater_control/mcu-hotend260-sine-p60.csv),
+[30 s plot](img/heater-control-sine-260c-p30.svg), and
+[60 s plot](img/heater-control-sine-260c-p60.svg).
+These fits and dependency-free SVGs are reproducible with
+`scripts/analyze_thermal_sine.py`.
+
+The 100 C and 200 C captures and plots are retained as development history,
+not acceptance evidence. They exposed the hardware-shift and high-temperature
+one-sided-relay problems that led to the qualified 260 C method.
+
+- 100 C: [initial shift-7 data](evidence/heater_control/mcu-hotend100-sine-p30-shift7.csv),
+  [corrected 30 s data](evidence/heater_control/mcu-hotend100-sine-p30.csv),
+  [corrected 60 s data](evidence/heater_control/mcu-hotend100-sine-p60.csv),
+  [shift-7 plot](img/heater-control-sine-p30-shift7.svg),
+  [30 s plot](img/heater-control-sine-p30.svg), and
+  [60 s plot](img/heater-control-sine-p60.svg)
+- 200 C: [30 s data](evidence/heater_control/mcu-hotend200-sine-p30.csv),
+  [60 s data](evidence/heater_control/mcu-hotend200-sine-p60.csv),
+  [30 s plot](img/heater-control-sine-200c-p30.svg), and
+  [60 s plot](img/heater-control-sine-200c-p60.svg)
+
 ## Qualification still required
 
-- Run adaptive autotune on both bed and hotend, archive the traces, and compare
-  ZN/TL candidates for overshoot, settling, variance, and disturbance recovery.
-- Validate multiple targets and prove exact, interpolated, context-surface,
-  restart, fallback, convex-hull, and bumpless activation behavior physically.
+- Complete physical context-surface, convex-hull, and held bumpless-transition
+  qualification; exact/interpolated/restart/fallback behavior is complete.
 - Capture ADC OSR 1 through 128 from the same DC and low-distortion sine fixture
   with retained bits; publish histograms, autocorrelation, SINAD, and ENOB.
-- Run guarded PWM-sine tests at several periods and compare fitted thermal-
-  chain gain, phase, SINAD, and residual spectra between controller modes.
+- Extend the completed 260 C two-period response with representative fan,
+  extrusion-flow, chamber, and supply disturbances.
 - Exercise autonomous-duration, ADC-deadline, sensor-open/short, and ceiling
   cutoffs with independent temperature evidence.
 - Repeat controller comparisons after representative fan, flow, chamber, and
@@ -197,10 +292,12 @@ the thermal plant is intentionally part of the experiment.
 
 ## Conclusion
 
-The current evidence supports the architectural change. Local control reduced
-the feedback path, survived a bounded host interruption, and improved physical
-repeatability—dramatically on the hotend and modestly on the bed—without
-worsening overshoot in these tests. The design remains conservative about what
-has not yet been measured: candidates require validation, gain models cannot
-extrapolate, safety stays local, and a 16-bit representation is never confused
-with 16-bit analog information.
+The current evidence supports the architectural change without requiring a
+universal thermal-variance claim. Local control reduced the feedback path,
+survived a bounded host interruption, and at 260 C matched host control with
+the same gains while removing host availability from the safety boundary. The
+symmetric tuner solved a measured high-loss failure of the one-sided method.
+The design remains conservative about what has not yet been measured: context
+models require validation, gain models cannot extrapolate, destructive cutoffs
+remain open gates, and a 16-bit representation is never confused with 16-bit
+analog information.

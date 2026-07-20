@@ -895,6 +895,13 @@ to be a truthful thermistor conversion.
 `helix_pid` fault. The heater target must first be set to zero. Clearing a
 fault does not restore the previous target.
 
+#### HELIX_HEATER_CONTROL_MODE
+`HELIX_HEATER_CONTROL_MODE HEATER=<heater_name> MODE=HOST TARGET=<temperature>
+CONFIRM=YES` selects guarded host PID with the same bounded scheduled gains for
+qualification. `MODE=MCU CONFIRM=YES` restores local execution. Target and
+output must be zero for either transition. Host mode retains MCU-local ADC,
+temperature-ceiling, and manual-output guards; it is not automatic failover.
+
 #### HELIX_PID_PROFILE_STATUS
 `HELIX_PID_PROFILE_STATUS HEATER=<heater_name> [RUNS=20]`: Show the profile
 store generation, fitted-model type, active gain source, run counts, and the
@@ -919,7 +926,7 @@ The configured base PID remains available and becomes the scheduling fallback.
 
 #### HELIX_PID_PROFILE_RETRAIN
 `HELIX_PID_PROFILE_RETRAIN HEATER=<heater_name>
-TARGETS=<t1,t2,...> [REPLACE=0|1] [CONFIRM=YES]`: Run guarded adaptive relay
+TARGETS=<t1,t2,...> [REPLACE=0|1] [CONFIRM=YES]`: Run guarded symmetric relay
 calibration at unique ascending temperatures and store one candidate per
 target without changing the printer.cfg base gains. `REPLACE=1` requires
 confirmation and removes older runs only after every requested tune succeeds.
@@ -928,10 +935,13 @@ New runs remain candidates until explicitly validated.
 #### HELIX_HEATER_SINE_TEST
 `HELIX_HEATER_SINE_TEST HEATER=<heater_name> CENTER=<temperature>
 CEILING=<temperature> [BIAS=AUTO|<duty>] [AMPLITUDE=<duty>]
-[PERIOD=60] [CYCLES=4] [WARMUP_CYCLES=2] [WRITE_FILE=1]`: Stabilize at
-`CENTER`, then drive a guarded open-loop PWM sine around the measured or
-specified bias. The MCU enforces `CEILING`, ADC validity, sample deadline, and
-maximum output. Helix fits temperature amplitude and phase at the commanded
+[PERIOD=60] [CYCLES=4] [WARMUP_CYCLES=2] [SETTLE_TIME=60]
+[WRITE_FILE=1]`: Stabilize at `CENTER`, hold closed-loop for the settling
+window, then drive a guarded open-loop PWM sine around the averaged or
+specified bias. Explicit bias retains the same settling phase and is compared
+with the measured value. The host controller and MCU independently enforce
+`CEILING`; target-clear also aborts the run. Helix fits temperature amplitude
+and phase at the commanded
 frequency and reports installed thermal-chain gain, residual RMS, SINAD, and
 effective control bits. This is an end-to-end heater/thermistor/ADC result,
 not isolated ADC ENOB. The default raw capture is
@@ -1284,17 +1294,20 @@ in the config file.
 
 #### PID_CALIBRATE
 `PID_CALIBRATE HEATER=<config_name> TARGET=<temperature>
-[WRITE_FILE=1] [METHOD=ADAPTIVE|LEGACY] [TOLERANCE=<power_delta>]
-[RULE=ZN|TL] [STORE=0|1] [SAVE_BASE=0|1]`: Perform a PID calibration test. The specified heater
-will be enabled until the specified target temperature is reached, and
-then the heater will be turned off and on for several cycles. If the
-WRITE_FILE parameter is enabled, then the file /tmp/heattest.txt will
-be created with a log of all temperature samples taken during the
-test. `ADAPTIVE` balances relay power until recent power estimates converge;
-it is the default for `helix_pid`, while `LEGACY` preserves the original
+[WRITE_FILE=1] [METHOD=SYMMETRIC|ADAPTIVE|LEGACY]
+[TOLERANCE=<power_delta>] [SETTLE_TIME=<seconds>]
+[POWER_DELTA=<duty>] [CEILING=<temperature>] [RULE=ZN|TL]
+[STORE=0|1] [SAVE_BASE=0|1]`: Perform a PID calibration test. The specified
+heater is brought to the target and then excited for several cycles. If
+`WRITE_FILE=1`, `/tmp/heattest.txt` records the temperature samples.
+`SYMMETRIC` is the default for `helix_pid`: it measures the settled holding
+duty and applies equal relay excursions above and below that operating point.
+`SETTLE_TIME`, `POWER_DELTA`, and `CEILING` bound that method. `ADAPTIVE`
+retains the older one-sided bias search, while `LEGACY` preserves the original
 fixed full-power relay. `ZN` selects classic Ziegler-Nichols gains and `TL`
 selects the more conservative Tyreus-Luyben rule. Helix tunes are stored as
-candidates by default. `SAVE_BASE=0` leaves printer.cfg gains unchanged.
+inactive candidates by default. `SAVE_BASE=0` leaves printer.cfg gains
+unchanged.
 
 ### [print_stats]
 

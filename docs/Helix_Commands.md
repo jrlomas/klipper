@@ -52,12 +52,13 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | --- | --- |
 | `HEATER_CONTROL_STATUS HEATER=<name>` | Query local state, fault, output, sample count, temperature, and loop cadence. |
 | `HEATER_CONTROL_CLEAR HEATER=<name>` | Clear a latched local heater fault with target zero. |
+| `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=<HOST\|MCU> [TARGET=<C>] CONFIRM=YES` | Enter guarded host comparison mode with the same bounded gains, or restore autonomous MCU control; target and output must be zero during either transition. |
 | `HELIX_PID_PROFILE_STATUS HEATER=<name>` | List candidate, validated, and rejected characterization runs. |
 | `HELIX_PID_PROFILE_COEFFICIENTS HEATER=<name>` | Show bounded curve or target/context surface coefficients and measured hull. |
 | `HELIX_PID_PROFILE_VALIDATE HEATER=<name> RUN=<id> STATUS=<VALIDATED\|REJECTED> CONFIRM=YES` | Change a candidate's explicit validation state. |
 | `HELIX_PID_PROFILE_CLEAR HEATER=<name> CONFIRM=YES` | Clear one heater's stored characterization registry. |
-| `HELIX_PID_PROFILE_RETRAIN HEATER=<name> TARGETS=<t1,t2,...>` | Run ascending adaptive relay tunes without changing the base profile. |
-| `HELIX_HEATER_SINE_TEST HEATER=<name> CENTER=<C> CEILING=<C>` | Apply a guarded PWM sine and measure installed thermal-chain gain, phase, residual, and SINAD. |
+| `HELIX_PID_PROFILE_RETRAIN HEATER=<name> TARGETS=<t1,t2,...>` | Run ascending symmetric relay tunes without changing the base profile; every result remains inactive until validation. |
+| `HELIX_HEATER_SINE_TEST HEATER=<name> CENTER=<C> CEILING=<C> [SETTLE_TIME=<s>]` | Settle and measure holding duty, then apply a host- and MCU-guarded PWM sine and report installed thermal-chain gain, phase, residual, and SINAD. |
 
 ### Structured trace — `[atlas_trace]`
 | Command | Summary |

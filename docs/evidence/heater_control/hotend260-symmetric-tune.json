@@ -1,0 +1,27 @@
+{
+  "candidate_id": "56f9ef65923838a5",
+  "status": "validated",
+  "target_c": 260.0,
+  "method": "relay_symmetric_tl",
+  "cycles": 7,
+  "samples": 360,
+  "duration_s": 107.70299699329735,
+  "holding_bias": 0.6984099008499047,
+  "relay_delta": 0.08958376781304389,
+  "oscillation_amplitude_c": 0.7366159186509643,
+  "ultimate_gain": 0.1548454124570543,
+  "ultimate_period_s": 16.000430798313726,
+  "raw_gains": {
+    "kp": 17.947990989340383,
+    "ki": 0.5098723793916369,
+    "kd": 45.583426633920496
+  },
+  "observed_temperature_c": {
+    "minimum": 259.1906480937997,
+    "maximum": 260.8968426823435
+  },
+  "final_cycle": {
+    "midpoint_error_c": 0.004930151229302737,
+    "leg_asymmetry": 3.876603409616724e-7
+  }
+}

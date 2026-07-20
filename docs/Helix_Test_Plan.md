@@ -734,10 +734,25 @@ a faster stop — test both the latency and the things polling could not do.
   `autonomous`, accepts a returning ping, and turns off at the configured
   duration. Interrupt ADC delivery and exercise sensor/ceiling faults.
   Pass: every cutoff is local and latched; no host PWM command owns the pin;
-  guarded adaptive `PID_CALIBRATE` preserves `control: helix_pid`; candidates
+  guarded symmetric `PID_CALIBRATE` preserves `control: helix_pid`; candidates
   remain inactive until validation; exact/interpolated gains reach the MCU
   without an output discontinuity. Detailed gates and
   safety contract are in [FD-0001 doc 18](founding/0001-motion-intentions/18-Autonomous_Heater_Control.md).
+  Hotend gates from this point forward use 260 C; lower-temperature runs are
+  developmental evidence only unless a gate explicitly requires otherwise.
+  - [x] Bed 60 C, hotend 100 C development, and hotend 260 C release-target
+    control runs completed under supervision; the 260 C equal-gain host/MCU
+    comparison is archived with raw captures and plots.
+  - [x] Host interruption while heating exercised autonomous, active, and
+    returned-host states without transferring PWM ownership to the host.
+  - [x] Symmetric 260 C tune completed; candidate inactivity, validation,
+    exact selection, interpolation, restart persistence, fallback, and
+    raw-versus-bounded gain reporting were exercised.
+  - [x] Guarded 260 C thermal-chain sine characterization completed at 30 s
+    and 60 s periods after settled-bias and independent-ceiling hardening.
+  - [ ] Inject autonomous-duration expiry, interrupted ADC delivery,
+    open/short sensor faults, and an independent ceiling trip. The parent gate
+    remains open until every local cutoff is captured and latched.
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

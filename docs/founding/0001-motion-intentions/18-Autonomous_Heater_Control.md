@@ -156,14 +156,28 @@ Calibration preserves `control: helix_pid` instead of silently reverting the
 heater to host PID.
 
 The original Klipper relay drives full power and uses a fixed peak count.
-Kalico/Danger-Klipper improves the experiment by adapting relay power until
-the oscillation is centered on the requested operating point and recent power
-estimates converge. Helix adopts that power-balanced method as the default for
-`helix_pid`, retains `METHOD=LEGACY` for controlled comparison, records the
-relay powers and peaks, and offers both classic Ziegler-Nichols (`RULE=ZN`)
-and the less aggressive Tyreus-Luyben (`RULE=TL`) conversion from Ku/Tu. No
-rule is declared universally superior: candidates are compared on overshoot,
-settling, steady variance, duty variance, and disturbance recovery.
+Kalico/Danger-Klipper improves the experiment by adapting the high-side power
+of a zero-to-power relay. Helix retains both as `METHOD=LEGACY` and
+`METHOD=ADAPTIVE`, but the one-sided adaptive method failed its 0.02 convergence
+gate at the physically important 200 C hotend point after all 60 peaks. Near
+the upper rail, one number controlled both equilibrium bias and excitation
+amplitude, making convergence unnecessarily sensitive.
+
+`METHOD=SYMMETRIC` is therefore the qualified `helix_pid` default. The existing
+controller first holds the target for a configurable settling window and
+averages the required duty. Identification alternates `B-Delta` and
+`B+Delta`; midpoint and heating/cooling duration errors adapt `B`, while the
+measured oscillation adapts `Delta`. Both legs retain rail margin. Ku uses the
+actual symmetric relay amplitude, `4*Delta/(pi*a)`. The 260 C physical run
+converged in seven cycles with `B=0.6984`, `Delta=0.0896`, `Ku=0.15485`, and
+`Tu=16.0004 s`. Helix records biases, deltas, half-cycle timing, peaks, and
+extrema, and offers classic Ziegler-Nichols (`RULE=ZN`) plus conservative
+Tyreus-Luyben (`RULE=TL`) conversion. A completed tune remains an inactive
+candidate until explicit validation.
+
+The hotend qualification target is 260 C going forward. Lower-temperature
+100 C and 200 C records remain useful developmental baselines, but they do not
+substitute for release evidence at the intended ABS operating point.
 
 This separation also leaves room for better identification than the original
 relay/Ziegler-Nichols method without expanding firmware complexity. Candidate
@@ -202,6 +216,14 @@ runs an ascending target list, preserves old data if any tune fails, and only
 replaces old records after the complete sequence succeeds. Its new runs still
 require validation.
 
+Physical registry qualification includes validated bed 60 C and hotend 100,
+120, and 260 C points. Candidate inactivity, validation, exact selection,
+100-to-120 C linear interpolation, restart persistence, no-extrapolation base
+fallback, and raw-versus-bounded status were observed live. At 260 C the raw
+TL profile `17.948/0.510/45.583` was selected exactly; the configured 0.25x
+base floor bounded Ki to 2.03725 and exposed that clamp before activation.
+Context-surface and held bumpless-transition qualification remain open.
+
 ## Oversampling, dither, and effective resolution
 
 ADC oversampling and actuator dithering are separate. For uncorrelated noise,
@@ -236,6 +258,16 @@ SINAD or effective control resolution. It answers how well the real installed
 system follows a known excitation, but cannot isolate ADC ENOB because the
 heater, mechanics, and thermistor are inside the measurement path.
 
+AUTO bias is a settled-window average, not the instantaneous output at first
+setpoint entry. Explicit bias retains the same settling phase and logs its
+difference from the independently measured value. The host controller also
+terminates at the manual ceiling or a cleared target, in addition to the MCU's
+independent guard. These requirements were added after a rejected 260 C run
+sampled transient duty and drifted to 272.6 C. Corrected 260 C runs at 30 and
+60 s periods measured 12.156 and 28.843 C/duty, respectively, with faults and
+EBB transport errors remaining zero. The 2.37x gain increase at the longer
+period is the expected installed thermal low-pass response.
+
 ## Commands and observability
 
 Klippy explicitly queries controller state and MCU-measured loop timing once
@@ -258,7 +290,15 @@ query and reports the same fields.
 `HEATER_CONTROL_CLEAR HEATER=<name>` clears a latched fault only with the
 target at zero. The ordinary heater status includes an `mcu_control` object so
 Mainsail, Moonraker, and Atlas can display whether control is `active`,
-`autonomous`, `manual`, or `fault`.
+`autonomous`, `manual`, or `fault`. It also reports raw selected gains, applied
+bounded gains, the names of clamped terms, and whether execution is on the MCU
+or in guarded host-comparison mode.
+
+`HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=HOST TARGET=<C> CONFIRM=YES`
+creates ordinary Klippy `ControlPID` with the same bounded scheduled gains but
+keeps MCU-local manual temperature and ADC guards. `MODE=MCU CONFIRM=YES`
+restores autonomous execution. Both changes require target and output zero;
+the command exists for controlled qualification, not automatic failover.
 
 `HELIX_PID_PROFILE_STATUS`, `HELIX_PID_PROFILE_COEFFICIENTS`,
 `HELIX_PID_PROFILE_VALIDATE`, `HELIX_PID_PROFILE_CLEAR`, and
@@ -276,8 +316,9 @@ commands require `CONFIRM=YES`.
   inactive and state/sample telemetry advancing.
 - [x] Low-temperature bed step test: compare host PID and MCU PID rise,
   overshoot, settling, duty, and disturbance recovery.
-- [x] Hotend step test at 100 C with operator and
-  emergency stop present.
+- [x] Hotend step tests at 100 C and the release target of 260 C with
+  operator and emergency stop present; the 260 C final-minute variation was
+  0.09 C peak-to-peak and 0.0223 C standard deviation.
 - [x] Host-process loss while holding: target and duty remain bounded until
   reconnection and state transitions active/autonomous/active.
 - [ ] Autonomous-duration expiry turns output off.
@@ -286,12 +327,15 @@ commands require `CONFIRM=YES`.
   evidence.
 - [x] Legacy `PID_CALIBRATE` guarded-manual run completes with target zero,
   local safety active, and finite coefficients.
-- [ ] Adaptive autotune candidate storage, validation, interpolated profile
-  activation, restart, and intermediate-target comparison.
+- [x] Candidate storage, inactivity before validation, explicit validation,
+  exact and interpolated activation, restart persistence, fallback, and
+  raw/bounded gain visibility. Symmetric tuning passed at 260 C after the
+  one-sided adaptive method failed at 200 C.
+- [ ] Context-surface/convex-hull and held bumpless-transition qualification.
 - [ ] Raw 1x..128x DC/sine capture establishes measured ENOB, correlation,
   useful dither, and the retained-bit shift limit.
-- [ ] Guarded PWM-sine runs at multiple periods establish installed thermal-
-  chain gain, phase, distortion, noise floor, and effective control resolution.
+- [x] Guarded PWM-sine runs at 260 C and 30/60 s periods establish installed
+  thermal-chain gain, phase, drift, residual, and effective control resolution.
 
 Until the physical gates pass, `helix_pid` is implemented and workstation-
 verified but not the default controller.
