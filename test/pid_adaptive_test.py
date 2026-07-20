@@ -69,10 +69,30 @@ def test_thermal_sine_fit_absorbs_gain_and_phase():
         samples.append((stamp, temp, .2 + .05 * math.sin(
             2. * math.pi * stamp / period), stamp >= 20.))
     result = pid_calibrate.thermal_sine_metrics(samples, period, .05)
-    assert abs(result['amplitude_c'] - amplitude) < 1.e-9
-    assert abs(result['phase_deg'] + 37.) < 1.e-9
-    assert abs(result['gain_c_per_duty'] - 50.) < 1.e-9
+    assert abs(result['amplitude_c'] - amplitude) < .001
+    assert abs(result['phase_deg'] + 37.) < .02
+    assert abs(result['gain_c_per_duty'] - 50.) < .02
     assert .013 < result['residual_rms_c'] < .015
+
+
+def test_thermal_sine_fit_separates_operating_point_drift():
+    period = 20.
+    amplitude, phase, drift = 2.5, math.radians(-37.), .0125
+    samples = []
+    for pos in range(800):
+        stamp = pos * .1
+        temp = (100. + drift * stamp + amplitude * math.sin(
+            2. * math.pi * stamp / period + phase)
+                + .02 * math.sin(4. * math.pi * stamp / period))
+        samples.append((stamp, temp, .2 + .05 * math.sin(
+            2. * math.pi * stamp / period), stamp >= 20.))
+    result = pid_calibrate.thermal_sine_metrics(samples, period, .05)
+    assert abs(result['amplitude_c'] - amplitude) < .001
+    assert abs(result['phase_deg'] + 37.) < .02
+    assert abs(result['drift_c_per_s'] - drift) < .0002
+    assert .013 < result['residual_rms_c'] < .015
+    assert result['raw_residual_rms_c'] > .20
+    assert result['sinad_db'] > result['raw_sinad_db'] + 20.
 
 
 def test_thermal_sine_controller_finishes_off():
@@ -89,6 +109,7 @@ def test_thermal_sine_controller_finishes_off():
 def main():
     test_adaptive_convergence()
     test_thermal_sine_fit_absorbs_gain_and_phase()
+    test_thermal_sine_fit_separates_operating_point_drift()
     test_thermal_sine_controller_finishes_off()
     print('PASS: adaptive relay power converges and tuning rules are finite')
 

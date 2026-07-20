@@ -160,11 +160,14 @@ class PIDCalibrate:
             test.write_file(filename)
         gcmd.respond_info(
             '%s thermal-chain sine: samples=%d gain=%.6f C/duty '
-            'phase=%.3fdeg residual=%.6fC SINAD=%.3fdB '
+            'phase=%.3fdeg drift=%+.6fC/min residual=%.6fC '
+            'raw_residual=%.6fC SINAD=%.3fdB raw_SINAD=%.3fdB '
             'effective_control_bits=%.3f%s' % (
                 heater_name, metrics['samples'], metrics['gain_c_per_duty'],
-                metrics['phase_deg'], metrics['residual_rms_c'],
-                metrics['sinad_db'], metrics['effective_control_bits'],
+                metrics['phase_deg'], metrics['drift_c_per_min'],
+                metrics['residual_rms_c'], metrics['raw_residual_rms_c'],
+                metrics['sinad_db'], metrics['raw_sinad_db'],
+                metrics['effective_control_bits'],
                 '' if filename is None else '\nRaw capture: %s' % filename))
 
 TUNE_PID_DELTA = 5.0
@@ -274,21 +277,31 @@ ADAPTIVE_MAX_PEAKS = 60
 
 
 def _solve_thermal_fit(matrix, vector):
-    rows = [list(matrix[pos]) + [vector[pos]] for pos in range(3)]
-    for col in range(3):
-        pivot = max(range(col, 3), key=lambda row: abs(rows[row][col]))
+    size = len(vector)
+    rows = [list(matrix[pos]) + [vector[pos]] for pos in range(size)]
+    for col in range(size):
+        pivot = max(range(col, size), key=lambda row: abs(rows[row][col]))
         if abs(rows[pivot][col]) < 1.e-18:
             raise ValueError('thermal sine fit is singular')
         rows[col], rows[pivot] = rows[pivot], rows[col]
         divisor = rows[col][col]
         rows[col] = [value / divisor for value in rows[col]]
-        for row in range(3):
+        for row in range(size):
             if row == col:
                 continue
             factor = rows[row][col]
             rows[row] = [rows[row][idx] - factor * rows[col][idx]
-                         for idx in range(4)]
-    return [rows[row][3] for row in range(3)]
+                         for idx in range(size + 1)]
+    return [rows[row][size] for row in range(size)]
+
+
+def _least_squares(rows, values):
+    size = len(rows[0])
+    matrix = [[sum(row[i] * row[j] for row in rows)
+               for j in range(size)] for i in range(size)]
+    vector = [sum(row[i] * value for row, value in zip(rows, values))
+              for i in range(size)]
+    return _solve_thermal_fit(matrix, vector)
 
 
 def thermal_sine_metrics(samples, period, commanded_amplitude):
@@ -296,32 +309,53 @@ def thermal_sine_metrics(samples, period, commanded_amplitude):
     if len(measured) < 8:
         raise ValueError('insufficient thermal sine samples')
     omega = 2. * math.pi / period
-    rows = [(1., math.sin(omega * sample[0]),
+    origin = measured[0][0]
+    raw_rows = [(1., math.sin(omega * sample[0]),
+                 math.cos(omega * sample[0])) for sample in measured]
+    values = [sample[1] for sample in measured]
+    raw_offset, raw_sine, raw_cosine = _least_squares(raw_rows, values)
+    raw_fitted = [sum(coef * value for coef, value in zip(
+                  (raw_offset, raw_sine, raw_cosine), row))
+                  for row in raw_rows]
+    raw_residuals = [value - fit
+                     for value, fit in zip(values, raw_fitted)]
+
+    # Open-loop thermal experiments commonly retain a slow operating-point
+    # drift even after warm-up.  Publish that drift separately instead of
+    # folding it into the periodic distortion/noise floor.  Centering elapsed
+    # time at the measurement-window origin also conditions the normal matrix.
+    rows = [(1., sample[0] - origin, math.sin(omega * sample[0]),
              math.cos(omega * sample[0])) for sample in measured]
-    matrix = [[sum(row[i] * row[j] for row in rows)
-               for j in range(3)] for i in range(3)]
-    vector = [sum(row[i] * sample[1]
-                  for row, sample in zip(rows, measured))
-              for i in range(3)]
-    offset, sine, cosine = _solve_thermal_fit(matrix, vector)
-    fitted = [offset + sine * row[1] + cosine * row[2] for row in rows]
+    offset, drift, sine, cosine = _least_squares(rows, values)
+    fitted = [sum(coef * value for coef, value in zip(
+              (offset, drift, sine, cosine), row)) for row in rows]
     residuals = [sample[1] - fit
                  for sample, fit in zip(measured, fitted)]
     amplitude = math.hypot(sine, cosine)
     signal_rms = amplitude / math.sqrt(2.)
     residual_rms = math.sqrt(
         sum(value * value for value in residuals) / len(residuals))
+    raw_amplitude = math.hypot(raw_sine, raw_cosine)
+    raw_signal_rms = raw_amplitude / math.sqrt(2.)
+    raw_residual_rms = math.sqrt(
+        sum(value * value for value in raw_residuals) / len(raw_residuals))
     if signal_rms <= 0.:
         raise ValueError('no thermal response at the commanded frequency')
     sinad_db = (20. * math.log10(signal_rms / residual_rms)
                 if residual_rms else float('inf'))
+    raw_sinad_db = (20. * math.log10(raw_signal_rms / raw_residual_rms)
+                    if raw_residual_rms else float('inf'))
     phase = math.degrees(math.atan2(cosine, sine))
     return {
         'samples': len(measured), 'offset_c': offset,
         'amplitude_c': amplitude,
         'gain_c_per_duty': amplitude / commanded_amplitude,
-        'phase_deg': phase, 'residual_rms_c': residual_rms,
+        'phase_deg': phase, 'drift_c_per_s': drift,
+        'drift_c_per_min': 60. * drift,
+        'residual_rms_c': residual_rms,
+        'raw_residual_rms_c': raw_residual_rms,
         'sinad_db': sinad_db,
+        'raw_sinad_db': raw_sinad_db,
         'effective_control_bits': ((sinad_db - 1.76) / 6.02
                                    if math.isfinite(sinad_db)
                                    else float('inf')),
