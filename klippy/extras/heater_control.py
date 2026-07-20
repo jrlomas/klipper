@@ -535,6 +535,12 @@ class HeaterProfileManager:
                              if len(samples) > 1 else 0.),
                 'relay_powers': [float(value) for value in getattr(
                     calibrate, 'powers', [])],
+                'relay_biases': [float(value) for value in getattr(
+                    calibrate, 'biases', [])],
+                'relay_deltas': [float(value) for value in getattr(
+                    calibrate, 'deltas', [])],
+                'relay_cycles': list(getattr(
+                    calibrate, 'cycle_metrics', [])),
                 'ultimate': getattr(calibrate, 'ultimate', None),
             },
         }

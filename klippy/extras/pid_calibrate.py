@@ -37,10 +37,34 @@ class PIDCalibrate:
             tolerance = gcmd.get_float('TOLERANCE', .02, above=0.)
             calibrate = ControlAdaptiveAutoTune(
                 heater, target, tolerance, rule)
+        elif method == 'SYMMETRIC':
+            if mcu_control is None:
+                raise gcmd.error(
+                    'METHOD=SYMMETRIC requires control: helix_pid')
+            tolerance = gcmd.get_float('TOLERANCE', .02, above=0.)
+            settle_time = gcmd.get_float(
+                'SETTLE_TIME', 30., minval=5., maxval=300.)
+            pheaters.set_temperature(heater, target, True)
+            bias = self._measure_holding_bias(
+                heater, target, settle_time, gcmd)
+            max_power = heater.get_max_power()
+            default_delta = min(.15 * max_power,
+                                .45 * min(bias, max_power - bias))
+            power_delta = gcmd.get_float(
+                'POWER_DELTA', default_delta, above=0.)
+            if (bias - power_delta <= 0.
+                    or bias + power_delta >= max_power):
+                pheaters.set_temperature(heater, 0.)
+                raise gcmd.error(
+                    'BIAS %.6f +/- POWER_DELTA %.6f must remain inside '
+                    '0..max_power' % (bias, power_delta))
+            calibrate = ControlSymmetricAutoTune(
+                heater, target, bias, power_delta, tolerance, rule)
         elif method == 'LEGACY':
             calibrate = ControlAutoTune(heater, target, rule)
         else:
-            raise gcmd.error('METHOD must be ADAPTIVE or LEGACY')
+            raise gcmd.error(
+                'METHOD must be SYMMETRIC, ADAPTIVE, or LEGACY')
         old_control = heater.set_control(calibrate)
         try:
             pheaters.set_temperature(heater, target, True)
@@ -92,6 +116,42 @@ class PIDCalibrate:
         configfile.set(cfgname, 'pid_Kp', "%.3f" % (Kp,))
         configfile.set(cfgname, 'pid_Ki', "%.3f" % (Ki,))
         configfile.set(cfgname, 'pid_Kd', "%.3f" % (Kd,))
+
+    def _measure_holding_bias(self, heater, target, settle_time, gcmd):
+        """Average ordinary closed-loop duty at the requested setpoint."""
+        reactor = self.printer.get_reactor()
+        eventtime = reactor.monotonic()
+        end_time = eventtime + settle_time
+        samples = []
+        while eventtime < end_time and not self.printer.is_shutdown():
+            temp, unused_target = heater.get_temp(eventtime)
+            samples.append((eventtime, temp, heater.last_pwm_value))
+            eventtime = reactor.pause(min(end_time, eventtime + .5))
+        if self.printer.is_shutdown():
+            raise gcmd.error('symmetric PID bias measurement interrupted')
+        # Discard the first fifth of the settling window.  The arithmetic mean
+        # is intentional: heater energy, not the median PWM command, defines
+        # the equilibrium duty when the existing controller is cycling.
+        samples = samples[max(0, len(samples) // 5):]
+        powers = [sample[2] for sample in samples]
+        if not powers:
+            pheaters = self.printer.lookup_object('heaters')
+            pheaters.set_temperature(heater, 0.)
+            raise gcmd.error('unable to measure symmetric PID holding bias')
+        bias = sum(powers) / len(powers)
+        max_power = heater.get_max_power()
+        if bias <= .01 or bias >= max_power - .01:
+            pheaters = self.printer.lookup_object('heaters')
+            pheaters.set_temperature(heater, 0.)
+            raise gcmd.error(
+                'measured holding bias %.6f leaves no symmetric relay margin'
+                % (bias,))
+        mean_temp = sum(sample[1] for sample in samples) / len(samples)
+        logging.info(
+            'Symmetric autotune: holding bias=%.6f mean_temp=%.6f '
+            'target=%.6f samples=%d',
+            bias, mean_temp, target, len(samples))
+        return bias
 
     cmd_HELIX_HEATER_SINE_TEST_help = (
         "Measure installed heater-chain response to guarded PWM sine")
@@ -569,6 +629,226 @@ class ControlAdaptiveAutoTune:
             'rule=%s Kp=%f Ki=%f Kd=%f', Ku, Tu,
             self.ultimate['power'], self.ultimate['amplitude'], self.rule,
             Kp, Ki, Kd)
+        return Kp, Ki, Kd
+
+    def write_file(self, filename):
+        out = ['time,temp'] + ['%.6f,%.6f' % sample
+                               for sample in self.temp_samples]
+        out += ['pwm_time,pwm'] + ['%.6f,%.6f' % sample
+                                   for sample in self.pwm_samples]
+        with open(filename, 'w') as stream:
+            stream.write('\n'.join(out) + '\n')
+
+
+class ControlSymmetricAutoTune:
+    """Bias-tracking symmetric relay identification.
+
+    The relay alternates between B-Delta and B+Delta.  B is adjusted to center
+    the observed extrema on the requested temperature, while Delta is adjusted
+    to hold a controlled oscillation amplitude.  Keeping these two quantities
+    independent avoids the near-full-power sensitivity of a zero-to-P relay at
+    high-loss operating points.
+    """
+    SWITCH_AMPLITUDE = .50
+    TARGET_AMPLITUDE = .65
+    MIDPOINT_TOLERANCE = .20
+    AMPLITUDE_TOLERANCE = .20
+
+    def __init__(self, heater, target, bias, relay_delta, tolerance=.02,
+                 rule='ZN'):
+        self.heater = heater
+        self.heater_max_power = heater.get_max_power()
+        self.calibrate_temp = target
+        self.temp_high = target + self.SWITCH_AMPLITUDE
+        self.temp_low = target - self.SWITCH_AMPLITUDE
+        self.tolerance = tolerance
+        self.rule = rule
+        self.started = self.done = self.errored = False
+        self.heating = False
+        self.peak = target
+        self.peak_times = []
+        self.peaks = []
+        self.biases = [float(bias)]
+        self.deltas = [float(relay_delta)]
+        self.powers = [self.biases[0] + self.deltas[0]]
+        self.last_pwm = 0.
+        self.pwm_samples = []
+        self.temp_samples = []
+        self.cycle_metrics = []
+        self.last_switch_time = None
+        self.high_duration = self.low_duration = None
+        self.ultimate = None
+
+    def set_pwm(self, read_time, value):
+        if value != self.last_pwm:
+            self.pwm_samples.append(
+                (read_time + self.heater.get_pwm_delay(), value))
+            self.last_pwm = value
+        self.heater.set_pwm(read_time, value)
+
+    def _finish(self, read_time, error=None):
+        self.set_pwm(read_time, 0.)
+        self.heater.alter_target(0.)
+        self.done = True
+        self.heating = False
+        if error is not None:
+            self.errored = True
+            logging.warning('Symmetric PID autotune: %s', error)
+
+    def _track_peak(self, read_time, temp):
+        if temp == self.peak:
+            self.peak_times.append(read_time)
+        elif temp > self.calibrate_temp and temp > self.peak:
+            self.peak, self.peak_times = temp, [read_time]
+        elif temp < self.calibrate_temp and temp < self.peak:
+            self.peak, self.peak_times = temp, [read_time]
+
+    def _store_peak(self):
+        if not self.peak_times:
+            return False
+        stamp = sum(self.peak_times) / len(self.peak_times)
+        self.peaks.append((self.peak, stamp))
+        self.peak = self.calibrate_temp
+        self.peak_times = []
+        return True
+
+    def _recent_range(self, values):
+        if len(values) < ADAPTIVE_SAMPLES + 1:
+            return None
+        recent = values[-(ADAPTIVE_SAMPLES + 1):]
+        return max(recent) - min(recent)
+
+    def _complete_cycle(self):
+        low = min(self.peaks[-2][0], self.peaks[-1][0])
+        high = max(self.peaks[-2][0], self.peaks[-1][0])
+        amplitude = .5 * (high - low)
+        if amplitude <= 1.e-9:
+            return False
+        bias, relay_delta = self.biases[-1], self.deltas[-1]
+        asymmetry = .5 * (low + high) - self.calibrate_temp
+        if self.high_duration is not None and self.low_duration is not None:
+            leg_asymmetry = ((self.high_duration - self.low_duration)
+                             / (self.high_duration + self.low_duration))
+        else:
+            leg_asymmetry = 0.
+        bias_tolerance = self._recent_range(self.biases)
+        delta_tolerance = self._recent_range(self.deltas)
+        self.cycle_metrics.append({
+            'low': low, 'high': high, 'amplitude': amplitude,
+            'asymmetry': asymmetry, 'bias': bias,
+            'relay_delta': relay_delta,
+            'high_duration': self.high_duration,
+            'low_duration': self.low_duration,
+            'leg_asymmetry': leg_asymmetry,
+        })
+        logging.info(
+            'Symmetric autotune: sample=%d bias=%.6f delta=%.6f '
+            'amplitude=%.6f asymmetry=%.6f leg_asymmetry=%.6f '
+            'bias_tolerance=%s delta_tolerance=%s',
+            len(self.cycle_metrics), bias, relay_delta, amplitude, asymmetry,
+            leg_asymmetry,
+            'n/a' if bias_tolerance is None else '%.6f' % bias_tolerance,
+            'n/a' if delta_tolerance is None else '%.6f' % delta_tolerance)
+        stable = (bias_tolerance is not None
+                  and bias_tolerance <= self.tolerance
+                  and delta_tolerance <= self.tolerance
+                  and abs(asymmetry) <= self.MIDPOINT_TOLERANCE
+                  and abs(leg_asymmetry) <= .10
+                  and abs(amplitude - self.TARGET_AMPLITUDE)
+                  <= self.AMPLITUDE_TOLERANCE)
+        if stable:
+            return True
+
+        # Correct the two independent physical quantities separately.  A
+        # midpoint error shifts B, while an amplitude error scales Delta.
+        # Half-step damping prevents a single quantized peak from dominating
+        # either estimate.
+        raw_bias = (bias + .5 * relay_delta * leg_asymmetry
+                    - .25 * relay_delta * asymmetry / amplitude)
+        ratio = max(.5, min(1.5, self.TARGET_AMPLITUDE / amplitude))
+        next_delta = relay_delta * (1. + .5 * (ratio - 1.))
+        margin = .01 * self.heater_max_power
+        next_delta = max(margin, min(.45 * self.heater_max_power,
+                                    next_delta))
+        next_bias = max(next_delta + margin,
+                        min(self.heater_max_power - next_delta - margin,
+                            raw_bias))
+        self.biases.append(next_bias)
+        self.deltas.append(next_delta)
+        self.powers.append(next_bias + next_delta)
+        return False
+
+    def temperature_update(self, read_time, temp, target_temp):
+        self.temp_samples.append((read_time, temp))
+        if self.done:
+            return
+        if not self.started:
+            self.started = True
+            self.heating = temp < self.calibrate_temp
+            self.last_switch_time = read_time
+        if len(self.peaks) > ADAPTIVE_MAX_PEAKS:
+            self._finish(read_time, 'calibration did not converge')
+            return
+
+        if temp > self.temp_high or temp < self.temp_low:
+            self._track_peak(read_time, temp)
+        stored = False
+        if self.peak > self.temp_high and temp < self.calibrate_temp:
+            stored = self._store_peak()
+        elif self.peak < self.temp_low and temp > self.calibrate_temp:
+            stored = self._store_peak()
+        if stored and len(self.peaks) >= 2 and not len(self.peaks) % 2:
+            if self._complete_cycle():
+                self._finish(read_time)
+                return
+
+        if self.heating and temp >= self.temp_high:
+            self.high_duration = read_time - self.last_switch_time
+            self.last_switch_time = read_time
+            self.heating = False
+            self.heater.alter_target(self.temp_low)
+        elif not self.heating and temp <= self.temp_low:
+            self.low_duration = read_time - self.last_switch_time
+            self.last_switch_time = read_time
+            self.heating = True
+            self.heater.alter_target(self.temp_high)
+        bias, relay_delta = self.biases[-1], self.deltas[-1]
+        output = bias + relay_delta if self.heating else bias - relay_delta
+        self.set_pwm(read_time, output)
+
+    def check_busy(self, eventtime, smoothed_temp, target_temp):
+        if eventtime == smoothed_temp == target_temp == 0.:
+            return self.errored
+        return not self.done
+
+    def _ultimate_constants(self):
+        if len(self.peaks) < 7:
+            raise ValueError('insufficient symmetric relay peaks')
+        recent = self.peaks[-7:]
+        amplitudes = [.5 * abs(recent[pos][0] - recent[pos - 1][0])
+                      for pos in range(1, len(recent))]
+        amplitude = sum(amplitudes[-2 * ADAPTIVE_SAMPLES:]) / (
+            2. * ADAPTIVE_SAMPLES)
+        periods = [recent[pos][1] - recent[pos - 2][1]
+                   for pos in range(2, len(recent))]
+        Tu = sum(periods[-ADAPTIVE_SAMPLES:]) / ADAPTIVE_SAMPLES
+        relay_delta = sum(self.deltas[-ADAPTIVE_SAMPLES:]) / ADAPTIVE_SAMPLES
+        bias = sum(self.biases[-ADAPTIVE_SAMPLES:]) / ADAPTIVE_SAMPLES
+        Ku = 4. * relay_delta / (math.pi * amplitude)
+        self.ultimate = {
+            'ku': Ku, 'tu': Tu, 'amplitude': amplitude,
+            'bias': bias, 'relay_delta': relay_delta,
+        }
+        return Ku, Tu
+
+    def calc_final_pid(self):
+        Ku, Tu = self._ultimate_constants()
+        Kp, Ki, Kd = _pid_from_ultimate(Ku, Tu, self.rule)
+        logging.info(
+            'Symmetric autotune: Ku=%f Tu=%f bias=%f relay_delta=%f '
+            'amplitude=%f rule=%s Kp=%f Ki=%f Kd=%f',
+            Ku, Tu, self.ultimate['bias'], self.ultimate['relay_delta'],
+            self.ultimate['amplitude'], self.rule, Kp, Ki, Kd)
         return Kp, Ki, Kd
 
     def write_file(self, filename):
