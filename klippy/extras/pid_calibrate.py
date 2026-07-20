@@ -181,17 +181,22 @@ class PIDCalibrate:
         # Establish the operating point under the ordinary controller before
         # changing one variable: the open-loop PWM perturbation.
         pheaters.set_temperature(heater, center, True)
+        settle_time = gcmd.get_float(
+            'SETTLE_TIME', 60., minval=5., maxval=300.)
+        measured_bias = self._measure_holding_bias(
+            heater, center, settle_time, gcmd)
         bias_raw = gcmd.get('BIAS', 'AUTO').strip().upper()
         if bias_raw == 'AUTO':
-            settle_time = gcmd.get_float(
-                'SETTLE_TIME', 60., minval=5., maxval=300.)
-            bias = self._measure_holding_bias(
-                heater, center, settle_time, gcmd)
+            bias = measured_bias
         else:
             try:
                 bias = float(bias_raw)
             except ValueError:
                 raise gcmd.error('BIAS must be AUTO or a numeric duty')
+            logging.info(
+                'Heater sine: explicit bias=%.6f measured_bias=%.6f '
+                'difference=%+.6f',
+                bias, measured_bias, bias - measured_bias)
         max_power = heater.get_max_power()
         if bias <= 0. or bias >= max_power:
             pheaters.set_temperature(heater, 0.)
