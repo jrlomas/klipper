@@ -63,6 +63,12 @@ class ADCStream:
             "input_div", [1] * count, count=count)
         self.oversamples = config.getintlist(
             "oversample", [1] * count, count=count)
+        self.window_average = config.getboolean("window_average", True)
+        self.filter_alphas = config.getfloatlist(
+            "filter_alpha", [1.] * count, count=count)
+        self.filter_alpha_q15 = [max(
+            1, min(32768, int(value * 32768. + .5)))
+            for value in self.filter_alphas]
         default_shifts = [
             value.bit_length() - 1
             if value > 0 and not value & (value - 1) else 0
@@ -78,6 +84,9 @@ class ADCStream:
             raise config.error("input_div values must be between 1 and 65535")
         if any(not 1 <= value <= 256 for value in self.oversamples):
             raise config.error("oversample values must be between 1 and 256")
+        if any(not 0. < value <= 1. for value in self.filter_alphas):
+            raise config.error("filter_alpha values must be greater than 0"
+                               " and no greater than 1")
         if any(not 0 <= value <= 31 for value in self.filter_shifts):
             raise config.error("filter_shift values must be between 0 and 31")
         if any(not 1 <= value <= 4096 for value in self.report_divs):
@@ -207,6 +216,12 @@ class ADCStream:
                     " report_class=%d" % (
                         self.oid, channel, channel, input_div, osr, shift,
                         report_div, self.summary_class))
+                self.mcu.add_config_cmd(
+                    "adc_stream_set_subscription_filter oid=%d sub=%d"
+                    " window_divisor=%d alpha_q15=%d" % (
+                        self.oid, channel,
+                        osr if self.window_average else 0,
+                        self.filter_alpha_q15[channel]))
                 self.mcu.add_config_cmd(
                     "adc_stream_set_subscription_options oid=%d sub=%d"
                     " summary_mode=%d" % (
@@ -390,7 +405,9 @@ class ADCStream:
         self.summary_epochs[sub] = epoch
         self.epoch = epoch
         total = params["sum_lo"] | (params["sum_hi"] << 32)
-        scale = ((1 << self.filter_shifts[sub])
+        output_divisor = (self.oversamples[sub] if self.window_average
+                          else 1 << self.filter_shifts[sub])
+        scale = (output_divisor
                  / float(self.oversamples[sub] * self.adc_max))
         value = total * scale / params["count"]
         last_clock = self.mcu.clock32_to_clock64(params["last_clock"])

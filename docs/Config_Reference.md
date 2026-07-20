@@ -6208,9 +6208,26 @@ instead of falling back.
 #adc_stream_hardware_oversample: 1
 #   Hardware conversion count for each DMA value used by automatically
 #   migrated ADC clients. It must be a power of two from 1 through 256 and
-#   requires MCU support. Automatic mode always shifts the accumulated value
-#   back to native ADC scale, preserving existing calibration and thresholds.
-#   The default is 1 (disabled).
+#   requires MCU support. This is a runtime MCU setting read from printer.cfg,
+#   not a compile-time firmware choice. Automatic mode always shifts the
+#   accumulated value back to native ADC scale, preserving existing
+#   calibration and thresholds. Once configured, acquisition continues on the
+#   MCU without host participation. The default is 1 (disabled).
+```
+
+ADC-backed temperature sections also accept these per-consumer options:
+
+```
+#adc_stream_software_average: 4
+#   Number of hardware-oversampled results in the exact firmware boxcar
+#   window. ADC thermistors and amplifiers default to 4. temperature_mcu
+#   defaults to 1. The valid range is 1 through 256.
+#adc_stream_filter_alpha: 1.0
+#   Firmware EWMA response coefficient after the window average. It must be
+#   greater than 0 and no greater than 1. A value of 1 reports each completed
+#   window without additional lag; smaller values provide progressively more
+#   smoothing. Local safety thresholds use the pre-EWMA window value so a
+#   small alpha cannot hide a new limit violation.
 ```
 
 For merged legacy clients, firmware advertises each ADC pin's physical scan
@@ -6272,6 +6289,14 @@ pins:
 #   accepts one sample every N physical scans. The default is 1 for each.
 #oversample: 1
 #   Comma-separated software boxcar lengths (1..256). The default is 1.
+#window_average: true
+#   Divide each completed boxcar by its exact window length in firmware. The
+#   default is true. If false, filter_shift retains the legacy accumulator
+#   scaling behavior.
+#filter_alpha: 1.0
+#   Comma-separated firmware EWMA coefficients, one per channel. Each value
+#   must be greater than 0 and no greater than 1. The default is 1 for every
+#   channel.
 #filter_shift:
 #   Comma-separated accumulator right shifts. Rounding is deterministic
 #   round-half-up. The default is log2(oversample) for power-of-two boxcars,

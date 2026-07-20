@@ -97,9 +97,10 @@ The landed architecture now includes:
   multi-channel firmware without this metadata falls back before claiming the
   ADC. `adc_stream_hardware_oversample` optionally applies a power-of-two
   backend oversample to every automatic consumer and always shifts the result
-  back to native ADC scale before the existing software OSR stage, preserving
-  thermistor calibration and safety thresholds. OpenAMS FPS retains its
-  explicit opt-out.
+  back to native ADC scale. Each consumer then has an exact normalized
+  firmware boxcar and Q15 EWMA alpha. Safety checks use the pre-EWMA window;
+  reports use the EWMA, so response smoothing cannot conceal a new threshold
+  violation. OpenAMS FPS retains its explicit opt-out.
 
 Evidence at this checkpoint:
 
@@ -112,7 +113,7 @@ Evidence at this checkpoint:
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
 | RP2040 merged-consumer boot | SKR Pico with consumers constructed as GPIO27, internal temperature, GPIO26 now emits physical order GPIO26, GPIO27, internal temperature. Klipper reached Ready with distinct bed, chamber, and MCU readings and no ADC fault; the former `channels must ascend` configuration shutdown is covered by regression. |
-| STM32G0B1 automatic consumers | EBB36 PA3 hotend plus internal temperature and the USB CAN-FD bridge internal temperature run through their respective DMA engines in forced mode. Both use 16x hardware oversampling with native-scale shift followed by the normal 8-sample software average. The initial internal readings incorrectly jumped from the 30 C range to about 50 C even though PA3 remained correct; this failed the analog gate. Root cause was the high-impedance internal sensor retaining the 39.5-cycle external-channel aperture under back-to-back hardware oversampling, compounded by the stream setup overwriting the calibrated ADC clock selection. The backend now preserves `CKMODE` and routes G0 channel 12 to a 160.5-cycle aperture. The clean simultaneous rerun reached Ready at EBB36 34.6 C, bridge 31.0 C, and hotend 25.2 C with no fallback or ADC fault. |
+| STM32G0B1 automatic consumers | EBB36 PA3 hotend plus internal temperature and the USB CAN-FD bridge internal temperature run through their respective DMA engines in forced mode. The initial OSR16 internal readings incorrectly jumped from the 30 C range to about 50 C even though PA3 remained correct; this failed the analog gate. Root cause was the high-impedance internal sensor retaining the 39.5-cycle external-channel aperture under back-to-back hardware oversampling, compounded by stream setup overwriting the calibrated ADC clock selection. The backend now preserves `CKMODE` and routes G0 channel 12 to a 160.5-cycle aperture. After that correction, printer.cfg-selected OSR128 with a four-result PA3 window and one-result internal windows reached Ready at EBB36 34.0 C, bridge 31.4 C, and hotend 26.1 C. All window normalization and optional alpha filtering execute in firmware; alpha was 1 for this isolation run. No fallback or ADC fault occurred. |
 | STM32F072 v1 filtered gate | Standalone OAMS1 rev1.4.3 on PC5 with the FPS geometry: 5 ms physical scans, OSR 5, four filtered outputs per 100 ms Prompt report, raw output disabled. The first run exposed 16-scan DMA blocks crossing the 20-scan report boundary and producing an avoidable 80/160 ms host-delivery pattern. The adapter now selects 10-scan blocks. The corrected run delivered 250 consecutive epoch-1 summaries at steady 100 ms intervals from 5,000 physical scans, then stopped and restarted at summary sequence 0/epoch 2. A further 1,540 scans completed before clean stop; both status snapshots reported `dropped=0`, `status=0`. Summary machine-clock deltas were exactly 4,800,000 ticks at 48 MHz, each four-output report spanned 3,600,000 ticks, and the F0 backend truthfully reported its 240-tick inferred-start uncertainty. |
 | STM32F072 polling/DMA profile | The archived legacy 8x/300 ms schedule used 53.33 timer callbacks/s for 26.67 conversions/s. Its equivalent distributed DMA schedule used 3.33 block publications/s, delivered 419 consecutive reports, and had zero drops/errors/overruns. A separate 1 ksample/s DMA stress delivered 581 blocks with the same zero-fault result. Exact counters and graphs are in the qualification paper. |
 | STM32H723 hardware OSR | The MPU arena maps at DMA1-reachable AXI SRAM `0x24000000`. PA0 at 1 ktrigger/s and hardware OSR16 produced 802 consecutive 64-value blocks (821,248 physical conversions), zero drops/errors/overruns, and queue high-water one. A second 254-block run remained continuous while the 100 kHz/four-axis trajectory benchmark returned status 0. |
@@ -388,8 +389,12 @@ without evidence:
 Selected STM32 targets use the hardware accumulator and right shift. Other
 targets DMA raw samples and perform the same operation once per completed
 block. The reference software path uses a 64-bit accumulator, deterministic
-rounding, and a boxcar filter followed by integer decimation. A later CIC/FIR
-filter may be added without changing block ownership or wire metadata.
+rounding, and an exact configurable boxcar average. A Q15 EWMA with
+configurable alpha follows the finite window; alpha 1 has no additional lag.
+The EWMA initializes from the first complete window rather than ramping from
+zero and resets on a discontinuity. Local safety and trigger consumers receive
+the pre-EWMA window value, while reports receive the smoothed value. A later
+CIC/FIR filter may be added without changing block ownership or wire metadata.
 
 Oversampling reduces in-band uncorrelated noise and trades bandwidth for SNR.
 It does not remove offset, gain error, reference error, integral nonlinearity,
@@ -457,6 +462,8 @@ adc_stream_status oid=%c state=%c class=%c channels=%c block_values=%c
 ```
 adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu osr=%hu
                      shift=%c report_div=%hu report_class=%c
+adc_stream_set_subscription_filter oid=%c sub=%c window_divisor=%hu
+                                   alpha_q15=%hu
 adc_stream_set_options oid=%c raw_output=%c
 adc_stream_get_capabilities oid=%c
 

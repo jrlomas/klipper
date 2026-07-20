@@ -5,6 +5,7 @@
 
 #define ADC_FILTER_MAX_OSR 256
 #define ADC_FILTER_MAX_REPORT_DIV 4096
+#define ADC_FILTER_ALPHA_ONE 32768
 
 enum adc_filter_flags {
     ADC_FILTER_FLAG_DISCONTINUITY = 1u << 0,
@@ -17,11 +18,13 @@ enum adc_filter_summary_mode {
 
 struct adc_filter_config {
     // Take one sample every input_div physical scans, accumulate osr accepted
-    // samples, round and right-shift the accumulator, then summarize
-    // report_div filtered results.
+    // samples, normalize by window_divisor or right-shift the accumulator,
+    // apply an alpha_q15 EWMA, then summarize report_div filtered results.
     uint16_t input_div;
     uint16_t osr;
     uint16_t report_div;
+    uint16_t window_divisor;
+    uint16_t alpha_q15;
     uint8_t shift;
     uint8_t summary_mode;
 };
@@ -41,13 +44,18 @@ struct adc_filter {
     struct adc_filter_summary summary;
     uint64_t accumulator;
     uint64_t raw_index;
+    int64_t ewma_q15;
     uint16_t osr_count;
     uint16_t report_count;
     uint8_t pending_flags;
+    uint8_t ewma_valid;
 };
 
 int adc_filter_configure(struct adc_filter *filter,
                          const struct adc_filter_config *config);
+int adc_filter_set_postprocess(struct adc_filter *filter,
+                               uint16_t window_divisor,
+                               uint16_t alpha_q15);
 void adc_filter_reset(struct adc_filter *filter, uint8_t discontinuity);
 // Return one when a complete summary was copied to result, zero otherwise.
 int adc_filter_push(struct adc_filter *filter, uint16_t sample,

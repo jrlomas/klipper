@@ -761,6 +761,10 @@ class MCU_adc:
         self._oid = self._callback = None
         self._use_adc_stream = False
         self._adc_stream_class = 1
+        self._adc_stream_window = None
+        self._adc_stream_alpha_q15 = 32768
+        self._adc_stream_filter_count = 1
+        self._adc_stream_normalized = False
         self._adc_config_built = False
         self._mcu.register_config_callback(self._build_config)
         self._inv_max_adc = 0.
@@ -796,6 +800,15 @@ class MCU_adc:
             manager = MCUADCStreamManager(self._mcu)
             self._mcu._helix_adc_stream_manager = manager
         manager.add_adc(self)
+    def setup_adc_stream_filter(self, window, alpha=1.):
+        """Configure the firmware boxcar and EWMA for migrated ADC input."""
+        if not 1 <= window <= 256:
+            raise ValueError("ADC stream window must be between 1 and 256")
+        if not 0. < alpha <= 1.:
+            raise ValueError("ADC stream alpha must be greater than 0 and <= 1")
+        self._adc_stream_window = window
+        self._adc_stream_alpha_q15 = max(
+            1, min(32768, int(alpha * 32768. + .5)))
     def get_last_value(self):
         return self._last_state
     def _build_config(self):
@@ -953,6 +966,9 @@ class MCUADCStreamManager:
             self._mcu, "_adc_stream_hardware_oversample", 1)
         hardware_oversample_format = (
             "adc_stream_set_hardware_oversample oid=%c ratio=%hu shift=%c")
+        filter_format = (
+            "adc_stream_set_subscription_filter oid=%c sub=%c"
+            " window_divisor=%hu alpha_q15=%hu")
         subscribe_format = (
             "adc_stream_subscribe oid=%c sub=%c channel=%c input_div=%hu"
             " osr=%hu shift=%c report_div=%hu report_class=%c")
@@ -969,6 +985,10 @@ class MCUADCStreamManager:
                      or self._mcu.try_lookup_command(
                          hardware_oversample_format) is None)):
             self._fallback("firmware lacks hardware ADC oversampling")
+            return
+        if (any(adc._adc_stream_window is not None for adc in self._adcs)
+                and self._mcu.try_lookup_command(filter_format) is None):
+            self._fallback("firmware lacks configurable ADC filtering")
             return
         max_channels = self._mcu.get_constants().get(
             "ADC_STREAM_MAX_CHANNELS", 0)
@@ -1005,14 +1025,16 @@ class MCUADCStreamManager:
         # burst and makes the schedule exactly phase-lockable across clients.
         desired_ticks = []
         for adc in self._adcs:
+            window = (adc._adc_stream_window if adc._adc_stream_window
+                      is not None else adc._sample_count)
             ticks = max(1, self._mcu.seconds_to_clock(
-                adc._report_time / adc._sample_count))
+                adc._report_time / window))
             if self._mcu.seconds_to_clock(adc._sample_time) > ticks:
                 self._fallback("sample aperture exceeds distributed interval")
                 return
-            actual_report = ticks * adc._sample_count
+            actual_report = ticks * window
             requested_report = self._mcu.seconds_to_clock(adc._report_time)
-            if abs(actual_report - requested_report) > adc._sample_count:
+            if abs(actual_report - requested_report) > window:
                 self._fallback("report period cannot be represented in ticks")
                 return
             desired_ticks.append(ticks)
@@ -1027,11 +1049,14 @@ class MCUADCStreamManager:
             if not 1 <= input_div <= 0xffff:
                 self._fallback("distributed sample divisor exceeds limit")
                 return
-            osr = adc._sample_count
+            osr = (adc._adc_stream_window if adc._adc_stream_window
+                   is not None else adc._sample_count)
             if osr > self._mcu.get_constants().get("ADC_STREAM_MAX_OSR", 0):
                 self._fallback("oversample count exceeds firmware limit")
                 return
             schedules.append((input_div, osr, 1))
+            adc._adc_stream_filter_count = osr
+            adc._adc_stream_normalized = adc._adc_stream_window is not None
 
         max_block_values = self._mcu.get_constants().get(
             "ADC_STREAM_MAX_BLOCK_VALUES", 16)
@@ -1072,10 +1097,16 @@ class MCUADCStreamManager:
                 " input_div=%d osr=%d shift=0 report_div=%d report_class=%d"
                 % (self._oid, sub, sub, input_div, osr, report_div,
                    adc._adc_stream_class))
+            if adc._adc_stream_normalized:
+                self._mcu.add_config_cmd(
+                    "adc_stream_set_subscription_filter oid=%d sub=%d"
+                    " window_divisor=%d alpha_q15=%d" % (
+                        self._oid, sub, osr, adc._adc_stream_alpha_q15))
             self._mcu.add_config_cmd(
                 "adc_stream_set_subscription_options oid=%d sub=%d"
                 " summary_mode=1" % (self._oid, sub))
-            adc_max = adc._sample_count * int(
+            scale_count = 1 if adc._adc_stream_normalized else osr
+            adc_max = scale_count * int(
                 self._mcu.get_constants().get("ADC_MAX", 4095))
             if adc._range_check_count:
                 low = max(0, min(0xffffffff,
@@ -1102,10 +1133,13 @@ class MCUADCStreamManager:
             is_init=True)
         logging.info(
             "MCU '%s' ADC DMA adapter configured: pins=%s"
-            " hardware_oversample=%d software_osr=%s period_ticks=%d",
+            " hardware_oversample=%d software_windows=%s alpha_q15=%s"
+            " period_ticks=%d",
             self._mcu.get_name(), ",".join(adc._pin for adc in self._adcs),
             hardware_oversample,
             ",".join(str(schedule[1]) for schedule in schedules),
+            ",".join(str(adc._adc_stream_alpha_q15)
+                     for adc in self._adcs),
             period_ticks)
         for message in ("adc_stream_prompt ", "adc_stream_telemetry "):
             self._mcu.register_serial_response(
@@ -1123,7 +1157,9 @@ class MCUADCStreamManager:
             return
         adc = self._adcs[sub]
         total = params["sum_lo"] | (params["sum_hi"] << 32)
-        denominator = params["count"] * adc._sample_count
+        filter_count = (1 if adc._adc_stream_normalized
+                        else adc._adc_stream_filter_count)
+        denominator = params["count"] * filter_count
         adc_max = float(self._mcu.get_constants().get("ADC_MAX", 4095))
         value = total / (denominator * adc_max)
         read_clock = self._mcu.clock32_to_clock64(params["last_clock"])

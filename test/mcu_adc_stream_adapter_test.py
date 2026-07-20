@@ -238,6 +238,36 @@ def test_auto_mode_configures_hardware_oversampling_at_native_scale():
     assert any("osr=8 shift=0" in command for command in commands)
 
 
+def test_per_consumer_firmware_window_and_alpha():
+    fake = FakeMCU(mode="force", channel_order={
+        "PA3": 3, "ADC_TEMPERATURE": 12})
+    external = MODULE.MCU_adc(fake, {"pin": "PA3"})
+    external.setup_adc_stream_filter(4, .25)
+    external.setup_adc_sample(.300, .001, 8)
+    internal = MODULE.MCU_adc(fake, {"pin": "ADC_TEMPERATURE"})
+    internal.setup_adc_stream_filter(1, 1.)
+    internal.setup_adc_sample(.300, .001, 8)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    assert any("sub=0 channel=0 input_div=1 osr=4" in command
+               for command in commands)
+    assert any("sub=1 channel=1 input_div=4 osr=1" in command
+               for command in commands)
+    assert ("adc_stream_set_subscription_filter oid=0 sub=0"
+            " window_divisor=4 alpha_q15=8192" in commands)
+    assert ("adc_stream_set_subscription_filter oid=0 sub=1"
+            " window_divisor=1 alpha_q15=32768" in commands)
+    assert any("period_ticks=75000 block_values=8" in command
+               for command in commands)
+    received = []
+    external.setup_adc_callback(received.extend)
+    fake._helix_adc_stream_manager._handle_summary({
+        "sub": 0, "count": 1, "sum_lo": 2048, "sum_hi": 0,
+        "last_clock": 300000, "status": 0,
+    })
+    assert received == [(.3, 2048 / 4095.)]
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
@@ -247,4 +277,5 @@ if __name__ == "__main__":
     test_auto_mode_sorts_rp2040_consumers_by_physical_channel()
     test_old_firmware_without_order_metadata_falls_back_safely()
     test_auto_mode_configures_hardware_oversampling_at_native_scale()
+    test_per_consumer_firmware_window_and_alpha()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

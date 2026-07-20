@@ -54,6 +54,33 @@ main(int argc, char **argv)
     assert(result.minimum == 55 && result.maximum == 55);
     assert(result.first_scan == 5 && result.last_scan == 5);
 
+    config = (struct adc_filter_config) {
+        .input_div = 1, .osr = 4, .report_div = 1,
+        .summary_mode = ADC_FILTER_SUMMARY_LATEST,
+    };
+    assert(!adc_filter_configure(&f, &config));
+    assert(!adc_filter_set_postprocess(&f, 4, ADC_FILTER_ALPHA_ONE / 2));
+    const uint16_t ewma_values[] = {
+        100, 100, 100, 100, 200, 200, 200, 200, 100, 100, 100, 100,
+    };
+    const uint32_t ewma_expected[] = {100, 150, 125};
+    for (uint32_t i = 0; i < 12; i++) {
+        int ready = adc_filter_push_ex(&f, ewma_values[i], i, &result,
+                                       &filtered_value, &filtered_ready);
+        if ((i & 3) != 3) {
+            assert(!ready && !filtered_ready);
+            continue;
+        }
+        uint32_t group = i / 4;
+        assert(ready && filtered_ready);
+        assert(filtered_value == ewma_values[i]);
+        assert(result.sum == ewma_expected[group]);
+    }
+    adc_filter_reset(&f, 1);
+    for (uint32_t i = 0; i < 4; i++)
+        assert(adc_filter_push(&f, 50, i, &result) == (i == 3));
+    assert(result.sum == 50 && result.flags == ADC_FILTER_FLAG_DISCONTINUITY);
+
     config.osr = 0;
     assert(adc_filter_configure(&f, &config) < 0);
     (void)argc;

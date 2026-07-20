@@ -243,6 +243,20 @@ DECL_COMMAND(command_adc_stream_set_subscription_options,
              " summary_mode=%c");
 
 void
+command_adc_stream_set_subscription_filter(uint32_t *args)
+{
+    struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);
+    struct adc_stream_subscription *sub = adc_stream_find_subscription(
+        s, args[1]);
+    if (s->state != ADC_STREAM_STOPPED || !sub
+        || adc_filter_set_postprocess(&sub->filter, args[2], args[3]))
+        shutdown("Invalid ADC subscription filter");
+}
+DECL_COMMAND(command_adc_stream_set_subscription_filter,
+             "adc_stream_set_subscription_filter oid=%c sub=%c"
+             " window_divisor=%hu alpha_q15=%hu");
+
+void
 command_adc_stream_set_safety(uint32_t *args)
 {
     struct adc_stream *s = oid_lookup(args[0], command_config_adc_stream);

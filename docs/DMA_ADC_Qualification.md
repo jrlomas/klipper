@@ -181,6 +181,18 @@ Ready and no stream fault or fallback. These values restore agreement with the
 pre-DMA temperature range; they are a sanity check, not a calibrated accuracy
 claim.
 
+A follow-up raised the G0 hardware accumulator to OSR128 from `printer.cfg`
+and replaced the compatibility OSR8 sum with exact firmware windows: four
+hardware-averaged results for PA3 and one for each internal-temperature
+subscription. An optional Q15 EWMA follows each window; alpha 1 was used to
+isolate the window and hardware changes. The Pico ran matching firmware with
+four-result external windows and a one-result internal window, but retained
+hardware OSR1 because it does not advertise a native oversampler. Klipper
+reached Ready at EBB36 34.0 C, bridge 31.4 C, PA3 26.1 C, Pico 41.1 C, bed
+26.4 C, and chamber 26.5 C. Local threshold evaluation deliberately consumes
+the pre-EWMA window result, while reporting consumes the EWMA, so response
+smoothing cannot delay recognition of a newly out-of-range input.
+
 The F767 Ethernet build uses the same manager—not a parallel descriptor
 allocator—for four RX descriptors/buffers, two TX descriptors/buffers, and ADC
 storage. Its 16 KiB non-cacheable arena is at `0x20020000`; compiled claims

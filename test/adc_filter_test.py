@@ -87,8 +87,24 @@ def test_interleaved_channels_and_discontinuity():
     assert model.push(3, 1)["flags"] == 1
 
 
+def test_window_average_and_ewma_reference():
+    model = FilterModel(osr=4, window_divisor=4, alpha_q15=16384)
+    reports = []
+    for index, sample in enumerate([100] * 4 + [200] * 4 + [100] * 4):
+        result = model.push(sample, index)
+        if result is not None:
+            reports.append(result["sum"])
+    assert reports == [100, 150, 125]
+    model.reset(discontinuity=True)
+    result = None
+    for index in range(4):
+        result = model.push(50, index)
+    assert result["sum"] == 50 and result["flags"] == 1
+
+
 if __name__ == "__main__":
     test_c_reference_vectors()
     test_randomized_reference_model()
     test_interleaved_channels_and_discontinuity()
+    test_window_average_and_ewma_reference()
     print("PASS: deterministic randomized ADC filter reference")

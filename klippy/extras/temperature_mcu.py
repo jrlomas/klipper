@@ -31,6 +31,11 @@ class PrinterTemperatureMCU:
         ppins = config.get_printer().lookup_object('pins')
         self.mcu_adc = ppins.setup_pin('adc',
                                        '%s:ADC_TEMPERATURE' % (mcu_name,))
+        stream_window = config.getint(
+            'adc_stream_software_average', 1, minval=1, maxval=256)
+        stream_alpha = config.getfloat(
+            'adc_stream_filter_alpha', 1., above=0., maxval=1.)
+        self.mcu_adc.setup_adc_stream_filter(stream_window, stream_alpha)
         self.mcu_adc.setup_adc_callback(self.adc_callback)
         self.diag_helper = adc_temperature.HelperTemperatureDiagnostics(
             config, self.mcu_adc, self.calc_temp)

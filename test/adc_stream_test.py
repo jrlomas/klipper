@@ -64,6 +64,7 @@ def make_stream(max_pending=16):
     stream.summary_gaps = 0
     stream.oversamples = [4, 2]
     stream.filter_shifts = [2, 1]
+    stream.window_average = False
     stream.capabilities = {}
     stream.calibration = {"scheme": 0}
     stream.last_status = stream.last_uncertainty = 0
