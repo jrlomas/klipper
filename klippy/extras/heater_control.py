@@ -85,6 +85,7 @@ class MCUHeaterControl:
         self.active_profile_clamped = ()
         self.mcu_control_algo = heater.control
         self.host_control = None
+        self.host_selection = None
         self.control_mode = 'mcu'
         self._commands_ready = False
         self.set_target_cmd = self.set_profile_cmd = None
@@ -418,6 +419,13 @@ class MCUHeaterControl:
             status['mcu_execution_state'] = status['state']
             status.update(host_status)
             status['control_mode'] = 'host'
+            selection = self.host_selection
+            status['pid_gains'] = dict(selection['gains'])
+            status['pid_profile_raw_gains'] = dict(selection['raw_gains'])
+            status['pid_profile_bounded'] = selection['bounded']
+            status['pid_profile_clamped_gains'] = list(
+                selection['clamped_gains'])
+            status['pid_profile_source'] = selection['source']
         return status
 
     cmd_HEATER_CONTROL_STATUS_help = "Report the MCU heater controller state"
@@ -469,6 +477,7 @@ class MCUHeaterControl:
             self.host_control = heaters.ControlPID.from_gains(
                 self.heater,
                 tuple(gains[name] for name in heater_profiles.GAIN_NAMES))
+            self.host_selection = selection
             self.heater.set_control(self.host_control)
             self.control_mode = 'host'
             gcmd.respond_info(
@@ -484,6 +493,7 @@ class MCUHeaterControl:
             self.set_manual_output(0.)
             self.heater.set_control(self.mcu_control_algo)
             self.host_control = None
+            self.host_selection = None
             self.control_mode = 'mcu'
             gcmd.respond_info('%s control mode=mcu' % self.name)
             return
