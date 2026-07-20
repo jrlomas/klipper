@@ -157,8 +157,16 @@ disturbance rejection, and noise sensitivity before becoming defaults.
 
 ## Commands and observability
 
-`HEATER_CONTROL_STATUS HEATER=<name>` queries state, fault bits, output,
-sample count, locally estimated temperature, and last sample clock.
+Klippy explicitly queries controller state and MCU-measured loop timing once
+per second. This avoids streaming ordinary control samples over the transport
+while still making state, fault bits, output, sample count, locally estimated
+temperature, last sample clock, and control-cadence mean/standard deviation
+visible through ordinary heater status. A distinct unsolicited fault event is
+reserved for a local safety trip so the host does not wait for the next
+telemetry query before shutting down coordinated motion.
+
+`HEATER_CONTROL_STATUS HEATER=<name>` performs an immediate state and timing
+query and reports the same fields.
 `HEATER_CONTROL_CLEAR HEATER=<name>` clears a latched fault only with the
 target at zero. The ordinary heater status includes an `mcu_control` object so
 Mainsail, Moonraker, and Atlas can display whether control is `active`,

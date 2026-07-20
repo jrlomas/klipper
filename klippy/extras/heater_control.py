@@ -76,7 +76,7 @@ class MCUHeaterControl:
         self._commands_ready = False
         self.set_target_cmd = self.manual_cmd = self.manual_guard_cmd = None
         self.ping_cmd = None
-        self.query_cmd = self.clear_cmd = None
+        self.query_cmd = self.timing_cmd = self.clear_cmd = None
         self.state = 1
         self.fault = 0
         self.fault_reported = False
@@ -85,9 +85,7 @@ class MCUHeaterControl:
         self.last_temp = 0.
         self.last_sample_clock = 0
         self.last_run_clock = 0
-        # Use Klippy's negotiated clock conversion. CLOCK_FREQ is a build-time
-        # Kconfig value, but it is not itself exported in every data dictionary.
-        self.clock_frequency = self.mcu.seconds_to_clock(1.)
+        self.clock_frequency = 0
         self.loop_dt_count = 0
         self.loop_dt_mean = self.loop_dt_m2 = 0.
         self.loop_dt_min = self.loop_dt_max = None
@@ -148,6 +146,8 @@ class MCUHeaterControl:
             raise self.printer.config_error(
                 "MCU '%s' lacks HEATER_CONTROL_V1" % (self.mcu.get_name(),))
         stream_oid, subscription = self.manager.get_local_binding(self.mcu_adc)
+        # Clock conversion is only valid after MCU identify/configuration.
+        self.clock_frequency = self.mcu.seconds_to_clock(1.)
         pwm = self.heater.mcu_pwm
         # The MCU controller replaces the prompt host-refresh watchdog and
         # exclusively owns the already-configured software-PWM GPIO.
@@ -171,11 +171,13 @@ class MCUHeaterControl:
         self.mcu.add_config_cmd(
             "heater_control_setup oid=%d min_adc=%d max_adc=%d"
             " max_temp_adc=%d invert_sense=%d sample_deadline=%d"
-            " host_timeout=%d autonomous_max_samples=%d max_output=%d"
+            " host_timeout=%d loop_period=%d autonomous_max_samples=%d"
+            " max_output=%d"
             " kp_q20=%d ki_step_q20=%d kd_step_q20=%d d_alpha_q15=%d" % (
                 self.oid, min_adc, max_adc, max_temp_adc, invert_sense,
                 self.mcu.seconds_to_clock(self.sample_deadline),
                 self.mcu.seconds_to_clock(self.host_timeout),
+                self.mcu.seconds_to_clock(self.period),
                 max(1, int(self.autonomous_max_duration / self.period + .5)),
                 max_output, kp_q20, ki_q20, kd_q20, alpha_q15))
         max_error_mdeg_ms = int(self.verify_max_error * 1000000. + .5)
@@ -213,8 +215,17 @@ class MCUHeaterControl:
                      " last_sample=%u last_run=%u")
         self.query_cmd = self.mcu.lookup_query_command(
             "heater_control_query oid=%c", state_fmt, oid=self.oid, cq=cq)
+        fault_fmt = ("heater_control_fault_event oid=%c state=%c fault=%c"
+                     " adc=%u target_adc=%u temp_mdeg=%i output=%hu"
+                     " samples=%u last_sample=%u last_run=%u")
         self.mcu.register_serial_response(
-            self._handle_state, state_fmt, self.oid)
+            self._handle_state, fault_fmt, self.oid)
+        timing_fmt = ("heater_control_timing oid=%c count=%u min_us=%i"
+                      " max_us=%i sum_lo=%u sum_hi=%i sumsq_lo=%u"
+                      " sumsq_hi=%u period_ticks=%u")
+        self.timing_cmd = self.mcu.lookup_query_command(
+            "heater_control_query_timing oid=%c", timing_fmt,
+            oid=self.oid, cq=cq)
         self._commands_ready = True
         logging.info(
             "MCU '%s' autonomous heater '%s': period=%.3fs host_timeout=%.3fs"
@@ -231,6 +242,8 @@ class MCUHeaterControl:
 
     def _ping_event(self, eventtime):
         if self.ping_cmd is not None and not self.printer.is_shutdown():
+            self._handle_state(self.query_cmd.send([self.oid]))
+            self._handle_timing(self.timing_cmd.send([self.oid]))
             self.ping_cmd.send([self.oid])
         return eventtime + 1.
 
@@ -241,12 +254,7 @@ class MCUHeaterControl:
         self.samples = params['samples']
         self.last_temp = params['temp_mdeg'] / 1000.
         self.last_sample_clock = params['last_sample']
-        run_clock = params['last_run']
-        if run_clock != self.last_run_clock and self.last_run_clock:
-            clock_delta = (run_clock - self.last_run_clock) & 0xffffffff
-            if clock_delta < 0x80000000:
-                self._note_loop_dt(clock_delta / self.clock_frequency)
-        self.last_run_clock = run_clock
+        self.last_run_clock = params['last_run']
         self.heater.last_pwm_value = self.output
         if not self.fault:
             self.fault_reported = False
@@ -258,15 +266,21 @@ class MCUHeaterControl:
                 "MCU heater '%s' fault: %s (0x%x)" % (
                     self.name, ', '.join(reasons) or 'unknown', self.fault))
 
-    def _note_loop_dt(self, dt):
-        self.loop_dt_count += 1
-        delta = dt - self.loop_dt_mean
-        self.loop_dt_mean += delta / self.loop_dt_count
-        self.loop_dt_m2 += delta * (dt - self.loop_dt_mean)
-        self.loop_dt_min = (dt if self.loop_dt_min is None
-                            else min(self.loop_dt_min, dt))
-        self.loop_dt_max = (dt if self.loop_dt_max is None
-                            else max(self.loop_dt_max, dt))
+    def _handle_timing(self, params):
+        count = params['count']
+        sum_value = params['sum_lo'] | ((params['sum_hi'] & 0xffffffff) << 32)
+        if sum_value & (1 << 63):
+            sum_value -= 1 << 64
+        sumsq = params['sumsq_lo'] | (params['sumsq_hi'] << 32)
+        mean_us = sum_value / float(count) if count else 0.
+        variance_us = (sumsq / float(count) - mean_us * mean_us
+                       if count else 0.)
+        period = params['period_ticks'] / float(self.clock_frequency)
+        self.loop_dt_count = count
+        self.loop_dt_mean = period + mean_us * 1.e-6
+        self.loop_dt_m2 = max(0., variance_us) * count * 1.e-12
+        self.loop_dt_min = period + params['min_us'] * 1.e-6 if count else 0.
+        self.loop_dt_max = period + params['max_us'] * 1.e-6 if count else 0.
 
     def set_target(self, temp):
         if self.set_target_cmd is None:
@@ -299,6 +313,7 @@ class MCUHeaterControl:
     def query(self):
         if self.query_cmd is not None:
             self._handle_state(self.query_cmd.send([self.oid]))
+            self._handle_timing(self.timing_cmd.send([self.oid]))
         return self.get_status()
 
     def get_status(self):

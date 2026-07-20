@@ -886,7 +886,8 @@ heater. If a target temperature is not supplied, the target is 0.
 #### HEATER_CONTROL_STATUS
 `HEATER_CONTROL_STATUS HEATER=<heater_name>`: Query an MCU-autonomous
 `helix_pid` controller. Reports controller state, fault bits, applied power,
-local sample count, and locally estimated temperature.
+local sample count, locally estimated temperature, and MCU-measured control
+loop cadence statistics.
 
 #### HEATER_CONTROL_CLEAR
 `HEATER_CONTROL_CLEAR HEATER=<heater_name>`: Clear a latched local

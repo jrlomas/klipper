@@ -24,7 +24,7 @@
 #endif
 #include "generic/heater_control_math.h"
 #include "gpiocmds.h" // digital_out_takeover_pin
-#include "sched.h" // DECL_TASK
+#include "sched.h" // timers, tasks, and shutdown hooks
 
 enum heater_control_state {
     HC_DISABLED,
@@ -56,11 +56,18 @@ struct heater_control {
     uint32_t phase_on_ticks;
     uint32_t sample_deadline_ticks;
     uint32_t host_timeout_ticks;
+    uint32_t loop_period_ticks;
     uint32_t autonomous_max_samples;
     uint32_t autonomous_samples;
     uint32_t last_host_clock;
     uint32_t last_sample_clock;
     uint32_t last_run_clock;
+    uint32_t previous_run_clock;
+    uint32_t loop_dt_count;
+    int64_t loop_jitter_sum_us;
+    uint64_t loop_jitter_sumsq_us;
+    int32_t loop_jitter_min_us;
+    int32_t loop_jitter_max_us;
     uint32_t sample_count;
     uint32_t min_valid_adc, max_valid_adc, max_temp_adc;
     uint32_t last_adc;
@@ -81,10 +88,10 @@ struct heater_control {
     uint8_t pwm_phase;
     uint8_t pwm_running;
     uint8_t deadline_armed;
-    uint8_t event_pending;
+    uint8_t fault_event_pending;
 };
 
-static struct task_wake heater_control_wake;
+static struct task_wake heater_control_fault_wake;
 
 static void
 heater_control_log(uint8_t type, struct heater_control *h, uint32_t clock,
@@ -99,13 +106,6 @@ heater_control_log(uint8_t type, struct heater_control *h, uint32_t clock,
     (void)arg0;
     (void)arg1;
 #endif
-}
-
-static void
-heater_control_note_event(struct heater_control *h)
-{
-    h->event_pending = 1;
-    sched_wake_task(&heater_control_wake);
 }
 
 static void
@@ -178,7 +178,8 @@ heater_control_fault(struct heater_control *h, uint8_t reason)
     h->state = HC_FAULT;
     heater_control_set_output(h, 0);
     heater_control_log(EL_FAULT, h, timer_read_time(), reason, h->last_adc);
-    heater_control_note_event(h);
+    h->fault_event_pending = 1;
+    sched_wake_task(&heater_control_fault_wake);
 }
 
 static uint_fast8_t
@@ -203,6 +204,25 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
 {
     struct heater_control *h = context;
     h->last_run_clock = timer_read_time();
+    if (h->previous_run_clock) {
+        uint32_t elapsed = h->last_run_clock - h->previous_run_clock;
+        int32_t jitter_ticks = (int32_t)(elapsed - h->loop_period_ticks);
+        uint32_t ticks_per_us = timer_from_us(1);
+        int32_t jitter_us = ticks_per_us ? jitter_ticks / (int32_t)ticks_per_us
+                                        : jitter_ticks;
+        if (!h->loop_dt_count) {
+            h->loop_jitter_min_us = h->loop_jitter_max_us = jitter_us;
+        } else {
+            if (jitter_us < h->loop_jitter_min_us)
+                h->loop_jitter_min_us = jitter_us;
+            if (jitter_us > h->loop_jitter_max_us)
+                h->loop_jitter_max_us = jitter_us;
+        }
+        h->loop_dt_count++;
+        h->loop_jitter_sum_us += jitter_us;
+        h->loop_jitter_sumsq_us += (int64_t)jitter_us * jitter_us;
+    }
+    h->previous_run_clock = h->last_run_clock;
     h->last_sample_clock = clock;
     h->last_adc = adc;
     h->sample_count++;
@@ -244,7 +264,6 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
         h->state = HC_AUTONOMOUS;
         h->autonomous_samples = 0;
         heater_control_log(EL_HEATER, h, clock, h->last_adc, h->state);
-        heater_control_note_event(h);
     }
     if (h->state == HC_MANUAL && silence > h->host_timeout_ticks) {
         h->manual_output_q16 = 0;
@@ -252,7 +271,6 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
         h->state = HC_READY;
         heater_control_set_output(h, 0);
         heater_control_log(EL_HEATER, h, clock, h->last_adc, h->state);
-        heater_control_note_event(h);
         return;
     }
     if (h->state == HC_AUTONOMOUS && h->autonomous_max_samples
@@ -268,9 +286,6 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
     else
         heater_control_set_output(h, heater_pid_update(
             &h->pid_state, &h->pid_config, h->last_temp_mdeg, error_mdeg));
-    if (h->state == HC_ACTIVE || h->state == HC_AUTONOMOUS
-        || h->state == HC_MANUAL)
-        heater_control_note_event(h);
 }
 
 void
@@ -306,19 +321,21 @@ command_heater_control_setup(uint32_t *args)
     h->invert_sense = args[4];
     h->sample_deadline_ticks = args[5];
     h->host_timeout_ticks = args[6];
-    h->autonomous_max_samples = args[7];
-    h->pid_config.max_output = args[8];
-    h->pid_config.kp_q20 = args[9];
-    h->pid_config.ki_step_q20 = args[10];
-    h->pid_config.kd_step_q20 = args[11];
-    h->pid_config.derivative_alpha_q15 = args[12];
+    h->loop_period_ticks = args[7];
+    h->autonomous_max_samples = args[8];
+    h->pid_config.max_output = args[9];
+    h->pid_config.kp_q20 = args[10];
+    h->pid_config.ki_step_q20 = args[11];
+    h->pid_config.kd_step_q20 = args[12];
+    h->pid_config.derivative_alpha_q15 = args[13];
     h->last_host_clock = timer_read_time();
     heater_pid_reset(&h->pid_state);
 }
 DECL_COMMAND(command_heater_control_setup,
              "heater_control_setup oid=%c min_adc=%u max_adc=%u"
              " max_temp_adc=%u invert_sense=%c sample_deadline=%u"
-             " host_timeout=%u autonomous_max_samples=%u max_output=%hu"
+             " host_timeout=%u loop_period=%u autonomous_max_samples=%u"
+             " max_output=%hu"
              " kp_q20=%i ki_step_q20=%i kd_step_q20=%i d_alpha_q15=%hu");
 
 void
@@ -365,7 +382,6 @@ command_heater_control_set_target(uint32_t *args)
         heater_pid_reset(&h->pid_state);
         heater_verify_reset(&h->verify_state, 0);
         heater_control_set_output(h, 0);
-        heater_control_note_event(h);
         return;
     }
     if (h->fault)
@@ -376,7 +392,6 @@ command_heater_control_set_target(uint32_t *args)
     h->last_host_clock = timer_read_time();
     h->state = HC_ACTIVE;
     heater_verify_reset(&h->verify_state, 1);
-    heater_control_note_event(h);
 }
 DECL_COMMAND(command_heater_control_set_target,
              "heater_control_set_target oid=%c target_adc=%u"
@@ -422,7 +437,6 @@ command_heater_control_ping(uint32_t *args)
         h->state = h->target_adc ? HC_ACTIVE : HC_READY;
         heater_control_log(EL_HEATER, h, timer_read_time(),
                            h->last_adc, h->state);
-        heater_control_note_event(h);
     }
 }
 DECL_COMMAND(command_heater_control_ping, "heater_control_ping oid=%c");
@@ -438,7 +452,6 @@ command_heater_control_clear_fault(uint32_t *args)
     h->state = HC_READY;
     h->last_host_clock = timer_read_time();
     heater_pid_reset(&h->pid_state);
-    heater_control_note_event(h);
 }
 DECL_COMMAND(command_heater_control_clear_fault,
              "heater_control_clear_fault oid=%c");
@@ -465,20 +478,42 @@ DECL_COMMAND_FLAGS(command_heater_control_query, HF_IN_SHUTDOWN,
                    "heater_control_query oid=%c");
 
 void
-heater_control_task(void)
+command_heater_control_query_timing(uint32_t *args)
 {
-    if (!sched_check_wake(&heater_control_wake))
+    struct heater_control *h = oid_lookup(
+        args[0], command_config_heater_control);
+    uint64_t sum = h->loop_jitter_sum_us;
+    sendf("heater_control_timing oid=%c count=%u min_us=%i max_us=%i"
+          " sum_lo=%u sum_hi=%i sumsq_lo=%u sumsq_hi=%u period_ticks=%u",
+          h->oid, h->loop_dt_count, h->loop_jitter_min_us,
+          h->loop_jitter_max_us, (uint32_t)sum, (int32_t)(sum >> 32),
+          (uint32_t)h->loop_jitter_sumsq_us,
+          (uint32_t)(h->loop_jitter_sumsq_us >> 32),
+          h->loop_period_ticks);
+}
+DECL_COMMAND_FLAGS(command_heater_control_query_timing, HF_IN_SHUTDOWN,
+                   "heater_control_query_timing oid=%c");
+
+void
+heater_control_fault_task(void)
+{
+    if (!sched_check_wake(&heater_control_fault_wake))
         return;
     uint8_t oid;
     struct heater_control *h;
     foreach_oid(oid, h, command_config_heater_control) {
-        if (!h->event_pending)
+        if (!h->fault_event_pending)
             continue;
-        h->event_pending = 0;
-        heater_control_send_state(h);
+        h->fault_event_pending = 0;
+        sendf("heater_control_fault_event oid=%c state=%c fault=%c adc=%u"
+              " target_adc=%u temp_mdeg=%i output=%hu samples=%u"
+              " last_sample=%u last_run=%u",
+              h->oid, h->state, h->fault, h->last_adc,
+              h->target_adc, h->last_temp_mdeg, h->output_q16,
+              h->sample_count, h->last_sample_clock, h->last_run_clock);
     }
 }
-DECL_TASK(heater_control_task);
+DECL_TASK(heater_control_fault_task);
 
 void
 heater_control_shutdown(void)
