@@ -914,6 +914,30 @@ class MCUADCStreamManager:
         for adc in self._adcs:
             adc._use_adc_stream = False
             adc._build_legacy_config()
+    def _sort_channels(self):
+        # Several DMA ADC engines emit samples in a fixed physical order
+        # regardless of the order in which clients appear in printer.cfg.
+        # Firmware advertises that order by canonical pin name so the host can
+        # keep each subscription paired with the right physical sample.  Do
+        # not guess for older firmware: a wrong guess can silently exchange a
+        # heater thermistor with an unrelated telemetry input.
+        if len(self._adcs) < 2:
+            return True
+        channel_order = self._mcu.get_enumerations().get(
+            "adc_stream_channel", {})
+        try:
+            ranked = [(channel_order[adc._pin], adc)
+                      for adc in self._adcs]
+        except KeyError as e:
+            self._fallback("firmware does not advertise ADC stream order"
+                           " for pin %s" % (e.args[0],))
+            return False
+        if len({rank for rank, adc in ranked}) != len(ranked):
+            self._fallback("firmware advertises duplicate ADC stream order")
+            return False
+        ranked.sort(key=lambda item: item[0])
+        self._adcs = [adc for rank, adc in ranked]
+        return True
     def _build_config(self):
         if not self._adcs:
             return
@@ -941,6 +965,8 @@ class MCUADCStreamManager:
             "ADC_STREAM_MAX_SUBSCRIPTIONS", 0)
         if len(self._adcs) > min(max_channels, max_subscriptions):
             self._fallback("too many opted-in channels")
+            return
+        if not self._sort_channels():
             return
         if any(not adc._sample_count for adc in self._adcs):
             self._fallback("consumer has no sampling schedule")

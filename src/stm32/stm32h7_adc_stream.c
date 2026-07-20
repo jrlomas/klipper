@@ -12,6 +12,22 @@
 #include "internal.h" // peripheral registers
 #include "sched.h" // sched_shutdown
 
+// The H7 sequencer can preserve arbitrary order, but publishing a stable
+// physical rank gives the automatic adapter the same deterministic contract
+// as fixed-order ADC backends.
+DECL_ENUMERATION("adc_stream_channel", "PF11", 2);
+DECL_ENUMERATION("adc_stream_channel", "PA6", 3);
+DECL_ENUMERATION("adc_stream_channel", "PC4", 4);
+DECL_ENUMERATION("adc_stream_channel", "PB1", 5);
+DECL_ENUMERATION("adc_stream_channel", "PF12", 6);
+DECL_ENUMERATION("adc_stream_channel", "PA7", 7);
+DECL_ENUMERATION("adc_stream_channel", "PC5", 8);
+DECL_ENUMERATION("adc_stream_channel", "PB0", 9);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PC0", 10, 4);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PA2", 14, 2);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PA0", 16, 2);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PA4", 18, 2);
+
 #define ADC_DMA_CR (DMA_SxCR_MINC | DMA_SxCR_PSIZE_0 | DMA_SxCR_MSIZE_0 \
                     | DMA_SxCR_TCIE | DMA_SxCR_TEIE | DMA_SxCR_DMEIE)
 #define ADC_DMA_CLEAR (DMA_LIFCR_CFEIF0 | DMA_LIFCR_CDMEIF0 \

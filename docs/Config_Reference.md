@@ -6204,6 +6204,13 @@ their contract. `off` forces the legacy ADC implementation. `force` is a
 qualification mode that turns any incompatibility into a configuration error
 instead of falling back.
 
+For merged legacy clients, firmware advertises each ADC pin's physical scan
+rank and the host orders channels by that rank while retaining the matching
+logical subscription and callback. Thus the order of heater and temperature
+sections in `printer.cfg` cannot swap readings or make a fixed-order ADC
+backend reject configuration. Multi-channel migration falls back to legacy ADC
+on older firmware that lacks the ordering metadata.
+
 Backends advertise hardware pacing bounds. When a legacy consumer requests a
 slower interval than a divider can directly represent (notably RP2040
 `ADC_DIV`), the adapter selects the slowest exact bounded scan period and uses

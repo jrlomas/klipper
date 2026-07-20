@@ -119,6 +119,10 @@ pass.
   frame. `[mcu] adc_stream_mode` provides `auto/off/force`; automatic migration
   distributes each legacy sample count across its report interval and falls
   back before either engine claims the ADC when semantics are incompatible.
+  Firmware-advertised channel ranks now canonicalize fixed hardware scan order
+  without changing logical sensor identity, with safe fallback for older
+  multi-channel firmware lacking the metadata. The SKR Pico's real
+  GPIO27/internal-temperature/GPIO26 construction order is live-verified.
   Heater range debounce becomes a local shutdown policy rather than depending
   on Python delivery.
 * The shared DMA resource layer now covers allocation, DMA-reachability,

@@ -22,12 +22,20 @@ class FakePrinter:
 
 
 class FakeMCU:
-    def __init__(self, stream=True, mode="off", max_scan_ticks=0):
+    def __init__(self, stream=True, mode="off", max_scan_ticks=0,
+                 channel_order=None):
         self.callbacks = []
         self.commands = []
         self.responses = []
         self.next_oid = 0
         self.constants = {"ADC_MAX": 4095}
+        if channel_order is None:
+            channel_order = {
+                "PA2": 2, "PA3": 3,
+                "gpio26": 0, "gpio27": 1,
+                "ADC_TEMPERATURE": 255,
+            }
+        self.enumerations = {"adc_stream_channel": channel_order}
         self._adc_stream_mode = mode
         if stream:
             self.constants.update({
@@ -48,6 +56,8 @@ class FakeMCU:
         return oid
     def get_constants(self):
         return self.constants
+    def get_enumerations(self):
+        return self.enumerations
     def get_constant_float(self, name):
         return float(self.constants[name])
     def try_lookup_command(self, fmt):
@@ -174,10 +184,53 @@ def test_backend_period_limit_uses_exact_input_decimation():
                in command for command in commands)
 
 
+def test_auto_mode_sorts_rp2040_consumers_by_physical_channel():
+    fake = FakeMCU(mode="auto")
+    callbacks = {}
+    for pin in ("gpio27", "ADC_TEMPERATURE", "gpio26"):
+        adc = MODULE.MCU_adc(fake, {"pin": pin})
+        adc.setup_adc_sample(.300, .001, 8)
+        callbacks[pin] = []
+        adc.setup_adc_callback(callbacks[pin].extend)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    channels = [command for command in commands
+                if command.startswith("adc_stream_add_channel")]
+    assert channels == [
+        "adc_stream_add_channel oid=0 pin=gpio26",
+        "adc_stream_add_channel oid=0 pin=gpio27",
+        "adc_stream_add_channel oid=0 pin=ADC_TEMPERATURE",
+    ]
+    # Subscription zero now belongs to gpio26, not to the first constructed
+    # consumer.  This proves reports retain their logical sensor identity.
+    fake._helix_adc_stream_manager._handle_summary({
+        "sub": 0, "count": 1, "sum_lo": 8 * 2048,
+        "sum_hi": 0, "last_clock": 200000, "status": 0,
+    })
+    assert len(callbacks["gpio26"]) == 1
+    assert callbacks["gpio27"] == []
+    assert callbacks["ADC_TEMPERATURE"] == []
+
+
+def test_old_firmware_without_order_metadata_falls_back_safely():
+    fake = FakeMCU(mode="auto", channel_order={})
+    for pin in ("gpio27", "gpio26"):
+        adc = MODULE.MCU_adc(fake, {"pin": pin})
+        adc.setup_adc_sample(.300, .001, 8)
+    finalize(fake)
+    commands = [command for command, _ in fake.commands]
+    assert not any(command.startswith("config_adc_stream")
+                   for command in commands)
+    assert sum(command.startswith("config_analog_in")
+               for command in commands) == 2
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
     test_unmigrated_consumer_prevents_split_adc_ownership()
     test_auto_mode_migrates_heater_thresholds_to_local_shutdown()
     test_backend_period_limit_uses_exact_input_decimation()
+    test_auto_mode_sorts_rp2040_consumers_by_physical_channel()
+    test_old_firmware_without_order_metadata_falls_back_safely()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

@@ -22,6 +22,21 @@
 #define ADC_DMA_CH1 11
 #define ADC_DMA_MASK ((1u << ADC_DMA_CH0) | (1u << ADC_DMA_CH1))
 
+// Hardware round-robin conversion advances in ADC channel order.  Publish
+// that physical order so automatic host-side migration does not depend on
+// the order of otherwise unrelated printer.cfg sections.
+#if CONFIG_MACH_RP2040
+DECL_ENUMERATION_RANGE("adc_stream_channel", "gpio26", 0, 4);
+#else
+// RP2350 QFN-60 exposes GPIO26..29; QFN-80 exposes GPIO40..47.  Both sets
+// start at ADC channel zero and only the set present on the package is valid.
+DECL_ENUMERATION_RANGE("adc_stream_channel", "gpio26", 0, 4);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "gpio40", 0, 8);
+#endif
+// The internal sensor follows every package ADC input.  This value is an
+// ordering rank, not the encoded pin or necessarily the hardware channel.
+DECL_ENUMERATION("adc_stream_channel", "ADC_TEMPERATURE", 255);
+
 // ADC_DIV is 16.8 fixed point and clk_adc is four times the 12MHz machine
 // clock.  The host uses this limit to introduce deterministic input
 // decimation when a requested scan is slower than the hardware divider can

@@ -91,18 +91,23 @@ The landed architecture now includes:
   sample counts are distributed across each report interval to avoid a
   continuous high-rate emulation, while `summary_mode=latest` preserves one
   callback batch. Existing heater range debounce becomes a local shutdown
-  policy. OpenAMS FPS retains its explicit opt-out.
+  policy. Firmware-provided `adc_stream_channel` ranks canonicalize physical
+  scan order independently of configuration-section construction order while
+  the reordered subscription objects preserve sensor identity. Older
+  multi-channel firmware without this metadata falls back before claiming the
+  ADC. OpenAMS FPS retains its explicit opt-out.
 
 Evidence at this checkpoint:
 
 | Check | Result |
 | --- | --- |
-| Ownership, filter, adapter, and host decode tests | Fixed C vectors, 500 seeded randomized schedules, legal/stale block transitions, interleaved timestamps, summary scaling/gaps, merged FPS scheduling, split-ownership rejection, automatic legacy fallback, and bounded host drops pass |
+| Ownership, filter, adapter, and host decode tests | Fixed C vectors, 500 seeded randomized schedules, legal/stale block transitions, interleaved timestamps, summary scaling/gaps, merged FPS scheduling, physical-rank ordering with preserved callbacks, old-firmware and split-ownership fallback, and bounded host drops pass |
 | Native builds | RP2040, STM32F072, STM32G0B1, and STM32H723 pass clean isolated builds |
 | DMA resource and M7 placement | Alignment, exhaustion, idempotent ownership, conflict, release, and status tests pass. F072/G0/H723 isolated images link with the shared manager. The H723 map proves the 2 KiB arena at DMA1-reachable AXI SRAM `0x24000000` rather than DTCM `0x20000000`; MPU setup covers exactly that power-of-two region. |
 | ESP32 builds | component, component-RMT, and modem images compile and link with IDF 5.3.2 |
 | ESP32 live acquisition | Lolin32 component image, GPIO32, 1 kscan/s, 16 values/block, isolated-lab trust-network WiFi/UDP: 47,072 scans in 2,942 consecutive blocks, `dropped=0`, `status=0`, clean stop |
 | STM32F072 live acquisition | OAMS1 rev1.4.3, 16 MHz reference, Katapult at 8 KiB: 58,544 one-channel PC5 scans followed by 10,256 correctly interleaved PC5/internal-temperature scan pairs at 1 kscan/s; zero drops/faults and clean stops. The exact build is retained in the Helix CI compile matrix. |
+| RP2040 merged-consumer boot | SKR Pico with consumers constructed as GPIO27, internal temperature, GPIO26 now emits physical order GPIO26, GPIO27, internal temperature. Klipper reached Ready with distinct bed, chamber, and MCU readings and no ADC fault; the former `channels must ascend` configuration shutdown is covered by regression. |
 | STM32F072 v1 filtered gate | Standalone OAMS1 rev1.4.3 on PC5 with the FPS geometry: 5 ms physical scans, OSR 5, four filtered outputs per 100 ms Prompt report, raw output disabled. The first run exposed 16-scan DMA blocks crossing the 20-scan report boundary and producing an avoidable 80/160 ms host-delivery pattern. The adapter now selects 10-scan blocks. The corrected run delivered 250 consecutive epoch-1 summaries at steady 100 ms intervals from 5,000 physical scans, then stopped and restarted at summary sequence 0/epoch 2. A further 1,540 scans completed before clean stop; both status snapshots reported `dropped=0`, `status=0`. Summary machine-clock deltas were exactly 4,800,000 ticks at 48 MHz, each four-output report spanned 3,600,000 ticks, and the F0 backend truthfully reported its 240-tick inferred-start uncertainty. |
 | STM32F072 polling/DMA profile | The archived legacy 8x/300 ms schedule used 53.33 timer callbacks/s for 26.67 conversions/s. Its equivalent distributed DMA schedule used 3.33 block publications/s, delivered 419 consecutive reports, and had zero drops/errors/overruns. A separate 1 ksample/s DMA stress delivered 581 blocks with the same zero-fault result. Exact counters and graphs are in the qualification paper. |
 | STM32H723 hardware OSR | The MPU arena maps at DMA1-reachable AXI SRAM `0x24000000`. PA0 at 1 ktrigger/s and hardware OSR16 produced 802 consecutive 64-value blocks (821,248 physical conversions), zero drops/errors/overruns, and queue high-water one. A second 254-block run remained continuous while the 100 kHz/four-axis trajectory benchmark returned status 0. |

@@ -30,6 +30,11 @@
 #define ESP32_ADC_MIN_CONVERSIONS 20000u
 #define ESP32_ADC_MAX_CONVERSIONS 2000000u
 
+// The continuous driver returns ADC1 channels in pattern-table order.  Keep
+// automatic consumers independent from their printer.cfg construction order.
+DECL_ENUMERATION_RANGE("adc_stream_channel", "gpio36", 0, 4);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "gpio32", 4, 4);
+
 static struct adc_stream_backend_config pending_cfg;
 static uint8_t pending_channels[ADC_STREAM_MAX_CHANNELS];
 static uint16_t pending_osr;

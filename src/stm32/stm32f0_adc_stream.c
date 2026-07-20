@@ -12,6 +12,21 @@
 #include "internal.h" // peripheral registers
 #include "sched.h" // sched_shutdown
 
+// F0/G0 scan hardware emits enabled channels in numerical channel order.
+// Advertise the pin-to-rank mapping for the host's merged legacy adapter.
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PA0", 0, 8);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PB0", 8, 2);
+#if CONFIG_MACH_STM32F0
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PC0", 10, 6);
+DECL_ENUMERATION("adc_stream_channel", "ADC_TEMPERATURE", 16);
+#else
+DECL_ENUMERATION("adc_stream_channel", "PB2", 10);
+DECL_ENUMERATION("adc_stream_channel", "PB10", 11);
+DECL_ENUMERATION("adc_stream_channel", "ADC_TEMPERATURE", 12);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PB11", 15, 2);
+DECL_ENUMERATION_RANGE("adc_stream_channel", "PC4", 17, 2);
+#endif
+
 #define ADC_DMA_CCR (DMA_CCR_MINC | DMA_CCR_PSIZE_0 | DMA_CCR_MSIZE_0 \
                      | DMA_CCR_CIRC | DMA_CCR_HTIE | DMA_CCR_TCIE \
                      | DMA_CCR_TEIE)
