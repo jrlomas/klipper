@@ -106,7 +106,7 @@ test_ram_pattern(uint32_t *value)
         for (unsigned i = 0; i < sizeof(buf); i++) {
             uint8_t want = pass == 0 ? 0x55 : pass == 1 ? 0xaa : (uint8_t)i;
             if (buf[i] != want) {
-                *value = (uint32_t)(pass << 16) | i;
+                *value = ((uint32_t)pass << 16) | (uint32_t)i;
                 return ST_FAIL;
             }
         }
@@ -139,7 +139,7 @@ test_traj_kernel(uint32_t *value)
                                       traj_golden[i].velocity,
                                       traj_golden[i].accel);
         if (got != traj_golden[i].want) {
-            *value = (uint32_t)(i << 16) | (uint32_t)(got & 0xffff);
+            *value = ((uint32_t)i << 16) | (uint32_t)(got & 0xffff);
             return ST_FAIL;
         }
     }
