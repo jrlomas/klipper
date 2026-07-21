@@ -297,6 +297,15 @@ The following information is available for heater objects such as
   the given heater.
 - `power`: The last setting of the pulse-width modulation (PWM) pin (a
   value between 0.0 and 1.0) associated with the heater.
+- `mcu_control`: For `control: helix_pid` and `control: helix_mpc`, a nested
+  dictionary describing the MCU-local controller. Common fields include
+  `state`, `fault`, `power`, `samples`, `algorithm`, `control_mode`, local loop
+  timing, and the MCU temperature estimate. `helix_pid` also reports the
+  selected PID gains and profile source. `helix_mpc` instead reports the
+  active thermal model, ambient estimate, model source, bounds, and profile
+  generation. A null `mcu_temperature` means the target-local thermistor
+  tangent is outside its valid reporting band; safety still operates from raw
+  ADC bounds.
 - `can_extrude`: If extruder can extrude (defined by `min_extrude_temp`),
   available only for [extruder](Config_Reference.md#extruder)
 

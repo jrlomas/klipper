@@ -88,6 +88,33 @@ target. Far from the target the output normally saturates; near the target the
 local linearization supplies the temperature error used by PID. Raw ADC
 thresholds remain independent of that approximation.
 
+## Predictive controller extension
+
+`control: helix_mpc` is the second controller under this same ownership and
+safety contract. It is not a renamed PID tune. The host characterizes a
+first-order-plus-dead-time plant (`gain`, `tau`, `delay`), selects a bounded
+model for the requested target, and converts the prediction horizon to fixed
+coefficients. The MCU
+uses a closed-form scalar receding-horizon solution:
+
+```text
+Tfree = Tambient + a * (Tfiltered - Tambient)
+u = argmin ((Ttarget - Tfree - b*u)^2 + rho^2*(u-uprevious)^2)
+```
+
+A slow signed integral bias rejects model error; it uses directional
+anti-windup against both output saturation and the independent duty-slew
+bound. Model changes rebase that bias around the current duty. Raw ADC safety
+never consumes the observer-filtered temperature.
+
+The model store follows the PID profile rules: immutable candidate evidence,
+explicit validation, bounded interpolation only inside characterized targets,
+no extrapolation, atomic private persistence, and explicit clearing. Guarded
+step characterization executes through the MCU manual owner so local ceiling,
+deadline, maximum-power, and heating-progress enforcement remain active.
+Details, equations, commands, and physical acceptance gates are in
+[Predictive Thermal Control](../../Predictive_Thermal_Control.md).
+
 ## Safety contract
 
 PID is never the safety mechanism. The MCU enforces, independently:
@@ -309,6 +336,13 @@ commands require `CONFIRM=YES`.
 
 - [x] Fixed-point proportional response, bounds, derivative-on-measurement,
   and anti-windup reference tests.
+- [x] Fixed-point predictive response, observer, explicit duty-movement cost,
+  signed model-error correction, anti-windup, slew bounds, and bumpless model
+  reconfiguration tests.
+- [x] Persistent candidate/validated thermal models with bounded target
+  interpolation and no extrapolation.
+- [x] Guarded step fitting rejects drift, weak excitation, poor first-order
+  fit, and an underidentified time constant.
 - [x] Host configuration and command encoding against an RP2040 data
   dictionary.
 - [x] RP2040 firmware build with ADC DMA and autonomous controller enabled.
@@ -336,9 +370,12 @@ commands require `CONFIRM=YES`.
   useful dither, and the retained-bit shift limit.
 - [x] Guarded PWM-sine runs at 260 C and 30/60 s periods establish installed
   thermal-chain gain, phase, drift, residual, and effective control resolution.
+- [ ] Paired physical `helix_pid` versus `helix_mpc` qualification on the bed.
 
-Until the physical gates pass, `helix_pid` is implemented and workstation-
-verified but not the default controller.
+`helix_pid` has passed nominal heated operation, physical printing, and
+host-loss continuity; the remaining injected cutoff cases stay explicit above.
+`helix_mpc` is workstation-qualified only and must not replace the production
+controller until its paired physical PID comparison passes.
 
 ## References
 

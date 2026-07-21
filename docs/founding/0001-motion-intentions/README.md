@@ -46,7 +46,7 @@ status line records its more precise state.
 | [15-CANFD_Transport.md](15-CANFD_Transport.md) | Transactional CAN FD, real bridge/node identities, SocketCAN control, and timestamped USB-SOF time transfer | Vertical slice and physical 1 Mbit carrier/time base qualified; injected recovery, CAN motion/print, and 2/5/8 Mbit BRS pending |
 | [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md) | NUCLEO-F767ZI native Ethernet, cache-safe DMA, IRQ service, hardware timestamping, DHCP, and ADC streaming | Adopted plan; implementation and board qualification pending |
 | [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Workstation implementation complete; F072/H723/RP2040/ESP32 live gates and RP2040 consumer/restart migration pass; remaining target/waveform/contention fixtures are explicit |
-| [18-Autonomous_Heater_Control.md](18-Autonomous_Heater_Control.md) | Host-configured, MCU-executed PID, guarded autotune, local safety, and host-loss continuity | Implemented and workstation-tested; cold and heated physical gates remain |
+| [18-Autonomous_Heater_Control.md](18-Autonomous_Heater_Control.md) | Host-configured MCU PID and predictive thermal control, guarded characterization, local safety, and host-loss continuity | PID physically qualified; predictive controller implemented and workstation-tested, with paired physical gates remaining |
 
 ## Reading order
 

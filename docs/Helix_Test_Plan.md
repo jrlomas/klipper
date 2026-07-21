@@ -753,6 +753,16 @@ a faster stop — test both the latency and the things polling could not do.
   - [ ] Inject autonomous-duration expiry, interrupted ADC delivery,
     open/short sensor faults, and an independent ceiling trip. The parent gate
     remains open until every local cutoff is captured and latched.
+- [ ] **7.5d — Predictive thermal control.** Configure `helix_mpc` with an
+  explicit conservative first-order model, run guarded step characterization,
+  inspect the fit evidence, and explicitly validate it before scheduling.
+  Repeat the same bed workload under `helix_pid` and `helix_mpc`. Pass:
+  predictive temperature RMS and peak error are no worse; RMS duty change is
+  reduced by at least 50 percent or a physical limit is documented; rise,
+  overshoot, and step-down recovery remain acceptable; model interpolation is
+  bounded and never extrapolates; model activation is bumpless; and all local
+  host-loss, ADC, sensor, ceiling, and restart gates behave identically. See
+  [Predictive Thermal Control](Predictive_Thermal_Control.md).
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

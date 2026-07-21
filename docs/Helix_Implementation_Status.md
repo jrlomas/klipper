@@ -148,9 +148,20 @@ pass.
   PWM; raw sensor range, hard ceiling, sample deadline, the configured
   `verify_heater` progress/error policy, max power, bounded autonomous
   duration, and firmware-shutdown-off remain independent. Fixed-
-  point tests, command encoding, and RP2040 build pass. Cold live and heated
-  physical gates remain open, as recorded in
+  point tests, command encoding, RP2040 build, cold live bring-up, supervised
+  bed/hotend runs, 260 C host comparison, and host-loss continuity pass. The
+  remaining expiry, interrupted-ADC, sensor-fault, and ceiling-injection gates
+  are recorded in
   [FD-0001 doc 18](founding/0001-motion-intentions/18-Autonomous_Heater_Control.md).
+* `control: helix_mpc` adds a distinct constrained predictive controller under
+  the same MCU ownership and safety path. The host fits and schedules bounded
+  first-order plant models; firmware minimizes predicted temperature error and
+  explicit duty movement in closed-form fixed-point arithmetic, with an
+  observer, signed integral model-error correction, anti-windup, slew bounds,
+  and bumpless model changes. Candidate persistence, explicit validation, no
+  extrapolation, guarded step fitting, cross-plant simulation, command
+  encoding, and RP2040 build pass. The paired physical PID/predictive bed gate
+  remains open; see [Predictive Thermal Control](Predictive_Thermal_Control.md).
 * The shared DMA resource layer now covers allocation, DMA-reachability,
   peripheral/timer/channel/stream/DMAMUX ownership, and map-verified cache
   policy. F0/G0 use circular half/full DMA, F4/F7 native double buffering,

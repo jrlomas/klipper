@@ -1,0 +1,114 @@
+{
+  "bed": {
+    "capture_duration_s": 1527.8487432899997,
+    "controller_states": [
+      "active"
+    ],
+    "error_bias_c": -0.04593324607329862,
+    "error_drift_c_per_min": 0.01097882936528427,
+    "error_mae_c": 0.09082853403141333,
+    "error_p01_c": -0.44200000000000017,
+    "error_p99_c": 0.14699999999999847,
+    "error_rms_c": 0.13256653964917015,
+    "error_stddev_c": 0.12435443031804214,
+    "faults": [
+      0
+    ],
+    "loop_timing": {
+      "cumulative_max_s_end": 0.300249,
+      "cumulative_max_s_start": 0.300103,
+      "cumulative_min_s_end": 0.29975199999999996,
+      "cumulative_min_s_start": 0.29991,
+      "mean_s": 0.2999999943047918,
+      "stddev_us": 16.198741964247933,
+      "updates": 5092
+    },
+    "max_absolute_error_c": 0.49099999999999966,
+    "observations": 1528,
+    "pid_gains": {
+      "kd": 948.182,
+      "ki": 0.77,
+      "kp": 54.027,
+      "model": "point",
+      "source": "base"
+    },
+    "power_at_zero_percent": 2.6178010471204187,
+    "power_max": 0.7960936903944457,
+    "power_mean": 0.29682484520281516,
+    "power_min": 0.0,
+    "power_p01": 0.0,
+    "power_p99": 0.6716083009079119,
+    "power_saturated_percent": 0.0,
+    "power_stddev": 0.15321640876002673,
+    "public_minus_mcu_max_abs_c": 0.10799999999999699,
+    "public_minus_mcu_mean_c": -0.012633507853402948,
+    "public_minus_mcu_stddev_c": 0.033097337450823626,
+    "target_c": 55.0,
+    "temperature_max_c": 55.147,
+    "temperature_mean_c": 54.9540667539267,
+    "temperature_min_c": 54.509,
+    "temperature_peak_to_peak_c": 0.6379999999999981,
+    "within_0_25c_percent": 92.5392670157068,
+    "within_0_50c_percent": 100.0,
+    "within_1_00c_percent": 100.0
+  },
+  "capture_end_print_duration_s": 1704.979188585,
+  "capture_start_print_duration_s": 176.62740934399972,
+  "effective_poll_interval_s": 0.501098407169508,
+  "extruder": {
+    "capture_duration_s": 1527.8487432899997,
+    "controller_states": [
+      "active"
+    ],
+    "error_bias_c": 0.013639397905758925,
+    "error_drift_c_per_min": -0.0015363212835873175,
+    "error_mae_c": 0.1052074607329835,
+    "error_p01_c": -0.3623000000000039,
+    "error_p99_c": 0.5699999999999932,
+    "error_rms_c": 0.15462805609909275,
+    "error_stddev_c": 0.1540253308964229,
+    "faults": [
+      0
+    ],
+    "loop_timing": {
+      "cumulative_max_s_end": 0.30092399999999997,
+      "cumulative_max_s_start": 0.30091599999999996,
+      "cumulative_min_s_end": 0.299006,
+      "cumulative_min_s_start": 0.299006,
+      "mean_s": 0.30000059493422343,
+      "stddev_us": 86.0128272424386,
+      "updates": 5093
+    },
+    "max_absolute_error_c": 0.9629999999999939,
+    "observations": 1528,
+    "pid_gains": {
+      "kd": 38.19622460734466,
+      "ki": 2.03725,
+      "kp": 14.205892372630283,
+      "model": "curve",
+      "source": "linear"
+    },
+    "power_at_zero_percent": 0.0,
+    "power_max": 0.8876783398184176,
+    "power_mean": 0.733394928652089,
+    "power_min": 0.6542000457770657,
+    "power_p01": 0.6822192721446555,
+    "power_p99": 0.8701837186236362,
+    "power_saturated_percent": 0.0,
+    "power_stddev": 0.03480707629712955,
+    "public_minus_mcu_max_abs_c": 0.08799999999999386,
+    "public_minus_mcu_mean_c": -0.00013808900523564762,
+    "public_minus_mcu_stddev_c": 0.020605682500755004,
+    "target_c": 210.0,
+    "temperature_max_c": 210.963,
+    "temperature_mean_c": 210.01363939790576,
+    "temperature_min_c": 209.467,
+    "temperature_peak_to_peak_c": 1.495999999999981,
+    "within_0_25c_percent": 90.96858638743456,
+    "within_0_50c_percent": 98.23298429319371,
+    "within_1_00c_percent": 100.0
+  },
+  "printing_rows": 3051,
+  "raw_rows": 3052,
+  "source": "/tmp/helix-heater-print-voron-cube-20260720.csv"
+}

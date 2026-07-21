@@ -43,6 +43,9 @@ the same, and your first Helix feature in five minutes.
 - [MCU-autonomous heater control](Autonomous_Heater_Control_Qualification.md):
   Physical host-versus-MCU PID results, host-loss behavior, gain scheduling,
   and the ADC noise/oversampling information limit.
+- [Predictive thermal control](Predictive_Thermal_Control.md): A generic,
+  model-characterized MCU controller that explicitly trades temperature error
+  against actuator movement without differentiating quantized ADC samples.
 - [STM32G0B1 HELIX motion qualification](STM32G0B1_Helix_Qualification.md):
   Solver cost, V1 edge parity, deadlines, and hot-extrusion evidence for the
   EBB36 trajectory executor.

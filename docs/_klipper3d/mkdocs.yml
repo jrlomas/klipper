@@ -97,6 +97,7 @@ nav:
       - Interrupt_vs_Polling.md
       - DMA_ADC_Qualification.md
       - Autonomous_Heater_Control_Qualification.md
+      - Predictive_Thermal_Control.md
       - STM32G0B1_Helix_Qualification.md
       - Transport_Time_Synchronization.md
     - Atlas_Bring-up_Plan.md

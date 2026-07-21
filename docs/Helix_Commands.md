@@ -47,7 +47,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, per-node FIFO/protocol errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Counters are cumulative; compare deltas when diagnosing a particular print. |
 | `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]` | Drain motion and place the bus on an allowlisted Classical CAN maintenance profile before stopping Klipper to flash a bridge or node. |
 
-### MCU-autonomous heater control — `control: helix_pid`
+### MCU-autonomous heater control — `control: helix_pid` / `helix_mpc`
 | Command | Summary |
 | --- | --- |
 | `HEATER_CONTROL_STATUS HEATER=<name>` | Query local state, fault, output, sample count, temperature, and loop cadence. |
@@ -59,6 +59,12 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `HELIX_PID_PROFILE_CLEAR HEATER=<name> CONFIRM=YES` | Clear one heater's stored characterization registry. |
 | `HELIX_PID_PROFILE_RETRAIN HEATER=<name> TARGETS=<t1,t2,...>` | Run ascending symmetric relay tunes without changing the base profile; every result remains inactive until validation. |
 | `HELIX_HEATER_SINE_TEST HEATER=<name> CENTER=<C> CEILING=<C> [SETTLE_TIME=<s>]` | Settle and measure holding duty, then apply a host- and MCU-guarded PWM sine and report installed thermal-chain gain, phase, residual, and SINAD. |
+| `HELIX_THERMAL_MODEL_CALIBRATE HEATER=<name> TARGET=<C> POWER=<0..1> DURATION=<s> CEILING=<C> CONFIRM=YES` | Run an off-state drift preflight and guarded constant-power step, fit a first-order plant, and store an inactive candidate model. Requires `control: helix_mpc`. |
+| `HELIX_THERMAL_MODEL_STATUS HEATER=<name>` | List candidate, validated, and rejected predictive plant models. |
+| `HELIX_THERMAL_MODEL_COEFFICIENTS HEATER=<name>` | Show the bounded target-indexed model schedule. |
+| `HELIX_THERMAL_MODEL_RECORD HEATER=<name> TARGET=<C> GAIN=<C/duty> TAU=<s> [DELAY=<s>] CONFIRM=YES` | Record an explicit candidate model without activating it. Intended for imported/offline identification evidence. |
+| `HELIX_THERMAL_MODEL_VALIDATE HEATER=<name> ID=<id> STATUS=<VALIDATED\|REJECTED> CONFIRM=YES` | Change a candidate model's validation state. |
+| `HELIX_THERMAL_MODEL_CLEAR HEATER=<name> CONFIRM=YES` | Clear one heater's stored predictive plant models. |
 
 ### Structured trace — `[atlas_trace]`
 | Command | Summary |
@@ -108,6 +114,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | `[mcu] hardware_endstop_observer: True` | Commissioning only: timestamp GPIO edges through a passive ISR while the legacy poller remains the stop owner. |
 | `[heater_*] failure_policy: hold` | Keep a heater at its target through a fault (`hold_max_temp`, `hold_max_duration`). |
 | `[heater_*] control: helix_pid` | Run PID and safety on the heater-owning MCU, with bounded validated gain scheduling and guarded system-identification tests. |
+| `[heater_*] control: helix_mpc` | Run constrained first-order predictive control on the heater MCU, with explicit duty-movement cost, bounded model scheduling, and the same local safety owner. |
 
 ## Firmware capabilities (Kconfig)
 
@@ -122,7 +129,7 @@ on where code size allows and off on `HAVE_LIMITED_CODE_SIZE` boards.
 | `WANT_TRAJECTORY_PWM` | The sampled PWM/DAC actuator backend (a non-stepper actuator — the same door a future BLDC/FOC backend uses). |
 | `WANT_TRIGGER_SOURCE` | Hardware-event trigger sources — edge interrupts, comparators, ADC watchdogs, input capture. |
 | `WANT_HEATER_HOLD` | The autonomous heater failsafe hold. |
-| `WANT_HEATER_CONTROL` | MCU-local PID, safety, manual-test ceiling, dynamic profiles, and control telemetry. |
+| `WANT_HEATER_CONTROL` | MCU-local PID and predictive thermal control, safety, guarded characterization, dynamic profiles/models, and control telemetry. |
 | `WANT_SYSCALL_API` | The unified cross-family board syscall table (advertised as `BOARD_SYSCALL_ABI`/`CAPS`). |
 | `WANT_SIGNED_IMAGES` | Ed25519 signature verification of firmware images in the bootloader (where it fits). |
 | `WANT_SELF_TEST` | The built-in self-test commands (`run_self_test`): the live verification gates / diagnostics driven by `HELIX_SELF_TEST`. |

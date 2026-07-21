@@ -1463,11 +1463,17 @@ sensor_pin:
 #   be smoothed to reduce the impact of measurement noise. The default
 #   is 1 seconds.
 control:
-#   Control algorithm (pid, helix_pid, or watermark). This parameter must
+#   Control algorithm (pid, helix_pid, helix_mpc, or watermark). This
+#   parameter must
 #   be provided. 'helix_pid' uses the PID values below but executes the
 #   feedback loop and PWM on the sensor/heater MCU. It requires an ADC
 #   temperature sensor, software PWM, and the sensor and heater pin on the
 #   same MCU. See FD-0001 doc 18.
+#   'helix_mpc' uses the same MCU-local ownership and safety contract, but
+#   drives the heater with a constrained first-order predictive model instead
+#   of PID. It requires the thermal_model_gain and thermal_model_tau options
+#   below. Explicit PID values remain required as the guarded host-comparison
+#   and fallback baseline.
 pid_Kp:
 pid_Ki:
 pid_Kd:
@@ -1479,22 +1485,83 @@ pid_Kd:
 #   and "heater_pwm" is the requested heating rate with 0.0 being full
 #   off and 1.0 being full on. Consider using the PID_CALIBRATE
 #   command to obtain these parameters. The pid_Kp, pid_Ki, and pid_Kd
-#   parameters must be provided for PID heaters.
+#   parameters must be provided for PID heaters and for the guarded helix_mpc
+#   host-comparison fallback.
 #pid_derivative_filter: 1.0
 #   Time constant in seconds for derivative-on-measurement filtering when
 #   control is helix_pid. The default is smooth_time.
+#thermal_model_gain:
+#   Steady temperature rise in degrees C produced by full heater duty above
+#   ambient for the first-order model used by control: helix_mpc. This must be
+#   greater than zero. Characterized models may replace this value only inside
+#   their validated target range.
+#thermal_model_tau:
+#   Dominant first-order thermal time constant in seconds for helix_mpc. This
+#   must exceed the local control period.
+#thermal_model_delay: 0.0
+#   Dead time in seconds between a duty change and the start of its modeled
+#   thermal response. Guarded characterization fits this value. The prediction
+#   horizon must exceed it.
+#thermal_prediction_horizon:
+#   Prediction horizon in seconds. The host converts the model and horizon to
+#   closed-form coefficients before uploading them to the MCU. The default is
+#   the larger of thermal_model_delay plus one control period and the smaller
+#   of 30 seconds or one quarter of thermal_model_tau.
+#thermal_effort_penalty:
+#   Equivalent degrees C assigned to a full-duty output change in the
+#   predictive objective. Larger values reduce duty movement. The default is
+#   five percent of thermal_model_gain, with a minimum of 0.1 C.
+#thermal_integral_gain: 0.0005
+#   Slow model-error correction in duty/(degree C * second). This removes
+#   steady bias caused by plant or ambient mismatch without differentiating
+#   quantized temperature samples.
+#thermal_observer_time: 2.0
+#   Time constant in seconds for the MCU-local temperature observer used by
+#   the predictive controller. Raw ADC bounds and safety checks remain
+#   unfiltered. The default is the greater of 2 seconds or one control period.
+#thermal_output_slew_rate: 1.0
+#   Maximum heater-duty change per second. This is enforced independently of
+#   the predictive effort penalty. The default is 1.0.
+#thermal_control_band: 10.0
+#   Absolute target-error band in degrees C inside which the predictive model
+#   is used. Outside it, firmware uses slew-bounded full/off approach control
+#   and resets the observer. This prevents a target-local thermistor tangent
+#   from being treated as a globally linear temperature conversion. The
+#   default is 10 C.
+#thermal_ambient_sensor:
+#   Optional temperature object used as the ambient value uploaded with a new
+#   target. The last value is retained if the host disappears. Without this,
+#   the most recent idle heater observation is used, falling back to
+#   thermal_ambient_temperature.
+#thermal_ambient_temperature: 25.0
+#   Ambient fallback in degrees C when no idle observation or configured
+#   ambient sensor is available.
+#heater_thermal_model_path: helix_heater_profiles.json
+#   Atomic private store for characterized thermal plant models. By default it
+#   shares heater_pid_profile_path.
+#heater_thermal_model_schedule: true
+#   Select validated exact/interpolated plant models inside their measured
+#   target range. Extrapolation is forbidden.
+#heater_thermal_model_min_ratio: 0.25
+#heater_thermal_model_max_ratio: 4.0
+#   Bounds applied to scheduled plant gain and time constant relative to the
+#   explicit printer.cfg model.
+#heater_thermal_model_max_delay: 60.0
+#   Absolute upper bound in seconds for a scheduled fitted dead time.
 #heater_control_host_timeout: 5.0
-#   Host-silence interval after which a helix_pid controller reports itself
-#   autonomous while retaining its target and PID state. This is liveness
+#   Host-silence interval after which a helix_pid or helix_mpc controller
+#   reports itself autonomous while retaining its target and controller state.
+#   This is liveness
 #   observability, not a PWM refresh deadline. The default is 5 seconds and
 #   must be greater than 1 second.
 #heater_control_autonomous_max_duration: 3600
-#   Maximum seconds that helix_pid may continue after host silence before the
-#   MCU latches the heater off. The firmware represents this as an exact
-#   number of controller samples. The default is 3600 seconds.
+#   Maximum seconds that helix_pid or helix_mpc may continue after host silence
+#   before the MCU latches the heater off. The firmware represents this as an
+#   exact number of controller samples. The default is 3600 seconds.
 #heater_control_sample_deadline:
-#   Maximum interval between local filtered ADC samples before helix_pid
-#   latches the heater off. The default is the greater of 1 second or three
+#   Maximum interval between local filtered ADC samples before an MCU-local
+#   controller latches the heater off. The default is the greater of 1 second
+#   or three
 #   sensor report periods. It must exceed one report period.
 #heater_pid_profile_path: helix_heater_profiles.json
 #   Versioned JSON file used for immutable PID characterization runs. Relative
