@@ -25,7 +25,10 @@ class PrinterADCtoTemperature:
             'adc_stream_software_average', 4, minval=1, maxval=256)
         stream_alpha = config.getfloat(
             'adc_stream_filter_alpha', 1., above=0., maxval=1.)
-        self.mcu_adc.setup_adc_stream_filter(stream_window, stream_alpha)
+        setup_filter = getattr(
+            self.mcu_adc, 'setup_adc_stream_filter', None)
+        if setup_filter is not None:
+            setup_filter(stream_window, stream_alpha)
         self.mcu_adc.setup_adc_callback(self.adc_callback)
         self.diag_helper = HelperTemperatureDiagnostics(
             config, self.mcu_adc, adc_convert.calc_temp)

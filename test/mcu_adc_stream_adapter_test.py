@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "klippy"))
 for dependency in ("serialhdl", "msgproto", "pins", "chelper", "clocksync"):
     sys.modules[dependency] = types.ModuleType(dependency)
 import mcu as MODULE
+from extras import adc_scaled
 
 
 SUBSCRIBE_FORMAT = (
@@ -268,6 +269,56 @@ def test_per_consumer_firmware_window_and_alpha():
     assert received == [(.3, 2048 / 4095.)]
 
 
+def test_scaled_adc_preserves_stream_configuration_surface():
+    class PhysicalADC:
+        def __init__(self):
+            self.calls = []
+            self.callback = None
+        def setup_adc_sample(self, *args, **kwargs):
+            self.calls.append(('sample', args, kwargs))
+        def setup_adc_stream(self, *args, **kwargs):
+            self.calls.append(('stream', args, kwargs))
+        def setup_adc_stream_filter(self, *args, **kwargs):
+            self.calls.append(('filter', args, kwargs))
+        def setup_adc_callback(self, callback):
+            self.callback = callback
+        def get_mcu(self):
+            return object()
+    class PinMCU:
+        def __init__(self, physical):
+            self.physical = physical
+        def setup_pin(self, pin_type, pin_params):
+            assert pin_type == 'adc'
+            return self.physical
+    class QueryADC:
+        def register_adc(self, name, adc):
+            pass
+    class Printer:
+        def lookup_object(self, name):
+            assert name == 'query_adc'
+            return QueryADC()
+    class Main:
+        def __init__(self, physical):
+            self.mcu = PinMCU(physical)
+            self.printer = Printer()
+            self.name = 'scaled'
+            self.last_vref = (0., 1.)
+            self.last_vssa = (0., 0.)
+
+    physical = PhysicalADC()
+    scaled = adc_scaled.MCU_scaled_adc(Main(physical), {'pin': 'PA2'})
+    scaled.setup_adc_stream(report_class=1)
+    scaled.setup_adc_stream_filter(4, .25)
+    assert physical.calls == [
+        ('stream', (), {'report_class': 1}),
+        ('filter', (4, .25), {}),
+    ]
+    received = []
+    scaled.setup_adc_callback(received.extend)
+    physical.callback([(1., .75)])
+    assert received == [(1., .75)]
+
+
 if __name__ == "__main__":
     test_opted_consumer_uses_one_filtered_dma_subscription()
     test_unsupported_firmware_falls_back_once_to_legacy_adc()
@@ -278,4 +329,5 @@ if __name__ == "__main__":
     test_old_firmware_without_order_metadata_falls_back_safely()
     test_auto_mode_configures_hardware_oversampling_at_native_scale()
     test_per_consumer_firmware_window_and_alpha()
+    test_scaled_adc_preserves_stream_configuration_surface()
     print("PASS: MCU_adc merged DMA adapter and legacy fallback")

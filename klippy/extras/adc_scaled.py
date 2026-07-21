@@ -18,6 +18,12 @@ class MCU_scaled_adc:
         query_adc.register_adc(qname, self._mcu_adc)
         self._callback = None
         self.setup_adc_sample = self._mcu_adc.setup_adc_sample
+        # Preserve the complete MCU ADC capability surface through the scaled
+        # wrapper.  Consumers such as DMA-backed temperature acquisition and
+        # MCU-local heater control must configure the physical ADC, not lose
+        # those controls merely because values are normalized through VREF.
+        self.setup_adc_stream = self._mcu_adc.setup_adc_stream
+        self.setup_adc_stream_filter = self._mcu_adc.setup_adc_stream_filter
         self.get_mcu = self._mcu_adc.get_mcu
     def _handle_callback(self, samples):
         max_adc = self._main.last_vref[1]
