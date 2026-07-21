@@ -17,6 +17,7 @@ config STM32_SELECT
     select HAVE_CHIPID
     select HAVE_STEPPER_OPTIMIZED_BOTH_EDGE if !MACH_STM32H7
     select HAVE_BOOTLOADER_REQUEST
+    select HAVE_CANBOOT_REQUEST
     select HAVE_LIMITED_CODE_SIZE if FLASH_SIZE < 0x10000
     # Parts with a built-in Ethernet MAC (external RMII PHY) - enables
     # the native RMII datagram-console path.  H723 uses the newer Synopsys

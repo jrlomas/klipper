@@ -14,6 +14,7 @@
 #include "autoconf.h" // CONFIG_RAM_START
 #include "board/internal.h" // NVIC_SystemReset
 #include "board/irq.h" // irq_disable
+#include "board/misc.h" // bootloader_request
 #include "command.h" // DECL_COMMAND_FLAGS
 #include "generic/armcm_reset.h" // try_request_canboot
 #include "generic/bootentry.h" // INTENTPROTO_BOOT_REQ_ADDR
@@ -51,13 +52,17 @@ command_enter_bootloader(uint32_t *args)
     SCB_CleanDCache_by_Addr((void *)req, sizeof(*req));
 #endif
 
-    // Katapult/CanBoot compatibility: if a CanBoot bootloader is
-    // installed instead, this stamps its request signature so existing
-    // host "request bootloader" tooling reaches it. A no-op when no
-    // CanBoot bootloader is present.
+    // Katapult/CanBoot compatibility is distinct from a board's native
+    // bootloader entry mechanism.  Targets which link the CanBoot request
+    // helper stamp its signature and reset normally, giving the first-class
+    // request precedence.  Other targets (notably ATSAM) enter their native
+    // ROM bootloader instead.
+#if CONFIG_HAVE_CANBOOT_REQUEST
     try_request_canboot();
-
     NVIC_SystemReset();
+#else
+    bootloader_request();
+#endif
 }
 DECL_COMMAND_FLAGS(command_enter_bootloader, HF_IN_SHUTDOWN,
                    "enter_bootloader force=%c");
