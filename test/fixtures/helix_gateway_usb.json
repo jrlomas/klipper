@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "captured": "2026-07-21",
+  "source": "live FK723M1-ZGT6 and STM32G0B1 composite bridges",
+  "device": {
+    "vid": 7504,
+    "pid": 24687,
+    "manufacturer": "OpenAMS",
+    "product": "Helix CAN-FD Bridge",
+    "device_class": 239,
+    "device_subclass": 2,
+    "device_protocol": 1,
+    "interfaces": 3,
+    "configuration_length": 93,
+    "interface_layout": [
+      {"number": 0, "class": 255, "endpoints": [2, 129]},
+      {"number": 1, "class": 2, "endpoints": [131]},
+      {"number": 2, "class": 10, "endpoints": [4, 133]}
+    ]
+  },
+  "socketcan": {
+    "mtu": 72,
+    "nominal_bitrate": 1000000,
+    "data_bitrate": 8000000,
+    "controller_clock": 80000000,
+    "fd": true,
+    "error_counters": {
+      "restarts": 0,
+      "bus_errors": 0,
+      "arbitration_lost": 0,
+      "error_warning": 0,
+      "error_passive": 0,
+      "bus_off": 0,
+      "rx_errors": 0,
+      "rx_dropped": 0,
+      "tx_errors": 0,
+      "tx_dropped": 0
+    }
+  },
+  "gateway_status": {
+    "schema_version": 1,
+    "rx_error": 0,
+    "tx_error": 0,
+    "tx_retries": 0,
+    "rx_queue_drops": 0,
+    "rx_queue_highwater": 0,
+    "rx_queue_depth": 0,
+    "hw_rx_frames": 0,
+    "host_forwarded_frames": 0
+  }
+}

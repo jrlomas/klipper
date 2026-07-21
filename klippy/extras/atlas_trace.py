@@ -295,6 +295,10 @@ class AtlasTrace:
         self.printer.register_event_handler(
             "klippy:disconnect", self._disconnect)
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
+        self.printer.register_event_handler(
+            "helix_can:status", self._gateway_status)
+        self.printer.register_event_handler(
+            "helix_can:incident", self._gateway_incident)
         gcode = self.printer.lookup_object("gcode")
         gcode.register_command(
             "ATLAS_TRACE_STATUS", self.cmd_ATLAS_TRACE_STATUS,
@@ -324,6 +328,30 @@ class AtlasTrace:
         for link in self.links.values():
             link.query()
         return eventtime + self.query_interval
+
+    def _gateway_status(self, status):
+        """Persist versioned fabric health without manufacturing incidents."""
+        self.writer.write({
+            "schema_version": status.get("schema_version", 1),
+            "kind": "gateway_status",
+            "machine_time": None,
+            "source": "gateway/%s" % status.get("name", "unknown"),
+            "severity": "info",
+            "summary": "CAN gateway status generation=%s profile=%s" % (
+                status.get("generation", 0), status.get("profile", "unknown")),
+            "fields": dict(status),
+        })
+
+    def _gateway_incident(self, incident):
+        self.writer.write({
+            "schema_version": 1,
+            "kind": "gateway_incident",
+            "machine_time": None,
+            "source": "gateway/%s" % incident.get("bus", "unknown"),
+            "severity": "error",
+            "summary": str(incident.get("kind", "gateway fault")),
+            "fields": dict(incident),
+        })
 
     def record_execution(self, mcu_obj, record):
         """Persist one MCU execution-log record on the machine-time axis."""

@@ -22,9 +22,11 @@ sys.path.insert(0, os.path.join(ROOT, 'lib', 'intentproto', 'tools'))
 
 from helix_gateway import (CAN_CONFIG, CAN_CONFIG_COMMIT, CAN_CONFIG_PREPARE,
                            CAN_DELIVERY, CAN_FRAME, SERIAL_DATA, SERVICE_CAN,
-                           SERVICE_SERIAL, PACKET_RESET, RECORD_ERROR,
-                           CanFrame, Packet,
-                           CanConfig, Delivery, Record, Runtime)
+                           SERVICE_CONTROL, SERVICE_SERIAL, PACKET_ACK_ONLY,
+                           PACKET_RESET, RECORD_ERROR, CONTROL_ACK, Ack,
+                           CanFrame, Packet, CanConfig, Delivery,
+                           DeliveryLedger, PacketWindow, Record, Runtime,
+                           DELIVERY_UNKNOWN)
 from udp_bridge import DatagramCodec
 
 
@@ -61,6 +63,8 @@ class GatewayProxy(asyncio.DatagramProtocol):
         self.sequence = 0
         self.cookie = 0
         self.delivery = {}
+        self.delivery_ledger = DeliveryLedger()
+        self.packet_window = PacketWindow(capacity=256)
         self.profile_status = None
         self.profile_replies = {}
         self.profile_records = None
@@ -79,6 +83,7 @@ class GatewayProxy(asyncio.DatagramProtocol):
         self.can.bind((interface,))
         self.serial = serial_channels
         self.runtime = Runtime()
+        self.runtime.register(SERVICE_CONTROL, self._remote_control)
         self.runtime.register(SERVICE_CAN, self._remote_can)
         self.runtime.register(SERVICE_SERIAL, self._remote_serial)
 
@@ -119,6 +124,11 @@ class GatewayProxy(asyncio.DatagramProtocol):
                 Record(SERVICE_CAN, CAN_CONFIG, cookie=profile_epoch,
                        data=commit.encode()))
             self._send_profile_transaction()
+        asyncio.get_running_loop().call_later(.050, self._retry_packets)
+
+    def _seal(self, raw):
+        return (self.session.encode(raw) if self.session_established
+                else self.codec.encode(raw))
 
     def _send_profile_transaction(self):
         if self.profile_records is None or len(self.profile_replies) == 2:
@@ -133,15 +143,41 @@ class GatewayProxy(asyncio.DatagramProtocol):
     def _send(self, record):
         self._send_records((record,))
 
-    def _send_records(self, records):
+    def _send_records(self, records, flags=0, track=True):
         if self.session is not None and not self.session_established:
             return
         self.sequence += 1
-        flags = PACKET_RESET if self.sequence == 1 else 0
-        raw = Packet(self.epoch, self.sequence, tuple(records), flags).encode()
-        sealed = (self.session.encode(raw) if self.session_established
-                  else self.codec.encode(raw))
+        if self.sequence == 1:
+            flags |= PACKET_RESET
+        packet = Packet(self.epoch, self.sequence, tuple(records), flags)
+        raw = packet.encode()
+        if track:
+            replay_safe = all(
+                record.service == SERVICE_CAN and record.opcode == CAN_CONFIG
+                for record in packet.records)
+            self.packet_window.track(packet, raw, replay_safe)
+        sealed = self._seal(raw)
         self.transport.sendto(sealed, self.board)
+
+    def _send_ack(self, ack):
+        record = Record(SERVICE_CONTROL, CONTROL_ACK, flags=1,
+                        cookie=ack.sequence, data=ack.encode())
+        self._send_records((record,), flags=PACKET_ACK_ONLY, track=False)
+
+    def _retry_packets(self):
+        if not self.io_active:
+            return
+        retries, unknown = self.packet_window.due()
+        for raw in retries:
+            self.transport.sendto(self._seal(raw), self.board)
+        for item in unknown:
+            for record in item['packet'].records:
+                if record.service == SERVICE_CAN and record.opcode == CAN_FRAME:
+                    delivery = Delivery(DELIVERY_UNKNOWN, record.cookie,
+                                        error=2)
+                    self.delivery[record.cookie] = delivery
+                    self.delivery_ledger.update(delivery)
+        asyncio.get_running_loop().call_later(.050, self._retry_packets)
 
     def _local_can(self):
         raw = self.can.recv(CANFD.size)
@@ -176,6 +212,7 @@ class GatewayProxy(asyncio.DatagramProtocol):
         if record.opcode == CAN_DELIVERY:
             delivery = Delivery.decode(record.data)
             self.delivery[delivery.cookie] = delivery
+            self.delivery_ledger.update(delivery)
             return
         if record.opcode == CAN_CONFIG:
             config = CanConfig.decode(record.data)
@@ -197,6 +234,12 @@ class GatewayProxy(asyncio.DatagramProtocol):
             raw = CAN_CLASSIC.pack(frame.can_id, len(frame.data),
                                    frame.data.ljust(8, b'\0'))
         self.can.send(raw)
+
+    def _remote_control(self, record):
+        self.runtime.add_credits(SERVICE_CONTROL, 1)
+        if record.opcode != CONTROL_ACK:
+            return
+        self.packet_window.acknowledge(Ack.decode(record.data))
 
     def _remote_serial(self, record):
         self.runtime.add_credits(SERVICE_SERIAL, 1)
@@ -227,7 +270,11 @@ class GatewayProxy(asyncio.DatagramProtocol):
             payloads = self.codec.decode(data)
         for payload in payloads:
             if payload:
-                self.runtime.dispatch(payload)
+                packet = self.runtime.dispatch(payload)
+                if not packet.flags & PACKET_ACK_ONLY:
+                    ack = self.runtime.acknowledgement()
+                    if ack is not None:
+                        self._send_ack(ack)
 
 
 def parse_serial(values):

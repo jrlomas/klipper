@@ -5,6 +5,8 @@ import logging
 import secrets
 import socket
 
+from helix_fabric import CanFabricEndpoint
+
 
 PROFILE_DATA = {
     'CLASSIC_1M': (8, False, 1000000),
@@ -68,6 +70,12 @@ class HelixCANBus:
         self.reactor = self.printer.get_reactor()
         self.name = config.get_name().split()[-1]
         self.interface = config.get('interface', self.name)
+        self.endpoint_backend = config.getchoice(
+            'endpoint_backend', {'af_can': 'af_can',
+                                 'authenticated_udp': 'authenticated_udp'},
+            'af_can')
+        self.endpoint = CanFabricEndpoint(
+            self.name, self.interface, self.endpoint_backend)
         self.nominal_bitrate = config.getint(
             'nominal_bitrate', 1000000, minval=1000000, maxval=1000000)
         preferred = config.get('preferred_profiles',
@@ -101,10 +109,12 @@ class HelixCANBus:
             'rx_queue_highwater': None, 'rx_queue_depth': None,
             'hw_rx_frames': None, 'usb_forwarded_frames': None,
             'handoff_unaccounted': None}
+        self._last_emitted_status = None
         self.time_beacon_us = config.getint(
             'time_beacon_us', 20000, minval=5000, maxval=1000000)
         # The manager replaces this bootstrap value before CAN MCU attach.
         self.active_profile = 'CLASSIC_1M'
+        self.endpoint.activate_profile('CLASSIC_1M', 0)
         self.state = 'bootstrap'
         self.epoch = 0
         self.time_epoch = 0
@@ -126,6 +136,10 @@ class HelixCANBus:
                 "Duplicate board_id %s on HELIX CAN bus %s"
                 % (board_id, self.name))
         self.required_nodes.append(board_id)
+        try:
+            self.endpoint.add_node(board_id)
+        except ValueError as exc:
+            raise self.printer.config_error(str(exc))
     def register_connection(self, connection):
         self.connections.append(connection)
     def get_interface(self):
@@ -182,6 +196,7 @@ class HelixCANBus:
         except Exception:
             pass
         self.active_profile = 'CLASSIC_1M'
+        self.endpoint.activate_profile('CLASSIC_1M', epoch)
         self.state = 'failed'
         self.printer.send_event('helix_can:incident', {
             'bus': self.name, 'kind': 'profile_activation_failed',
@@ -218,6 +233,7 @@ class HelixCANBus:
                                   self.name)
         self._manager_apply(profile)
         self.active_profile = profile
+        self.endpoint.activate_profile(profile, self.epoch)
         self.state = 'maintenance'
         self.time_epoch = 0
         self.printer.send_event('helix_can:profile_changed', {
@@ -363,6 +379,11 @@ class HelixCANBus:
             status['hw_rx_frames'] - accounted) & 0xffffffff
         previous = self.bridge_status
         self.bridge_status = status
+        self.endpoint.update_health(status)
+        endpoint_status = self.endpoint.status()
+        if endpoint_status != self._last_emitted_status:
+            self._last_emitted_status = endpoint_status
+            self.printer.send_event('helix_can:status', endpoint_status)
         grew = []
         for key in ('rx_error', 'rx_queue_drops'):
             prior = previous[key]
@@ -383,6 +404,7 @@ class HelixCANBus:
         selected = self._select_profile()
         if selected == 'CLASSIC_1M':
             self.active_profile = selected
+            self.endpoint.activate_profile(selected, self.epoch)
             self.state = 'active'
             self._start_time_source()
             return
@@ -410,12 +432,17 @@ class HelixCANBus:
                 % (selected, self.name, exc))
         self.active_profile = selected
         self.epoch = epoch
+        self.endpoint.activate_profile(selected, epoch)
+        self.endpoint.set_owner(epoch)
         self.state = 'active'
         self.printer.send_event('helix_can:profile_changed', {
             'bus': self.name, 'profile': selected, 'epoch': epoch})
     def get_status(self, eventtime):
         profile = self.get_connection_profile()
-        return {'interface': self.interface,
+        endpoint = self.endpoint.status()
+        return {'schema_version': endpoint['schema_version'],
+                'endpoint': endpoint,
+                'interface': self.interface,
                 'profile': profile['name'],
                 'nominal_bitrate': self.nominal_bitrate,
                 'data_bitrate': profile['data_bitrate'],

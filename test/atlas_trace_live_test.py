@@ -275,11 +275,33 @@ def test_execution_and_wire_intention_share_machine_time():
               " machine-time axis")
 
 
+def test_gateway_status_and_incident_are_distinct():
+    with tempfile.TemporaryDirectory() as tmp:
+        output = os.path.join(tmp, "trace.jsonl")
+        manager, printer, mcus = _setup(output)
+        printer.events["helix_can:status"]({
+            "schema_version": 1, "name": "helixcan0",
+            "generation": 4, "profile": "FD_8M_BRS",
+            "conservation": {"residual": 0}})
+        printer.events["helix_can:incident"]({
+            "bus": "helixcan0", "kind": "bridge_receive_loss",
+            "status": {"rx_queue_drops": 1}})
+        records = [json.loads(line) for line in
+                   pathlib.Path(output).read_text().splitlines()]
+        assert records[0]["kind"] == "gateway_status"
+        assert records[0]["severity"] == "info"
+        assert records[0]["schema_version"] == 1
+        assert records[1]["kind"] == "gateway_incident"
+        assert records[1]["severity"] == "error"
+        print("PASS: normal gateway health and incidents stay distinct")
+
+
 def main():
     test_configures_and_tolerates_rolling_firmware()
     test_trace_data_renders_and_writes_common_time()
     test_sequence_gaps_and_firmware_drops_are_visible()
     test_execution_and_wire_intention_share_machine_time()
+    test_gateway_status_and_incident_are_distinct()
     print("ALL PASS")
 
 

@@ -72,6 +72,20 @@ static int gateway_emit(uint8_t service, uint8_t opcode, uint16_t channel,
                         uint16_t flags, uint32_t cookie,
                         const uint8_t *data, uint16_t length);
 
+static int
+gateway_emit_ack(void)
+{
+    struct helix_gateway_ack ack;
+    uint8_t data[12];
+    if (helix_gateway_runtime_get_ack(&GatewayRuntime, &ack)
+        || helix_gateway_ack_encode(data, sizeof(data), &ack) < 0)
+        return -1;
+    return gateway_emit(HELIX_GATEWAY_SERVICE_CONTROL,
+                        HELIX_GATEWAY_CONTROL_ACK, 0,
+                        HELIX_GATEWAY_RECORD_REPLY, ack.sequence,
+                        data, sizeof(data));
+}
+
 static uint32_t
 gateway_link_free(void)
 {
@@ -211,6 +225,17 @@ static int
 gateway_control_submit(void *ctx, const struct helix_gateway_record *record)
 {
     (void)ctx;
+    if (record->opcode == HELIX_GATEWAY_CONTROL_ACK) {
+        struct helix_gateway_ack ack;
+        if (helix_gateway_ack_decode(&ack, record->data, record->length) < 0)
+            return -1;
+        // Gateway-originated data packets are intentionally not blindly
+        // replayed.  The ACK still provides explicit loss/accounting evidence
+        // and reserves the wire format for bounded idempotent replies.
+        helix_gateway_runtime_add_credits(&GatewayRuntime,
+                                          HELIX_GATEWAY_SERVICE_CONTROL, 1);
+        return 0;
+    }
     if (record->opcode != HELIX_GATEWAY_CONTROL_CONSOLE
         || GatewayConsoleRxPos + record->length > sizeof(GatewayConsoleRx))
         return -1;
@@ -390,6 +415,7 @@ gateway_flush_link(void)
         uint32_t push = readl((void *)&GatewayLinkTxPush);
         uint32_t offset = HELIX_GATEWAY_HEADER_SIZE;
         uint16_t count = 0;
+        uint8_t ack_only = 1;
         while (pull + count != push) {
             uint32_t pos = (pull + count) % ARRAY_SIZE(GatewayLinkTx);
             struct helix_gateway_record record = {
@@ -405,12 +431,16 @@ gateway_flush_link(void)
                 GatewayWire + offset, sizeof(GatewayWire) - offset, &record);
             if (used < 0)
                 break;
+            if (record.service != HELIX_GATEWAY_SERVICE_CONTROL
+                || record.opcode != HELIX_GATEWAY_CONTROL_ACK)
+                ack_only = 0;
             offset += used;
             count++;
         }
         if (!count)
             return;
         struct helix_gateway_packet packet = {
+            .flags = ack_only ? HELIX_GATEWAY_PACKET_ACK_ONLY : 0,
             .epoch = GatewayRuntime.have_owner ? GatewayRuntime.owner_epoch
                                                : GatewayEpoch,
             .sequence = GatewaySequence + 1, .record_count = count,
@@ -678,7 +708,14 @@ udp_gateway_task(void)
         // an admission/config reply to the first valid packet has a target.
         if (GatewayOps->rx_accepted)
             GatewayOps->rx_accepted(GatewayOpsCtx);
-        helix_gateway_runtime_dispatch(&GatewayRuntime, payload, length);
+        struct helix_gateway_packet packet;
+        if (helix_gateway_packet_decode(&packet, payload, length) < 0)
+            continue;
+        int dispatched = helix_gateway_runtime_dispatch(
+            &GatewayRuntime, payload, length);
+        if (dispatched >= 0
+            && !(packet.flags & HELIX_GATEWAY_PACKET_ACK_ONLY))
+            gateway_emit_ack();
     }
     gateway_dispatch_console();
     gateway_drain_tx_events();
@@ -760,7 +797,7 @@ command_get_gateway_status(uint32_t *args)
     struct udpdg_stats datagram;
     udpdg_get_stats(&datagram);
     sendf("gateway_status epoch=%u tx_packets=%u tx_drops=%u malformed=%u"
-          " stale=%u credit_stalls=%u can_rx=%u can_forwarded=%u"
+          " stale=%u duplicates=%u credit_stalls=%u can_rx=%u can_forwarded=%u"
           " can_drops=%u can_depth=%u can_bus_off=%u admitted=%u"
           " submitted=%u completed=%u failed=%u unknown=%u"
           " submitted_now=%c can_tx_depth=%hu link_tx_depth=%hu"
@@ -768,6 +805,7 @@ command_get_gateway_status(uint32_t *args)
           " auth_failures=%u",
           GatewayEpoch, GatewayTxPackets, GatewayTxDrops,
           GatewayRuntime.stats.malformed, GatewayRuntime.stats.stale_epochs,
+          GatewayRuntime.stats.duplicates,
           GatewayRuntime.stats.credit_stalls, GatewayCanRx.received,
           GatewayCanRx.forwarded, GatewayCanRx.drops,
           can_gateway_queue_depth(&GatewayCanRx), GatewayCanBusOff,

@@ -74,6 +74,11 @@ def test_control_records():
     assert CanConfig.decode(config.encode()) == config
     delivery = Delivery(DELIVERY_COMPLETED, 0xfeedbeef, 12345, 7)
     assert Delivery.decode(delivery.encode()) == delivery
+    ack = Ack(0x10203040, 17, 0x1f)
+    assert Ack.decode(ack.encode()) == ack
+    assert ack.contains(0x10203040, 17)
+    assert ack.contains(0x10203040, 13)
+    assert not ack.contains(0x10203040, 12)
 
 
 def test_runtime():
@@ -89,10 +94,13 @@ def test_runtime():
     runtime.add_credits(SERVICE_SERIAL, 1)
     runtime.dispatch(Packet(7, 3, (Record(SERVICE_SERIAL, SERIAL_DATA,
                                        data=b'c'),)).encode())
-    expect_error(lambda: runtime.dispatch(Packet(7, 3, ()).encode()))
+    runtime.dispatch(Packet(7, 3, ()).encode())
     expect_error(lambda: runtime.dispatch(Packet(8, 4, ()).encode()))
     assert runtime.stats['credit_stalls'] == 1
-    assert runtime.stats['stale_epochs'] == 2
+    assert runtime.stats['duplicates'] == 1
+    assert runtime.stats['stale_epochs'] == 1
+    ack = runtime.acknowledgement()
+    assert ack.epoch == 7 and ack.sequence == 3 and ack.mask & 1
 
     # Sequence comparison is modulo 32 bits, not ordinary integer ordering.
     wrapped = Runtime()
@@ -171,7 +179,8 @@ int main(void) {
   assert(!helix_gateway_runtime_register(&rt, 1, &ops, 0, 1));
   assert(helix_gateway_runtime_dispatch(&rt, wire, 16 + rn) == 1);
   assert(seen == 76 && rt.stats.records == 1);
-  assert(helix_gateway_runtime_dispatch(&rt, wire, 16 + rn) < 0);
+  assert(helix_gateway_runtime_dispatch(&rt, wire, 16 + rn) == 0);
+  assert(seen == 76 && rt.stats.duplicates == 1);
   struct helix_gateway_can_config cfg = {1, 1, 1, 9, 1000000, 8000000}, cfg2;
   uint8_t cfgwire[16];
   assert(helix_gateway_can_config_encode(cfgwire, 16, &cfg) == 16);
@@ -182,6 +191,13 @@ int main(void) {
   assert(helix_gateway_delivery_encode(cfgwire, 16, &dl) == 16);
   assert(helix_gateway_delivery_decode(&dl2, cfgwire, 16) == 16);
   assert(dl2.cookie == 77 && dl2.hw_clock == 88 && dl2.detail == 99);
+  struct helix_gateway_ack ack = {9, 8, 3}, ack2;
+  uint8_t ackwire[12];
+  assert(helix_gateway_ack_encode(ackwire, sizeof(ackwire), &ack) == 12);
+  assert(helix_gateway_ack_decode(&ack2, ackwire, sizeof(ackwire)) == 12);
+  assert(ack2.epoch == 9 && ack2.sequence == 8 && ack2.mask == 3);
+  assert(!helix_gateway_runtime_get_ack(&rt, &ack2));
+  assert(ack2.epoch == 0x10203040 && ack2.sequence == 5);
   return 0;
 }
 '''

@@ -236,3 +236,27 @@ helix_gateway_delivery_decode(struct helix_gateway_delivery *delivery,
     delivery->detail = rd32(data + 12);
     return 16;
 }
+
+int
+helix_gateway_ack_encode(uint8_t *out, uint32_t cap,
+                         const struct helix_gateway_ack *ack)
+{
+    if (!out || !ack || cap < 12 || !(ack->mask & 1))
+        return -1;
+    wr32(out, ack->epoch);
+    wr32(out + 4, ack->sequence);
+    wr32(out + 8, ack->mask);
+    return 12;
+}
+
+int
+helix_gateway_ack_decode(struct helix_gateway_ack *ack,
+                         const uint8_t *data, uint32_t length)
+{
+    if (!ack || !data || length != 12 || !(rd32(data + 8) & 1))
+        return -1;
+    ack->epoch = rd32(data);
+    ack->sequence = rd32(data + 4);
+    ack->mask = rd32(data + 8);
+    return 12;
+}

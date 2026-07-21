@@ -8,6 +8,7 @@ generic stream.
 
 import dataclasses
 import struct
+import time
 
 
 MAGIC = 0x4748
@@ -33,6 +34,7 @@ CONTROL_CONSOLE = 1
 CONTROL_CREDIT = 2
 CONTROL_STATUS = 3
 CONTROL_TAKEOVER = 4
+CONTROL_ACK = 5
 CAN_FRAME = 1
 CAN_CONFIG = 2
 CAN_STATUS = 3
@@ -51,6 +53,8 @@ SERIAL_DATA = 1
 SERIAL_CONFIG = 2
 SERIAL_STATUS = 3
 SERIAL_BREAK = 4
+
+ACK_FORMAT = struct.Struct('<III')
 
 
 class GatewayProtocolError(ValueError):
@@ -229,6 +233,163 @@ class Delivery:
         return cls(state, cookie, clock, detail, error)
 
 
+@dataclasses.dataclass(frozen=True)
+class Ack:
+    """Selective acknowledgement for one gateway owner epoch.
+
+    ``sequence`` is the newest accepted packet and bit zero of ``mask``
+    acknowledges it.  The remaining bits describe the preceding 31 packet
+    sequence numbers.  ACK packets are never themselves acknowledged.
+    """
+    epoch: int
+    sequence: int
+    mask: int = 1
+
+    def encode(self):
+        if not self.mask & 1:
+            raise GatewayProtocolError('ACK mask must include sequence')
+        return ACK_FORMAT.pack(self.epoch, self.sequence, self.mask)
+
+    @classmethod
+    def decode(cls, data):
+        if len(data) != ACK_FORMAT.size:
+            raise GatewayProtocolError('invalid ACK length')
+        ack = cls(*ACK_FORMAT.unpack(data))
+        if not ack.mask & 1:
+            raise GatewayProtocolError('invalid ACK mask')
+        return ack
+
+    def contains(self, epoch, sequence):
+        if epoch != self.epoch:
+            return False
+        distance = (self.sequence - sequence) & 0xffffffff
+        return distance < 32 and bool(self.mask & (1 << distance))
+
+
+class PacketWindow:
+    """Bounded packet accounting with an explicit no-blind-replay policy.
+
+    Idempotent control/status packets may be returned by ``due()`` for a new
+    authenticated outer encoding.  Packets carrying CAN, serial, or console
+    data become UNKNOWN on timeout instead of being replayed and possibly
+    actuating twice.  Upper HELIX/Klipper ARQ remains responsible for those
+    data streams.
+    """
+    def __init__(self, capacity=32, retry_after=.100, max_attempts=4,
+                 clock=None):
+        if capacity < 1 or retry_after <= 0 or max_attempts < 1:
+            raise ValueError('invalid packet window geometry')
+        self.capacity = capacity
+        self.retry_after = retry_after
+        self.max_attempts = max_attempts
+        self.clock = clock or time.monotonic
+        self.pending = {}
+        self.stats = {name: 0 for name in (
+            'tracked', 'acked', 'retransmitted', 'unknown', 'overflow')}
+
+    def track(self, packet, raw, replay_safe=False):
+        key = (packet.epoch, packet.sequence)
+        if key in self.pending:
+            raise GatewayProtocolError('packet already tracked')
+        if len(self.pending) >= self.capacity:
+            self.stats['overflow'] += 1
+            raise GatewayProtocolError('packet acknowledgement window full')
+        self.pending[key] = {
+            'packet': packet, 'raw': bytes(raw), 'safe': bool(replay_safe),
+            'attempts': 1, 'deadline': self.clock() + self.retry_after}
+        self.stats['tracked'] += 1
+
+    def acknowledge(self, ack):
+        removed = []
+        for key in tuple(self.pending):
+            if ack.contains(*key):
+                removed.append(self.pending.pop(key))
+        self.stats['acked'] += len(removed)
+        return removed
+
+    def due(self, now=None):
+        now = self.clock() if now is None else now
+        retries, unknown = [], []
+        for key, item in tuple(self.pending.items()):
+            if now < item['deadline']:
+                continue
+            if item['safe'] and item['attempts'] < self.max_attempts:
+                item['attempts'] += 1
+                item['deadline'] = now + self.retry_after
+                retries.append(item['raw'])
+                self.stats['retransmitted'] += 1
+            else:
+                unknown.append(self.pending.pop(key))
+                self.stats['unknown'] += 1
+        return retries, unknown
+
+    def reset(self):
+        unknown = list(self.pending.values())
+        self.pending.clear()
+        self.stats['unknown'] += len(unknown)
+        return unknown
+
+
+class DeliveryLedger:
+    """Cookie-correlated CAN delivery state and conservation accounting."""
+    TERMINAL = frozenset((DELIVERY_COMPLETED, DELIVERY_FAILED,
+                          DELIVERY_UNKNOWN))
+    TRANSITIONS = {
+        None: frozenset((DELIVERY_ADMITTED, DELIVERY_FAILED,
+                         DELIVERY_UNKNOWN)),
+        DELIVERY_ADMITTED: frozenset((DELIVERY_SUBMITTED, DELIVERY_FAILED,
+                                      DELIVERY_UNKNOWN)),
+        DELIVERY_SUBMITTED: TERMINAL,
+    }
+
+    def __init__(self, capacity=4096):
+        self.capacity = capacity
+        self.states = {}
+        self.counts = {state: 0 for state in range(
+            DELIVERY_ADMITTED, DELIVERY_UNKNOWN + 1)}
+        self.invalid_transitions = 0
+
+    def update(self, delivery):
+        old = self.states.get(delivery.cookie)
+        if old in self.TERMINAL:
+            if old == delivery.state:
+                return False
+            self.invalid_transitions += 1
+            raise GatewayProtocolError('terminal delivery state changed')
+        if delivery.state not in self.TRANSITIONS.get(old, ()):
+            self.invalid_transitions += 1
+            raise GatewayProtocolError('invalid delivery transition')
+        if old is None and len(self.states) >= self.capacity:
+            raise GatewayProtocolError('delivery ledger full')
+        self.states[delivery.cookie] = delivery.state
+        self.counts[delivery.state] += 1
+        return True
+
+    def mark_nonterminal_unknown(self):
+        changed = []
+        for cookie, state in tuple(self.states.items()):
+            if state not in self.TERMINAL:
+                self.update(Delivery(DELIVERY_UNKNOWN, cookie))
+                changed.append(cookie)
+        return changed
+
+    def snapshot(self):
+        current = {state: 0 for state in range(
+            DELIVERY_ADMITTED, DELIVERY_UNKNOWN + 1)}
+        for state in self.states.values():
+            current[state] += 1
+        admitted = len(self.states)
+        terminal = sum(current[state] for state in self.TERMINAL)
+        inflight = admitted - terminal
+        return {'schema_version': 1, 'admitted': admitted,
+                'inflight': inflight, 'terminal': terminal,
+                'completed': current[DELIVERY_COMPLETED],
+                'failed': current[DELIVERY_FAILED],
+                'unknown': current[DELIVERY_UNKNOWN],
+                'residual': admitted - terminal - inflight,
+                'invalid_transitions': self.invalid_transitions}
+
+
 class Runtime:
     """Host/test implementation of the firmware dispatcher contract."""
     def __init__(self, credits=64):
@@ -240,7 +401,8 @@ class Runtime:
         self.stats = {name: 0 for name in (
             'packets', 'records', 'stale_epochs', 'malformed',
             'unknown_services', 'credit_stalls', 'service_errors',
-            'takeovers')}
+            'takeovers', 'duplicates')}
+        self.received_mask = 0
 
     def register(self, service, callback, credits=None):
         if service in self.services or not 0 <= service < MAX_SERVICES:
@@ -252,6 +414,7 @@ class Runtime:
     def set_owner(self, epoch):
         self.owner_epoch = epoch
         self.last_sequence = None
+        self.received_mask = 0
         self.stats['takeovers'] += 1
 
     def add_credits(self, service, count):
@@ -268,8 +431,12 @@ class Runtime:
                 and packet.epoch != self.owner_epoch):
             self.set_owner(packet.epoch)
         delta = (packet.sequence - (self.last_sequence or 0)) & 0xffffffff
+        if (packet.epoch == self.owner_epoch and self.last_sequence is not None
+                and not delta):
+            self.stats['duplicates'] += 1
+            return packet
         if packet.epoch != self.owner_epoch or (self.last_sequence is not None
-                and (not delta or delta > 0x7fffffff)):
+                and delta > 0x7fffffff):
             self.stats['stale_epochs'] += 1
             raise GatewayProtocolError('stale epoch or replayed sequence')
         needed = {}
@@ -282,6 +449,11 @@ class Runtime:
             if needed[record.service] > self.credits.get(record.service, 0):
                 self.stats['credit_stalls'] += 1
                 raise GatewayProtocolError('service is out of credits')
+        if self.last_sequence is None or delta >= 32:
+            self.received_mask = 1
+        else:
+            self.received_mask = ((self.received_mask << delta) | 1) \
+                & 0xffffffff
         self.last_sequence = packet.sequence
         self.stats['packets'] += 1
         for record in packet.records:
@@ -295,3 +467,9 @@ class Runtime:
                 raise
             self.stats['records'] += 1
         return packet
+
+    def acknowledgement(self):
+        if self.owner_epoch is None or self.last_sequence is None:
+            return None
+        return Ack(self.owner_epoch, self.last_sequence,
+                   self.received_mask or 1)

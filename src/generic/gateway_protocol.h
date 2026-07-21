@@ -37,6 +37,7 @@ enum helix_gateway_control_opcode {
     HELIX_GATEWAY_CONTROL_CREDIT = 2,
     HELIX_GATEWAY_CONTROL_STATUS = 3,
     HELIX_GATEWAY_CONTROL_TAKEOVER = 4,
+    HELIX_GATEWAY_CONTROL_ACK = 5,
 };
 
 enum helix_gateway_can_opcode {
@@ -112,6 +113,12 @@ struct helix_gateway_delivery {
     uint32_t detail;
 };
 
+struct helix_gateway_ack {
+    uint32_t epoch;
+    uint32_t sequence;
+    uint32_t mask;
+};
+
 int helix_gateway_packet_encode(uint8_t *out, uint32_t cap,
                                 const struct helix_gateway_packet *packet);
 int helix_gateway_packet_decode(struct helix_gateway_packet *packet,
@@ -136,5 +143,9 @@ int helix_gateway_delivery_encode(
 int helix_gateway_delivery_decode(
     struct helix_gateway_delivery *delivery,
     const uint8_t *data, uint32_t length);
+int helix_gateway_ack_encode(uint8_t *out, uint32_t cap,
+                             const struct helix_gateway_ack *ack);
+int helix_gateway_ack_decode(struct helix_gateway_ack *ack,
+                             const uint8_t *data, uint32_t length);
 
 #endif

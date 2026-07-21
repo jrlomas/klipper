@@ -32,6 +32,7 @@ helix_gateway_runtime_set_owner(struct helix_gateway_runtime *runtime,
 {
     runtime->owner_epoch = epoch;
     runtime->last_sequence = 0;
+    runtime->received_mask = 0;
     runtime->have_sequence = 0;
     runtime->have_owner = 1;
     runtime->stats.takeovers++;
@@ -71,9 +72,13 @@ helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
             && packet.epoch != runtime->owner_epoch))
         helix_gateway_runtime_set_owner(runtime, packet.epoch);
     uint32_t delta = packet.sequence - runtime->last_sequence;
+    if (packet.epoch == runtime->owner_epoch && runtime->have_sequence
+        && !delta) {
+        runtime->stats.duplicates++;
+        return 0;
+    }
     if (packet.epoch != runtime->owner_epoch
-        || (runtime->have_sequence
-            && (!delta || delta > 0x7fffffffu))) {
+        || (runtime->have_sequence && delta > 0x7fffffffu)) {
         runtime->stats.stale_epochs++;
         return -1;
     }
@@ -107,6 +112,10 @@ helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
         runtime->stats.malformed++;
         return -1;
     }
+    if (!runtime->have_sequence || delta >= 32)
+        runtime->received_mask = 1;
+    else
+        runtime->received_mask = (runtime->received_mask << delta) | 1;
     runtime->last_sequence = packet.sequence;
     runtime->have_sequence = 1;
     runtime->stats.packets++;
@@ -127,4 +136,16 @@ helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
         offset += used;
     }
     return count;
+}
+
+int
+helix_gateway_runtime_get_ack(const struct helix_gateway_runtime *runtime,
+                              struct helix_gateway_ack *ack)
+{
+    if (!runtime || !ack || !runtime->have_owner || !runtime->have_sequence)
+        return -1;
+    ack->epoch = runtime->owner_epoch;
+    ack->sequence = runtime->last_sequence;
+    ack->mask = runtime->received_mask ? runtime->received_mask : 1;
+    return 0;
 }

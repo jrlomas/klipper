@@ -27,11 +27,13 @@ struct helix_gateway_runtime_stats {
     uint32_t credit_stalls;
     uint32_t service_errors;
     uint32_t takeovers;
+    uint32_t duplicates;
 };
 
 struct helix_gateway_runtime {
     uint32_t owner_epoch;
     uint32_t last_sequence;
+    uint32_t received_mask;
     uint8_t have_owner, have_sequence;
     struct helix_gateway_service_slot services[HELIX_GATEWAY_MAX_SERVICES];
     struct helix_gateway_runtime_stats stats;
@@ -48,5 +50,7 @@ void helix_gateway_runtime_add_credits(struct helix_gateway_runtime *runtime,
                                        uint8_t service, uint16_t credits);
 int helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
                                    const uint8_t *packet, uint32_t length);
+int helix_gateway_runtime_get_ack(const struct helix_gateway_runtime *runtime,
+                                  struct helix_gateway_ack *ack);
 
 #endif
