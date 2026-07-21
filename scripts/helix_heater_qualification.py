@@ -149,6 +149,9 @@ def main():
             if not control:
                 control = state.get("control_stats", {})
             model = control.get("thermal_model", {})
+            control_band = model.get("control_band", "")
+            if control_band == "" and model.get("control_band_mdeg") != "":
+                control_band = model["control_band_mdeg"] / 1000.
             row = {
                 "elapsed_s": now - started,
                 "temperature_c": state["temperature"],
@@ -179,7 +182,7 @@ def main():
                 "thermal_model_tau_s": model.get("tau", ""),
                 "thermal_model_delay_s": model.get("delay", ""),
                 "thermal_model_horizon_s": model.get("horizon", ""),
-                "thermal_control_band_c": model.get("control_band", ""),
+                "thermal_control_band_c": control_band,
                 "host_predictive_output": control.get(
                     "host_predictive_output", ""),
                 "host_predictive_bias": control.get(

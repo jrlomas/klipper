@@ -376,8 +376,10 @@ commands require `CONFIRM=YES`.
 - [ ] Paired physical `helix_pid` versus `helix_mpc` qualification on the bed.
   - [x] The host-first 75 C open-printer smooth-blend candidate passed its
     promotion gate and compiled fixed-point replay stayed within 0.0001746
-    maximum duty error. The same-target paired PID and MCU physical repeat
-    remain open.
+    maximum duty error. The RP2040 physical repeat then passed with 0.12 C
+    overshoot, 0.227 C steady standard deviation, 0.00178 RMS duty change,
+    zero faults, and a 1.8-percent rise-normalized time difference from host.
+    The same-target paired PID remains open.
 
 `helix_pid` has passed nominal heated operation, physical printing, and
 host-loss continuity; the remaining injected cutoff cases stay explicit above.

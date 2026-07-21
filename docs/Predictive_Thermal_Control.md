@@ -217,6 +217,18 @@ disagreement was 0.0000309. That parity result clears promotion to a single MCU
 physical confirmation; it is not permission to skip the remaining safety
 injection gates.
 
+That MCU confirmation passed on the flashed RP2040 at the same 75 C target and
+open-printer condition. From 50.43 C it became print-ready in 56.13 seconds,
+overshot 0.12 C, held the complete 60-second band, showed 0.227 C steady
+standard deviation and 0.00178 RMS duty change, and reported no faults. The
+host began 1.49 C warmer; normalizing time-to-readiness by the required
+temperature rise gives 2.338 s/C for host and 2.381 s/C for MCU, a 1.8-percent
+difference. The [MCU trace](evidence/heater_control/mcu-predictive-bed75-open-blend-20260720.csv),
+[MCU summary](evidence/heater_control/mcu-predictive-bed75-open-blend-20260720.json),
+and [host/MCU comparison](evidence/heater_control/bed75-open-host-mcu-comparison-20260720.json)
+close the promotion confirmation. Production remains `helix_pid` until the
+same-target paired PID and injected safety gates pass.
+
 `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=HOST TARGET=<C> CONFIRM=YES`
 selects the floating-point predictive law for `control: helix_mpc` and ordinary
 host PID for `control: helix_pid`. The target and output must be zero during a

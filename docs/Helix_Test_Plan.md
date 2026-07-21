@@ -782,7 +782,11 @@ a faster stop — test both the latency and the things polling could not do.
     qualification. Host acceptance must precede this promotion.
     - [x] Physical-envelope host/fixed-point replay passed: maximum duty error
       0.0001746, mean 0.0000309.
-    - [ ] Flash and physically confirm the promoted MCU smooth-blend law.
+    - [x] Firmware `902a7c48` was flashed to the RP2040 and the 75 C open-bed
+      physical confirmation passed: 56.13 s sustained readiness from 50.43 C,
+      0.12 C overshoot, 0.227 C steady standard deviation, 0.00178 RMS duty
+      change, and zero faults. Rise-normalized time differed from the host by
+      1.8 percent. Production remains `helix_pid` pending the parent gates.
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

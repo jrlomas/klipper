@@ -1,0 +1,24 @@
+{
+  "environment": "printer open",
+  "host": {
+    "initial_temperature_c": 51.92,
+    "overshoot_c": 0.24,
+    "ready_rise_c": 22.08,
+    "steady_power_delta_rms": 0.0015201737543607808,
+    "steady_temperature_stddev_c": 0.2349967992608939,
+    "time_per_ready_degree_s": 2.3376367661231816,
+    "time_to_print_s": 51.61501981699985
+  },
+  "mcu": {
+    "initial_temperature_c": 50.43,
+    "overshoot_c": 0.12,
+    "ready_rise_c": 23.57,
+    "steady_power_delta_rms": 0.001776860521311929,
+    "steady_temperature_stddev_c": 0.2267962247472233,
+    "time_per_ready_degree_s": 2.381388447433281,
+    "time_to_print_s": 56.12932570600242
+  },
+  "normalized_time_ratio_mcu_to_host": 1.018716131852759,
+  "result": "MCU physical confirmation passed",
+  "target_c": 75.0
+}
