@@ -169,7 +169,7 @@ config STM32_USB_DOUBLE_BUFFER_TX
     default y
 config HAVE_STM32_CANBUS
     bool
-    default y if MACH_STM32F1 || MACH_STM32F2 || MACH_STM32F4x5 || MACH_STM32F446 || MACH_STM32F0x2
+    default y if MACH_STM32F1 || MACH_STM32F2 || MACH_STM32F4x5 || MACH_STM32F446 || MACH_STM32F7 || MACH_STM32F0x2
 config HAVE_STM32_FDCANBUS
     bool
     default y if MACH_STM32G0B1 || MACH_STM32H7 || MACH_STM32G4
@@ -541,6 +541,15 @@ choice
             RMII PHY as the board's console transport.  No USART/USB/CAN
             console is built.  Configure the board's PHY, reset pin,
             RMII pins, static IP, and PSK under "Ethernet transport".
+    config STM32_ETHERNET_CAN_GATEWAY_RMII
+        bool "Ethernet to CAN/serial Helix gateway via native RMII MAC"
+        depends on HAVE_ETH_MAC && (HAVE_STM32_CANBUS || HAVE_STM32_FDCANBUS)
+        select GATEWAY_RMII
+        select CANBUS
+        help
+            Run the authenticated, typed Helix gateway over native RMII.
+            CAN frames retain message boundaries and CAN-FD metadata; serial
+            channels remain independently flow-controlled byte streams.
 endchoice
 
 config HELIX_USB_CAN_COMPOSITE
@@ -553,7 +562,7 @@ config HELIX_USB_CAN_COMPOSITE
         by a synthetic node on the downstream CAN bus.
 
 choice
-    prompt "CAN bus interface" if USBCANBUS
+    prompt "CAN bus interface" if USBCANBUS || GATEWAY_RMII
     config STM32_CMENU_CANBUS_PB8_PB9
         bool "CAN bus (on PB8/PB9)"
     config STM32_CMENU_CANBUS_PI9_PH13

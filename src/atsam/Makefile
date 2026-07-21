@@ -36,7 +36,8 @@ src-$(CONFIG_USBSERIAL) += $(usb-src-y) atsam/chipid.c generic/usb_cdc.c
 src-$(CONFIG_SERIAL) += atsam/serial.c generic/serial_irq.c
 canbus-src-y := generic/canserial.c ../lib/fast-hash/fasthash.c
 canbus-src-y += atsam/fdcan.c atsam/chipid.c
-src-$(CONFIG_USBCANBUS) += $(canbus-src-y) $(usb-src-y) generic/usb_canbus.c
+src-$(CONFIG_USBCANBUS) += $(canbus-src-y) $(usb-src-y) \
+    generic/usb_canbus.c generic/can_gateway.c
 src-$(CONFIG_CANSERIAL) += $(canbus-src-y) generic/canbus.c
 src-$(CONFIG_MACH_SAM3X) += atsam/adc.c atsam/hard_pwm.c
 src-$(CONFIG_MACH_SAM4)  += atsam/hard_pwm.c

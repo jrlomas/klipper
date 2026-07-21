@@ -28,12 +28,13 @@ udp_console_note_rx(void)
     wakeups++;
 }
 
-static void
+static int
 capture_emit(const uint8_t *frame, uint32_t len)
 {
     emits++;
     emitted_len = len < sizeof(emitted) ? len : sizeof(emitted);
     memcpy(emitted, frame, emitted_len);
+    return 0;
 }
 
 static uint32_t
@@ -74,7 +75,8 @@ main(void)
     uint32_t len_b = make_packet(frame_b, mac_b, 0xc0a8010b, 4200,
                                  payload_b, sizeof(payload_b));
 
-    nano_udp_setup(our_mac, 0xc0a80164, 4950, capture_emit);
+    nano_udp_setup(our_mac, 0xc0a80164, 4950, capture_emit,
+                   udp_console_note_rx);
 
     // IPv4 unicast for another station is ignored before parsing.
     frame_b[0] ^= 1;

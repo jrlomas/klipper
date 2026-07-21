@@ -94,6 +94,7 @@ class HelixCANBus:
         self.bridge_is_primary = config.getboolean(
             'bridge_is_primary', False)
         self.bridge_status_cmd = self.bridge_status_timer = None
+        self.bridge_status_forwarded = 'usb_forwarded_frames'
         self.bridge_status = {
             'rx_error': None, 'tx_error': None, 'tx_retries': None,
             'bus_state': None, 'rx_queue_drops': None,
@@ -326,11 +327,22 @@ class HelixCANBus:
         if not params['enabled'] or params['epoch'] != self.time_epoch:
             raise self.printer.config_error(
                 'Composite CAN bridge refused hardware time source')
-        self.bridge_status_cmd = bridge.lookup_query_command(
-            'get_usb_canbus_status',
-            'usb_canbus_status rx_error=%u tx_error=%u tx_retries=%u'
-            ' bus_state=%u rx_queue_drops=%u rx_queue_highwater=%hu'
-            ' rx_queue_depth=%hu hw_rx_frames=%u usb_forwarded_frames=%u')
+        common = (' rx_error=%u tx_error=%u tx_retries=%u bus_state=%u'
+                  ' rx_queue_drops=%u rx_queue_highwater=%hu'
+                  ' rx_queue_depth=%hu hw_rx_frames=%u')
+        gateway_response = ('can_gateway_status transport=%c' + common
+                            + ' host_forwarded_frames=%u')
+        check_response = getattr(bridge, 'check_valid_response', None)
+        if check_response is not None and check_response(gateway_response):
+            self.bridge_status_cmd = bridge.lookup_query_command(
+                'get_can_gateway_status', gateway_response)
+            self.bridge_status_forwarded = 'host_forwarded_frames'
+        else:
+            self.bridge_status_cmd = bridge.lookup_query_command(
+                'get_usb_canbus_status',
+                'usb_canbus_status' + common
+                + ' usb_forwarded_frames=%u')
+            self.bridge_status_forwarded = 'usb_forwarded_frames'
         if self.bridge_status_timer is None:
             self.bridge_status_timer = self.reactor.register_timer(
                 self._query_bridge_status, self.reactor.NOW)
@@ -340,7 +352,10 @@ class HelixCANBus:
         except Exception:
             return eventtime + 1.
         status = {key: params[key] for key in self.bridge_status
-                  if key != 'handoff_unaccounted'}
+                  if key not in ('handoff_unaccounted',
+                                 'usb_forwarded_frames')}
+        status['usb_forwarded_frames'] = params[
+            self.bridge_status_forwarded]
         accounted = (status['usb_forwarded_frames']
                      + status['rx_queue_drops']
                      + status['rx_queue_depth']) & 0xffffffff

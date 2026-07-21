@@ -94,6 +94,7 @@ for TEST in \
     test/flash_usb_test.py \
     test/helix_can_manager_test.py \
     test/helix_can_profile_test.py \
+    test/helix_gateway_test.py \
     test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
     test/pause_resume_recovery_test.py \

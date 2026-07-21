@@ -29,7 +29,7 @@ canbus-src-y := lpc176x/can.c lpc176x/chipid.c generic/canserial.c
 canbus-src-y += ../lib/fast-hash/fasthash.c
 src-$(CONFIG_CANSERIAL) += $(canbus-src-y) generic/canbus.c
 src-$(CONFIG_USBCANBUS) += $(canbus-src-y) lpc176x/usbserial.c
-src-$(CONFIG_USBCANBUS) += generic/usb_canbus.c
+src-$(CONFIG_USBCANBUS) += generic/usb_canbus.c generic/can_gateway.c
 src-$(CONFIG_WANT_HARD_PWM) += lpc176x/hard_pwm.c
 
 # Build the additional bin output file

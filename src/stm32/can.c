@@ -67,7 +67,7 @@
  #define CAN_FUNCTION  GPIO_FUNCTION(9)  // Alternative function mapping number
 #endif
 
-#if CONFIG_MACH_STM32F4
+#if CONFIG_MACH_STM32F4 || CONFIG_MACH_STM32F7
  #if (CONFIG_STM32_CANBUS_PA11_PA12 || CONFIG_STM32_CANBUS_PB8_PB9 \
      || CONFIG_STM32_CANBUS_PD0_PD1 || CONFIG_STM32_CANBUS_PI9_PH13)
   #define SOC_CAN CAN1
@@ -84,7 +84,7 @@
   #define CAN_TX_IRQn   CAN2_TX_IRQn
   #define CAN_SCE_IRQn  CAN2_SCE_IRQn
  #else
-  #error Uknown pins for STMF32F4 CAN
+  #error Unknown pins for STM32F4/F7 CAN
  #endif
 
  #define CAN_FUNCTION  GPIO_FUNCTION(9) // Alternative function mapping number

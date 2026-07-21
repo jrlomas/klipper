@@ -57,14 +57,16 @@ def main():
 
     fdcan = read('src/stm32/fdcan.c')
     bridge = read('src/generic/usb_canbus.c')
+    gateway = read('src/generic/can_gateway.c')
     node = read('src/generic/canserial.c')
     assert 'msg->hw_clock = fdcan_timestamp_to_clock' in fdcan
     assert 'FDCAN_IR_TEFN' in fdcan and 'MSG_RAM.TEF' in fdcan
     assert 'CANMSG_FLAG_TX_EVENT' in bridge
     assert 'command_get_usb_canbus_status' in bridge
-    assert 'UsbCan.canhw_queue_drops++' in bridge
-    assert 'UsbCan.canhw_queue_highwater = depth + 1' in bridge
+    assert 'queue->drops++' in gateway
+    assert 'queue->highwater = depth + 1' in gateway
     assert 'canhw_queue[512]' in bridge
+    assert 'can_gateway_queue_push(&UsbCan.canhw, msg)' in bridge
     assert 'timesync_local_to_clock(local_clock)' in bridge
     assert 'timesync_ingest_can_sample(seq, machine_clock' in node
     assert 'CANBUS_TIME_FOLLOWUP' in node

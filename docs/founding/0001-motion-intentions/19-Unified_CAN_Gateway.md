@@ -1,9 +1,12 @@
 # FD-0001: Unified USB/Ethernet-to-CAN Gateway Architecture
 
-Status: Adopted architecture; extraction of the existing USB bridge core and
-Ethernet gateway implementation are pending. The NUCLEO-F767ZI remains the
-native-Ethernet proof target. The NUCLEO-H723ZG with a CAN FD 7 Click is the
-preferred Ethernet-to-CAN-FD qualification target.
+Status: Workstation implementation in progress. The typed gateway codec,
+bounded runtime, shared CAN queue, authenticated RMII gateway binding,
+SocketCAN/serial host proxy, F767 bxCAN port, and USB compatibility adapter
+are implemented and compile-tested. Ethernet silicon, PTP, and H723 CAN-FD
+qualification remain hardware gates. The NUCLEO-F767ZI remains the
+native-Ethernet proof target; the NUCLEO-H723ZG with a CAN FD 7 Click remains
+the preferred Ethernet-to-CAN-FD qualification target.
 
 This document defines one HELIX CAN gateway architecture with interchangeable
 host links, time sources, and CAN controllers. It extends the CAN FD rules in
@@ -194,6 +197,36 @@ A frame record contains:
 The delivery cookie is not a CAN sequence number. It correlates admission and
 completion events without changing the downstream HELIX wire protocol.
 
+### Implemented version 1 binary layout
+
+All multibyte integers are little-endian. Authentication and the outer
+datagram sequence are supplied by intentproto; the inner sequence and epoch
+prevent a decoded packet from crossing ownership generations or being applied
+twice by the service dispatcher.
+
+| Envelope offset | Width | Field |
+| ---: | ---: | --- |
+| 0 | 2 | magic `HG` (`0x4748` little-endian) |
+| 2 | 1 | version (`1`) |
+| 3 | 1 | packet flags (`RESET`, `ACK_ONLY`) |
+| 4 | 4 | ownership/session epoch |
+| 8 | 4 | packet sequence |
+| 12 | 2 | record count |
+| 14 | 2 | exact record-payload byte count |
+
+Each record begins with a 12-byte header: service, opcode, channel, flags,
+data length, and 32-bit delivery/transaction cookie. Record data is bounded to
+128 bytes. A packet is rejected before any service callback when a header,
+length, service, trailing byte, epoch, sequence, or credit reservation is
+invalid. Version 1 service IDs are `CONTROL=0`, `CAN=1`, and `SERIAL=2`.
+
+A CAN frame record contains a 12-byte CAN header followed by 0–64 payload
+bytes: 32-bit CAN ID, 32-bit hardware clock, byte length, CAN flags, and a
+zero reserved field. The flags preserve FD, BRS, ESI, Tx-event, and timestamp
+semantics from `struct canbus_msg`. Serial records remain bytes on a numbered
+channel; configuration and break are distinct opcodes, so they cannot be
+confused with stream data.
+
 ### Control record
 
 Control records cover:
@@ -243,6 +276,13 @@ into `src/generic/can_gateway_core.[ch]`. The core owns:
 * CAN time-beacon scheduling and follow-up association; and
 * common statistics.
 
+The first extraction is intentionally smaller than the final target. The
+single-producer/single-consumer queue and its accepted/forwarded/drop/highwater
+conservation counters now live in `generic/can_gateway.[ch]` and are used by
+the qualified USB bridge and the network gateway. Profile and two-step-time
+state still live in the USB adapter until the common completion-event model is
+implemented; moving them prematurely would change qualified behavior.
+
 The core is task-context code. CAN and link ISRs publish bounded events and
 wake tasks; they do not perform authentication, protocol negotiation, or
 unbounded routing work.
@@ -276,6 +316,16 @@ It reuses the HELIX datagram session and authentication machinery defined by
 [07-Link_Transport.md](07-Link_Transport.md). CAN records use a separately
 versioned payload type so a console endpoint cannot be confused with a CAN
 gateway endpoint even if both share the same MAC and UDP implementation.
+
+The workstation implementation uses the existing authenticated intentproto
+datagram envelope and the versioned gateway payload above. The first host
+adapter is `scripts/helix_gateway_proxy.py`: it binds ordinary SocketCAN for
+the CAN service and explicitly configured file descriptors for numbered
+serial services. Consequently downstream Klipper nodes retain their real CAN
+identities; the gateway does not invent a downstream UUID. Static-PSK mode is
+implemented now. Rotating-key HostSession binding, delivery acknowledgements,
+multi-record transmit batching, and redundant-host leases remain before the
+network path is safety-qualified.
 
 ### CAN hardware adapter
 
@@ -474,16 +524,21 @@ diagnoses or incidents.
 
 ### Phase 1 — extract the common core
 
-- [ ] Introduce canonical frame, control, delivery, and status types.
-- [ ] Move routing, queues, profiles, accounting, and time-beacon association
-  from `usb_canbus.c` into `can_gateway_core`.
-- [ ] Adapt `gs_usb` to the new core without changing its wire behavior.
-- [ ] Retain status-command and field-name compatibility aliases.
-- [ ] Cross-build and run the complete existing USB/CAN suite.
+- [x] Introduce canonical frame, control, and status types.
+- [x] Extract the bounded CAN RX queue and conservation counters for reuse by
+  USB and Ethernet without changing `gs_usb` descriptors or framing.
+- [x] Retain `get_usb_canbus_status` and `usb_forwarded_frames` compatibility
+  while adding `get_can_gateway_status` and `host_forwarded_frames`.
+- [x] Cross-build the STM32G0B1 USB-to-CAN-FD bridge and run the focused
+  USB/CAN transport, manager, and profile suites.
+- [ ] Extract profiles, delivery completion, and time-beacon association from
+  `usb_canbus.c` after the common completion-event contract is implemented.
 
 ### Phase 2 — host endpoint abstraction
 
-- [ ] Add `CanFabricEndpoint` to the host bus owner.
+- [x] Add a deployable authenticated UDP gateway proxy with typed SocketCAN
+  and serial endpoints, preserving real downstream CAN identities.
+- [ ] Add `CanFabricEndpoint` directly to the Klippy bus owner.
 - [ ] Move common identity/profile/conservation logic out of USB-specific
   branches in `helix_can.py`.
 - [ ] Add versioned common status and Atlas ingestion.
@@ -491,17 +546,25 @@ diagnoses or incidents.
 
 ### Phase 3 — Ethernet gateway protocol
 
-- [ ] Specify exact binary record layouts and version-negotiation rules.
+- [x] Specify and cross-test exact version-1 binary envelope, record, CAN, and
+  serial layouts.
 - [ ] Reuse HostSession authentication, replay, and epoch handling.
 - [ ] Implement batching, acknowledgements, credits, and delivery records.
-- [ ] Build an in-process gateway/host emulator.
-- [ ] Fuzz malformed lengths, flags, epochs, reordered packets, duplicate
+- [x] Implement bounded per-service credits and whole-packet validation before
+  dispatch.
+- [x] Build cross-language C/Python gateway-core fixtures.
+- [x] Test malformed lengths, epochs, replayed packets, service exhaustion,
+  and binary golden vectors.
+- [ ] Fuzz reordered packets, duplicate
   controls, and authentication failures.
 
 ### Phase 4 — F767 Ethernet proof
 
 - [ ] Complete the gates in [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md).
-- [ ] Run the gateway protocol against a simulated CAN core.
+- [x] Port the F767 bxCAN compile path and build the complete RMII gateway
+  image with authenticated datagrams, DMA MAC, typed services, and classic
+  CAN at 1 Mbit/s.
+- [x] Run the gateway protocol against host/C fixtures.
 - [ ] Qualify hardware MAC timestamps, link loss/recovery, DHCP/static
   configuration, authentication, and sustained bidirectional traffic.
 - [ ] Optionally run a Classical-CAN smoke test; do not count it as FD proof.

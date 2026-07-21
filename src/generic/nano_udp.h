@@ -57,7 +57,8 @@ extern const struct udp_console_ops nano_udp_ops;
 // Configure the responder (called by the MAC bring-up).  'emit' is the
 // MAC transmit hook: nano_udp hands it complete ethernet frames.
 void nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
-                    , void (*emit)(const uint8_t *frame, uint32_t len));
+                    , int (*emit)(const uint8_t *frame, uint32_t len)
+                    , void (*notify_rx)(void));
 
 // Feed one received ethernet frame from the MAC.  ARP requests are
 // answered immediately (via emit); UDP datagrams to the listen port are

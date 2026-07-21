@@ -231,7 +231,8 @@ nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
 static uint8_t our_mac[6];
 static uint32_t our_ip;
 static uint16_t our_port;
-static void (*mac_emit)(const uint8_t *frame, uint32_t len);
+static int (*mac_emit)(const uint8_t *frame, uint32_t len);
+static void (*rx_notify)(void);
 
 // Latched peer (only after datagram authentication) and the candidate
 // from the most recently received frame
@@ -247,12 +248,14 @@ static uint8_t rx_full;
 
 void
 nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
-               , void (*emit)(const uint8_t *frame, uint32_t len))
+               , int (*emit)(const uint8_t *frame, uint32_t len)
+               , void (*notify_rx)(void))
 {
     memcpy(our_mac, mac, 6);
     our_ip = ip;
     our_port = listen_port;
     mac_emit = emit;
+    rx_notify = notify_rx;
 }
 
 void
@@ -303,7 +306,8 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     memcpy(rx_payload, payload, plen);
     rx_len = plen;
     rx_full = 1;
-    udp_console_note_rx();
+    if (rx_notify)
+        rx_notify();
 }
 
 static int32_t
@@ -352,6 +356,19 @@ nano_send(void *ctx, const uint8_t *data, uint32_t len)
         nano_send_to(peer_mac, peer_ip, peer_port, data, len);
 }
 
+static int
+nano_send_checked(void *ctx, const uint8_t *data, uint32_t len)
+{
+    (void)ctx;
+    if (!have_peer || !mac_emit)
+        return -1;
+    uint8_t frame[NANO_UDP_OVERHEAD + UDPDG_DATAGRAM_MAX];
+    uint32_t flen = nano_udp_build_frame(frame, sizeof(frame), our_mac,
+                                         peer_mac, our_ip, peer_ip,
+                                         our_port, peer_port, data, len);
+    return flen ? mac_emit(frame, flen) : -1;
+}
+
 static void
 nano_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
@@ -362,6 +379,7 @@ nano_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 const struct udp_console_ops nano_udp_ops = {
     .recv = nano_recv,
     .send = nano_send,
+    .send_checked = nano_send_checked,
     .send_candidate = nano_send_candidate,
     .rx_accepted = nano_rx_accepted,
 };

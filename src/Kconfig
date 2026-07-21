@@ -426,10 +426,12 @@ config HAVE_ETH_MAC
     bool
 config CONSOLE_RMII
     bool
+config GATEWAY_RMII
+    bool
 config WANT_ETHERNET_RMII
     bool
-    default y if CONSOLE_RMII
-if CONSOLE_RMII
+    default y if CONSOLE_RMII || GATEWAY_RMII
+if WANT_ETHERNET_RMII
 config RMII_TRUST_NETWORK
     bool "Run the RMII link unauthenticated (trust_network confession)"
     default n
@@ -491,7 +493,7 @@ config RMII_FEC_PAIR
     help
         Enable fec_k=2. Wired Ethernet normally does not benefit, so
         leave this disabled unless measurements show packet loss.
-endif # CONSOLE_RMII
+endif # WANT_ETHERNET_RMII
 config WANT_NANO_UDP
     bool
     default y if WANT_ETHERNET_RMII
@@ -499,7 +501,10 @@ config WANT_NANO_UDP
 # codec) is shared by every network transport
 config NEED_UDP_CONSOLE
     bool
-    default y if WANT_ETHERNET_W5500 || WANT_ETHERNET_RMII
+    default y if WANT_ETHERNET_W5500 || CONSOLE_RMII
+config NEED_UDP_GATEWAY
+    bool
+    default y if GATEWAY_RMII
 
 menu "Optional features (to reduce code size)"
     depends on HAVE_LIMITED_CODE_SIZE

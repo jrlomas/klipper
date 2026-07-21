@@ -47,7 +47,7 @@ status line records its more precise state.
 | [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md) | NUCLEO-F767ZI native Ethernet, cache-safe DMA, IRQ service, hardware timestamping, DHCP, and ADC streaming | Adopted plan; implementation and board qualification pending |
 | [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Workstation implementation complete; F072/H723/RP2040/ESP32 live gates and RP2040 consumer/restart migration pass; remaining target/waveform/contention fixtures are explicit |
 | [18-Autonomous_Heater_Control.md](18-Autonomous_Heater_Control.md) | Host-configured MCU PID and predictive thermal control, guarded characterization, local safety, and host-loss continuity | PID physically qualified; predictive controller implemented and workstation-tested, with paired physical gates remaining |
-| [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One CAN gateway core with USB and Ethernet host links, transport-independent time sources, exact delivery accounting, and Ethernet-to-CAN-FD qualification | Adopted architecture; core extraction and Ethernet gateway implementation pending |
+| [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One typed gateway runtime with USB and Ethernet host links, CAN and serial services, transport-independent time sources, and exact delivery accounting | Workstation core/proxy/RMII implementation compile-tested; Ethernet/PTP/H723 hardware gates pending |
 
 ## Reading order
 

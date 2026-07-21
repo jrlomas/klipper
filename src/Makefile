@@ -50,6 +50,9 @@ src-$(CONFIG_WANT_BOOTLOADER) += bootloader_entry.c
 # datagram glue (udp_console.c + the C++ intentproto codec, wired in the
 # port Makefile) is pulled by NEED_UDP_CONSOLE.
 src-$(CONFIG_NEED_UDP_CONSOLE) += generic/udp_console.c
+src-$(CONFIG_NEED_UDP_GATEWAY) += generic/udp_gateway.c \
+    generic/gateway_protocol.c generic/gateway_runtime.c \
+    generic/can_gateway.c
 # Serial console framing v2 (BCH). The C++ frame_v2 shim + the BCH codec
 # objects are wired in the port Makefiles (like the datagram glue).
 src-$(CONFIG_WANT_CONSOLE_FRAMING_V2) += generic/console_v2.c

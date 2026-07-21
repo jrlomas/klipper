@@ -101,7 +101,8 @@ usbcan-console-src-$(CONFIG_HELIX_USB_CAN_COMPOSITE) := \
     generic/usb_local_console.c
 src-$(CONFIG_USBCANBUS) += $(usb-src-y) $(canhw-src-y) $(usbcan-console-src-y)
 src-$(CONFIG_USBCANBUS) += stm32/chipid.c generic/usb_canbus.c \
-    $(usb-sof-src-y)
+    generic/can_gateway.c $(usb-sof-src-y)
+src-$(CONFIG_GATEWAY_RMII) += $(canhw-src-y)
 src-$(CONFIG_WANT_HARD_PWM) += stm32/hard_pwm.c
 src-$(CONFIG_HAVE_GPIO_SDIO) += stm32/sdio.c
 src-$(CONFIG_MACH_STM32G0) += stm32/comp.c
@@ -118,7 +119,7 @@ src-$(CONFIG_WANT_ETHERNET_RMII) += stm32/eth_mac.c
 # The intentproto C++ codec is pulled in by the datagram console (Ethernet)
 # and/or the serial console framing v2 (BCH). Both need datagram.o + bch.o +
 # hmac.o; udp_datagram.o is Ethernet-only, framing_v2.o is console-v2-only.
-ifneq ($(filter y,$(CONFIG_NEED_UDP_CONSOLE) $(CONFIG_WANT_CONSOLE_FRAMING_V2)),)
+ifneq ($(filter y,$(CONFIG_NEED_UDP_CONSOLE) $(CONFIG_NEED_UDP_GATEWAY) $(CONFIG_WANT_CONSOLE_FRAMING_V2)),)
 CXX = $(CROSS_PREFIX)g++
 w5500-cxxflags := $(CFLAGS-y) -mthumb -D$(MCU_UPPER) \
 	-iquote $(OUT) -iquote src/generic -Ilib/intentproto/include \
@@ -131,7 +132,7 @@ ifeq ($(CONFIG_WANT_DATAGRAM_SESSION),y)
 OBJS_klipper.elf += $(OUT)lib/intentproto/src/session_sec.o \
 	$(OUT)lib/intentproto/src/sha512.o
 endif
-ifeq ($(CONFIG_NEED_UDP_CONSOLE),y)
+ifneq ($(filter y,$(CONFIG_NEED_UDP_CONSOLE) $(CONFIG_NEED_UDP_GATEWAY)),)
 OBJS_klipper.elf += $(OUT)src/generic/udp_datagram.o
 $(OUT)src/generic/udp_datagram.o: src/generic/udp_datagram.cpp $(OUT)autoconf.h
 	@echo "  Compiling (C++) $@"

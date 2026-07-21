@@ -40,7 +40,11 @@
 #include "sched.h" // DECL_TASK
 #include "internal.h" // gpio_peripheral, ETH
 #include "generic/nano_udp.h" // nano_udp_input
+#if CONFIG_GATEWAY_RMII
+#include "generic/udp_gateway.h"
+#else
 #include "generic/udp_console.h" // udp_console_init
+#endif
 
 static uint8_t eth_mac_addr[6];
 static uint8_t eth_psk[64];
@@ -110,6 +114,10 @@ ETH_IRQHandler(void)
     if (status & ETH_DMASR_RS)
         eth_publish_ready();
     sched_wake_task(&eth_wake);
+#if CONFIG_GATEWAY_RMII
+    if (status & ETH_DMASR_TS)
+        udp_gateway_note_rx();
+#endif
 }
 
 /****************************************************************
@@ -372,16 +380,16 @@ eth_mac_init(void)
  ****************************************************************/
 
 // The MAC transmit hook handed to nano_udp (or lwIP's low_level_output)
-static void
+static int
 eth_mac_emit(const uint8_t *frame, uint32_t len)
 {
     if (!eth_ready || !eth_link_up)
-        return;
+        return -1;
     struct eth_desc *d = &tx_ring[tx_idx];
     if (d->status & ETH_DESC_OWN)
-        return; // ring full - drop; the frame layer's ARQ recovers
+        return -1; // ring full - checked callers retain/retry
     if (len > ETH_BUF_SZ)
-        return;
+        return -1;
     memcpy(&tx_buf[tx_idx * ETH_BUF_SZ], frame, len);
     d->control = len & 0x1FFF;
     __DMB(); // publish buffer + descriptor fields before DMA ownership
@@ -391,6 +399,7 @@ eth_mac_emit(const uint8_t *frame, uint32_t len)
     // Kick the transmit DMA out of any suspended state
     ETH->DMASR = ETH_DMASR_TBUS;
     ETH->DMATPDR = 0;
+    return 0;
 }
 
 // Poll the rx ring for CPU-owned descriptors and pump frames through
@@ -502,13 +511,21 @@ DECL_COMMAND_FLAGS(command_eth_mac_get_status, HF_IN_SHUTDOWN,
 void
 console_sendf(const struct command_encoder *ce, va_list args)
 {
+#if CONFIG_GATEWAY_RMII
+    udp_gateway_sendf(ce, args);
+#else
     udp_console_sendf(ce, args);
+#endif
 }
 
 void *
 console_receive_buffer(void)
 {
+#if CONFIG_GATEWAY_RMII
+    return udp_gateway_get_rx_buf();
+#else
     return udp_console_get_rx_buf();
+#endif
 }
 
 void
@@ -525,13 +542,23 @@ eth_mac_setup(void)
         return;
     eth_mac_address_init();
     nano_udp_setup(eth_mac_addr, CONFIG_RMII_IP, CONFIG_RMII_UDP_PORT,
-                   eth_mac_emit);
+                   eth_mac_emit,
+#if CONFIG_GATEWAY_RMII
+                   udp_gateway_note_rx
+#else
+                   udp_console_note_rx
+#endif
+                   );
     if (eth_mac_init() < 0)
         return; // link down; nothing to report it on (this is the console)
-#if CONFIG_RMII_FEC_PAIR
+#if CONFIG_RMII_FEC_PAIR && !CONFIG_GATEWAY_RMII
     udp_console_set_fec_k(2);
 #endif
+#if CONFIG_GATEWAY_RMII
+    udp_gateway_init(&nano_udp_ops, NULL, eth_psk, psk_len);
+#else
     udp_console_init(&nano_udp_ops, NULL, eth_psk, psk_len);
+#endif
 }
 DECL_INIT(eth_mac_setup);
 
