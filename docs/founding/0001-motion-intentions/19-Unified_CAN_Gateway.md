@@ -641,8 +641,11 @@ remain open until the Ethernet board arrives.
 
 ### Phase 7 — optional Linux projection and redundancy
 
-- [x] Add an optional `vcan`/real-UDP diagnostic lab; it is a test projection,
-  not a second production ownership path.
+- [x] Add and run an optional `vcan`/real-UDP diagnostic lab. On 2026-07-21
+  `helixvcan0` sent and received the exact Classical-CAN witness while the
+  paired 2,000-packet UDP fault campaign retained unique actuation and exact
+  authentication-failure accounting. It is a test projection, not a second
+  production ownership path.
 - [ ] Decide from measured operational needs whether a kernel netdevice driver
   is warranted for exact rtnetlink semantics.
 - [ ] Qualify read-only observers, lease expiry, planned takeover, and

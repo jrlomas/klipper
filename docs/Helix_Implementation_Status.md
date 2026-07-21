@@ -202,7 +202,8 @@ pass.
   conservation, deterministic queue/bus-off/Tx-event/restart faults, a
   200,000-mutation ASAN/UBSAN run, and a real localhost UDP campaign with
   deliberate loss, corruption, duplication, and reordering pass without
-  duplicate actuation.
+  duplicate actuation. The same lab also passed a real PF_CAN send/receive
+  witness on the disposable `helixvcan0` interface.
   Native RMII additionally has epoch-based atomic `printer.cfg` provisioning
   and a bounded DHCP client covering acquire/renew/rebind/expire/NAK/static
   fallback. A cross-language four-timestamp record and host robust
