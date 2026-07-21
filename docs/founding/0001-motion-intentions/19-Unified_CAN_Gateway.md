@@ -2,8 +2,8 @@
 
 Status: Adopted architecture; extraction of the existing USB bridge core and
 Ethernet gateway implementation are pending. The NUCLEO-F767ZI remains the
-native-Ethernet proof target. The STM32H735G-DK is the preferred integrated
-Ethernet-to-CAN-FD qualification target.
+native-Ethernet proof target. The NUCLEO-H723ZG with a CAN FD 7 Click is the
+preferred Ethernet-to-CAN-FD qualification target.
 
 This document defines one HELIX CAN gateway architecture with interchangeable
 host links, time sources, and CAN controllers. It extends the CAN FD rules in
@@ -62,44 +62,69 @@ The F767 is consequently not the full gateway qualification target and should
 not acquire an external CAN controller merely to make the Ethernet proof more
 complicated.
 
-### STM32H735G-DK: preferred integrated qualification target
+### NUCLEO-H723ZG plus CAN FD 7 Click: preferred qualification target
 
-The STM32H735G-DK is the preferred first complete Ethernet-to-CAN-FD gateway:
+The NUCLEO-H723ZG is the preferred first complete Ethernet-to-CAN-FD gateway
+when paired with a MikroElektronika CAN FD 7 Click (`MIKROE-5888`):
 
 * native 10/100 Ethernet with IEEE 1588 capability;
-* three native FDCAN controllers;
-* three on-board CAN-FD physical interfaces/transceivers;
-* an RJ45 connector and integrated STLINK-V3E; and
+* native FDCAN exposed by the Nucleo headers;
+* an RJ45 connector and integrated STLINK-V3E;
+* no unused display, external memory, audio, or user-interface hardware; and
 * sufficient CPU, SRAM, DMA, cache, and MPU resources to stress both sides at
   once without making the evaluation board the bottleneck.
 
-The board's CAN interfaces are non-isolated. The qualification harness must
-share signal ground, use correct two-end 120-ohm termination, and must not
-connect two independently grounded high-energy machines without isolation.
+The Click board contains a TI TCAN1462-Q1 transceiver, not a second CAN
+controller. The H723's native FDCAN peripheral therefore retains message-RAM,
+Tx Event, timestamp, filtering, and error-state ownership. The transceiver is
+rated for Classical CAN and CAN FD through 8 Mbit/s and includes signal
+improvement capability (SIC), which increases margin against ringing and
+unterminated stubs at high data rates. It provides 3.3/5 V logic selection,
+standby control, an optional 120-ohm terminator, a DE-9 connector, and an
+external CAN header.
 
-The fitted MCP2562FD-family transceiver is specified for CAN FD up to 8 Mbit/s,
-which matches HELIX's current fastest profile. Pin sharing and solder-bridge
-settings must be recorded in the board preset; the first gateway test uses one
-CAN channel only.
+The electrical connection is deliberately simple:
+
+| NUCLEO-H723ZG | CAN FD 7 Click | Meaning |
+| --- | --- | --- |
+| selected `FDCAN_TX` alternate-function pin | `TXD` | controller to transceiver |
+| selected `FDCAN_RX` alternate-function pin | `RXD` | transceiver to controller |
+| `5V` | `5V` | transceiver supply |
+| `3V3` | `3V3` / VIO selected to 3.3 V | logic-level reference |
+| `GND` | `GND` | mandatory signal reference |
+| GPIO or ground | `STB` | high for standby; low for normal operation |
+| n/a | `CANH`, `CANL` | physical bus pair |
+
+The labels `TX` and `RX` on mikroBUS material describe raw transceiver logic
+signals; firmware must route an FDCAN peripheral to them, not a UART. The
+board preset fixes the exact H723 alternate-function pins only after the
+Nucleo schematic/header route is verified on the received board.
+
+This add-on is non-isolated. The qualification harness must share signal
+ground, use correct two-end 120-ohm termination, and must not connect two
+independently grounded high-energy machines without isolation. Enable the
+Click's terminator only when it is one physical end of the bus; the EBB36 or
+FPS at the other end supplies the second termination.
 
 Primary hardware references:
 
+* [NUCLEO-H723ZG product page](https://www.st.com/en/evaluation-tools/nucleo-h723zg.html)
+* [NUCLEO-H723ZG schematic](https://www.st.com/resource/en/schematic_pack/mb1364-h723zg-e01_schematic.pdf)
+* [CAN FD 7 Click product page](https://www.mikroe.com/can-fd-7-click)
+* [TCAN1462-Q1 product page](https://www.ti.com/product/TCAN1462-Q1)
+
+### STM32H735G-DK: integrated alternative
+
+The STM32H735G-DK remains a useful integrated alternative. It includes
+Ethernet, three FDCAN controllers, and three CAN-FD-compliant transceiver
+channels on one board, but it also carries an LCD, external memories, audio,
+and other peripherals irrelevant to this gateway. It is preferable only when
+minimum wiring matters more than cost and board simplicity.
+
+References:
+
 * [STM32H735G-DK product page](https://www.st.com/en/evaluation-tools/stm32h735g-dk.html)
-* [STM32H735G-DK data brief](https://www.st.com/resource/en/data_brief/stm32h735g-dk.pdf)
 * [STM32H735G-DK user manual](https://www.st.com/resource/en/user_manual/um2679-discovery-kit-with-stm32h735ig-mcu-stmicroelectronics.pdf)
-* [STM32H735 MCU family](https://www.st.com/en/microcontrollers-microprocessors/stm32h735ig.html)
-* [MCP2562FD product page](https://www.microchip.com/en-us/product/mcp2562fd)
-
-### NUCLEO-H723ZG: modular alternative
-
-The NUCLEO-H723ZG is the lower-cost alternative when an external CAN-FD
-transceiver module is acceptable. It provides Ethernet, native FDCAN pins, an
-RJ45 connector, and ST-LINK, but the CAN-FD header is a logic-level controller
-interface rather than a complete physical CAN port. It is useful for custom
-transceiver experiments, isolation experiments, and eventual board-design
-work; it is not as convenient for the first end-to-end gateway proof.
-
-Reference: [NUCLEO-H723ZG product page](https://www.st.com/en/evaluation-tools/nucleo-h723zg.html).
 
 ## Architectural decomposition
 
@@ -481,13 +506,13 @@ diagnoses or incidents.
   configuration, authentication, and sustained bidirectional traffic.
 - [ ] Optionally run a Classical-CAN smoke test; do not count it as FD proof.
 
-### Phase 5 — H735 integrated bridge
+### Phase 5 — H723 Ethernet-to-CAN-FD bridge
 
-- [ ] Add an STM32H735G-DK board preset and persistent CI configuration.
+- [ ] Add a NUCLEO-H723ZG gateway preset and persistent CI configuration.
 - [ ] Port/verify Ethernet DMA, MPU arena, MAC timestamps, and FDCAN message
-  RAM on the H735.
-- [ ] Verify the selected onboard CAN channel, solder bridges, termination,
-  transceiver mode, and controller timing at `FD_1M_NOBRS`.
+  RAM on the H723.
+- [ ] Verify H723 pin routing, the CAN FD 7 Click's VIO and standby settings,
+  termination, and controller timing at `FD_1M_NOBRS`.
 - [ ] Run the same gateway protocol and core used on the F767/USB targets.
 - [ ] Qualify 2, 5, and 8 Mbit/s BRS profiles against compatible nodes.
 
