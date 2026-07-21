@@ -292,13 +292,21 @@ class HelixCANBus:
             response += (
                 "\n  node %s: bus=%s rx_error=%s tx_error=%s retries=%s"
                 " fifo_overruns=%s protocol_errors=%s fifo_highwater=%s"
+                " fifo0(overruns/highwater)=%s/%s"
+                " fifo1(overruns/highwater)=%s/%s service_max_ticks=%s"
                 % (mcu_name, format_node_counter(node, 'bus_state'),
                    format_node_counter(node, 'rx_error'),
                    format_node_counter(node, 'tx_error'),
                    format_node_counter(node, 'tx_retries'),
                    format_node_counter(node, 'rx_fifo_overruns'),
                    format_node_counter(node, 'rx_protocol_errors'),
-                   format_node_counter(node, 'rx_fifo_highwater')))
+                   format_node_counter(node, 'rx_fifo_highwater'),
+                   format_node_counter(node, 'rx_fifo0_overruns'),
+                   format_node_counter(node, 'rx_fifo0_highwater'),
+                   format_node_counter(node, 'rx_fifo1_overruns'),
+                   format_node_counter(node, 'rx_fifo1_highwater'),
+                   format_node_counter(node,
+                                       'rx_service_max_delay_ticks')))
         gcmd.respond_info(response)
     def _start_time_source(self):
         if self.bridge_mcu is None:

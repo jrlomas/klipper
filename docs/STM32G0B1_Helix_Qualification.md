@@ -689,6 +689,24 @@ Live on-board gate after flashing a `WANT_SELF_TEST` build:
 HELIX_SELF_TEST MCU=ebb36
 ```
 
+Exercise the partitioned FDCAN receive path without moving or heating:
+
+```text
+HELIX_CAN_RX_STRESS MCU=ebb36 ITERATIONS=500 HOLD_US=2000
+HELIX_CAN_STATUS BUS=helixcan0
+```
+
+The final 2026-07-21 EBB36 image
+`5383b0a9-dirty-20260721_010324-linuxathena` (flash verification SHA
+`14281554836FC343FE956CA45E3D9D00BB0CD6F7`) completed 500 full-credit bursts
+in 2.027 seconds. Both FIFO high-water marks reached two while per-FIFO
+overrun, protocol-error, retransmit, invalid-byte, and SocketCAN drop counters
+remained zero. The maximum start-of-frame-to-service interval was 152,153
+ticks (2.377 ms including frame wire time). The firmware caps `HOLD_US` at
+2000; a characterization run at 5 ms retained receive isolation but crossed
+Klipper's late-timer safety boundary and is not an accepted field-test
+setting.
+
 Computation-only rate sweep on a self-test firmware image:
 
 ```shell
@@ -720,8 +738,9 @@ non-zero when the requested set intentionally includes the rejected 32x case.
   print and a long soak. The completed cubes qualify repeatable coordinated
   XY, Z, and extrusion at the active V0 limits; they do not yet establish the
   high-speed/deep-queue or 24-hour gates.
-- Repeat the toolhead qualification over CAN for the V2.4. USB success proves
-  the protocol and solver but not CAN physical-layer behavior.
+- Repeat the V0's successful CAN toolhead qualification on the V2.4 wiring and
+  workload. V0 CAN success proves the protocol and present physical link, not
+  the V2.4 installation.
 - Measure GPIO edges with a logic analyzer if an external timing reference is
   required; the present proof uses V1 comparison, fixed-point replay, and the
   MCU's own timer/flight log.

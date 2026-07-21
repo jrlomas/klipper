@@ -16,6 +16,7 @@
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
 #include <string.h> // memset
+#include "board/irq.h" // irq_save
 #include "board/misc.h" // timer_read_time, crc16_ccitt
 #include "command.h" // DECL_COMMAND
 #include "sched.h" // sched_shutdown
@@ -190,6 +191,39 @@ command_run_self_test(uint32_t *args)
     sendf("self_test_result id=%c status=%c value=%u", id, status, value);
 }
 DECL_COMMAND(command_run_self_test, "run_self_test id=%c");
+
+// Controlled receive-path stress primitive.  It recreates a bounded motion
+// critical section without touching GPIO or live trajectory state.  The
+// accompanying host diagnostic queues this record and two near-maximum no-op
+// records, exercising the three-frame receive credit while time/control
+// traffic continues independently.  Keep the hard cap short enough that this
+// can never become a general-purpose interrupt blocker.
+void
+command_self_test_irq_hold(uint32_t *args)
+{
+    uint32_t duration = args[0];
+    uint32_t max_duration = timer_from_us(2000);
+    if (duration > max_duration)
+        duration = max_duration;
+    // Decode the padding so this command occupies its own CAN-FD record.
+    (void)args[1];
+    (void)command_decode_ptr(args[2]);
+    irqstatus_t flag = irq_save();
+    uint32_t end = timer_read_time() + duration;
+    while (timer_is_before(timer_read_time(), end))
+        ;
+    irq_restore(flag);
+}
+DECL_COMMAND(command_self_test_irq_hold,
+             "self_test_irq_hold duration=%u padding=%*s");
+
+void
+command_self_test_rx_nop(uint32_t *args)
+{
+    (void)args[0];
+    (void)command_decode_ptr(args[1]);
+}
+DECL_COMMAND(command_self_test_rx_nop, "self_test_rx_nop padding=%*s");
 
 #if CONFIG_WANT_TRAJECTORY
 // Computation-only trajectory throughput probe.  This exercises the real

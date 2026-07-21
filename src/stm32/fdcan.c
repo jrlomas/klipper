@@ -264,11 +264,16 @@ canhw_send(struct canbus_msg *msg)
     return len;
 }
 
+enum {
+    FDCAN_FILTER_FIFO0 = 1,
+    FDCAN_FILTER_FIFO1 = 2,
+};
+
 static void
-can_filter(uint32_t index, uint32_t id)
+can_filter(uint32_t index, uint32_t id, uint32_t fifo)
 {
     MSG_RAM.FLS[index] = ((0x2 << 30) // Classic filter
-                          | (0x1 << 27) // Store in Rx FIFO 0 if filter matches
+                          | (fifo << 27)
                           | (id << 16)
                           | 0x7FF); // mask all enabled
 }
@@ -287,12 +292,15 @@ canhw_set_filter(uint32_t id)
     /* Enable configuration change */
     SOC_CAN->CCCR |= FDCAN_CCCR_CCE;
 
-    // Load filter
-    can_filter(0, CANBUS_ID_ADMIN);
-    can_filter(1, CANBUS_ID_TIME_SYNC);
-    can_filter(2, CANBUS_ID_TIME_FOLLOWUP);
-    can_filter(3, id);
-    can_filter(4, id + 1);
+    // Keep the credit-controlled serial data stream in FIFO0.  Route the
+    // independent admin, time-transfer, and conflict/control traffic through
+    // FIFO1 so it cannot consume the data stream's three hardware slots while
+    // a trajectory critical section temporarily defers this IRQ.
+    can_filter(0, CANBUS_ID_ADMIN, FDCAN_FILTER_FIFO1);
+    can_filter(1, CANBUS_ID_TIME_SYNC, FDCAN_FILTER_FIFO1);
+    can_filter(2, CANBUS_ID_TIME_FOLLOWUP, FDCAN_FILTER_FIFO1);
+    can_filter(3, id, FDCAN_FILTER_FIFO0);
+    can_filter(4, id + 1, FDCAN_FILTER_FIFO1);
 
 #if CONFIG_MACH_STM32G0 || CONFIG_MACH_STM32G4
     SOC_CAN->RXGFC = ((id ? 5 : 3) << FDCAN_RXGFC_LSS_Pos
@@ -312,6 +320,9 @@ canhw_set_filter(uint32_t id)
 static struct {
     uint32_t rx_error, tx_error;
     uint32_t rx_fifo_overruns, rx_protocol_errors, rx_fifo_highwater;
+    uint32_t rx_fifo0_overruns, rx_fifo1_overruns;
+    uint32_t rx_fifo0_highwater, rx_fifo1_highwater;
+    uint32_t rx_service_max_delay_ticks;
 } CAN_Errors;
 
 static void
@@ -356,6 +367,11 @@ canhw_get_status(struct canbus_status *status)
     uint32_t fifo_overruns = CAN_Errors.rx_fifo_overruns;
     uint32_t protocol_errors = CAN_Errors.rx_protocol_errors;
     uint32_t fifo_highwater = CAN_Errors.rx_fifo_highwater;
+    uint32_t fifo0_overruns = CAN_Errors.rx_fifo0_overruns;
+    uint32_t fifo1_overruns = CAN_Errors.rx_fifo1_overruns;
+    uint32_t fifo0_highwater = CAN_Errors.rx_fifo0_highwater;
+    uint32_t fifo1_highwater = CAN_Errors.rx_fifo1_highwater;
+    uint32_t service_max_delay = CAN_Errors.rx_service_max_delay_ticks;
     irq_restore(flag);
 
     status->rx_error = rx_error;
@@ -364,6 +380,11 @@ canhw_get_status(struct canbus_status *status)
     status->rx_fifo_overruns = fifo_overruns;
     status->rx_protocol_errors = protocol_errors;
     status->rx_fifo_highwater = fifo_highwater;
+    status->rx_fifo0_overruns = fifo0_overruns;
+    status->rx_fifo1_overruns = fifo1_overruns;
+    status->rx_fifo0_highwater = fifo0_highwater;
+    status->rx_fifo1_highwater = fifo1_highwater;
+    status->rx_service_max_delay_ticks = service_max_delay;
     if (psr & FDCAN_PSR_BO)
         status->bus_state = CANBUS_STATE_OFF;
     else if (psr & FDCAN_PSR_EP)
@@ -374,64 +395,112 @@ canhw_get_status(struct canbus_status *status)
         status->bus_state = 0;
 }
 
+static void
+fdcan_read_rx_element(struct fdcan_fifo *rx, struct canbus_msg *msg)
+{
+    uint32_t ids = rx->id_section;
+    if (ids & FDCAN_XTD)
+        msg->id = (ids & 0x1fffffff) | CANMSG_ID_EFF;
+    else
+        msg->id = (ids >> 18) & 0x7ff;
+    msg->id |= ids & FDCAN_RTR ? CANMSG_ID_RTR : 0;
+    uint32_t ctl = rx->dlc_section;
+    msg->hw_clock = fdcan_timestamp_to_clock(ctl & 0xffff);
+    msg->flags |= CANMSG_FLAG_HW_TIMESTAMP;
+    msg->dlc = canbus_dlc_to_len((ctl >> 16) & 0x0f);
+    if (ctl & FDCAN_FDF)
+        msg->flags |= CANMSG_FLAG_FD;
+    if (ctl & FDCAN_BRS)
+        msg->flags |= CANMSG_FLAG_BRS;
+    if (ids & FDCAN_ESI)
+        msg->flags |= CANMSG_FLAG_ESI;
+    fdcan_ram_read(msg->data, rx->data, msg->dlc);
+
+    // The hardware timestamp marks start of frame, so this includes the wire
+    // time as well as interrupt deferral and receive-copy time.  It is still a
+    // conservative and directly comparable bound on receive service latency.
+    uint32_t service_delay = timer_read_time() - msg->hw_clock;
+    if (service_delay > CAN_Errors.rx_service_max_delay_ticks)
+        CAN_Errors.rx_service_max_delay_ticks = service_delay;
+}
+
+static void
+fdcan_drain_fifo0(void)
+{
+    for (uint_fast8_t drained = 0;
+         drained < ARRAY_SIZE(MSG_RAM.RXF0); drained++) {
+        uint32_t status = SOC_CAN->RXF0S;
+        uint32_t fill = ((status & FDCAN_RXF0S_F0FL_Msk)
+                         >> FDCAN_RXF0S_F0FL_Pos);
+        if (fill > CAN_Errors.rx_fifo0_highwater)
+            CAN_Errors.rx_fifo0_highwater = fill;
+        if (fill > CAN_Errors.rx_fifo_highwater)
+            CAN_Errors.rx_fifo_highwater = fill;
+        if (!fill)
+            break;
+        uint32_t idx = ((status & FDCAN_RXF0S_F0GI_Msk)
+                        >> FDCAN_RXF0S_F0GI_Pos);
+        struct canbus_msg msg = {};
+        fdcan_read_rx_element(&MSG_RAM.RXF0[idx], &msg);
+        barrier();
+        SOC_CAN->RXF0A = idx;
+        canbus_process_data(&msg);
+    }
+}
+
+static void
+fdcan_drain_fifo1(void)
+{
+    for (uint_fast8_t drained = 0;
+         drained < ARRAY_SIZE(MSG_RAM.RXF1); drained++) {
+        uint32_t status = SOC_CAN->RXF1S;
+        uint32_t fill = ((status & FDCAN_RXF1S_F1FL_Msk)
+                         >> FDCAN_RXF1S_F1FL_Pos);
+        if (fill > CAN_Errors.rx_fifo1_highwater)
+            CAN_Errors.rx_fifo1_highwater = fill;
+        if (fill > CAN_Errors.rx_fifo_highwater)
+            CAN_Errors.rx_fifo_highwater = fill;
+        if (!fill)
+            break;
+        uint32_t idx = ((status & FDCAN_RXF1S_F1GI_Msk)
+                        >> FDCAN_RXF1S_F1GI_Pos);
+        struct canbus_msg msg = {};
+        fdcan_read_rx_element(&MSG_RAM.RXF1[idx], &msg);
+        barrier();
+        SOC_CAN->RXF1A = idx;
+        canbus_process_data(&msg);
+    }
+}
+
 // This function handles CAN global interrupts
 void
 CAN_IRQHandler(void)
 {
     uint32_t ir = SOC_CAN->IR;
 
-    if (ir & FDCAN_IE_RF0NE) {
+    if (ir & (FDCAN_IR_RF0N | FDCAN_IR_RF0L)) {
         // RF0N is an event flag, not a promise of one queued element. A
         // trajectory critical section may defer this IRQ while all three
         // hardware FIFO slots fill. Clear the event first, then drain the
         // bounded hardware FIFO so an accumulated tail is not stranded until
         // another edge (and eventually overwritten). New arrivals after the
         // clear reassert RF0N and receive another bounded service pass.
-        SOC_CAN->IR = FDCAN_IE_RF0NE;
-        for (uint_fast8_t drained = 0;
-             drained < ARRAY_SIZE(MSG_RAM.RXF0); drained++) {
-            uint32_t rxf0s = SOC_CAN->RXF0S;
-            uint32_t fill = ((rxf0s & FDCAN_RXF0S_F0FL_Msk)
-                             >> FDCAN_RXF0S_F0FL_Pos);
-            if (fill > CAN_Errors.rx_fifo_highwater)
-                CAN_Errors.rx_fifo_highwater = fill;
-            if (!fill)
-                break;
-            // Read and ack data packet
-            uint32_t idx = (rxf0s & FDCAN_RXF0S_F0GI) >> FDCAN_RXF0S_F0GI_Pos;
-            struct fdcan_fifo *rxf0 = &MSG_RAM.RXF0[idx];
-            uint32_t ids = rxf0->id_section;
-            struct canbus_msg msg = {};
-            if (ids & FDCAN_XTD)
-                msg.id = (ids & 0x1fffffff) | CANMSG_ID_EFF;
-            else
-                msg.id = (ids >> 18) & 0x7ff;
-            msg.id |= ids & FDCAN_RTR ? CANMSG_ID_RTR : 0;
-            uint32_t ctl = rxf0->dlc_section;
-            msg.hw_clock = fdcan_timestamp_to_clock(ctl & 0xffff);
-            msg.flags |= CANMSG_FLAG_HW_TIMESTAMP;
-            msg.dlc = canbus_dlc_to_len((ctl >> 16) & 0x0f);
-            if (ctl & FDCAN_FDF)
-                msg.flags |= CANMSG_FLAG_FD;
-            if (ctl & FDCAN_BRS)
-                msg.flags |= CANMSG_FLAG_BRS;
-            if (ids & FDCAN_ESI)
-                msg.flags |= CANMSG_FLAG_ESI;
-            fdcan_ram_read(msg.data, rxf0->data, msg.dlc);
-            barrier();
-            SOC_CAN->RXF0A = idx;
-
-            // Process packet
-            canbus_process_data(&msg);
+        SOC_CAN->IR = FDCAN_IR_RF0N | FDCAN_IR_RF0L;
+        if (ir & FDCAN_IR_RF0L) {
+            CAN_Errors.rx_error++;
+            CAN_Errors.rx_fifo_overruns++;
+            CAN_Errors.rx_fifo0_overruns++;
         }
+        fdcan_drain_fifo0();
     }
-    if (ir & FDCAN_IR_RF0L) {
-        // A lost FIFO element is a lost byte-stream fragment even when the
-        // physical bus itself is error-free. Account it as a receive error so
-        // bridge/node status exposes the transport failure.
-        SOC_CAN->IR = FDCAN_IR_RF0L;
-        CAN_Errors.rx_error++;
-        CAN_Errors.rx_fifo_overruns++;
+    if (ir & (FDCAN_IR_RF1N | FDCAN_IR_RF1L)) {
+        SOC_CAN->IR = FDCAN_IR_RF1N | FDCAN_IR_RF1L;
+        if (ir & FDCAN_IR_RF1L) {
+            CAN_Errors.rx_error++;
+            CAN_Errors.rx_fifo_overruns++;
+            CAN_Errors.rx_fifo1_overruns++;
+        }
+        fdcan_drain_fifo1();
     }
     if (ir & FDCAN_IE_TC) {
         // Tx
@@ -716,6 +785,8 @@ can_init(void)
     /* Setup message RAM addresses */
     uint32_t f0sa = (uint32_t)MSG_RAM.RXF0 - SRAMCAN_BASE;
     SOC_CAN->RXF0C = f0sa | (ARRAY_SIZE(MSG_RAM.RXF0) << FDCAN_RXF0C_F0S_Pos);
+    uint32_t f1sa = (uint32_t)MSG_RAM.RXF1 - SRAMCAN_BASE;
+    SOC_CAN->RXF1C = f1sa | (ARRAY_SIZE(MSG_RAM.RXF1) << FDCAN_RXF1C_F1S_Pos);
     SOC_CAN->RXESC = (7 << FDCAN_RXESC_F1DS_Pos) | (7 << FDCAN_RXESC_F0DS_Pos);
     uint32_t tbsa = (uint32_t)MSG_RAM.TXFIFO - SRAMCAN_BASE;
     SOC_CAN->TXBC = (tbsa
@@ -747,7 +818,8 @@ can_init(void)
     /*##-3- Configure Interrupts #################################*/
     armcm_enable_irq(CAN_IRQHandler, CAN_IT0_IRQn, 1);
     SOC_CAN->ILE = FDCAN_ILE_EINT0;
-    SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_RF0LE | FDCAN_IE_TC
+    SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_RF0LE
+                   | FDCAN_IE_RF1NE | FDCAN_IE_RF1LE | FDCAN_IE_TC
                    | FDCAN_IE_PEDE
                    | FDCAN_IE_PEAE | FDCAN_IE_BOE
                    | FDCAN_IE_TEFNE | FDCAN_IE_TEFLE);

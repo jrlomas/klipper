@@ -57,7 +57,17 @@ mcu is configured to use canbus):
 - `rx_protocol_errors`: STM32 FDCAN receive-side physical/protocol errors,
   separate from FIFO exhaustion.
 - `rx_fifo_highwater`: Highest observed STM32 FDCAN hardware receive FIFO
-  occupancy since boot. The current G0B1 layout has three entries.
+  occupancy since boot across either FIFO. The current G0B1 layout has three
+  entries per FIFO.
+- `rx_fifo0_overruns`, `rx_fifo1_overruns`: Per-FIFO loss attribution. Helix
+  routes the reliable command stream to FIFO0 and asynchronous timing/control
+  traffic to FIFO1.
+- `rx_fifo0_highwater`, `rx_fifo1_highwater`: Highest occupancy observed in
+  each receive traffic plane since boot.
+- `rx_service_max_delay_ticks`: Maximum interval from the FDCAN element's
+  hardware start-of-frame timestamp until firmware copied it. This includes
+  frame wire time, IRQ deferral, and copy time; it is a conservative service
+  bound, not a pure interrupt-latency measurement.
 - `tx_error`: The number of transmit errors detected by the
   micro-controller canbus hardware.
 - `tx_retries`: On rp2XXX, the controller retry count. On STM32 FDCAN HELIX
@@ -73,7 +83,8 @@ mcu is configured to use canbus):
 The rp2XXX implementation always reports `tx_error` as zero and `bus_state`
 as "active". The extended receive diagnostics report `None` on firmware that
 does not advertise them. STM32 FDCAN reports the disaggregated receive path,
-bus state, and stale-buffer cancellations.
+bus state, per-FIFO occupancy/loss, service delay, and stale-buffer
+cancellations. Older firmware falls back to the aggregate diagnostics.
 
 ## helix_can
 

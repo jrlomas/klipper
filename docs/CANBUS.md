@@ -195,6 +195,19 @@ high-water three, and zero drops or unaccounted handoff. SocketCAN remained
 transitions, or bus-offs. This closes the receive-drain print regression at
 the 1 Mbit `FD_1M_NOBRS` profile.
 
+A subsequent long-run audit found a second, rarer node-side boundary: the
+three-frame reliable receive window and independent time/admin frames all used
+the same three-entry FDCAN FIFO. The ISR could drain correctly and still arrive
+too late to recover an overwritten fourth frame. Helix now maps reliable data
+to FIFO0 and timing/control to FIFO1, acknowledges copied entries before
+protocol dispatch, and exposes per-FIFO loss/high-water plus a conservative
+start-of-frame-to-service maximum. A no-motion/no-heater 500-iteration hardware
+stress held EBB36 interrupts for 2 ms while filling the command credit; FIFO0
+and FIFO1 high-water both reached two with zero loss, retransmission, invalid
+bytes, or SocketCAN drops. The conservative service maximum was 152,153 ticks
+(2.377 ms, including frame wire time). The diagnostic command
+`HELIX_CAN_RX_STRESS` is firmware-capped at the proven-safe 2 ms.
+
 After the first coherent resume, continued receive loss caused a second
 extruder underrun and then a delayed software-PWM update triggered `Timer too
 close`. Current Helix firmware applies late software-PWM state promptly while

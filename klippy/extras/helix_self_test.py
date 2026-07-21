@@ -33,6 +33,9 @@ class HelixSelfTest:
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('HELIX_SELF_TEST', self.cmd_HELIX_SELF_TEST,
                                desc=self.cmd_HELIX_SELF_TEST_help)
+        gcode.register_command(
+            'HELIX_CAN_RX_STRESS', self.cmd_HELIX_CAN_RX_STRESS,
+            desc=self.cmd_HELIX_CAN_RX_STRESS_help)
         if self.on_connect:
             self.printer.register_event_handler('klippy:connect',
                                                  self._connect_run)
@@ -132,6 +135,43 @@ class HelixSelfTest:
             raise gcmd.error("Unknown MCU '%s'" % (only,))
         text, _ = self._format(report)
         gcmd.respond_info(text)
+
+    cmd_HELIX_CAN_RX_STRESS_help = (
+        "Exercise a CAN MCU's partitioned receive FIFOs without I/O")
+    def cmd_HELIX_CAN_RX_STRESS(self, gcmd):
+        only = gcmd.get('MCU')
+        iterations = gcmd.get_int('ITERATIONS', 100, minval=1, maxval=1000)
+        hold_us = gcmd.get_int('HOLD_US', 2000, minval=50, maxval=2000)
+        matches = [mcu for _, mcu in self.printer.lookup_objects(module='mcu')
+                   if mcu.get_name() == only]
+        if not matches:
+            raise gcmd.error("Unknown MCU '%s'" % (only,))
+        mcu = matches[0]
+        hold_format = 'self_test_irq_hold duration=%u padding=%*s'
+        if mcu.try_lookup_command(hold_format) is None:
+            raise gcmd.error("MCU '%s' lacks CAN RX stress support" % (only,))
+        hold = mcu.lookup_command(hold_format)
+        nop = mcu.lookup_command('self_test_rx_nop padding=%*s')
+        uptime = mcu.lookup_query_command('get_uptime',
+                                          'uptime high=%u clock=%u')
+        duration = mcu.seconds_to_clock(hold_us / 1000000.)
+        # Forty-four payload bytes make each record too large to share a
+        # 64-byte carrier frame.  Hold plus two nops therefore consume exactly
+        # the protocol's three-frame receive window.
+        padding = bytes(range(44))
+        started = time.monotonic()
+        for _ in range(iterations):
+            hold.send([duration, padding])
+            nop.send([padding])
+            nop.send([padding])
+            # Wait until the three-record burst has executed before repeating;
+            # this preserves the bounded protocol credit under test.
+            uptime.send([])
+        elapsed = time.monotonic() - started
+        gcmd.respond_info(
+            "HELIX CAN RX stress complete: mcu=%s iterations=%d"
+            " hold_us=%d elapsed=%.3fs"
+            % (only, iterations, hold_us, elapsed))
 
     def get_status(self, eventtime):
         out = {}

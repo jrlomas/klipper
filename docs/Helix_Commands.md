@@ -46,6 +46,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | --- | --- |
 | `HELIX_CAN_STATUS BUS=<bus>` | Active profile and rates, transaction/time epochs, required nodes, per-node FIFO/protocol errors, retries, queue occupancy, and accepted-to-forwarded delivery accounting. Counters are cumulative; compare deltas when diagnosing a particular print. |
 | `HELIX_CAN_QUIESCE BUS=<bus> [PROFILE=<classic-profile>]` | Drain motion and place the bus on an allowlisted Classical CAN maintenance profile before stopping Klipper to flash a bridge or node. |
+| `HELIX_CAN_RX_STRESS MCU=<name> [ITERATIONS=100] [HOLD_US=2000]` | No-motion/no-heater field regression for an FDCAN node. Queues the full three-frame command credit while applying a firmware-capped IRQ hold; inspect `HELIX_CAN_STATUS` or `canbus_stats` afterward for per-FIFO loss/high-water. Requires built-in MCU self tests. |
 
 ### MCU-autonomous heater control — `control: helix_pid` / `helix_mpc`
 | Command | Summary |

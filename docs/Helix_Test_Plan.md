@@ -1024,6 +1024,19 @@ Phases 3/7/8 over each real transport.
       236,528 accepted and forwarded, depth zero, high-water three, zero drops,
       and zero unaccounted handoff; SocketCAN likewise retained zero errors,
       drops, missed frames, or bus-state transitions.
+    - [x] Partition the node receive window from asynchronous control traffic.
+      A later long print accumulated seven EBB36 FIFO losses even though bridge
+      conservation remained exact. The three-frame reliable receive credit and
+      time/admin frames had shared the G0B1's three-entry FIFO0. Firmware now
+      routes reliable commands to FIFO0 and timing/control to FIFO1, drains and
+      acknowledges both, and reports per-FIFO counters. On 2026-07-21, 200 live
+      trajectory suites and 500 controlled 2 ms IRQ-mask/full-credit bursts
+      completed in 2.027 seconds with zero FIFO0/FIFO1 overruns, protocol
+      errors, retransmissions, invalid bytes, or SocketCAN drops; both FIFO
+      high-water marks reached two. The measured service maximum was 152,153
+      ticks (2.377 ms including wire time). The field diagnostic is capped at
+      the proven-safe 2 ms because 5 ms intentionally crosses the scheduler's
+      late-timer guard.
   - [ ] **9.2d — Faster transceivers:** after hardware replacement, qualify
     2/5/8 Mbit BRS profiles independently; do not infer them from the 1 Mbit
     result.

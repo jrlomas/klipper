@@ -14,6 +14,15 @@ def read(path):
 
 
 def main():
+    # The protocol permits three command frames outstanding.  A time transfer
+    # independently contributes sync and follow-up frames.  A shared
+    # three-entry FIFO necessarily loses two at the coincident worst case;
+    # separate three-entry FIFOs retain both bounded traffic classes.
+    data_burst, control_burst, fifo_depth = 3, 2, 3
+    assert max(0, data_burst + control_burst - fifo_depth) == 2
+    assert max(0, data_burst - fifo_depth) == 0
+    assert max(0, control_burst - fifo_depth) == 0
+
     legal_lengths = (1, 2, 3, 4, 5, 6, 7, 8,
                      12, 16, 20, 24, 32, 48, 64)
     for total in range(1, 193):
@@ -49,7 +58,7 @@ def main():
     fdcan = read('src/stm32/fdcan.c')
     bridge = read('src/generic/usb_canbus.c')
     node = read('src/generic/canserial.c')
-    assert 'msg.hw_clock = fdcan_timestamp_to_clock' in fdcan
+    assert 'msg->hw_clock = fdcan_timestamp_to_clock' in fdcan
     assert 'FDCAN_IR_TEFN' in fdcan and 'MSG_RAM.TEF' in fdcan
     assert 'CANMSG_FLAG_TX_EVENT' in bridge
     assert 'command_get_usb_canbus_status' in bridge
@@ -67,16 +76,31 @@ def main():
     assert 'SOC_CAN->TXBCR = cancel' in fdcan
     assert 'SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT' in fdcan
     assert 'fdcan_ram_write(txfifo->data' in fdcan
-    assert 'fdcan_ram_read(msg.data' in fdcan
+    assert 'fdcan_ram_read(msg->data' in fdcan
     assert 'memcpy(txfifo->data' not in fdcan
     assert 'SOC_CAN->TXBC &= ~FDCAN_TXBC_TFQM' in fdcan
     assert 'SOC_CAN->TXBTIE = tx_irq_mask' in fdcan
     assert 'SOC_CAN->TXBCIE = tx_irq_mask' in fdcan
     assert 'FDCAN_IE_RF0LE' in fdcan
+    assert 'FDCAN_IE_RF1LE' in fdcan
     assert 'drained < ARRAY_SIZE(MSG_RAM.RXF0)' in fdcan
+    assert 'drained < ARRAY_SIZE(MSG_RAM.RXF1)' in fdcan
+    assert ('can_filter(3, id, FDCAN_FILTER_FIFO0)' in fdcan
+            and 'can_filter(1, CANBUS_ID_TIME_SYNC,' in fdcan)
+    assert 'CAN_Errors.rx_fifo0_overruns++' in fdcan
+    assert 'CAN_Errors.rx_fifo1_overruns++' in fdcan
+    assert 'rx_service_max_delay_ticks' in fdcan
     assert 'CAN_Errors.rx_fifo_overruns++' in fdcan
     assert 'CAN_Errors.rx_protocol_errors++' in fdcan
     assert 'command_get_canbus_diagnostics' in node
+    assert 'command_get_canbus_diagnostics_v2' in node
+    self_test = read('src/self_test.c')
+    assert 'command_self_test_irq_hold' in self_test
+    assert 'timer_from_us(2000)' in self_test
+    assert 'command_self_test_rx_nop' in self_test
+    self_test_host = read('klippy/extras/helix_self_test.py')
+    assert "'HELIX_CAN_RX_STRESS'" in self_test_host
+    assert 'padding = bytes(range(44))' in self_test_host
     assert 'usb_local_check_reboot' in bridge
     assert 'line_coding.dwDTERate == 1200' in bridge
     assert 'CANBUS_RESP_SESSION_RESET' in node

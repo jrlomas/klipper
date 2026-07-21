@@ -13,10 +13,16 @@ class PrinterCANBusStats:
         self.mcu = None
         self.get_canbus_status_cmd = None
         self.get_canbus_diagnostics_cmd = None
+        self.canbus_diagnostics_v2 = False
         self.status = {'rx_error': None, 'tx_error': None, 'tx_retries': None,
                        'bus_state': None, 'rx_fifo_overruns': None,
                        'rx_protocol_errors': None,
-                       'rx_fifo_highwater': None}
+                       'rx_fifo_highwater': None,
+                       'rx_fifo0_overruns': None,
+                       'rx_fifo1_overruns': None,
+                       'rx_fifo0_highwater': None,
+                       'rx_fifo1_highwater': None,
+                       'rx_service_max_delay_ticks': None}
         self.printer.register_event_handler("klippy:connect",
                                             self.handle_connect)
         self.printer.register_event_handler("klippy:shutdown",
@@ -42,7 +48,18 @@ class PrinterCANBusStats:
             "get_canbus_status",
             "canbus_status rx_error=%u tx_error=%u tx_retries=%u"
             " canbus_bus_state=%u")
-        if self.mcu.try_lookup_command("get_canbus_diagnostics") is not None:
+        if (self.mcu.try_lookup_command("get_canbus_diagnostics_v2")
+                is not None):
+            self.canbus_diagnostics_v2 = True
+            self.get_canbus_diagnostics_cmd = self.mcu.lookup_query_command(
+                "get_canbus_diagnostics_v2",
+                "canbus_diagnostics_v2 rx_fifo_overruns=%u"
+                " rx_protocol_errors=%u rx_fifo_highwater=%u"
+                " rx_fifo0_overruns=%u rx_fifo1_overruns=%u"
+                " rx_fifo0_highwater=%u rx_fifo1_highwater=%u"
+                " rx_service_max_delay_ticks=%u")
+        elif self.mcu.try_lookup_command(
+                "get_canbus_diagnostics") is not None:
             self.get_canbus_diagnostics_cmd = self.mcu.lookup_query_command(
                 "get_canbus_diagnostics",
                 "canbus_diagnostics rx_fifo_overruns=%u"
@@ -74,6 +91,8 @@ class PrinterCANBusStats:
                                   & 0xffffffff)
         state = params['canbus_bus_state']
         fifo_overruns = protocol_errors = fifo_highwater = None
+        fifo0_overruns = fifo1_overruns = None
+        fifo0_highwater = fifo1_highwater = service_max_delay = None
         if self.get_canbus_diagnostics_cmd is not None:
             prior_fifo = self.status['rx_fifo_overruns'] or 0
             prior_protocol = self.status['rx_protocol_errors'] or 0
@@ -84,11 +103,29 @@ class PrinterCANBusStats:
                 (diagnostics['rx_protocol_errors'] - prior_protocol)
                 & 0xffffffff)
             fifo_highwater = diagnostics['rx_fifo_highwater']
+            if self.canbus_diagnostics_v2:
+                prior_fifo0 = self.status['rx_fifo0_overruns'] or 0
+                prior_fifo1 = self.status['rx_fifo1_overruns'] or 0
+                fifo0_overruns = prior_fifo0 + (
+                    (diagnostics['rx_fifo0_overruns'] - prior_fifo0)
+                    & 0xffffffff)
+                fifo1_overruns = prior_fifo1 + (
+                    (diagnostics['rx_fifo1_overruns'] - prior_fifo1)
+                    & 0xffffffff)
+                fifo0_highwater = diagnostics['rx_fifo0_highwater']
+                fifo1_highwater = diagnostics['rx_fifo1_highwater']
+                service_max_delay = diagnostics[
+                    'rx_service_max_delay_ticks']
         self.status = {'rx_error': rx, 'tx_error': tx, 'tx_retries': retries,
                        'bus_state': state,
                        'rx_fifo_overruns': fifo_overruns,
                        'rx_protocol_errors': protocol_errors,
-                       'rx_fifo_highwater': fifo_highwater}
+                       'rx_fifo_highwater': fifo_highwater,
+                       'rx_fifo0_overruns': fifo0_overruns,
+                       'rx_fifo1_overruns': fifo1_overruns,
+                       'rx_fifo0_highwater': fifo0_highwater,
+                       'rx_fifo1_highwater': fifo1_highwater,
+                       'rx_service_max_delay_ticks': service_max_delay}
         return self.reactor.monotonic() + 1.
     def stats(self, eventtime):
         status = self.status
@@ -104,6 +141,15 @@ class PrinterCANBusStats:
                     % (status['rx_fifo_overruns'],
                        status['rx_protocol_errors'],
                        status['rx_fifo_highwater']))
+        if status['rx_fifo0_overruns'] is not None:
+            msg += (' rx_fifo0_overruns=%d rx_fifo1_overruns=%d'
+                    ' rx_fifo0_highwater=%d rx_fifo1_highwater=%d'
+                    ' rx_service_max_delay_ticks=%d'
+                    % (status['rx_fifo0_overruns'],
+                       status['rx_fifo1_overruns'],
+                       status['rx_fifo0_highwater'],
+                       status['rx_fifo1_highwater'],
+                       status['rx_service_max_delay_ticks']))
         return (False, msg)
     def get_status(self, eventtime):
         return self.status

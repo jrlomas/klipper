@@ -669,6 +669,49 @@ underrun boundary and completed its end macro without trajectory recovery or
 the 1 Mbit `FD_1M_NOBRS` profile; injected bus faults and faster BRS profiles
 remain separate qualification items.
 
+### Receive-window/FDCAN FIFO partition (2026-07-21)
+
+A later successful long print exposed seven sparse EBB36 FIFO losses despite
+the bounded drain fix above. Bridge conservation remained exact: all 653,122
+frames accepted by the bridge were forwarded, its queue had zero drops and
+zero unaccounted handoff, and SocketCAN reported no loss. The remaining defect
+was a capacity mismatch inside the node, not a slow Linux bridge.
+
+The reliable byte stream advertises a 192-byte receive window, which permits
+three 64-byte command frames to be outstanding. STM32G0/G4 FDCAN provides
+three entries in each receive FIFO. Helix had routed the three-credit command
+stream, two-step time sync/follow-up, administration, and node-control frames
+through FIFO0. A motion critical section may legally defer the FDCAN IRQ; a
+full three-frame data window therefore left no slot for independent control
+traffic. Draining pending entries after the IRQ ran could not recover a frame
+already overwritten by hardware.
+
+The filter layout now treats the two receive FIFOs as separate traffic planes:
+
+- FIFO0 contains only the assigned node's reliable host-to-MCU command stream;
+  its three hardware entries exactly match the protocol's three-frame credit.
+- FIFO1 contains administration, time sync, time follow-up, and assigned
+  ID+1 conflict/control traffic.
+- A single bounded ISR drains and acknowledges both FIFOs. It acknowledges
+  each copied element before protocol dispatch so parsing cannot retain scarce
+  hardware capacity.
+- Diagnostics retain the compatibility aggregate and add per-FIFO overrun and
+  high-water counters plus maximum start-of-frame-to-service ticks.
+
+The no-I/O `HELIX_CAN_RX_STRESS` regression queues three near-maximum command
+records while the MCU masks interrupts for a firmware-capped 2 ms. Five
+hundred iterations on the final 64 MHz EBB36 image
+`5383b0a9-dirty-20260721_010324-linuxathena` (flash verification SHA
+`14281554836FC343FE956CA45E3D9D00BB0CD6F7`) completed in 2.027 seconds.
+Both FIFO high-water marks reached two while FIFO0/FIFO1 overruns, protocol
+errors, retransmissions, invalid bytes, and SocketCAN drops remained zero. The
+maximum start-of-frame-to-service interval was 152,153 ticks (2.377 ms), which
+includes the deliberately injected 2 ms IRQ hold and frame wire time. A
+boundary-only 5 ms experiment also retained zero receive loss but correctly
+tripped Klipper's unrelated late-timer guard; the shipped diagnostic is
+therefore immutably capped at the proven-safe 2 ms. All 200 preceding live
+trajectory-kernel suites also passed with zero receive errors.
+
 On 2026-07-20 a later print exposed an incorrect policy boundary in the first
 implementation: eight recoverable physical FDCAN errors inside 10 ms caused
 `MCU 'canbridge' shutdown: CAN FD protocol error burst`, although the

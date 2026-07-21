@@ -63,6 +63,12 @@ struct canbus_status {
     // Optional receive-path diagnostics. Drivers that do not distinguish
     // these leave them zero; rx_error remains the compatibility aggregate.
     uint32_t rx_fifo_overruns, rx_protocol_errors, rx_fifo_highwater;
+    // FDCAN drivers partition the reliable data stream from asynchronous
+    // timing/control traffic.  These counters expose each hardware FIFO and
+    // the worst start-of-frame to software-service interval.
+    uint32_t rx_fifo0_overruns, rx_fifo1_overruns;
+    uint32_t rx_fifo0_highwater, rx_fifo1_highwater;
+    uint32_t rx_service_max_delay_ticks;
     uint32_t bus_state;
 };
 

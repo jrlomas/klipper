@@ -819,6 +819,26 @@ DECL_COMMAND_FLAGS(command_get_canbus_diagnostics, HF_IN_SHUTDOWN,
                    "get_canbus_diagnostics");
 
 void
+command_get_canbus_diagnostics_v2(uint32_t *args)
+{
+    struct canbus_status status;
+    memset(&status, 0, sizeof(status));
+    canhw_get_status(&status);
+    sendf("canbus_diagnostics_v2 rx_fifo_overruns=%u"
+          " rx_protocol_errors=%u rx_fifo_highwater=%u"
+          " rx_fifo0_overruns=%u rx_fifo1_overruns=%u"
+          " rx_fifo0_highwater=%u rx_fifo1_highwater=%u"
+          " rx_service_max_delay_ticks=%u"
+          , status.rx_fifo_overruns, status.rx_protocol_errors
+          , status.rx_fifo_highwater, status.rx_fifo0_overruns
+          , status.rx_fifo1_overruns, status.rx_fifo0_highwater
+          , status.rx_fifo1_highwater
+          , status.rx_service_max_delay_ticks);
+}
+DECL_COMMAND_FLAGS(command_get_canbus_diagnostics_v2, HF_IN_SHUTDOWN,
+                   "get_canbus_diagnostics_v2");
+
+void
 command_get_can_time_status(uint32_t *args)
 {
     uint32_t age = timer_read_time() - CanData.time_last_rx;
