@@ -3,9 +3,11 @@
 Status: Workstation implementation complete for the first gateway release.
 The typed gateway codec, bounded runtime, shared CAN queue, authenticated RMII
 gateway binding, SocketCAN/serial host proxy, F767 bxCAN port, H723 RMII/FDCAN
-port, and USB compatibility adapter are implemented and compile-tested.
-Ethernet silicon, PTP timestamp discipline, and physical H723 CAN-FD
-qualification remain hardware gates. The NUCLEO-F767ZI remains the
+port, and USB compatibility adapter are implemented and compile-tested. The
+FK723M1-ZGT6 H723 smoke target has also passed live USB-composite, controller
+clock, control-console, and self-test qualification. Ethernet silicon, PTP
+timestamp discipline, and electrical H723 CAN-FD bus qualification remain
+hardware gates. The NUCLEO-F767ZI remains the
 native-Ethernet proof target; the NUCLEO-H723ZG with a CAN FD 7 Click remains
 the preferred Ethernet-to-CAN-FD qualification target.
 
@@ -599,6 +601,12 @@ diagnoses or incidents.
   F767/USB targets into the H723 image.
 - [x] Add the dedicated 80 MHz FDCAN clock domain and cross-build the H723
   USB-OTG composite bridge with exact 1/2/5/8 Mbit/s timing support.
+- [x] Qualify the FK723M1 H723 controller/USB smoke path: mainline `gs_usb`
+  plus CDC-ACM enumerate together, Linux reads back the real 80 MHz FDCAN
+  clock, SocketCAN accepts and reads back the exact 1 Mbit/s nominal / 8 Mbit/s
+  data profile, the control console reports zero queue/error counters, and all
+  five on-board self-tests pass. This is controller and host-interface
+  evidence; the board has no external CAN transceiver and no frames were sent.
 - [ ] Qualify 2, 5, and 8 Mbit/s BRS profiles against compatible nodes.
 
 ### Phase 6 — fault and saturation qualification

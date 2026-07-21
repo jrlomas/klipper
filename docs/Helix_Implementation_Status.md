@@ -199,10 +199,17 @@ pass.
   cross-build; the live `helixcan0` bridge remains error-active after more than
   2.1 million received frames with zero kernel-reported errors or drops. H723
   FDCAN uses a dedicated 80 MHz PLL2Q clock so 1/2/5/8 Mbit/s profiles are
-  exact, and its HS USB core supports the same `gs_usb` plus independent CDC
-  control interface without a fake downstream UUID. Ethernet PHY traffic,
-  hardware MAC/PTP timestamps, and physical 2/5/8 Mbit/s BRS remain explicit
-  hardware gates in
+  exact. A live FK723M1-ZGT6 smoke run verified that Linux reads back that
+  80 MHz controller clock (rather than the 520 MHz CPU clock), and that its HS
+  USB core simultaneously exposes mainline `gs_usb` plus an independent CDC
+  control interface without a fake downstream UUID. The CDC dictionary
+  reported the 520 MHz CPU, CAN-FD with an 8 Mbit/s ceiling, five passing
+  self-tests, and zero gateway queue drops, retries, or bus errors. SocketCAN
+  also accepted and read back an exact 1 Mbit/s nominal / 8 Mbit/s data
+  profile with every controller and kernel error counter at zero. No frames
+  were sent because the board has no transceiver. Ethernet PHY traffic,
+  hardware MAC/PTP timestamps, and electrical 2/5/8 Mbit/s BRS traffic remain
+  explicit hardware gates in
   [FD-0001 doc 19](founding/0001-motion-intentions/19-Unified_CAN_Gateway.md).
 * The authenticated W5500 console has a persistent STM32F407 CI configuration.
   Its SPI command waits and counter reads are bounded, malformed receive

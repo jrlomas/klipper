@@ -191,9 +191,20 @@ enum {
     HS_TX_LOCAL = 4,
 };
 
+static uint32_t CanClockFrequency;
+
+uint32_t __attribute__((weak))
+canhw_get_clock_frequency(void)
+{
+    // Most existing bridge targets derive CAN directly from the MCU clock.
+    // Drivers with a distinct peripheral clock override this hook.
+    return CONFIG_CLOCK_FREQ;
+}
+
 void
 usbcan_init(void)
 {
+    CanClockFrequency = canhw_get_clock_frequency();
     can_gateway_queue_init(&UsbCan.canhw, UsbCan.canhw_queue,
                            ARRAY_SIZE(UsbCan.canhw_queue));
 }
@@ -1228,10 +1239,9 @@ gs_breq_device_config(struct usb_ctrlrequest *req)
     usb_do_xfer((void*)&device_config, sizeof(device_config), UX_SEND);
 }
 
-static const struct gs_device_bt_const bt_const PROGMEM = {
+static struct gs_device_bt_const bt_const = {
     .feature = CONFIG_CANBUS_FD
                ? GS_CAN_FEATURE_FD | GS_CAN_FEATURE_BT_CONST_EXT : 0,
-    .fclk_can = CONFIG_CLOCK_FREQ,
     .tseg1_min = 1,
     .tseg1_max = 256,
     .tseg2_min = 1,
@@ -1242,11 +1252,10 @@ static const struct gs_device_bt_const bt_const PROGMEM = {
     .brp_inc = 1,
 };
 
-static const struct gs_device_bt_const_extended bt_const_ext PROGMEM = {
+static struct gs_device_bt_const_extended bt_const_ext = {
     .nominal = {
         .feature = CONFIG_CANBUS_FD
                    ? GS_CAN_FEATURE_FD | GS_CAN_FEATURE_BT_CONST_EXT : 0,
-        .fclk_can = CONFIG_CLOCK_FREQ,
         .tseg1_min = 1, .tseg1_max = 256,
         .tseg2_min = 1, .tseg2_max = 128,
         .sjw_max = 128, .brp_min = 1, .brp_max = 512, .brp_inc = 1,
@@ -1259,12 +1268,14 @@ static const struct gs_device_bt_const_extended bt_const_ext PROGMEM = {
 static void
 gs_breq_bt_const(struct usb_ctrlrequest *req)
 {
+    bt_const.fclk_can = CanClockFrequency;
     usb_do_xfer((void*)&bt_const, sizeof(bt_const), UX_SEND);
 }
 
 static void
 gs_breq_bt_const_ext(struct usb_ctrlrequest *req)
 {
+    bt_const_ext.nominal.fclk_can = CanClockFrequency;
     usb_do_xfer((void*)&bt_const_ext, sizeof(bt_const_ext), UX_SEND);
 }
 
@@ -1299,8 +1310,8 @@ gs_timing_bitrate(struct gs_device_bittiming *timing)
     uint32_t tq = 1 + timing->prop_seg + timing->phase_seg1
                   + timing->phase_seg2;
     uint32_t divisor = timing->brp * tq;
-    return divisor && CONFIG_CLOCK_FREQ % divisor == 0
-           ? CONFIG_CLOCK_FREQ / divisor : 0;
+    return divisor && CanClockFrequency % divisor == 0
+           ? CanClockFrequency / divisor : 0;
 }
 
 static void

@@ -252,8 +252,23 @@ that clock path. It also exercises the H7 USB-OTG composite device: mainline
 `gs_usb` remains interface 0 and the bridge's own Helix control console uses a
 separate CDC-ACM function, so the bridge needs no synthetic downstream CAN
 UUID. An external CAN-FD transceiver is required before using its PB8/PB9 bus.
-That smoke image builds at 93,756 bytes of text, 76 bytes of data, and 46,856
+That smoke image builds at 93,676 bytes of text, 188 bytes of data, and 46,920
 bytes of BSS.
+
+The FK723M1-ZGT6 target was also exercised on hardware on 2026-07-21. Its
+composite image enumerated interface 0 as mainline `gs_usb` and interfaces
+1/2 as the independent CDC-ACM console. Linux created `can0` and read back an
+80 MHz CAN-controller clock; this caught and corrected an earlier descriptor
+bug that had exposed the 520 MHz CPU clock. The live CDC console served its
+dictionary, reported CAN-FD and the 8 Mbit/s ceiling, returned a zeroed gateway
+status (including queue drops, retry, bus-error, and queue-depth counters), and
+passed all five advertised self-tests. SocketCAN then accepted and read back
+an exact 1 Mbit/s nominal / 8 Mbit/s BRS data profile while the controller
+remained error-active with zero errors, drops, restarts, or bus-off events.
+No frames were sent because this board has no transceiver. This validates H723
+clock startup, USB composition, controller timing configuration, and the
+firmware control path. It does not validate CAN electrical signaling or BRS
+traffic, nor does it validate the still-unavailable Ethernet PHY path.
 
 The combined `stm32f767-nucleo-ethernet-adc.config` image has text 86,586,
 data 64, and BSS 36,920 bytes. Its single 16 KiB `.dma_buffer` is map-verified

@@ -233,8 +233,15 @@ Prove the wire before you trust it to carry motion.
   Pico timer rate 123 and RTT 0.21 ms; EBB36 timer rate 2052 and RTT 0.30 ms.
   A computation-only FK723M1-ZGT6 / STM32H723ZGT6 image subsequently served
   its dictionary over USB at 520 MHz and passed the same five tests (timer-rate
-  value 528, trajectory result 4). This qualifies the H723 CPU/USB/DFU port,
-  not any board-level motor or heater pins.
+  value 528, trajectory result 4). The final composite gateway image also
+  enumerated mainline `gs_usb` and its independent CDC console together;
+  Linux read the dedicated FDCAN clock as 80 MHz and the live gateway status
+  contained no queue drops, retries, bus errors, or queued frames. SocketCAN
+  accepted and read back the exact 1 Mbit/s nominal / 8 Mbit/s data profile
+  with zero controller/kernel errors; no frame was sent without a transceiver.
+  This qualifies the H723 CPU/USB/DFU, composite-device, control, and
+  CAN-controller timing paths, not CAN electrical signaling or board-level
+  motor/heater pins.
   - [ ] **All-target follow-up:** run the live self-test on the remaining
     certification targets and H723 board-level I/O when it is wired.
 - [x] **2.1c — Core-clock identity.** A port whose real CPU clock differs

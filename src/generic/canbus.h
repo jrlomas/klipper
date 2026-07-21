@@ -81,6 +81,7 @@ enum {
 int canhw_send(struct canbus_msg *msg);
 void canhw_set_filter(uint32_t id);
 void canhw_get_status(struct canbus_status *status);
+uint32_t canhw_get_clock_frequency(void);
 #if CONFIG_CANBUS_FD
 uint32_t canhw_get_fd_bitrate_mask(void);
 int canhw_set_nominal_bitrate(uint32_t bitrate);

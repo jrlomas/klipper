@@ -74,7 +74,7 @@ lookup_clock_line(uint32_t periph_base)
 uint32_t
 get_pclock_frequency(uint32_t periph_base)
 {
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
     if (periph_base == FDCAN1_BASE || periph_base == FDCAN2_BASE
 #ifdef FDCAN3_BASE
         || periph_base == FDCAN3_BASE
@@ -128,7 +128,7 @@ clock_setup(void)
         RCC->PLLCKSELR = RCC_PLLCKSELR_PLLSRC_HSI
             | ((64000000/pll_base) << RCC_PLLCKSELR_DIVM1_Pos);
     }
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
     // Give FDCAN a dedicated 80MHz PLL2Q clock.  Unlike the 130MHz APB
     // clock at a 520MHz CPU rate, 80MHz divides exactly to every supported
     // Helix CAN-FD rate (1, 2, 5, and 8Mbit/s).
@@ -144,7 +144,7 @@ clock_setup(void)
         | RCC_PLLCFGR_DIVQ1EN
         // Enable PLL1P (for cpu clock)
         | RCC_PLLCFGR_DIVP1EN
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
         | (2 << RCC_PLLCFGR_PLL2RGE_Pos) | RCC_PLLCFGR_DIVQ2EN
 #endif
         ;
@@ -154,10 +154,12 @@ clock_setup(void)
         | ((pll_freq/FREQ_PERIPH - 1) << RCC_PLL1DIVR_Q1_Pos)
         // Set PLL1P cpu clock frequency
         | ((pll_freq/CONFIG_CLOCK_FREQ - 1) << RCC_PLL1DIVR_P1_Pos);
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
     uint32_t pll2_freq = 400000000;
     RCC->PLL2DIVR = ((pll2_freq / pll_base - 1)
                      << RCC_PLL2DIVR_N2_Pos)
+        // DIVP2 is unused, but its valid minimum is two.
+        | ((2 - 1) << RCC_PLL2DIVR_P2_Pos)
         | ((pll2_freq / FREQ_FDCAN - 1) << RCC_PLL2DIVR_Q2_Pos);
 #endif
 
@@ -201,13 +203,13 @@ clock_setup(void)
 
     // Switch on PLL1
     RCC->CR = rcc_cr = rcc_cr | RCC_CR_PLL1ON
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
         | RCC_CR_PLL2ON
 #endif
         ;
     while (!(RCC->CR & RCC_CR_PLL1RDY))
         ;
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
     while (!(RCC->CR & RCC_CR_PLL2RDY))
         ;
 #endif
@@ -218,7 +220,7 @@ clock_setup(void)
         ;
 
     // Set the source of FDCAN clock to pll2_q_ck.
-#if CONFIG_HAVE_STM32_FDCANBUS
+#if CONFIG_CANBUS
     RCC->D2CCIP1R = 2 << RCC_D2CCIP1R_FDCANSEL_Pos;
 #endif
 

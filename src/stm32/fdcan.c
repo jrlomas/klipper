@@ -395,6 +395,12 @@ canhw_get_status(struct canbus_status *status)
         status->bus_state = 0;
 }
 
+uint32_t
+canhw_get_clock_frequency(void)
+{
+    return get_pclock_frequency((uint32_t)SOC_CAN);
+}
+
 static void
 fdcan_read_rx_element(struct fdcan_fifo *rx, struct canbus_msg *msg)
 {
