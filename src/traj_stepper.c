@@ -53,6 +53,7 @@ struct traj_stepper {
     // Preparing these at segment load keeps coefficient range checks and
     // 64-bit constant multiplication out of the precision timer IRQ.
     int32_t poly_c, poly_s5, poly_j20, poly_a60, poly_v120;
+    uint8_t poly_fraction_shift;
     int64_t target16;       // next boundary, Q16.16 rel segment start
     int64_t q16_end;        // segment end position, Q16.16 rel start
     // Pure-cruise crossing recurrence.  Division is paid once per segment;
@@ -282,6 +283,7 @@ traj_poly_fast_setup(struct traj_stepper *s)
     s->poly_fast_valid = 0;
     if ((tq->seg_flags & TSEG_POLY_MASK) != TSEG_POLY_QUINTIC)
         return;
+    int64_t c = tq->crackle;
     int64_t s5 = (int64_t)tq->snap * 5;
     int64_t j20 = (int64_t)tq->jerk * 20;
     int64_t a60 = (int64_t)tq->accel * 60;
@@ -291,11 +293,47 @@ traj_poly_fast_setup(struct traj_stepper *s)
         || a60 > INT32_MAX || a60 < INT32_MIN
         || v120 > INT32_MAX || v120 < INT32_MIN)
         return;
-    s->poly_c = tq->crackle;
-    s->poly_s5 = s5;
-    s->poly_j20 = j20;
-    s->poly_a60 = a60;
-    s->poly_v120 = v120;
+
+    // Retain as many fractional Horner bits as the complete segment can
+    // safely carry in int32.  The former integer-only path discarded 16
+    // bits at every stage.  A small crackle coefficient could then change by
+    // one at an x=t/65536 boundary and that one-LSB step was multiplied by
+    // every remaining stage, manufacturing a multi-microstep jump in an
+    // otherwise smooth fitted curve.  A Qn intermediate shrinks that
+    // artifact by 2^n without adding another timer-path multiply.
+    uint64_t bounds[5] = {
+        c < 0 ? -(uint64_t)c : (uint64_t)c,
+        s5 < 0 ? -(uint64_t)s5 : (uint64_t)s5,
+        j20 < 0 ? -(uint64_t)j20 : (uint64_t)j20,
+        a60 < 0 ? -(uint64_t)a60 : (uint64_t)a60,
+        v120 < 0 ? -(uint64_t)v120 : (uint64_t)v120,
+    };
+    // First bound the unscaled Horner state once.  Scaling that conservative
+    // bound is itself conservative (ceil(x)*scale >= ceil(x*scale)), so the
+    // precision choice needs no repeated multiply pass at segment load.
+    uint64_t bound = bounds[0], max_bound = bound;
+    uint8_t i;
+    for (i = 1; i < 5; i++) {
+        if (bound > INT32_MAX)
+            return;
+        bound = bounds[i]
+            + (bound * tq->duration + 65535) / 65536;
+        if (bound > max_bound)
+            max_bound = bound;
+    }
+    if (max_bound > INT32_MAX)
+        return;
+    uint8_t shift = 0;
+    while (shift < 16
+           && max_bound <= ((uint32_t)INT32_MAX >> (shift + 1)))
+        shift++;
+    uint32_t scale = 1U << shift;
+    s->poly_c = c * scale;
+    s->poly_s5 = s5 * scale;
+    s->poly_j20 = j20 * scale;
+    s->poly_a60 = a60 * scale;
+    s->poly_v120 = v120 * scale;
+    s->poly_fraction_shift = shift;
     s->poly_fast_valid = 1;
 }
 
@@ -309,7 +347,16 @@ traj_poly_pos120(struct traj_stepper *s, uint32_t ticks, int64_t *position120)
         || !traj_poly_stage(s->poly_a60, h, ticks, &h)
         || !traj_poly_stage(s->poly_v120, h, ticks, &h))
         return 0;
-    *position120 = (int64_t)h * ticks;
+    int64_t product = (int64_t)h * ticks;
+    uint8_t shift = s->poly_fraction_shift;
+    if (shift) {
+        uint8_t negative = product < 0;
+        uint64_t magnitude = negative
+            ? -(uint64_t)product : (uint64_t)product;
+        magnitude >>= shift;
+        product = negative ? -(int64_t)magnitude : (int64_t)magnitude;
+    }
+    *position120 = product;
     return 1;
 }
 #endif
@@ -953,6 +1000,108 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
     }
     if (sharp_count != 133 || sharp.mpos != -138) {
         *max_elapsed_out = 0x00f00000 | (sharp_count & 0xffff);
+        return 0;
+    }
+
+    // Exact extrusion segment active during the 2026-07-20 long-print
+    // shutdown.  Its intended polynomial is strictly monotonic, but the old
+    // integer-only compact Horner state discarded a small crackle term and
+    // manufactured a late reversal after 28 crossings.  Keep the captured
+    // phase, physical position, and prior interval so the live-silicon test
+    // covers the same predictor and quantizer state as the failed print.
+    struct traj_stepper fractional = { };
+    fractional.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+    fractional.tq.duration = 3584000;
+    fractional.tq.velocity = 40160;
+    fractional.tq.accel = -1643;
+    fractional.tq.jerk = 274;
+    fractional.tq.snap = -25;
+    fractional.tq.crackle = 1;
+    fractional.tq.acc = 3020413576023638016LL;
+    fractional.mpos = 10731;
+    fractional.dir = 1;
+    fractional.step_interval = 174118;
+    fractional.q16_end = trajq_end_delta_seg(&fractional.tq) >> 16;
+    fractional.target16 = traj_stepper_calc_target16(
+        fractional.tq.acc, fractional.mpos, fractional.dir);
+    first_magnitude = fractional.target16 < 0
+        ? -(uint64_t)fractional.target16 : (uint64_t)fractional.target16;
+    if (first_magnitude > STEP_Q)
+        first_magnitude = STEP_Q;
+    fractional.first_step_guess = (
+        first_magnitude * fractional.step_interval) >> 32;
+    if (!fractional.first_step_guess)
+        fractional.first_step_guess = 1;
+    traj_poly_fast_setup(&fractional);
+    if (!fractional.poly_fast_valid || !fractional.poly_fraction_shift) {
+        *max_elapsed_out = 0x00100000;
+        return 0;
+    }
+    int64_t fractional_v120 = trajq_velocity24_at_seg_fast(
+        &fractional.tq, 0) * 5;
+    uint64_t fractional_speed = fractional_v120 < 0
+        ? -(uint64_t)fractional_v120 : (uint64_t)fractional_v120;
+    while (fractional_speed > 131071) {
+        fractional_speed >>= 1;
+        fractional_v120 = traj_signed_shr(fractional_v120, 1);
+    }
+    traj_recip_init(&fractional, fractional_v120 < 0
+                    ? -(uint32_t)fractional_v120
+                    : (uint32_t)fractional_v120);
+    static const uint32_t fractional_golden[] = {
+        102322, 217003, 328967, 451267, 579528, 707682, 834747,
+        960635, 1085066, 1208012, 1329659, 1450248, 1570117,
+        1689836, 1809829, 1930278, 2051770, 2174499, 2299148,
+        2424949, 2552059, 2679470, 2807289, 2932151, 3055091,
+        3172116, 3280414, 3385596, 3480319,
+    };
+    uint32_t fractional_count = 0;
+    for (;;) {
+        uint32_t step_t, before = timer_read_time();
+        int result = traj_solve_step(&fractional, &step_t);
+        uint32_t elapsed = timer_read_time() - before;
+        if (elapsed > overall_max)
+            overall_max = elapsed;
+        if (!result)
+            break;
+        if (result != 1 || step_t <= fractional.t_prev
+            || step_t > fractional.tq.duration) {
+            *max_elapsed_out = 0x00110000
+                | (fractional_count & 0xffff);
+            return 0;
+        }
+        // The workstation regression independently verifies these clocks
+        // against the rational wire polynomial (worst error 0.0934 step).
+        // A golden clock sequence avoids using either staged Horner evaluator
+        // as its own on-silicon oracle.
+        if (fractional_count >= ARRAY_SIZE(fractional_golden)
+            || step_t != fractional_golden[fractional_count]) {
+            *max_elapsed_out = 0x00120000
+                | (fractional_count & 0xffff);
+            return 0;
+        }
+        uint32_t available = fractional.last_step_t
+            ? step_t - fractional.last_step_t : step_t;
+        if (elapsed >= available - available / 4) {
+            *max_elapsed_out = 0x00130000
+                | (elapsed & 0x0000ffff);
+            return 0;
+        }
+        if (fractional.last_step_t)
+            fractional.step_interval = step_t - fractional.last_step_t;
+        fractional.last_step_t = step_t;
+        fractional.t_prev = step_t;
+        fractional.target16 += STEP_Q;
+        fractional.mpos++;
+        fractional_count++;
+        if (fractional_count > 64) {
+            *max_elapsed_out = 0x00140000 | fractional_count;
+            return 0;
+        }
+    }
+    if (fractional_count != 29 || fractional.mpos != 10760) {
+        *max_elapsed_out = 0x00150000
+            | (fractional_count & 0xffff);
         return 0;
     }
     *max_elapsed_out = overall_max;

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import random
+from fractions import Fraction
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'klippy'))
@@ -450,6 +451,15 @@ def check_real_gcode_solver_vectors(solver):
         ('cube E crackle precision', 3520000,
          (188264, -2302, 343, -28, 1), -4927265779052008791,
          1620895, 24595, 1, 147, 1621042),
+        # Captured from the 2026-07-20 EBB36 print shutdown at local clock
+        # 1194254476.  The segment began at 1190772069, and the integer-only
+        # compact Horner path manufactured a late reversal from a smooth,
+        # strictly positive-velocity polynomial.  It failed with
+        # "traj solver divergence" after 28 pulses.  Retained fractional
+        # Horner state must emit the 29 physical crossings without a burst.
+        ('long-print E fractional Horner', 3584000,
+         (40160, -1643, 274, -25, 1), 3020413576023638016,
+         10731, 174118, 1, 29, 10760),
         # These direction-reversing segments were captured from the 100%
         # calibration-cube replay.  Clearing the stale interval is correct,
         # but the old cold Newton solve then emitted its first two pulses at
@@ -490,13 +500,32 @@ def check_real_gcode_solver_vectors(solver):
             for index in range(1, count)
         ]
         assert min(intervals) > 500, (name, min(intervals))
+        if name == 'long-print E fractional Horner':
+            target = solver.helix_test_target16(
+                acc, start_mpos, prior_direction)
+            velocity, accel, jerk, snap, crackle = coeffs
+            def ideal_position(tick):
+                # Independent rational evaluation of the wire derivative
+                # ladder, without either MCU Horner implementation's staged
+                # truncation convention.
+                return (Fraction(velocity * tick)
+                        + Fraction(accel * tick**2, 2 * 65536)
+                        + Fraction(jerk * tick**3, 6 * 65536**2)
+                        + Fraction(snap * tick**4, 24 * 65536**3)
+                        + Fraction(crackle * tick**5, 120 * 65536**4))
+            errors = [abs(ideal_position(pulse_data[index])
+                          - (target + index * (1 << 32)))
+                      for index in range(count)]
+            # Timer ticks are discrete.  Every selected edge remains within
+            # the production solver's one-eighth-step spatial target.
+            assert max(errors) <= (1 << 29), max(errors)
+            print("PASS: captured fractional-Horner crossing error %.4f step"
+                  % (max(errors) / float(1 << 32)))
     print("PASS: real first-layer quintics preserve every endpoint without"
           " catch-up bursts")
 
-    # Doubling the captured crackle makes the same Q16 boundary jump span
-    # more than one complete microstep.  That is no longer an unambiguous
-    # choice of one adjacent timer tick, so the production guard must retain
-    # its shutdown instead of silently masking a malformed trajectory.
+    # Retaining fractional Horner state also makes the doubled-crackle curve
+    # continuous.  It is a valid trajectory, not a reason to shut down.
     mpos = ctypes.c_int32(1620895)
     interval = ctypes.c_uint32(24595)
     direction = ctypes.c_int32(1)
@@ -504,9 +533,21 @@ def check_real_gcode_solver_vectors(solver):
         flags, 3520000, 188264, -2302, 343, -28, 2,
         -4927265779052008791, ctypes.byref(mpos), ctypes.byref(interval),
         ctypes.byref(direction), pulse_data, len(pulse_data))
+    assert count == 204, count
+    assert mpos.value == 1621099, mpos.value
+
+    # A genuinely non-monotonic/malformed quintic must still fail closed.
+    mpos = ctypes.c_int32(0)
+    interval = ctypes.c_uint32(0)
+    direction = ctypes.c_int32(1)
+    count = solver.helix_test_expand_segment(
+        flags, 2132000, 92475, 24469, -1513, 914, -15, 0,
+        ctypes.byref(mpos), ctypes.byref(interval),
+        ctypes.byref(direction), pulse_data, len(pulse_data))
     assert count == -2, count
     assert solver.helix_test_last_shutdown() == b'traj solver divergence'
-    print("PASS: multi-step fixed-point jumps retain the divergence guard")
+    print("PASS: smooth fixed-point curves execute and malformed reversals"
+          " retain the divergence guard")
 
 
 def compare_case(solver, name, start_z, distance, speed, accel,

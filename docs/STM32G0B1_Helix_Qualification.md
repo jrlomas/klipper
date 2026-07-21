@@ -209,6 +209,56 @@ This workstation result and the Pico, EBB36, and Linux target builds pass. It
 does not replace the required on-silicon self-test and supervised print after
 flashing the corrected firmware.
 
+#### Long-print fractional-Horner regression (2026-07-20)
+
+A later PLA print failed on the EBB36 with `traj solver divergence` at local
+clock 1,194,254,476. Transport was healthy: the CAN bus remained active, the
+bridge had no dropped frames, and the EBB36 reported no TX or protocol errors.
+The execution log and serial queue identify the active extrusion segment
+exactly. It began at local clock 1,190,772,069 and carried:
+
+```text
+duration=3584000 velocity=40160 accel=-1643
+jerk=274 snap=-25 crackle=1
+```
+
+The fitted real-valued polynomial has strictly positive velocity over the
+whole segment. The compact deadline evaluator, however, previously stored
+each nested Horner stage as an integer. Discarding all 16 fractional bits at
+each stage let the small `crackle=1` correction change discontinuously at
+`t/65536` boundaries; the remaining stages amplified that one-unit rounding
+step into a false late reversal. The crossing bracket correctly rejected the
+non-monotonic representation, but the representation—not the intended
+trajectory—was wrong.
+
+`traj_poly_fast_setup()` now selects the largest safe per-segment fractional
+scale for its int32 Horner state. The recurring timer path retains the same
+four nested stage multiplies and one final multiply; it only applies the
+preselected final shift. The segment-load range proof is computed once and
+remains conservative over the complete duration. A genuinely non-monotonic
+quintic still reaches the existing fail-closed divergence guard.
+
+The captured segment is a permanent production-solver regression in
+`test/trajectory_v1_pulse_compare.py`. Before the change it shuts down after
+28 pulses. With the correction it emits 29 ordered crossings, ends on the
+expected physical step, and has no catch-up burst. An independent rational
+evaluation of the wire derivative ladder—not either staged MCU Horner
+implementation—puts the worst selected crossing only 0.0934 microstep from
+its ideal half-step boundary, inside the one-eighth-step solver target. A
+genuinely non-monotonic vector continues to fail closed.
+
+The exact 29-clock sequence is also part of the built-in `traj_kernel` test,
+so the MCU cannot use its own evaluator as the regression oracle. The final
+STM32G0B1 image (`8d2a8904-dirty-20260720_222227-linuxathena`, flash SHA
+`99EB20ACD702017C0995B96BA828ABB62B707541`) passed that test on the 64 MHz
+EBB36 over `helixcan0`; all five live tests passed and link RTT was 0.96 ms.
+The full V1 differential, higher-order chaining, segment-library, extruder,
+G-code replay, timesync, and STM32G0B1 firmware-build suites also pass. The
+shared source additionally builds for RP2040 and STM32H723, and the Linux
+firmware executes the complete live self-test protocol successfully. A
+supervised print crossing the formerly failing region remains the final
+physical confirmation of this specific correction.
+
 ### Experiment 1c: disconnected extrusion-island rebase failure
 
 A subsequent supervised cube reached stable full-speed XY execution but then
