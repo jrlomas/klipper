@@ -280,6 +280,13 @@ config WANT_HEATER_CONTROL
     bool
     depends on WANT_ADC_STREAM
     default y if !HAVE_LIMITED_CODE_SIZE
+config NEED_EXECLOG
+    # The execution log is a shared event sink.  Motion originally owned its
+    # object file, but heater and trigger features also publish records when
+    # trajectory support is absent (notably on AVR).
+    bool
+    default y if WANT_TRAJECTORY || WANT_TRIGGER_SOURCE \
+        || WANT_HEATER_HOLD || WANT_HEATER_CONTROL
 config WANT_BOOTLOADER
     bool
     depends on HAVE_BOOTLOADER_REQUEST
