@@ -235,8 +235,8 @@ trajectory—was wrong.
 scale for its int32 Horner state. The recurring timer path retains the same
 four nested stage multiplies and one final multiply; it only applies the
 preselected final shift. The segment-load range proof is computed once and
-remains conservative over the complete duration. A genuinely non-monotonic
-quintic still reaches the existing fail-closed divergence guard.
+remains conservative over the complete duration. A multi-step representation
+discrepancy still reaches the existing fail-closed divergence guard.
 
 The captured segment is a permanent production-solver regression in
 `test/trajectory_v1_pulse_compare.py`. Before the change it shuts down after
@@ -244,8 +244,8 @@ The captured segment is a permanent production-solver regression in
 expected physical step, and has no catch-up burst. An independent rational
 evaluation of the wire derivative ladder—not either staged MCU Horner
 implementation—puts the worst selected crossing only 0.0934 microstep from
-its ideal half-step boundary, inside the one-eighth-step solver target. A
-genuinely non-monotonic vector continues to fail closed.
+its ideal half-step boundary, inside the one-eighth-step solver target.
+Multi-edge endpoint discrepancies continue to fail closed.
 
 The exact 29-clock sequence is also part of the built-in `traj_kernel` test,
 so the MCU cannot use its own evaluator as the regression oracle. The final
@@ -258,6 +258,53 @@ shared source additionally builds for RP2040 and STM32H723, and the Linux
 firmware executes the complete live self-test protocol successfully. A
 supervised print crossing the formerly failing region remains the final
 physical confirmation of this specific correction.
+
+#### Endpoint-only chained-rounding regression (2026-07-20)
+
+The next supervised print reached a different EBB36 `traj solver divergence`
+at local clock 1,013,865,718. CAN remained healthy: zero RX/TX errors, retries,
+FIFO overruns, protocol errors, or bridge drops. Starting from the retained
+local rebase at clock 994,401,998 (`pos=2086839360`, `mcu_pos=425059`), a
+workstation replay reproduced all 13 completed extrusion segments and every
+recorded accumulator endpoint before entering the failed segment with:
+
+```text
+start_clock=1012704698 duration=1536000
+velocity=-609627 accel=52985 jerk=-365 snap=-542 crackle=50
+acc=9021400908531587309 mpos=425266 prior_interval=7206 direction=-1
+```
+
+The curve has strictly negative velocity throughout and is therefore valid.
+The solver emitted 66 ordered pulses and then diverged while looking for the
+last boundary. This was not another false Horner reversal. The exact chained
+endpoint convention reaches that final negative half-step by 0.0071 step,
+while an independent rational evaluation of the continuous wire polynomial
+stops 0.0248 step before it. The two legitimate fixed-point evaluation
+conventions therefore straddled one physical boundary: endpoint admission
+required the edge, but no interior sign crossing existed for the deadline
+bracket to find.
+
+The bracket now reconciles this case only when all of the following are true:
+
+- its bounded search reached the segment endpoint without a sign crossing;
+- the authoritative chained endpoint reaches the current target;
+- it does not reach the following target;
+- the represented endpoint remains inside the existing half-step ambiguity
+  limit; and
+- the endpoint is strictly later than the preceding pulse.
+
+It then emits the sole edge at `t=duration`. The next solve sees the exhausted
+segment and cannot emit a same-clock catch-up edge. A direct negative
+regression proves that a two-step endpoint discrepancy still shuts down.
+
+The complete captured state is now permanent in
+`test/trajectory_v1_pulse_compare.py`: it emits 67 ordered pulses, the final
+one at tick 1,536,000, ends at physical `mpos=425199`, and stays within 0.1119
+step of the independent rational polynomial. The STM32G0B1 image
+(`f15f06a3-dirty-20260720_225213-linuxathena`, flash SHA
+`D5FC73A24FAE31BA74E1A5AB39BC951B773BA85C`) passed all five live tests on the
+64 MHz EBB36, including the on-silicon endpoint branch; link RTT was 1.064 ms.
+A supervised print remains the final physical confirmation.
 
 ### Experiment 1c: disconnected extrusion-island rebase failure
 

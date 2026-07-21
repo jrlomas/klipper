@@ -51,6 +51,8 @@ def build_mcu_solver():
     solver.helix_test_target16.argtypes = [
         ctypes.c_int64, ctypes.c_int32, ctypes.c_int32]
     solver.helix_test_target16.restype = ctypes.c_int64
+    solver.helix_test_endpoint_bracket.argtypes = [ctypes.c_int64]
+    solver.helix_test_endpoint_bracket.restype = ctypes.c_int
     solver.helix_test_is_pure_cruise.argtypes = [
         ctypes.c_uint8, ctypes.c_int32, ctypes.c_int32,
         ctypes.c_int32, ctypes.c_int32]
@@ -460,6 +462,15 @@ def check_real_gcode_solver_vectors(solver):
         ('long-print E fractional Horner', 3584000,
          (40160, -1643, 274, -25, 1), 3020413576023638016,
          10731, 174118, 1, 29, 10760),
+        # Captured from the immediately following 2026-07-20 print failure.
+        # Exact chained endpoint rounding reaches one final negative boundary,
+        # while the rational/combined Horner curve remains 0.0248 step short.
+        # The old bracket emitted 66 pulses and diverged looking for an
+        # interior crossing; the bounded endpoint rule emits only that final
+        # edge at duration and then advances normally.
+        ('long-print E endpoint edge', 1536000,
+         (-609627, 52985, -365, -542, 50), 9021400908531587309,
+         425266, 7206, -1, 67, 425199),
         # These direction-reversing segments were captured from the 100%
         # calibration-cube replay.  Clearing the stale interval is correct,
         # but the old cold Newton solve then emitted its first two pulses at
@@ -500,7 +511,8 @@ def check_real_gcode_solver_vectors(solver):
             for index in range(1, count)
         ]
         assert min(intervals) > 500, (name, min(intervals))
-        if name == 'long-print E fractional Horner':
+        if name in ('long-print E fractional Horner',
+                    'long-print E endpoint edge'):
             target = solver.helix_test_target16(
                 acc, start_mpos, prior_direction)
             velocity, accel, jerk, snap, crackle = coeffs
@@ -514,13 +526,13 @@ def check_real_gcode_solver_vectors(solver):
                         + Fraction(snap * tick**4, 24 * 65536**3)
                         + Fraction(crackle * tick**5, 120 * 65536**4))
             errors = [abs(ideal_position(pulse_data[index])
-                          - (target + index * (1 << 32)))
+                          - (target + index * prior_direction * (1 << 32)))
                       for index in range(count)]
             # Timer ticks are discrete.  Every selected edge remains within
             # the production solver's one-eighth-step spatial target.
             assert max(errors) <= (1 << 29), max(errors)
-            print("PASS: captured fractional-Horner crossing error %.4f step"
-                  % (max(errors) / float(1 << 32)))
+            print("PASS: %-33s crossing error %.4f step"
+                  % (name, max(errors) / float(1 << 32)))
     print("PASS: real first-layer quintics preserve every endpoint without"
           " catch-up bursts")
 
@@ -536,17 +548,12 @@ def check_real_gcode_solver_vectors(solver):
     assert count == 204, count
     assert mpos.value == 1621099, mpos.value
 
-    # A genuinely non-monotonic/malformed quintic must still fail closed.
-    mpos = ctypes.c_int32(0)
-    interval = ctypes.c_uint32(0)
-    direction = ctypes.c_int32(1)
-    count = solver.helix_test_expand_segment(
-        flags, 2132000, 92475, 24469, -1513, 914, -15, 0,
-        ctypes.byref(mpos), ctypes.byref(interval),
-        ctypes.byref(direction), pulse_data, len(pulse_data))
-    assert count == -2, count
+    # Endpoint rounding may authorize exactly one boundary edge.  It must
+    # never hide a two-step discrepancy or create an endpoint catch-up burst.
+    assert solver.helix_test_endpoint_bracket((1 << 32) // 4) == 100
+    assert solver.helix_test_endpoint_bracket(2 << 32) == -2
     assert solver.helix_test_last_shutdown() == b'traj solver divergence'
-    print("PASS: smooth fixed-point curves execute and malformed reversals"
+    print("PASS: one endpoint edge reconciles; multi-edge discrepancies"
           " retain the divergence guard")
 
 

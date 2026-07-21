@@ -66,6 +66,31 @@ helix_test_target16(int64_t acc, int32_t mpos, int32_t dir)
     return traj_stepper_calc_target16(acc, mpos, dir);
 }
 
+// Directly qualify the bounded endpoint exception in the crossing bracket.
+// A zero polynomial never reaches its positive target, so only q16_end can
+// authorize the synthetic boundary edge.  Return -2 when the production
+// fail-closed guard rejects the supplied endpoint delta.
+int
+helix_test_endpoint_bracket(int64_t endpoint_delta)
+{
+    struct traj_stepper s = { };
+    s.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+    s.tq.duration = 100;
+    s.dir = 1;
+    s.target16 = STEP_Q / 2;
+    s.q16_end = s.target16 + endpoint_delta;
+    traj_poly_fast_setup(&s);
+    if (setjmp(helix_test_shutdown_jmp)) {
+        helix_test_shutdown_active = 0;
+        return -2;
+    }
+    helix_test_shutdown_active = 1;
+    int64_t error = traj_stepper_error120(&s, 0);
+    uint32_t result = traj_stepper_bracket_crossing(&s, 0, error);
+    helix_test_shutdown_active = 0;
+    return result;
+}
+
 int
 helix_test_is_pure_cruise(uint8_t flags, int32_t accel, int32_t jerk,
                           int32_t snap, int32_t crackle)

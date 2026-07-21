@@ -1415,16 +1415,21 @@ Now put it together on the **full printer**.
     `v=40160`, `a=-1643`, `j=274`, `s=-25`, `c=1`). The intended curve is
     monotonic; the compact integer Horner evaluator had amplified discarded
     fractional state into a false late reversal. The exact captured segment
-    now passes as a workstation regression with 29 ordered E pulses, while a
-    genuinely non-monotonic vector still fails closed. STM32G0B1 builds and
-    the focused motion suites pass.
+    now passes as a workstation regression with 29 ordered E pulses, while
+    multi-edge representation discrepancies still fail closed. STM32G0B1
+    builds and the focused motion suites pass.
 
     - [x] Workstation production-solver replay: all 29 crossings, no catch-up
       burst, 0.0934-step worst error against an independent rational
-      polynomial, and malformed-vector rejection retained.
-    - [x] Corrected image flashed to EBB36 over `helixcan0`; the built-in
-      `traj_kernel` exact-clock regression and all other live self-tests pass
-      on the 64 MHz silicon (0.96 ms link RTT).
+      polynomial, with the multi-edge divergence guard retained.
+    - [x] A second print failure was reproduced from its complete 14-segment
+      flight-record chain. Bounded chained-endpoint reconciliation emits its
+      sole missing edge at segment duration: 67 ordered pulses, 0.1119-step
+      worst rational error, no catch-up burst. A synthetic two-edge endpoint
+      discrepancy still fails closed.
+    - [x] Final corrected image flashed to EBB36 over `helixcan0`; the built-in
+      `traj_kernel` exact-clock and endpoint-branch regressions and all other
+      live self-tests pass on the 64 MHz silicon (1.064 ms link RTT).
     - [ ] Supervised print crosses the formerly failing extrusion region
       without a solver shutdown or pulse artifact.
 - [x] **14.3 — High-speed / high-accel print.** Push into the regime where

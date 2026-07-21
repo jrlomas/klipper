@@ -493,6 +493,27 @@ traj_stepper_bracket_crossing(struct traj_stepper *s, uint32_t guess,
                 stride <<= 1;
         }
     }
+    if (hi_before && hi == tmax && tmax > s->t_prev) {
+        // Exact chained endpoints use the term-by-term wire convention,
+        // while the deadline Horner evaluator combines terms before its
+        // staged truncations.  They can straddle one final half-step by a
+        // tiny fraction even though the fitted curve remains monotonic.  If
+        // the authoritative endpoint reaches exactly this target (but not
+        // the following one) and the represented endpoint is still within
+        // the existing half-step ambiguity limit, emit that sole physical
+        // edge at the segment boundary.  This cannot create a catch-up burst:
+        // the next solve sees t_prev == duration and advances the segment.
+        int64_t endpoint_delta = s->q16_end - s->target16;
+        uint8_t reaches_target = dir > 0
+            ? endpoint_delta >= 0 : endpoint_delta <= 0;
+        uint8_t reaches_only_one = dir > 0
+            ? endpoint_delta < STEP_Q : endpoint_delta > -STEP_Q;
+        uint64_t represented_magnitude = hi_err < 0
+            ? -(uint64_t)hi_err : (uint64_t)hi_err;
+        if (reaches_target && reaches_only_one
+            && represented_magnitude <= STEP_Q * 60)
+            return tmax;
+    }
     if (!lo_before || hi_before)
         shutdown("traj solver divergence");
 
@@ -1102,6 +1123,28 @@ traj_stepper_test_quintic_deadline(uint32_t *max_elapsed_out)
     if (fractional_count != 29 || fractional.mpos != 10760) {
         *max_elapsed_out = 0x00150000
             | (fractional_count & 0xffff);
+        return 0;
+    }
+
+    // Exercise the endpoint-only branch on silicon without deliberately
+    // invoking its fatal multi-edge rejection.  The workstation adapter
+    // separately proves that a two-step endpoint delta still shuts down.
+    struct traj_stepper endpoint = { };
+    endpoint.tq.seg_flags = TSEG_POLY_QUINTIC | TSEG_LOCAL_TIME;
+    endpoint.tq.duration = 100;
+    endpoint.dir = 1;
+    endpoint.target16 = STEP_Q / 2;
+    endpoint.q16_end = endpoint.target16 + STEP_Q / 4;
+    traj_poly_fast_setup(&endpoint);
+    int64_t endpoint_error = traj_stepper_error120(&endpoint, 0);
+    uint32_t endpoint_before = timer_read_time();
+    uint32_t endpoint_tick = traj_stepper_bracket_crossing(
+        &endpoint, 0, endpoint_error);
+    uint32_t endpoint_elapsed = timer_read_time() - endpoint_before;
+    if (endpoint_elapsed > overall_max)
+        overall_max = endpoint_elapsed;
+    if (endpoint_tick != endpoint.tq.duration) {
+        *max_elapsed_out = 0x00160000 | (endpoint_tick & 0xffff);
         return 0;
     }
     *max_elapsed_out = overall_max;
