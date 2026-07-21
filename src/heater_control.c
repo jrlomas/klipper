@@ -43,12 +43,19 @@ enum heater_control_fault {
     HC_FAULT_HEATING_RATE = 1u << 4,
 };
 
+enum heater_control_algorithm {
+    HC_ALGO_PID,
+    HC_ALGO_PREDICTIVE,
+};
+
 struct heater_control {
     struct timer pwm_timer;
     struct timer sample_timer;
     struct gpio_out heater_out;
     struct heater_pid_config pid_config;
     struct heater_pid_state pid_state;
+    struct heater_predictive_config predictive_config;
+    struct heater_predictive_state predictive_state;
     struct heater_verify_config verify_config;
     struct heater_verify_state verify_state;
     uint32_t heater_pin;
@@ -79,6 +86,7 @@ struct heater_control {
     int32_t manual_guard_mdeg;
     int32_t manual_guard_slope_q16;
     int32_t last_temp_mdeg;
+    int32_t ambient_mdeg;
     uint16_t output_q16;
     uint16_t manual_output_q16;
     uint8_t oid;
@@ -88,6 +96,7 @@ struct heater_control {
     uint8_t fault;
     uint8_t pwm_phase;
     uint8_t pwm_running;
+    uint8_t algorithm;
     uint8_t deadline_armed;
     uint8_t fault_event_pending;
 };
@@ -306,6 +315,11 @@ heater_control_adc_update(void *context, uint32_t adc, uint32_t clock)
         heater_control_set_output(h, h->manual_output_q16);
     else if (!h->target_adc)
         heater_control_set_output(h, 0);
+    else if (h->algorithm == HC_ALGO_PREDICTIVE)
+        heater_control_set_output(h, heater_predictive_update(
+            &h->predictive_state, &h->predictive_config,
+            h->last_temp_mdeg, h->target_mdeg, h->ambient_mdeg,
+            error_mdeg));
     else
         heater_control_set_output(h, heater_pid_update(
             &h->pid_state, &h->pid_config, h->last_temp_mdeg, error_mdeg));
@@ -353,6 +367,7 @@ command_heater_control_setup(uint32_t *args)
     h->pid_config.derivative_alpha_q15 = args[13];
     h->last_host_clock = timer_read_time();
     heater_pid_reset(&h->pid_state);
+    heater_predictive_reset(&h->predictive_state);
 }
 DECL_COMMAND(command_heater_control_setup,
              "heater_control_setup oid=%c min_adc=%u max_adc=%u"
@@ -360,6 +375,36 @@ DECL_COMMAND(command_heater_control_setup,
              " host_timeout=%u loop_period=%u autonomous_max_samples=%u"
              " max_output=%hu"
              " kp_q20=%i ki_step_q20=%i kd_step_q20=%i d_alpha_q15=%hu");
+
+void
+command_heater_control_set_predictive(uint32_t *args)
+{
+    struct heater_control *h = oid_lookup(
+        args[0], command_config_heater_control);
+    uint32_t retention = args[1], observer_alpha = args[2];
+    uint32_t response_mdeg = args[3], effort_mdeg = args[4];
+    if (retention > HEATER_CONTROL_ALPHA_ONE
+        || !observer_alpha || observer_alpha > HEATER_CONTROL_ALPHA_ONE
+        || !response_mdeg || response_mdeg > 1000000
+        || effort_mdeg > 1000000 || args[5] > 1000000)
+        shutdown("Invalid predictive heater model");
+    h->predictive_config.retention_q15 = retention;
+    h->predictive_config.observer_alpha_q15 = observer_alpha;
+    h->predictive_config.max_output = h->pid_config.max_output;
+    h->predictive_config.response_mdeg = response_mdeg;
+    h->predictive_config.effort_mdeg = effort_mdeg;
+    h->predictive_config.control_band_mdeg = args[5];
+    h->predictive_config.integral_step_q20 = args[6];
+    h->predictive_config.max_output_step = args[7];
+    h->ambient_mdeg = args[8];
+    h->algorithm = HC_ALGO_PREDICTIVE;
+    heater_predictive_reconfigure(&h->predictive_state);
+}
+DECL_COMMAND(command_heater_control_set_predictive,
+             "heater_control_set_predictive oid=%c retention_q15=%hu"
+             " observer_alpha_q15=%hu response_mdeg=%u effort_mdeg=%u"
+             " control_band_mdeg=%u integral_step_q20=%i max_step=%hu"
+             " ambient_mdeg=%i");
 
 void
 command_heater_control_set_verify(uint32_t *args)
@@ -404,6 +449,7 @@ command_heater_control_set_target(uint32_t *args)
         h->state = h->fault ? HC_FAULT : HC_READY;
         heater_control_disarm_deadline(h);
         heater_pid_reset(&h->pid_state);
+        heater_predictive_reset(&h->predictive_state);
         heater_verify_reset(&h->verify_state, 0);
         heater_control_set_output(h, 0);
         return;
@@ -496,6 +542,7 @@ command_heater_control_clear_fault(uint32_t *args)
     h->state = HC_READY;
     h->last_host_clock = timer_read_time();
     heater_pid_reset(&h->pid_state);
+    heater_predictive_reset(&h->predictive_state);
 }
 DECL_COMMAND(command_heater_control_clear_fault,
              "heater_control_clear_fault oid=%c");
@@ -577,3 +624,4 @@ DECL_SHUTDOWN(heater_control_shutdown);
 
 DECL_CONSTANT("HEATER_CONTROL_V1", 1);
 DECL_CONSTANT("HEATER_CONTROL_V2", 1);
+DECL_CONSTANT("HEATER_CONTROL_V3", 1);

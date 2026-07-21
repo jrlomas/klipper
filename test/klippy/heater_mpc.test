@@ -1,0 +1,6 @@
+# Host configuration and command-encoding regression for predictive control.
+DICTIONARY klipper.dict
+CONFIG heater_mpc.cfg
+
+M140 S60
+M140 S0

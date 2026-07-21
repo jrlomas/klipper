@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -94,6 +95,121 @@ test_bumpless_reconfigure(void)
     assert(state.derivative_mdeg == 0);
 }
 
+static struct heater_predictive_config
+predictive_config(void)
+{
+    return (struct heater_predictive_config) {
+        .retention_q15 = (uint16_t)(.8 * HEATER_CONTROL_ALPHA_ONE),
+        .observer_alpha_q15 = (uint16_t)(.2 * HEATER_CONTROL_ALPHA_ONE),
+        .max_output = HEATER_CONTROL_OUTPUT_ONE,
+        .max_output_step = 6554, // 10 percentage points per update
+        .response_mdeg = 18000,  // 90C plant gain over a 20% horizon
+        .effort_mdeg = 10000,
+        .control_band_mdeg = 100000,
+        .integral_step_q20 = Q20(.02),
+    };
+}
+
+static void
+test_predictive_constraints(void)
+{
+    struct heater_predictive_config cfg = predictive_config();
+    struct heater_predictive_state state;
+    heater_predictive_reset(&state);
+    uint16_t previous = 0;
+    for (int i = 0; i < 8; i++) {
+        uint16_t output = heater_predictive_update(
+            &state, &cfg, 25000, 55000, 25000, 30000);
+        assert(output >= previous);
+        assert(output - previous <= cfg.max_output_step);
+        previous = output;
+    }
+    assert(previous > 30000);
+    // A temperature whose passive horizon remains above target cannot
+    // produce negative heater duty.
+    for (int i = 0; i < 20; i++)
+        previous = heater_predictive_update(
+            &state, &cfg, 90000, 55000, 25000, -35000);
+    assert(previous == 0);
+}
+
+static void
+test_predictive_effort_penalty_rejects_quantization_chatter(void)
+{
+    struct heater_predictive_config cfg = predictive_config();
+    cfg.max_output_step = 0;
+    cfg.integral_step_q20 = 0;
+    struct heater_predictive_state state;
+    heater_predictive_reset(&state);
+    uint16_t before = 0;
+    for (int i = 0; i < 20; i++)
+        before = heater_predictive_update(
+            &state, &cfg, 55000, 55000, 25000, 0);
+    uint16_t after = heater_predictive_update(
+        &state, &cfg, 55050, 55000, 25000, -50);
+    // A 0.05C ADC step changes duty by far less than one percentage point.
+    assert(before > 19000 && before < 25000);
+    assert(after < before && before - after < 655);
+}
+
+static void
+test_predictive_bumpless_reconfigure(void)
+{
+    struct heater_predictive_config cfg = predictive_config();
+    cfg.max_output_step = 0;
+    struct heater_predictive_state state;
+    heater_predictive_reset(&state);
+    uint16_t before = 0;
+    for (int i = 0; i < 20; i++)
+        before = heater_predictive_update(
+            &state, &cfg, 55000, 55000, 25000, 0);
+    cfg.response_mdeg /= 2;
+    heater_predictive_reconfigure(&state);
+    uint16_t after = heater_predictive_update(
+        &state, &cfg, 55000, 55000, 25000, 0);
+    assert(after >= before - 2 && after <= before + 2);
+}
+
+static void
+test_predictive_target_local_band(void)
+{
+    struct heater_predictive_config cfg = predictive_config();
+    cfg.control_band_mdeg = 10000;
+    struct heater_predictive_state state;
+    heater_predictive_reset(&state);
+    // Far below target: approach full power through the configured slew.
+    uint16_t first = heater_predictive_update(
+        &state, &cfg, 45000, 55000, 25000, 30000);
+    assert(first == cfg.max_output_step);
+    assert(!state.initialized);
+    // Crossing into the locally calibrated band initializes the observer and
+    // rebases around the approach duty rather than jumping.
+    uint16_t second = heater_predictive_update(
+        &state, &cfg, 50000, 55000, 25000, 5000);
+    assert(state.initialized);
+    assert(second >= first && second - first < 200);
+    // Far above target uses the same slew bound toward zero.
+    uint16_t third = heater_predictive_update(
+        &state, &cfg, 70000, 55000, 25000, -15000);
+    assert(third + cfg.max_output_step == second || third == 0);
+    assert(!state.initialized);
+}
+
+static void
+test_predictive_extreme_inputs_remain_bounded(void)
+{
+    struct heater_predictive_config cfg = predictive_config();
+    cfg.response_mdeg = 1000000;
+    cfg.effort_mdeg = 1000000;
+    cfg.control_band_mdeg = 0;
+    cfg.max_output_step = 0;
+    struct heater_predictive_state state;
+    heater_predictive_reset(&state);
+    uint16_t output = heater_predictive_update(
+        &state, &cfg, INT32_MIN, INT32_MAX, INT32_MIN, INT32_MAX);
+    assert(output <= cfg.max_output);
+}
+
 static void
 test_verify_heater_progress_and_stall(void)
 {
@@ -135,6 +251,11 @@ main(void)
     test_derivative_on_measurement();
     test_anti_windup_and_recovery();
     test_bumpless_reconfigure();
+    test_predictive_constraints();
+    test_predictive_effort_penalty_rejects_quantization_chatter();
+    test_predictive_bumpless_reconfigure();
+    test_predictive_target_local_band();
+    test_predictive_extreme_inputs_remain_bounded();
     test_verify_heater_progress_and_stall();
     puts("PASS: autonomous heater controller fixed-point math");
     return 0;

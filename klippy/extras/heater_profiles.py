@@ -10,6 +10,7 @@ import hashlib, json, math, os, stat, tempfile, time
 STORE_VERSION = 1
 MODEL_VERSION = 1
 GAIN_NAMES = ('kp', 'ki', 'kd')
+THERMAL_MODEL_NAMES = ('gain', 'tau', 'delay')
 
 
 def _median(values):
@@ -78,6 +79,94 @@ def _inside_convex_hull(point, hull):
             or all(value <= tolerance for value in signs))
 
 
+def fit_first_order_step(samples, power):
+    """Fit T=T0+A*(1-exp(-(t-delay)/tau)) to a constant-power step.
+
+    The host may spend computation on a bounded delay/tau grid; the MCU only
+    receives the resulting first-order coefficients.  This fitter deliberately
+    rejects weak, short, or boundary-limited experiments instead of inventing
+    a confident plant model from insufficient heating evidence.
+    """
+    if not math.isfinite(float(power)) or not 0. < power <= 1.:
+        raise ValueError('thermal step power must be in (0, 1]')
+    cleaned = []
+    for stamp, temp in samples:
+        stamp, temp = float(stamp), float(temp)
+        if math.isfinite(stamp) and math.isfinite(temp):
+            cleaned.append((stamp, temp))
+    cleaned.sort()
+    if len(cleaned) < 30:
+        raise ValueError('thermal step requires at least 30 samples')
+    start = cleaned[0][0]
+    measured = [(stamp - start, temp) for stamp, temp in cleaned]
+    duration = measured[-1][0]
+    if duration < 10.:
+        raise ValueError('thermal step duration is too short')
+    baseline_count = max(3, min(10, len(measured) // 20))
+    baseline = _median([temp for unused, temp
+                        in measured[:baseline_count]])
+    values = [temp - baseline for unused, temp in measured]
+    rise = max(values)
+    if rise < 2.:
+        raise ValueError('thermal step produced less than 2C rise')
+    intervals = [measured[pos][0] - measured[pos - 1][0]
+                 for pos in range(1, len(measured))
+                 if measured[pos][0] > measured[pos - 1][0]]
+    sample_period = _median(intervals) if intervals else duration / len(measured)
+    delay_limit = min(60., duration * .25)
+    delay_candidates = [delay_limit * pos / 24. for pos in range(25)]
+    tau_min = max(1., 2. * sample_period)
+    tau_max = duration * 20.
+    tau_candidates = [tau_min * (tau_max / tau_min) ** (pos / 119.)
+                      for pos in range(120)]
+    best = None
+    for delay in delay_candidates:
+        for tau in tau_candidates:
+            basis = [(0. if stamp <= delay else
+                      1. - math.exp(-(stamp - delay) / tau))
+                     for stamp, unused in measured]
+            norm = sum(value * value for value in basis)
+            if norm < 1.e-12:
+                continue
+            amplitude = sum(value * observed
+                            for value, observed in zip(basis, values)) / norm
+            if amplitude <= 0.:
+                continue
+            residuals = [observed - amplitude * value
+                         for value, observed in zip(basis, values)]
+            sse = sum(value * value for value in residuals)
+            if best is None or sse < best[0]:
+                best = (sse, delay, tau, amplitude, residuals)
+    if best is None:
+        raise ValueError('unable to fit first-order thermal response')
+    sse, delay, tau, amplitude, residuals = best
+    # A solution pinned to the search ceiling means the experiment observed
+    # too little curvature to identify a time constant safely.
+    if tau > tau_max * .98:
+        raise ValueError(
+            'thermal step did not run long enough to identify tau')
+    mean_value = sum(values) / len(values)
+    total = sum((value - mean_value) ** 2 for value in values)
+    r_squared = 1. - sse / total if total > 0. else 0.
+    rmse = math.sqrt(sse / len(values))
+    if r_squared < .95:
+        raise ValueError(
+            'thermal step first-order fit is poor (R^2=%.4f)' % r_squared)
+    return {
+        'gain': amplitude / power,
+        'tau': tau,
+        'delay': delay,
+        'baseline': baseline,
+        'asymptote': baseline + amplitude,
+        'power': power,
+        'samples': len(values),
+        'duration': duration,
+        'rise': rise,
+        'rmse': rmse,
+        'r_squared': r_squared,
+    }
+
+
 class HeaterProfileStore:
     """Private, atomic JSON store containing raw heater tune evidence."""
     def __init__(self, path, wall_clock=time.time):
@@ -133,6 +222,10 @@ class HeaterProfileStore:
     def runs(self, heater):
         return list(self.data['heaters'].get(heater, {}).get('runs', []))
 
+    def thermal_models(self, heater):
+        return list(self.data['heaters'].get(heater, {}).get(
+            'thermal_models', []))
+
     def add_run(self, heater, run):
         record = dict(run)
         record.setdefault('created', self.wall_clock())
@@ -140,6 +233,19 @@ class HeaterProfileStore:
         record['id'] = record.get('id') or _run_id(record)
         records = self.data['heaters'].setdefault(
             heater, {'runs': []})['runs']
+        if not any(item.get('id') == record['id'] for item in records):
+            records.append(record)
+            self.data['generation'] += 1
+            self._save()
+        return record
+
+    def add_thermal_model(self, heater, model):
+        record = dict(model)
+        record.setdefault('created', self.wall_clock())
+        record.setdefault('status', 'candidate')
+        record['id'] = record.get('id') or _run_id(record)
+        section = self.data['heaters'].setdefault(heater, {'runs': []})
+        records = section.setdefault('thermal_models', [])
         if not any(item.get('id') == record['id'] for item in records):
             records.append(record)
             self.data['generation'] += 1
@@ -157,6 +263,29 @@ class HeaterProfileStore:
                     self._save()
                 return record
         raise KeyError(run_id)
+
+    def set_thermal_model_status(self, heater, model_id, status):
+        if status not in ('candidate', 'validated', 'rejected'):
+            raise ValueError("Invalid thermal model status '%s'" % (status,))
+        records = self.data['heaters'].get(heater, {}).get(
+            'thermal_models', [])
+        for record in records:
+            if record.get('id') == model_id:
+                if record.get('status') != status:
+                    record['status'] = status
+                    self.data['generation'] += 1
+                    self._save()
+                return record
+        raise KeyError(model_id)
+
+    def clear_thermal_models(self, heater):
+        section = self.data['heaters'].get(heater)
+        if section is None or not section.get('thermal_models'):
+            return False
+        section['thermal_models'] = []
+        self.data['generation'] += 1
+        self._save()
+        return True
 
     def clear(self, heater=None):
         if heater is None:
@@ -355,4 +484,119 @@ class HeaterGainModel:
             'coefficients': self.coefficients,
             'surface_hull': self.hull,
             'gain_ratio_bounds': [self.min_ratio, self.max_ratio],
+        }
+
+
+class ThermalPlantModel:
+    """Bounded target-indexed first-order thermal plant models.
+
+    Plant identification is deliberately separate from controller tuning.
+    Each validated point contains steady full-duty gain and the dominant time
+    constant.  Interpolation is permitted only between characterized targets;
+    outside that range the explicit printer.cfg model remains authoritative.
+    """
+    def __init__(self, records, base_model, model_ratio=(.25, 4.0),
+                 max_delay=60.):
+        self.base_model = {
+            name: float(base_model[name]) for name in THERMAL_MODEL_NAMES}
+        self.min_ratio, self.max_ratio = model_ratio
+        self.max_delay = float(max_delay)
+        self.points = self._points(records)
+        self.kind = ('curve' if len(self.points) >= 2
+                     else 'point' if self.points else 'base')
+        self.target_range = (None if not self.points else (
+            self.points[0]['target'], self.points[-1]['target']))
+
+    def _points(self, records):
+        grouped = {}
+        for record in records:
+            if record.get('status') != 'validated':
+                continue
+            # Context-dependent plant surfaces are intentionally not collapsed
+            # into a target-only curve.
+            if record.get('context_temp') is not None:
+                continue
+            model = record.get('model', {})
+            try:
+                target = float(record['target'])
+                values = {
+                    'gain': float(model['gain']),
+                    'tau': float(model['tau']),
+                    'delay': float(model.get('delay', 0.)),
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (not math.isfinite(target)
+                    or not math.isfinite(values['gain'])
+                    or not math.isfinite(values['tau'])
+                    or not math.isfinite(values['delay'])
+                    or values['gain'] <= 0. or values['tau'] <= 0.
+                    or values['delay'] < 0.):
+                continue
+            grouped.setdefault(target, []).append(values)
+        points = []
+        for target, samples in sorted(grouped.items()):
+            point = {'target': target, 'samples': len(samples)}
+            point.update({name: _median([sample[name] for sample in samples])
+                          for name in THERMAL_MODEL_NAMES})
+            points.append(point)
+        return points
+
+    def _bounded(self, model):
+        raw = {name: float(model[name]) for name in THERMAL_MODEL_NAMES}
+        bounded = {}
+        for name in ('gain', 'tau'):
+            base = self.base_model[name]
+            bounded[name] = max(base * self.min_ratio,
+                                min(base * self.max_ratio, raw[name]))
+        bounded['delay'] = max(0., min(self.max_delay, raw['delay']))
+        clamped = [name for name in THERMAL_MODEL_NAMES
+                   if abs(bounded[name] - raw[name]) > 1.e-12]
+        return bounded, raw, clamped
+
+    def _selection(self, model, source, **metadata):
+        bounded, raw, clamped = self._bounded(model)
+        result = {'model': bounded, 'raw_model': raw,
+                  'clamped_parameters': clamped, 'bounded': bool(clamped),
+                  'source': source, 'kind': self.kind}
+        result.update(metadata)
+        return result
+
+    def select(self, target):
+        target = float(target)
+        fallback = {'model': dict(self.base_model),
+                    'raw_model': dict(self.base_model),
+                    'clamped_parameters': [], 'bounded': False,
+                    'source': 'base', 'kind': self.kind}
+        if not self.points or self.target_range is None:
+            return fallback
+        if target < self.target_range[0] or target > self.target_range[1]:
+            return fallback
+        exact = [point for point in self.points
+                 if abs(point['target'] - target) < 1.e-9]
+        if exact:
+            return self._selection(exact[0], 'exact')
+        if len(self.points) < 2:
+            return fallback
+        for lower, upper in zip(self.points, self.points[1:]):
+            if lower['target'] <= target <= upper['target']:
+                fraction = ((target - lower['target'])
+                            / (upper['target'] - lower['target']))
+                model = {name: lower[name] + fraction * (
+                    upper[name] - lower[name])
+                    for name in THERMAL_MODEL_NAMES}
+                return self._selection(
+                    model, 'linear',
+                    bracket=[lower['target'], upper['target']])
+        return fallback
+
+    def status(self):
+        return {
+            'version': MODEL_VERSION,
+            'kind': self.kind,
+            'points': len(self.points),
+            'target_range': self.target_range,
+            'model_ratio_bounds': [self.min_ratio, self.max_ratio],
+            'delay_bounds': [0., self.max_delay],
+            'models': [dict(point) for point in self.points],
         }

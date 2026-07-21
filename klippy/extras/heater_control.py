@@ -28,19 +28,25 @@ class MCUHeaterControl:
         self.reactor = self.printer.get_reactor()
         self.heater = heater
         self.name = heater.short_name
+        self.control_kind = getattr(heater.control, 'control_kind', 'pid')
+        self.is_predictive = self.control_kind == 'predictive'
+        control_label = 'helix_mpc' if self.is_predictive else 'helix_pid'
         sensor = heater.sensor
         if not hasattr(sensor, 'mcu_adc') or not hasattr(sensor, 'adc_convert'):
             raise config.error(
-                "control: helix_pid requires an ADC temperature sensor")
+                "control: %s requires an ADC temperature sensor"
+                % (control_label,))
         self.mcu_adc = sensor.mcu_adc
         self.adc_convert = sensor.adc_convert
         self.mcu = self.mcu_adc.get_mcu()
         if heater.mcu_pwm.get_mcu() is not self.mcu:
             raise config.error(
-                "control: helix_pid requires heater and sensor on one MCU")
+                "control: %s requires heater and sensor on one MCU"
+                % (control_label,))
         if heater.mcu_pwm.is_hardware_pwm():
             raise config.error(
-                "control: helix_pid currently requires software PWM")
+                "control: %s currently requires software PWM"
+                % (control_label,))
         heater.mcu_pwm.setup_max_duration(0.)
 
         # The merged DMA manager owns acquisition.  The local controller binds
@@ -78,11 +84,21 @@ class MCUHeaterControl:
             config.getfloat('pid_Kd', minval=0.))
         self.kp, self.ki, self.kd = [value / 255.
                                      for value in self.base_pid]
-        self.profile_manager = HeaterProfileManager(config, self)
+        self.profile_manager = (None if self.is_predictive
+                                else HeaterProfileManager(config, self))
         self.active_pid = self.base_pid
         self.active_profile_source = 'base'
         self.active_profile_raw_pid = self.base_pid
         self.active_profile_clamped = ()
+        self.predictive_model = None
+        self.predictive_selection = None
+        self.thermal_model_manager = None
+        self.predictive_ambient = None
+        self.ambient_observation = None
+        self.predictive_cmd = None
+        if self.is_predictive:
+            self._load_predictive_config(config)
+            self.thermal_model_manager = ThermalModelManager(config, self)
         self.mcu_control_algo = heater.control
         self.host_control = None
         self.host_selection = None
@@ -123,7 +139,85 @@ class MCUHeaterControl:
             'HELIX_HEATER_CONTROL_MODE', 'HEATER', self.name,
             self.cmd_HELIX_HEATER_CONTROL_MODE,
             desc=self.cmd_HELIX_HEATER_CONTROL_MODE_help)
-        self.profile_manager.register_commands(gcode)
+        if self.profile_manager is not None:
+            self.profile_manager.register_commands(gcode)
+        if self.thermal_model_manager is not None:
+            self.thermal_model_manager.register_commands(gcode)
+
+    def _load_predictive_config(self, config):
+        gain = config.getfloat('thermal_model_gain', above=0., maxval=1000.)
+        tau = config.getfloat('thermal_model_tau', above=self.period,
+                              maxval=100000.)
+        delay = config.getfloat(
+            'thermal_model_delay', 0., minval=0., maxval=1000.)
+        default_horizon = max(
+            delay + self.period, min(30., tau * .25))
+        horizon = config.getfloat(
+            'thermal_prediction_horizon', default_horizon,
+            above=delay, maxval=100000.)
+        effort = config.getfloat(
+            'thermal_effort_penalty', max(.1, gain * .05),
+            minval=0., maxval=1000.)
+        integral_gain = config.getfloat(
+            'thermal_integral_gain', .0005, minval=0., maxval=1.)
+        observer_time = config.getfloat(
+            'thermal_observer_time', max(self.period, 2.), above=0.,
+            maxval=1000.)
+        slew_rate = config.getfloat(
+            'thermal_output_slew_rate', 1., above=0., maxval=100.)
+        control_band = config.getfloat(
+            'thermal_control_band', 10., above=0., maxval=100.)
+        self.ambient_sensor_name = config.get(
+            'thermal_ambient_sensor', None)
+        self.ambient_fallback = config.getfloat(
+            'thermal_ambient_temperature', 25., minval=-273.15,
+            maxval=self.heater.max_temp)
+        self.base_predictive_model = {
+            'gain': gain, 'tau': tau, 'delay': delay}
+        self.predictive_tuning = {
+            'horizon': horizon,
+            'effort_penalty': effort,
+            'integral_gain': integral_gain,
+            'observer_time': observer_time,
+            'output_slew_rate': slew_rate,
+            'control_band': control_band,
+        }
+        self._configure_predictive_model(gain, tau, delay)
+
+    def _configure_predictive_model(self, gain, tau, delay):
+        tuning = self.predictive_tuning
+        horizon = tuning['horizon']
+        retention = math.exp(-horizon / tau)
+        response_horizon = max(self.period, horizon - delay)
+        response = gain * (1. - math.exp(-response_horizon / tau))
+        observer_alpha = 1. - math.exp(
+            -self.period / tuning['observer_time'])
+        integral_step = (tuning['integral_gain'] * self.period
+                         * OUTPUT_ONE / 1000.)
+        self.predictive_model = {
+            'gain': gain,
+            'tau': tau,
+            'delay': delay,
+            'horizon': horizon,
+            'effort_penalty': tuning['effort_penalty'],
+            'integral_gain': tuning['integral_gain'],
+            'observer_time': tuning['observer_time'],
+            'output_slew_rate': tuning['output_slew_rate'],
+            'retention_q15': max(0, min(
+                ALPHA_ONE, int(retention * ALPHA_ONE + .5))),
+            'observer_alpha_q15': max(1, min(
+                ALPHA_ONE, int(observer_alpha * ALPHA_ONE + .5))),
+            'response_mdeg': max(1, int(response * 1000. + .5)),
+            'effort_mdeg': int(
+                tuning['effort_penalty'] * 1000. + .5),
+            'control_band_mdeg': int(
+                tuning['control_band'] * 1000. + .5),
+            'integral_step_q20': self._q20(
+                integral_step, 'thermal_integral_gain'),
+            'max_step': max(1, min(
+                OUTPUT_ONE, int(tuning['output_slew_rate'] * self.period
+                                * OUTPUT_ONE + .5))),
+        }
 
     def _q20(self, value, option):
         result = int(value * (1 << GAIN_SHIFT) + .5)
@@ -169,6 +263,11 @@ class MCUHeaterControl:
             raise self.printer.config_error(
                 "MCU '%s' lacks HEATER_CONTROL_V2 dynamic profiles" % (
                     self.mcu.get_name(),))
+        if (self.is_predictive
+                and self.mcu.get_constants().get('HEATER_CONTROL_V3') != 1):
+            raise self.printer.config_error(
+                "MCU '%s' lacks HEATER_CONTROL_V3 predictive control" % (
+                    self.mcu.get_name(),))
         stream_oid, subscription = self.manager.get_local_binding(self.mcu_adc)
         # Clock conversion is only valid after MCU identify/configuration.
         self.clock_frequency = self.mcu.seconds_to_clock(1.)
@@ -204,6 +303,18 @@ class MCUHeaterControl:
                 self.mcu.seconds_to_clock(self.period),
                 max(1, int(self.autonomous_max_duration / self.period + .5)),
                 max_output, kp_q20, ki_q20, kd_q20, alpha_q15))
+        if self.is_predictive:
+            model = self.predictive_model
+            self.mcu.add_config_cmd(
+                "heater_control_set_predictive oid=%d retention_q15=%d"
+                " observer_alpha_q15=%d response_mdeg=%d effort_mdeg=%d"
+                " control_band_mdeg=%d integral_step_q20=%d max_step=%d"
+                " ambient_mdeg=%d" % (
+                    self.oid, model['retention_q15'],
+                    model['observer_alpha_q15'], model['response_mdeg'],
+                    model['effort_mdeg'], model['control_band_mdeg'],
+                    model['integral_step_q20'], model['max_step'],
+                    int(self.ambient_fallback * 1000.)))
         max_error_mdeg_ms = int(self.verify_max_error * 1000000. + .5)
         if max_error_mdeg_ms > 0xffffffff:
             raise self.printer.config_error(
@@ -228,6 +339,13 @@ class MCUHeaterControl:
         self.set_profile_cmd = self.mcu.lookup_command(
             "heater_control_set_profile oid=%c kp_q20=%i"
             " ki_step_q20=%i kd_step_q20=%i d_alpha_q15=%hu", cq=cq)
+        if self.is_predictive:
+            self.predictive_cmd = self.mcu.lookup_command(
+                "heater_control_set_predictive oid=%c retention_q15=%hu"
+                " observer_alpha_q15=%hu response_mdeg=%u effort_mdeg=%u"
+                " control_band_mdeg=%u integral_step_q20=%i max_step=%hu"
+                " ambient_mdeg=%i",
+                cq=cq)
         self.manual_cmd = self.mcu.lookup_command(
             "heater_control_set_manual oid=%c output=%hu", cq=cq)
         self.manual_guard_cmd = self.mcu.lookup_command(
@@ -256,9 +374,10 @@ class MCUHeaterControl:
         self._commands_ready = True
         logging.info(
             "MCU '%s' autonomous heater '%s': period=%.3fs host_timeout=%.3fs"
-            " autonomous_max=%.1fs alpha=%.5f",
+            " autonomous_max=%.1fs algorithm=%s alpha=%.5f",
             self.mcu.get_name(), self.name, self.period, self.host_timeout,
-            self.autonomous_max_duration, self.derivative_alpha)
+            self.autonomous_max_duration, self.control_kind,
+            self.derivative_alpha)
 
     def _handle_ready(self):
         self.reactor.update_timer(self.ping_timer, self.reactor.NOW)
@@ -316,11 +435,71 @@ class MCUHeaterControl:
         self.loop_dt_min = period + params['min_us'] * 1.e-6 if count else 0.
         self.loop_dt_max = period + params['max_us'] * 1.e-6 if count else 0.
 
+    def observe_temperature(self, temp, target):
+        if self.is_predictive and target <= 0. and math.isfinite(temp):
+            self.ambient_observation = float(temp)
+
+    def _ambient_temperature(self):
+        if self.ambient_sensor_name:
+            sensor = self.printer.lookup_object(
+                self.ambient_sensor_name, None)
+            if sensor is not None:
+                status = sensor.get_status(self.reactor.monotonic())
+                value = status.get('temperature')
+                if value is not None and math.isfinite(float(value)):
+                    return float(value)
+        if self.ambient_observation is not None:
+            return self.ambient_observation
+        return self.ambient_fallback
+
+    def _set_predictive_model(self, target):
+        if self.predictive_cmd is None:
+            return
+        selection = self.thermal_model_manager.select(target)
+        selected_model = selection['model']
+        # A persisted model is untrusted input.  Do not let a validated but
+        # physically implausible point produce a discrete model faster than
+        # the controller's own sample interval or a dead time beyond the
+        # configured prediction horizon.
+        invalid_parameters = []
+        if selected_model['tau'] <= self.period:
+            invalid_parameters.append('tau')
+        if selected_model['delay'] >= self.predictive_tuning['horizon']:
+            invalid_parameters.append('delay')
+        if invalid_parameters:
+            base = dict(self.base_predictive_model)
+            selection = {
+                'model': base, 'raw_model': dict(selected_model),
+                'clamped_parameters': invalid_parameters, 'bounded': True,
+                'source': 'base-invalid-model',
+                'kind': selection.get('kind', 'base'),
+            }
+            selected_model = base
+        self._configure_predictive_model(
+            selected_model['gain'], selected_model['tau'],
+            selected_model['delay'])
+        self.predictive_selection = selection
+        model = self.predictive_model
+        ambient = self._ambient_temperature()
+        self.predictive_cmd.send([
+            self.oid, model['retention_q15'],
+            model['observer_alpha_q15'], model['response_mdeg'],
+            model['effort_mdeg'], model['control_band_mdeg'],
+            model['integral_step_q20'], model['max_step'],
+            int(ambient * 1000. + .5)])
+        self.predictive_ambient = ambient
+
     def set_target(self, temp):
         if self.set_target_cmd is None:
             return
         if temp <= 0.:
             self.set_target_cmd.send([self.oid, 0, 0, 0])
+            return
+        if self.is_predictive:
+            self._set_predictive_model(temp)
+            target_adc, target_mdeg, slope_q16 = self._target_parameters(temp)
+            self.set_target_cmd.send(
+                [self.oid, target_adc, target_mdeg, slope_q16])
             return
         selection = self.profile_manager.select(temp)
         gains = selection['gains']
@@ -401,19 +580,43 @@ class MCUHeaterControl:
             'loop_dt_min': self.loop_dt_min or 0.,
             'loop_dt_max': self.loop_dt_max or 0.,
             'host_configured': self._commands_ready,
-            'pid_gains': dict(zip(heater_profiles.GAIN_NAMES,
-                                  self.active_pid)),
-            'pid_profile_raw_gains': dict(zip(
-                heater_profiles.GAIN_NAMES, self.active_profile_raw_pid)),
-            'pid_profile_bounded': bool(self.active_profile_clamped),
-            'pid_profile_clamped_gains': list(
-                self.active_profile_clamped),
-            'pid_profile_source': self.active_profile_source,
-            'pid_profile_model': self.profile_manager.model.kind,
-            'pid_profile_generation': self.profile_manager.store.data[
-                'generation'],
+            'algorithm': self.control_kind,
             'control_mode': self.control_mode,
         }
+        if self.is_predictive:
+            selection = self.predictive_selection or {
+                'source': 'base', 'bounded': False,
+                'clamped_parameters': [],
+                'raw_model': dict(self.base_predictive_model),
+            }
+            status.update({
+                'thermal_model': dict(self.predictive_model),
+                'thermal_ambient': self.predictive_ambient,
+                'thermal_model_source': selection['source'],
+                'thermal_model_raw': dict(selection['raw_model']),
+                'thermal_model_bounded': selection['bounded'],
+                'thermal_model_clamped_parameters': list(
+                    selection['clamped_parameters']),
+                'thermal_model_generation': (
+                    self.thermal_model_manager.store.data['generation']),
+                'fallback_pid_gains': dict(zip(
+                    heater_profiles.GAIN_NAMES, self.base_pid)),
+            })
+        else:
+            status.update({
+                'pid_gains': dict(zip(heater_profiles.GAIN_NAMES,
+                                      self.active_pid)),
+                'pid_profile_raw_gains': dict(zip(
+                    heater_profiles.GAIN_NAMES,
+                    self.active_profile_raw_pid)),
+                'pid_profile_bounded': bool(self.active_profile_clamped),
+                'pid_profile_clamped_gains': list(
+                    self.active_profile_clamped),
+                'pid_profile_source': self.active_profile_source,
+                'pid_profile_model': self.profile_manager.model.kind,
+                'pid_profile_generation': self.profile_manager.store.data[
+                    'generation'],
+            })
         if self.control_mode == 'host' and self.host_control is not None:
             host_status = self.host_control.get_status()
             status['mcu_execution_state'] = status['state']
@@ -435,13 +638,32 @@ class MCUHeaterControl:
                     if status['mcu_temperature_valid'] else
                     "n/a (local tangent %.3f)" % (
                         status['mcu_temperature_estimate'],))
-        gcmd.respond_info(
-            "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
-            "profile=%s bounded=%s" % (
-                self.name, status['state'], status['fault'], status['power'],
-                status['samples'], estimate, status['pid_profile_source'],
-                (','.join(status['pid_profile_clamped_gains'])
-                 if status['pid_profile_bounded'] else 'no')))
+        if self.is_predictive and status['control_mode'] == 'mcu':
+            model = status['thermal_model']
+            gcmd.respond_info(
+                "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
+                "algorithm=predictive gain=%.3fC tau=%.3fs delay=%.3fs "
+                "horizon=%.3fs "
+                "ambient=%s model=%s bounded=%s" % (
+                    self.name, status['state'], status['fault'],
+                    status['power'], status['samples'], estimate,
+                    model['gain'], model['tau'], model['delay'],
+                    model['horizon'],
+                    ('%.3fC' % status['thermal_ambient']
+                     if status['thermal_ambient'] is not None else 'unset'),
+                    status['thermal_model_source'],
+                    (','.join(status[
+                        'thermal_model_clamped_parameters'])
+                     if status['thermal_model_bounded'] else 'no')))
+        else:
+            gcmd.respond_info(
+                "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
+                "profile=%s bounded=%s" % (
+                    self.name, status['state'], status['fault'],
+                    status['power'], status['samples'], estimate,
+                    status['pid_profile_source'],
+                    (','.join(status['pid_profile_clamped_gains'])
+                     if status['pid_profile_bounded'] else 'no')))
 
     cmd_HEATER_CONTROL_CLEAR_help = "Clear a latched MCU heater fault"
     def cmd_HEATER_CONTROL_CLEAR(self, gcmd):
@@ -471,7 +693,16 @@ class MCUHeaterControl:
             target = gcmd.get_float(
                 'TARGET', minval=self.heater.min_temp,
                 maxval=self.heater.max_temp)
-            selection = self.profile_manager.select(target)
+            if self.profile_manager is None:
+                gains = dict(zip(
+                    heater_profiles.GAIN_NAMES, self.base_pid))
+                selection = {
+                    'gains': gains, 'raw_gains': gains,
+                    'source': 'fallback', 'bounded': False,
+                    'clamped_gains': (),
+                }
+            else:
+                selection = self.profile_manager.select(target)
             gains = selection['gains']
             from . import heaters
             self.host_control = heaters.ControlPID.from_gains(
@@ -488,7 +719,8 @@ class MCUHeaterControl:
             return
         if mode == 'MCU':
             if self.control_mode == 'mcu':
-                raise gcmd.error('%s is already in MCU PID mode' % self.name)
+                raise gcmd.error('%s is already in MCU control mode'
+                                 % self.name)
             self.set_manual_guard(0.)
             self.set_manual_output(0.)
             self.heater.set_control(self.mcu_control_algo)
@@ -498,6 +730,142 @@ class MCUHeaterControl:
             gcmd.respond_info('%s control mode=mcu' % self.name)
             return
         raise gcmd.error('MODE must be HOST or MCU')
+
+
+class ThermalModelManager:
+    """Persistent plant-model policy for one predictive heater."""
+    def __init__(self, config, controller):
+        self.printer = config.get_printer()
+        self.controller = controller
+        self.heater = controller.heater
+        self.name = controller.name
+        config_dir = os.path.dirname(os.path.abspath(
+            self.printer.get_start_args()['config_file']))
+        default_path = config.get(
+            'heater_pid_profile_path', 'helix_heater_profiles.json')
+        path = config.get('heater_thermal_model_path', default_path)
+        if not os.path.isabs(path):
+            path = os.path.join(config_dir, path)
+        store = self.printer.lookup_object('heater_profile_store', None)
+        if store is None:
+            try:
+                store = heater_profiles.HeaterProfileStore(path)
+            except ValueError as exc:
+                raise config.error(str(exc))
+            self.printer.add_object('heater_profile_store', store)
+            store.path = os.path.abspath(path)
+        elif store.path != os.path.abspath(path):
+            raise config.error(
+                'All Helix heater models must use one profile store')
+        self.store = store
+        self.enabled = config.getboolean('heater_thermal_model_schedule', True)
+        self.min_ratio = config.getfloat(
+            'heater_thermal_model_min_ratio', .25, above=0.)
+        self.max_ratio = config.getfloat(
+            'heater_thermal_model_max_ratio', 4., above=self.min_ratio)
+        self.max_delay = config.getfloat(
+            'heater_thermal_model_max_delay', 60., minval=0., maxval=1000.)
+        self.model = None
+        self._rebuild()
+
+    def _rebuild(self):
+        self.model = heater_profiles.ThermalPlantModel(
+            self.store.thermal_models(self.name),
+            self.controller.base_predictive_model,
+            (self.min_ratio, self.max_ratio), self.max_delay)
+
+    def select(self, target):
+        if not self.enabled:
+            base = dict(self.controller.base_predictive_model)
+            return {'model': base, 'raw_model': base,
+                    'clamped_parameters': [], 'bounded': False,
+                    'source': 'disabled', 'kind': self.model.kind}
+        return self.model.select(target)
+
+    def register_commands(self, gcode):
+        commands = [
+            ('HELIX_THERMAL_MODEL_STATUS', self.cmd_STATUS,
+             'Show stored predictive thermal models'),
+            ('HELIX_THERMAL_MODEL_COEFFICIENTS', self.cmd_COEFFICIENTS,
+             'Show the fitted predictive thermal model schedule'),
+            ('HELIX_THERMAL_MODEL_RECORD', self.cmd_RECORD,
+             'Record a candidate first-order thermal model'),
+            ('HELIX_THERMAL_MODEL_VALIDATE', self.cmd_VALIDATE,
+             'Validate or reject a stored thermal model'),
+            ('HELIX_THERMAL_MODEL_CLEAR', self.cmd_CLEAR,
+             'Clear stored predictive thermal models'),
+        ]
+        for command, callback, desc in commands:
+            gcode.register_mux_command(
+                command, 'HEATER', self.name, callback, desc=desc)
+
+    def cmd_STATUS(self, gcmd):
+        records = self.store.thermal_models(self.name)
+        if not records:
+            gcmd.respond_info('%s: no stored thermal models' % self.name)
+            return
+        lines = []
+        for record in records:
+            model = record.get('model', {})
+            lines.append(
+                '%s status=%s target=%.3f gain=%.6f tau=%.6f '
+                'delay=%.6f method=%s' % (
+                    record.get('id', '?'), record.get('status', 'candidate'),
+                    float(record.get('target', 0.)),
+                    float(model.get('gain', 0.)),
+                    float(model.get('tau', 0.)),
+                    float(model.get('delay', 0.)),
+                    record.get('method', 'unknown')))
+        gcmd.respond_info('\n'.join(lines))
+
+    def cmd_COEFFICIENTS(self, gcmd):
+        gcmd.respond_info(json.dumps(
+            self.model.status(), sort_keys=True, indent=2))
+
+    def cmd_RECORD(self, gcmd):
+        if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
+            raise gcmd.error('HELIX_THERMAL_MODEL_RECORD requires CONFIRM=YES')
+        target = gcmd.get_float(
+            'TARGET', minval=self.heater.min_temp,
+            maxval=self.heater.max_temp)
+        gain = gcmd.get_float('GAIN', above=0.)
+        tau = gcmd.get_float('TAU', above=0.)
+        delay = gcmd.get_float('DELAY', 0., minval=0.)
+        record = self.store.add_thermal_model(self.name, {
+            'target': target,
+            'context_temp': None,
+            'model': {'gain': gain, 'tau': tau, 'delay': delay},
+            'method': 'manual',
+            'firmware': self.printer.get_start_args().get(
+                'software_version', 'unknown'),
+        })
+        self._rebuild()
+        gcmd.respond_info(
+            '%s thermal model %s recorded as candidate' % (
+                self.name, record['id']))
+
+    def cmd_VALIDATE(self, gcmd):
+        if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
+            raise gcmd.error(
+                'HELIX_THERMAL_MODEL_VALIDATE requires CONFIRM=YES')
+        model_id = gcmd.get('ID').strip()
+        status = gcmd.get('STATUS', 'VALIDATED').strip().lower()
+        try:
+            record = self.store.set_thermal_model_status(
+                self.name, model_id, status)
+        except (KeyError, ValueError) as exc:
+            raise gcmd.error(str(exc))
+        self._rebuild()
+        gcmd.respond_info('%s thermal model %s is %s' % (
+            self.name, record['id'], record['status']))
+
+    def cmd_CLEAR(self, gcmd):
+        if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
+            raise gcmd.error('HELIX_THERMAL_MODEL_CLEAR requires CONFIRM=YES')
+        changed = self.store.clear_thermal_models(self.name)
+        self._rebuild()
+        gcmd.respond_info('%s thermal models %s' % (
+            self.name, 'cleared' if changed else 'already empty'))
 
 
 class HeaterProfileManager:

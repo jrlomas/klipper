@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone regression tests for Helix heater characterization models."""
 
-import json, os, stat, sys, tempfile
+import json, math, os, stat, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'klippy'))
@@ -13,6 +13,12 @@ def run(target, kp, ki, kd, status='candidate', context=None):
     return {'target': target, 'context_temp': context, 'status': status,
             'gains': {'kp': kp, 'ki': ki, 'kd': kd},
             'method': 'test'}
+
+
+def thermal(target, gain, tau, status='candidate', context=None, delay=1.):
+    return {'target': target, 'context_temp': context, 'status': status,
+            'model': {'gain': gain, 'tau': tau, 'delay': delay},
+            'method': 'step_fit'}
 
 
 def test_private_atomic_store():
@@ -27,8 +33,15 @@ def test_private_atomic_store():
         store.add_run('extruder', dict(first))
         assert len(store.runs('extruder')) == 1
         store.set_status('extruder', first['id'], 'validated')
+        plant = store.add_thermal_model(
+            'extruder', thermal(200, 250, 20))
+        store.set_thermal_model_status(
+            'extruder', plant['id'], 'validated')
         reopened = heater_profiles.HeaterProfileStore(path)
         assert reopened.runs('extruder')[0]['status'] == 'validated'
+        assert reopened.thermal_models('extruder')[0][
+            'status'] == 'validated'
+        assert reopened.clear_thermal_models('extruder')
         assert not [name for name in os.listdir(tmp) if name.endswith('.tmp')]
         assert reopened.clear('extruder')
         assert not reopened.runs('extruder')
@@ -116,6 +129,56 @@ def test_underdetermined_context_never_becomes_target_curve():
     assert model.select(150, 20)['source'] == 'base'
 
 
+def test_thermal_model_interpolation_bounds_and_context_guard():
+    records = [thermal(60, 90, 300, 'validated', delay=1.),
+               thermal(100, 110, 260, 'validated', delay=3.)]
+    model = heater_profiles.ThermalPlantModel(
+        records, {'gain': 100, 'tau': 280, 'delay': 1.})
+    selected = model.select(80)
+    assert selected['source'] == 'linear'
+    assert selected['model'] == {'gain': 100., 'tau': 280., 'delay': 2.}
+    assert model.select(120)['source'] == 'base'
+    guarded = heater_profiles.ThermalPlantModel(
+        [thermal(60, 999, 1, 'validated')],
+        {'gain': 100, 'tau': 280, 'delay': 1.}, model_ratio=(.5, 2.))
+    selected = guarded.select(60)
+    assert selected['bounded']
+    assert selected['model'] == {'gain': 200., 'tau': 140., 'delay': 1.}
+    delayed = heater_profiles.ThermalPlantModel(
+        [thermal(60, 100, 280, 'validated', delay=90.)],
+        {'gain': 100, 'tau': 280, 'delay': 1.}, max_delay=60.)
+    selected = delayed.select(60)
+    assert selected['bounded'] and selected['model']['delay'] == 60.
+    context_only = heater_profiles.ThermalPlantModel(
+        [thermal(60, 90, 300, 'validated', 30)],
+        {'gain': 100, 'tau': 280, 'delay': 1.})
+    assert context_only.select(60)['source'] == 'base'
+
+
+def test_first_order_step_fit_and_rejection():
+    baseline, gain, tau, delay, power = 25., 90., 120., 4., .5
+    samples = []
+    for index in range(401):
+        stamp = index * .5
+        response = (0. if stamp <= delay else gain * power * (
+            1. - math.exp(-(stamp - delay) / tau)))
+        # Deterministic ADC-like quantization/noise.
+        noise = ((index % 5) - 2) * .005
+        samples.append((stamp, baseline + response + noise))
+    fitted = heater_profiles.fit_first_order_step(samples, power)
+    assert abs(fitted['gain'] - gain) < 2.
+    assert abs(fitted['tau'] - tau) < 5.
+    assert abs(fitted['delay'] - delay) < 2.5
+    assert fitted['r_squared'] > .999
+    try:
+        heater_profiles.fit_first_order_step(
+            [(index, 25. + index * .001) for index in range(40)], .5)
+    except ValueError as exc:
+        assert 'less than 2C' in str(exc)
+    else:
+        raise AssertionError('weak thermal step was accepted')
+
+
 def test_reject_corrupt_and_wrong_version():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, 'profiles.json')
@@ -145,6 +208,8 @@ def main():
     test_surface_fit_and_hull_guards()
     test_gain_bounds()
     test_underdetermined_context_never_becomes_target_curve()
+    test_thermal_model_interpolation_bounds_and_context_guard()
+    test_first_order_step_fit_and_rejection()
     test_reject_corrupt_and_wrong_version()
     print('PASS: heater run store and bounded gain models')
 

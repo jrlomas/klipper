@@ -4,7 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import csv, math, logging, os
-from . import heaters
+from . import heater_profiles, heaters
 
 class PIDCalibrate:
     def __init__(self, config):
@@ -15,6 +15,10 @@ class PIDCalibrate:
         gcode.register_command(
             'HELIX_HEATER_SINE_TEST', self.cmd_HELIX_HEATER_SINE_TEST,
             desc=self.cmd_HELIX_HEATER_SINE_TEST_help)
+        gcode.register_command(
+            'HELIX_THERMAL_MODEL_CALIBRATE',
+            self.cmd_HELIX_THERMAL_MODEL_CALIBRATE,
+            desc=self.cmd_HELIX_THERMAL_MODEL_CALIBRATE_help)
     cmd_PID_CALIBRATE_help = "Run PID calibration test"
     def cmd_PID_CALIBRATE(self, gcmd):
         heater_name = gcmd.get('HEATER')
@@ -40,7 +44,8 @@ class PIDCalibrate:
         elif method == 'SYMMETRIC':
             if mcu_control is None:
                 raise gcmd.error(
-                    'METHOD=SYMMETRIC requires control: helix_pid')
+                    'METHOD=SYMMETRIC requires control: helix_pid or '
+                    'helix_mpc')
             tolerance = gcmd.get_float('TOLERANCE', .02, above=0.)
             settle_time = gcmd.get_float(
                 'SETTLE_TIME', 30., minval=5., maxval=300.)
@@ -71,10 +76,8 @@ class PIDCalibrate:
         old_control = heater.set_control(calibrate)
         try:
             pheaters.set_temperature(heater, target, True)
-        except self.printer.command_error as e:
+        finally:
             heater.set_control(old_control)
-            raise
-        heater.set_control(old_control)
         if write_file:
             calibrate.write_file('/tmp/heattest.txt')
         if calibrate.check_busy(0., 0., 0.):
@@ -82,13 +85,15 @@ class PIDCalibrate:
         # Log and report results
         Kp, Ki, Kd = calibrate.calc_final_pid()
         logging.info("Autotune: final: Kp=%f Ki=%f Kd=%f", Kp, Ki, Kd)
+        profile_manager = (getattr(mcu_control, 'profile_manager', None)
+                           if mcu_control is not None else None)
         store_run = gcmd.get_int(
-            'STORE', 1 if mcu_control is not None else 0,
+            'STORE', 1 if profile_manager is not None else 0,
             minval=0, maxval=1)
         stored = None
-        if store_run and mcu_control is not None:
+        if store_run and profile_manager is not None:
             try:
-                stored = mcu_control.profile_manager.record_tune(
+                stored = profile_manager.record_tune(
                     target, (Kp, Ki, Kd), calibrate,
                     'relay_%s_%s' % (method.lower(), rule.lower()))
             except (OSError, ValueError) as exc:
@@ -112,9 +117,12 @@ class PIDCalibrate:
             return
         cfgname = heater.get_name()
         configfile = self.printer.lookup_object('configfile')
-        control_name = ('helix_pid'
-                        if isinstance(old_control, heaters.ControlHelixPID)
-                        else 'pid')
+        if isinstance(old_control, heaters.ControlHelixMPC):
+            control_name = 'helix_mpc'
+        elif isinstance(old_control, heaters.ControlHelixPID):
+            control_name = 'helix_pid'
+        else:
+            control_name = 'pid'
         configfile.set(cfgname, 'control', control_name)
         configfile.set(cfgname, 'pid_Kp', "%.3f" % (Kp,))
         configfile.set(cfgname, 'pid_Ki', "%.3f" % (Ki,))
@@ -156,6 +164,83 @@ class PIDCalibrate:
             bias, mean_temp, target, len(samples))
         return bias
 
+    cmd_HELIX_THERMAL_MODEL_CALIBRATE_help = (
+        "Run a guarded thermal step and store a candidate plant model")
+    def cmd_HELIX_THERMAL_MODEL_CALIBRATE(self, gcmd):
+        if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
+            raise gcmd.error(
+                'HELIX_THERMAL_MODEL_CALIBRATE requires CONFIRM=YES')
+        heater_name = gcmd.get('HEATER')
+        pheaters = self.printer.lookup_object('heaters')
+        try:
+            heater = pheaters.lookup_heater(heater_name)
+        except self.printer.config_error as exc:
+            raise gcmd.error(str(exc))
+        mcu_control = getattr(heater, 'mcu_heater_control', None)
+        manager = (getattr(mcu_control, 'thermal_model_manager', None)
+                   if mcu_control is not None else None)
+        if manager is None:
+            raise gcmd.error(
+                'HELIX_THERMAL_MODEL_CALIBRATE requires control: helix_mpc')
+        if heater.target_temp or heater.last_pwm_value:
+            raise gcmd.error(
+                'Set the heater target and output to zero before calibration')
+        target = gcmd.get_float(
+            'TARGET', minval=heater.min_temp, maxval=heater.max_temp)
+        power = gcmd.get_float(
+            'POWER', .5, above=0., maxval=heater.get_max_power())
+        duration = gcmd.get_float(
+            'DURATION', 600., minval=30., maxval=7200.)
+        baseline_time = gcmd.get_float(
+            'BASELINE_TIME', 30., minval=10., maxval=600.)
+        max_baseline_slope = gcmd.get_float(
+            'MAX_BASELINE_SLOPE', .02, above=0., maxval=1.)
+        ceiling = gcmd.get_float(
+            'CEILING', min(target + 20., heater.max_temp),
+            above=target, maxval=heater.max_temp)
+        write_file = gcmd.get_int('WRITE_FILE', 0, minval=0, maxval=1)
+        self.printer.lookup_object('toolhead').get_last_move_time()
+        test = ControlThermalStep(
+            heater, power, duration, baseline_time, max_baseline_slope,
+            ceiling)
+        old_control = heater.set_control(test)
+        try:
+            pheaters.set_temperature(heater, ceiling, True)
+        finally:
+            heater.set_control(old_control)
+        if not test.completed:
+            raise gcmd.error(
+                'thermal model calibration interrupted: %s' % (
+                    test.abort_reason or 'unknown reason',))
+        try:
+            fitted = heater_profiles.fit_first_order_step(
+                test.samples, power)
+        except ValueError as exc:
+            raise gcmd.error('thermal model fit rejected: %s' % (exc,))
+        record = manager.store.add_thermal_model(heater.short_name, {
+            'target': target,
+            'context_temp': None,
+            'model': {'gain': fitted['gain'], 'tau': fitted['tau'],
+                      'delay': fitted['delay']},
+            'method': 'guarded_step_fopdt',
+            'firmware': self.printer.get_start_args().get(
+                'software_version', 'unknown'),
+            'evidence': dict(fitted, ceiling=ceiling,
+                             baseline_slope=test.baseline_slope),
+        })
+        manager._rebuild()
+        if write_file:
+            test.write_file('/tmp/helix-thermal-step-%s.csv' % (
+                heater.short_name,))
+        gcmd.respond_info(
+            '%s thermal model candidate %s: gain=%.6fC/duty '
+            'tau=%.6fs delay=%.6fs R^2=%.6f RMSE=%.6fC\n'
+            'Validate it with HELIX_THERMAL_MODEL_VALIDATE HEATER=%s '
+            'ID=%s STATUS=VALIDATED CONFIRM=YES' % (
+                heater.short_name, record['id'], fitted['gain'],
+                fitted['tau'], fitted['delay'], fitted['r_squared'],
+                fitted['rmse'], heater.short_name, record['id']))
+
     cmd_HELIX_HEATER_SINE_TEST_help = (
         "Measure installed heater-chain response to guarded PWM sine")
     def cmd_HELIX_HEATER_SINE_TEST(self, gcmd):
@@ -168,7 +253,8 @@ class PIDCalibrate:
         mcu_control = getattr(heater, 'mcu_heater_control', None)
         if mcu_control is None:
             raise gcmd.error(
-                'HELIX_HEATER_SINE_TEST requires control: helix_pid')
+                'HELIX_HEATER_SINE_TEST requires control: helix_pid or '
+                'helix_mpc')
         center = gcmd.get_float(
             'CENTER', minval=heater.min_temp, maxval=heater.max_temp)
         ceiling = gcmd.get_float(
@@ -434,6 +520,84 @@ def thermal_sine_metrics(samples, period, commanded_amplitude):
                                    if math.isfinite(sinad_db)
                                    else float('inf')),
     }
+
+
+class ControlThermalStep:
+    """Guarded constant-power step with an off-state drift preflight."""
+    def __init__(self, heater, power, duration, baseline_time,
+                 max_baseline_slope, ceiling):
+        self.heater = heater
+        self.power = power
+        self.duration = duration
+        self.baseline_time = baseline_time
+        self.max_baseline_slope = max_baseline_slope
+        self.manual_ceiling = ceiling
+        self.started = self.step_started = None
+        self.done = self.completed = False
+        self.abort_reason = None
+        self.baseline_samples = []
+        self.baseline_slope = None
+        self.samples = []
+
+    def _finish(self, read_time, completed=False, reason=None):
+        self.heater.set_pwm(read_time, 0.)
+        self.heater.alter_target(0.)
+        self.done = True
+        self.completed = completed
+        self.abort_reason = reason
+
+    def deactivate(self):
+        if self.done:
+            self.heater.set_pwm(0., 0.)
+            return
+        self._finish(0., reason='controller deactivated')
+
+    def temperature_update(self, read_time, temp, target_temp):
+        if self.done:
+            return
+        if self.started is None:
+            self.started = read_time
+        if target_temp <= 0.:
+            self._finish(read_time, reason='target cleared')
+            return
+        if temp >= self.manual_ceiling:
+            self._finish(read_time, reason='manual temperature ceiling reached')
+            return
+        if self.step_started is None:
+            self.heater.set_pwm(read_time, 0.)
+            self.baseline_samples.append((read_time - self.started, temp))
+            if read_time - self.started < self.baseline_time:
+                return
+            elapsed = self.baseline_samples[-1][0]
+            span = max(elapsed, 1.e-9)
+            self.baseline_slope = ((self.baseline_samples[-1][1]
+                                   - self.baseline_samples[0][1]) / span)
+            if abs(self.baseline_slope) > self.max_baseline_slope:
+                self._finish(
+                    read_time,
+                    reason='off-state drift %.6fC/s exceeds %.6fC/s' % (
+                        self.baseline_slope, self.max_baseline_slope))
+                return
+            self.step_started = read_time
+        elapsed = read_time - self.step_started
+        if elapsed >= self.duration:
+            self._finish(read_time, completed=True)
+            return
+        self.samples.append((elapsed, temp))
+        self.heater.set_pwm(read_time, self.power)
+
+    def check_busy(self, eventtime, smoothed_temp, target_temp):
+        return not self.done
+
+    def write_file(self, filename):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        flags |= getattr(os, 'O_NOFOLLOW', 0)
+        fd = os.open(filename, flags, 0o600)
+        with os.fdopen(fd, 'w', newline='') as stream:
+            writer = csv.writer(stream)
+            writer.writerow(('elapsed_s', 'temperature_c', 'power'))
+            writer.writerows((stamp, temp, self.power)
+                             for stamp, temp in self.samples)
 
 
 class ControlHeaterSine:

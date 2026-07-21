@@ -51,7 +51,8 @@ class Heater:
         self.autonomous_hold = None
         # Setup control algorithm sub-class
         algos = {'watermark': ControlBangBang, 'pid': ControlPID,
-                 'helix_pid': ControlHelixPID}
+                 'helix_pid': ControlHelixPID,
+                 'helix_mpc': ControlHelixMPC}
         algo = config.getchoice('control', algos)
         self.control = algo(self, config)
         # Setup output heater pin
@@ -63,7 +64,7 @@ class Heater:
         self.mcu_pwm.setup_cycle_time(pwm_cycle_time)
         self.mcu_pwm.setup_max_duration(MAX_HEAT_TIME)
         self.mcu_heater_control = None
-        if isinstance(self.control, ControlHelixPID):
+        if getattr(self.control, 'is_mcu_control', False):
             from . import heater_control
             self.mcu_heater_control = heater_control.MCUHeaterControl(
                 config, self)
@@ -134,7 +135,8 @@ class Heater:
         if self.mcu_heater_control is not None:
             raise self.printer.config_error(
                 "failure_policy: hold is incompatible with control:"
-                " helix_pid; the latter already owns autonomous control")
+                " helix_pid or helix_mpc; these already own autonomous"
+                " control")
         self.autonomous_hold = hold
         # The bounded holder replaces the legacy host-refresh watchdog.
         self.mcu_pwm.setup_max_duration(0.)
@@ -350,6 +352,7 @@ class ControlPID:
 
 class ControlHelixPID:
     is_mcu_control = True
+    control_kind = 'pid'
     def __init__(self, heater, config):
         self.heater = heater
         # Consume and validate the standard PID fields here.  The helper
@@ -386,6 +389,23 @@ class ControlHelixPID:
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return (abs(target_temp - smoothed_temp) > PID_SETTLE_DELTA
                 or abs(self.temp_deriv) > PID_SETTLE_SLOPE)
+
+
+class ControlHelixMPC(ControlHelixPID):
+    """Host facade for the MCU predictive thermal controller."""
+    control_kind = 'predictive'
+
+    def __init__(self, heater, config):
+        # Retain explicit PID gains as the qualification/fallback baseline,
+        # but do not use them in the predictive MCU loop.
+        super().__init__(heater, config)
+        config.getfloat('thermal_model_gain', above=0.)
+        config.getfloat('thermal_model_tau', above=0.)
+
+    def temperature_update(self, read_time, temp, target_temp):
+        super().temperature_update(read_time, temp, target_temp)
+        if self.controller is not None:
+            self.controller.observe_temperature(temp, target_temp)
 
 
 ######################################################################
