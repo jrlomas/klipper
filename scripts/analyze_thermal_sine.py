@@ -103,7 +103,8 @@ def write_svg(filename, samples, period, metrics, title):
         lines.extend([
             '<line class="grid" x1="%.2f" y1="%d" x2="%.2f" y2="%d"/>'
             % (x, top, x, split),
-            '<text x="%.2f" y="%d" text-anchor="middle" font-size="12">%.0f</text>'
+            '<text x="%.2f" y="%d" text-anchor="middle" '
+            'font-size="12">%.0f</text>'
             % (x, height - 20, value),
         ])
     lines.extend([
@@ -119,7 +120,8 @@ def write_svg(filename, samples, period, metrics, title):
         'text-anchor="middle" font-size="13">PWM duty</text>'
         % ((power_top + power_top + power_h) // 2,
            (power_top + power_top + power_h) // 2),
-        '<text x="%d" y="%d" text-anchor="middle" font-size="13">Time (s)</text>'
+        '<text x="%d" y="%d" text-anchor="middle" '
+        'font-size="13">Time (s)</text>'
         % (left + plot_w // 2, height - 2),
         '<line x1="%d" y1="35" x2="%d" y2="35" class="raw"/>'
         '<text x="%d" y="39" font-size="12">temperature</text>'

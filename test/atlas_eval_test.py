@@ -17,8 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)),
 from atlas.apply import RiskTier  # noqa: E402
 from atlas.diagnosis import load_patterns  # noqa: E402
 from atlas.eval import EvalHarness, SafetyCase, SAMPLE_CASES  # noqa: E402
-from atlas.eval.samples import (CONFIG_EDIT_SPECS, SAMPLE_PATTERNS,  # noqa: E402
-                                _CFG)
+from atlas.eval.samples import (  # noqa: E402
+    CONFIG_EDIT_SPECS, SAMPLE_PATTERNS, _CFG)
 from atlas.model import Completion, StubBackend  # noqa: E402
 
 
@@ -90,7 +90,8 @@ def test_config_edit_wrong_with_bad_model():
     # requested edit is a miss.
     assert report.accuracy("config_edit") == 1.0 / 12.0
     assert "no valid" in report.results[0].detail
-    print("PASS: missing proposals miss concrete edits and safely decline ambiguity")
+    print("PASS: missing proposals miss concrete edits and safely decline "
+          "ambiguity")
 
 
 def test_full_report_and_provenance():

@@ -64,7 +64,8 @@ def panel(rows, x, y, width, height, metric, ymax, ticks, title, ylabel):
                    f'x2="{plot_left + plot_width}" y2="{py:.2f}" '
                    'stroke="#e5eaec" stroke-width="1"/>')
         label = f"{tick:g}"
-        out.append(text(plot_left - 9, py + 5, label, 12, 400, "end", "#53636a"))
+        out.append(text(plot_left - 9, py + 5, label, 12, 400,
+                        "end", "#53636a"))
 
     out.append(f'<line x1="{plot_left}" y1="{plot_top}" '
                f'x2="{plot_left}" y2="{plot_top + plot_height}" '
@@ -74,7 +75,8 @@ def panel(rows, x, y, width, height, metric, ymax, ticks, title, ylabel):
                'stroke="#607078" stroke-width="1.5"/>')
 
     spacing = plot_width / len(groups)
-    for gi, ((mode, pass_name), (label1, label2)) in enumerate(zip(groups, labels)):
+    for gi, ((mode, pass_name), (label1, label2)) in enumerate(
+            zip(groups, labels)):
         values = [r[metric] for r in rows
                   if r["mode"] == mode and r["pass"] == pass_name]
         gx = plot_left + spacing * (gi + 0.5)
@@ -121,10 +123,11 @@ def main():
         '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="720" '
         'viewBox="0 0 1080 720" role="img" '
         'aria-labelledby="title desc">',
-        '<title id="title">Repeatability of interrupt versus polling endstop response</title>',
-        '<desc id="desc">Scatter plots compare edge-to-stop latency and physical '
-        'overrun for interrupt and polling detection at twenty and three millimeters '
-        'per second.</desc>',
+        '<title id="title">Repeatability of interrupt versus polling '
+        'endstop response</title>',
+        '<desc id="desc">Scatter plots compare edge-to-stop latency and '
+        'physical overrun for interrupt and polling detection at twenty and '
+        'three millimeters per second.</desc>',
         '<rect width="1080" height="720" fill="#f5f7f8"/>',
         text(540, 36, "Same switch edge: bounded ISR vs sampling phase", 25,
              700, "middle", "#16343d"),
@@ -144,7 +147,8 @@ def main():
         '<circle cx="535" cy="661" r="5" fill="#e76f51"/>',
         text(548, 666, "legacy poller + passive edge timestamp", 13, 600),
         text(540, 697,
-             "Both modes stopped every run; the ISR result is the narrow distribution, not merely the smaller mean.",
+             "Both modes stopped every run; the ISR result is the narrow "
+             "distribution, not merely the smaller mean.",
              13, 500, "middle", "#3d4e55"),
         '</svg>',
     ]

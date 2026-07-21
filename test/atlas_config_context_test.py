@@ -47,7 +47,8 @@ def test_include_tree_is_bounded_and_cannot_escape_config_root():
         try:
             (root / "printer.cfg").write_text(
                 "[include ../%s]\n[include child.cfg]\n" % outside.name)
-            (root / "child.cfg").write_text("[include printer.cfg]\n[fan]\npin: PA0\n")
+            (root / "child.cfg").write_text(
+                "[include printer.cfg]\n[fan]\npin: PA0\n")
             tree = read_config_tree(str(root / "printer.cfg"), 1024)
             assert "hunter2" not in tree
             assert tree.count("# Atlas source: printer.cfg") == 1

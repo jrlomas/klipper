@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--cli", help="path to llama-completion")
     parser.add_argument("--accelerator", choices=("cpu", "cuda", "rocm"),
                         default="cpu",
-                        help="runtime selected by the supplied llama.cpp binary")
+                        help="runtime selected by the supplied llama.cpp "
+                             "binary")
     args = parser.parse_args()
     sys.exit(main(args.model, args.cli, args.accelerator))

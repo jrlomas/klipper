@@ -112,7 +112,8 @@ def fit_first_order_step(samples, power):
     intervals = [measured[pos][0] - measured[pos - 1][0]
                  for pos in range(1, len(measured))
                  if measured[pos][0] > measured[pos - 1][0]]
-    sample_period = _median(intervals) if intervals else duration / len(measured)
+    sample_period = (_median(intervals) if intervals
+                     else duration / len(measured))
     delay_limit = min(60., duration * .25)
     delay_candidates = [delay_limit * pos / 24. for pos in range(25)]
     tau_min = max(1., 2. * sample_period)

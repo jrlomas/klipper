@@ -16,7 +16,8 @@ def test_acq_block_ownership():
         os.path.join(ROOT, 'src', 'generic', 'acq_block.c'),
         '-o', output,
     ], check=True)
-    result = subprocess.run([output], check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [output], check=True, capture_output=True, text=True)
     assert result.stdout.startswith('PASS:')
 
 

@@ -78,6 +78,7 @@ main(void)
             converged, &good, &bad, UINT32_MAX, 0);
     assert(converged && bad == 0);
 
-    printf("PASS: timesync corrections and convergence hysteresis are bounded\n");
+    printf("PASS: timesync corrections and convergence hysteresis are "
+           "bounded\n");
     return 0;
 }

@@ -179,7 +179,8 @@ def test_signed_release_inside_build_tree_is_blocked_before_clean():
         image.write_bytes(b"signed")
         commands = []
         executor = ProvisionExecutor(pathlib.Path(tmp) / "audit.json",
-                                     runner=lambda argv, cwd: commands.append(argv),
+                                     runner=lambda argv, cwd:
+                                     commands.append(argv),
                                      verifier=lambda path: True)
         try:
             executor.execute(plan, image, confirmed=True)

@@ -50,7 +50,7 @@ def duration_to_local(duration):
 
 def append_profile(lib, trapq, print_time, start_e, distance, speed, accel,
                    pressure_advance_allowed):
-    """Append the same signed E trapq shape PrinterExtruder.process_move uses."""
+    """Append the E trapq shape used by PrinterExtruder.process_move."""
     direction = 1. if distance >= 0. else -1.
     speed *= direction
     accel *= direction
@@ -132,7 +132,8 @@ def fit_path(distance, speed, accel, pressure_advance=0.,
     worst_local_endpoint = 0.
     worst_local_path = 0.
     signs = set()
-    for duration, velocity, acceleration, jerk, snap, crackle, flags in segments:
+    for (duration, velocity, acceleration, jerk, snap, crackle,
+         flags) in segments:
         assert flags & (3 << 6) == 2 << 6
         end_velocity = (velocity
                         + (acceleration * duration >> 16)
