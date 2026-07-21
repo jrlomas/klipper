@@ -45,9 +45,12 @@ b = K * (1 - exp(-max(dt, H - L) / tau))
 time constant, `L` is the fitted dead time, and `H` is the prediction horizon.
 The retained free response uses `H`, while the input response uses `H-L`.
 
-The host performs floating point conversion and model fitting. It uploads only
-bounded coefficients. The MCU performs deterministic fixed-point arithmetic
-and never fits a model or solves a matrix online.
+The host performs floating point conversion and model fitting. During
+development it can also execute the same control law in floating point while
+the MCU remains the safety-enforced manual-PWM endpoint. Only after that
+physical host loop is accepted are bounded coefficients compared against and
+promoted to deterministic fixed-point MCU execution. The MCU never fits a
+model or solves a matrix online.
 
 An ambient value may come from a configured temperature object. Otherwise the
 host uses the most recent idle observation of the heater itself, then the
@@ -150,6 +153,37 @@ sustained load disturbance. After five time constants, both remain below
 duty change per controller update. These are deterministic regression gates,
 not substitutes for physical qualification.
 
+The first physical MCU feasibility run on 2026-07-20 used the V0 bed at 55 C.
+It had no fault samples, 0.25 C overshoot, and very smooth steady duty
+(`0.00190` RMS update delta), but required 206.95 seconds to become
+print-ready. The controller did not reach its first target crossing until
+298.63 seconds. That is useful feasibility evidence, but it is not an
+acceptance pass: MCU execution happened before the host-first tuning gate, and
+the run was not paired with PID under identical initial conditions. The
+[raw capture](evidence/heater_control/mcu-predictive-bed55-feasibility-20260720.csv)
+and [summary](evidence/heater_control/mcu-predictive-bed55-feasibility-20260720.json)
+are retained specifically so the slow warm-up is not mistaken for success.
+
+## Host-first development gate
+
+For a low-speed plant such as the bed, predictive-controller iteration follows
+this order:
+
+1. Run the floating-point predictive loop in Klippy against the physical bed;
+   the MCU applies requested duty only through its local ADC, ceiling,
+   watchdog, and fault guards.
+2. Tune and accept the host loop, including time-to-print. Simulation and
+   replay are supporting tools, not a substitute for this physical run.
+3. Replay the accepted observations through both floating-point and MCU
+   fixed-point implementations and bound their duty/output error.
+4. Enable MCU execution once, then repeat thermal performance and host-loss
+   safety gates. Do not use repeated firmware heat cycles as the tuning loop.
+
+`HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=HOST TARGET=<C> CONFIRM=YES`
+selects the floating-point predictive law for `control: helix_mpc` and ordinary
+host PID for `control: helix_pid`. The target and output must be zero during a
+mode transition.
+
 ## Physical qualification gates
 
 The predictive controller is not the preferred production controller until a
@@ -160,7 +194,11 @@ paired physical experiment passes all of the following:
 2. Temperature RMS and peak error no worse than PID.
 3. At least 50 percent reduction in RMS duty change or a clearly explained
    physical limit.
-4. No unacceptable increase in heat-up time, overshoot, or step-down recovery.
+4. Time-to-print is measured from the target command to the first entry into a
+   +/-1 C band that remains uninterrupted for 60 seconds. It must be no slower
+   than the paired PID baseline by more than 5 percent; improvement is the
+   optimization goal. First crossing, overshoot, and step-down recovery are
+   reported separately so a fast but oscillatory crossing cannot pass.
 5. No output saturation during the intended operating envelope.
 6. Host-loss continuation, stale-sample cutoff, maximum-temperature cutoff,
    and firmware restart behave identically to the qualified PID safety path.

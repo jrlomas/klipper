@@ -322,10 +322,13 @@ bounded gains, the names of clamped terms, and whether execution is on the MCU
 or in guarded host-comparison mode.
 
 `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=HOST TARGET=<C> CONFIRM=YES`
-creates ordinary Klippy `ControlPID` with the same bounded scheduled gains but
-keeps MCU-local manual temperature and ADC guards. `MODE=MCU CONFIRM=YES`
-restores autonomous execution. Both changes require target and output zero;
-the command exists for controlled qualification, not automatic failover.
+creates ordinary Klippy `ControlPID` for `helix_pid`, or the floating-point
+predictive reference for `helix_mpc`, while keeping MCU-local manual
+temperature, ADC, watchdog, and ceiling guards. `MODE=MCU CONFIRM=YES` restores
+autonomous execution. Both changes require target and output zero; the command
+exists for controlled qualification, not automatic failover. Bed-controller
+development must physically accept the host loop—including time-to-print—then
+pass host/fixed-point parity before MCU execution is a release candidate.
 
 `HELIX_PID_PROFILE_STATUS`, `HELIX_PID_PROFILE_COEFFICIENTS`,
 `HELIX_PID_PROFILE_VALIDATE`, `HELIX_PID_PROFILE_CLEAR`, and
@@ -374,8 +377,11 @@ commands require `CONFIRM=YES`.
 
 `helix_pid` has passed nominal heated operation, physical printing, and
 host-loss continuity; the remaining injected cutoff cases stay explicit above.
-`helix_mpc` is workstation-qualified only and must not replace the production
-controller until its paired physical PID comparison passes.
+`helix_mpc` has workstation qualification plus one unpaired physical MCU
+feasibility capture. That capture was intentionally not accepted because its
+time-to-print was 206.95 seconds and it bypassed the host-first tuning gate; it
+must not replace the production controller until the physical host loop and
+paired PID comparison pass.
 
 ## References
 

@@ -52,7 +52,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | --- | --- |
 | `HEATER_CONTROL_STATUS HEATER=<name>` | Query local state, fault, output, sample count, temperature, and loop cadence. |
 | `HEATER_CONTROL_CLEAR HEATER=<name>` | Clear a latched local heater fault with target zero. |
-| `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=<HOST\|MCU> [TARGET=<C>] CONFIRM=YES` | Enter guarded host comparison mode with the same bounded gains, or restore autonomous MCU control; target and output must be zero during either transition. |
+| `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=<HOST\|MCU> [TARGET=<C>] CONFIRM=YES` | Enter guarded host comparison mode with the same bounded PID gains or predictive plant model, or restore autonomous MCU control; target and output must be zero during either transition. |
 | `HELIX_PID_PROFILE_STATUS HEATER=<name>` | List candidate, validated, and rejected characterization runs. |
 | `HELIX_PID_PROFILE_COEFFICIENTS HEATER=<name>` | Show bounded curve or target/context surface coefficients and measured hull. |
 | `HELIX_PID_PROFILE_VALIDATE HEATER=<name> RUN=<id> STATUS=<VALIDATED\|REJECTED> CONFIRM=YES` | Change a candidate's explicit validation state. |

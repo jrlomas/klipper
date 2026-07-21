@@ -763,6 +763,17 @@ a faster stop — test both the latency and the things polling could not do.
   bounded and never extrapolates; model activation is bumpless; and all local
   host-loss, ADC, sensor, ceiling, and restart gates behave identically. See
   [Predictive Thermal Control](Predictive_Thermal_Control.md).
+  - [x] MCU feasibility capture completed at bed 55 C with zero faults,
+    0.25 C overshoot, and smooth duty, but the 206.95 s time-to-print is not an
+    acceptance pass. Evidence is archived and the production bed was restored
+    to `helix_pid`.
+  - [ ] Run and tune the predictive law physically on the host with MCU-local
+    manual-output safety guards. Pass the paired cold-start PID comparison:
+    enter and remain within +/-1 C for 60 s no more than 5 percent later than
+    PID, while meeting the temperature, duty, overshoot, and recovery gates.
+  - [ ] Replay the accepted host trace through MCU fixed-point arithmetic,
+    bound parity error, then perform one MCU execution and host-loss safety
+    qualification. Host acceptance must precede this promotion.
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

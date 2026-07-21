@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Deterministic cross-plant simulation for Helix predictive heating."""
 
-import collections, math
+import collections, importlib.util, math, pathlib
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    'helix_test_heaters', ROOT / 'klippy' / 'extras' / 'heaters.py')
+heaters = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(heaters)
 
 
 class PredictiveController:
@@ -63,6 +70,74 @@ class PredictiveController:
         return self.output
 
 
+class FakeReactor:
+    def __init__(self):
+        self.now = 0.
+
+    def monotonic(self):
+        return self.now
+
+
+class FakePrinter:
+    def __init__(self, reactor):
+        self.reactor = reactor
+
+    def get_reactor(self):
+        return self.reactor
+
+
+class FakeHeater:
+    def __init__(self, reactor):
+        self.printer = FakePrinter(reactor)
+        self.outputs = []
+
+    def get_max_power(self):
+        return 1.
+
+    def set_pwm(self, read_time, output):
+        self.outputs.append((read_time, output))
+
+
+def test_host_execution_matches_reference():
+    dt, gain, tau, delay = .3, 90., 300., 2.
+    tuning = {
+        'horizon': 30., 'effort_penalty': 5.,
+        'integral_gain': .0005, 'observer_time': 2.,
+        'output_slew_rate': 1., 'control_band': 10.,
+    }
+    reactor = FakeReactor()
+    heater = FakeHeater(reactor)
+    host = heaters.ControlPredictive.from_model(
+        heater, dt, {'gain': gain, 'tau': tau, 'delay': delay},
+        tuning, 25.)
+    reference = PredictiveController(
+        dt, gain, tau, delay, horizon=tuning['horizon'],
+        effort=tuning['effort_penalty'],
+        integral_gain=tuning['integral_gain'],
+        observer_time=tuning['observer_time'],
+        slew_rate=tuning['output_slew_rate'],
+        control_band=tuning['control_band'])
+    temperature = 25.
+    for index in range(1600):
+        stamp = (index + 1) * dt
+        reactor.now = stamp
+        observed = round((temperature + ((index % 5) - 2) * .005)
+                         / .05) * .05
+        expected = reference.update(observed, 55., 25.)
+        host.temperature_update(stamp, observed, 55.)
+        actual = heater.outputs[-1][1]
+        assert abs(actual - expected) < 1.e-12, (
+            index, actual, expected)
+        temperature += dt * ((25. - temperature) / tau
+                             + gain * actual / tau)
+    status = host.get_status()
+    assert status['state'] == 'host'
+    assert status['samples'] == 1600
+    assert status['loop_clock_source'] == 'host'
+    assert status['host_predictive_model']['horizon'] == 30.
+    assert status['host_predictive_model']['gain'] == gain
+
+
 def simulate(gain, tau, delay, target, disturbance=None):
     dt, ambient = .3, 25.
     controller = PredictiveController(dt, gain, tau, delay)
@@ -102,6 +177,7 @@ def qualify(name, samples, target, tau):
 
 
 def main():
+    test_host_execution_matches_reference()
     bed = simulate(90., 300., 2., 55.)
     qualify('bed', bed, 55., 300.)
     hotend = simulate(

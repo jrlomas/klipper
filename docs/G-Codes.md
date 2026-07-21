@@ -897,10 +897,12 @@ fault does not restore the previous target.
 
 #### HELIX_HEATER_CONTROL_MODE
 `HELIX_HEATER_CONTROL_MODE HEATER=<heater_name> MODE=HOST TARGET=<temperature>
-CONFIRM=YES` selects guarded host PID with the same bounded scheduled gains for
-qualification. `MODE=MCU CONFIRM=YES` restores local execution. Target and
-output must be zero for either transition. Host mode retains MCU-local ADC,
-temperature-ceiling, and manual-output guards; it is not automatic failover.
+CONFIRM=YES` selects guarded host PID for `helix_pid`, or the floating-point
+predictive reference for `helix_mpc`, using the same bounded scheduled gains or
+plant model. `MODE=MCU CONFIRM=YES` restores local execution. Target and output
+must be zero for either transition. Host mode retains MCU-local ADC,
+temperature-ceiling, watchdog, and manual-output guards; it is not automatic
+failover.
 
 #### HELIX_PID_PROFILE_STATUS
 `HELIX_PID_PROFILE_STATUS HEATER=<heater_name> [RUNS=20]`: Show the profile

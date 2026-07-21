@@ -347,6 +347,159 @@ class ControlPID:
 
 
 ######################################################################
+# Host-executed predictive control (physical qualification)
+######################################################################
+
+class ControlPredictive:
+    """Floating-point reference for guarded physical MPC qualification."""
+    control_kind = 'predictive'
+
+    @classmethod
+    def from_model(cls, heater, period, model, tuning, ambient,
+                   selection=None):
+        control = cls.__new__(cls)
+        control.heater = heater
+        control.period = period
+        control.gain = model['gain']
+        control.tau = model['tau']
+        control.delay = model['delay']
+        control.horizon = tuning['horizon']
+        control.effort = tuning['effort_penalty']
+        control.integral_gain = tuning['integral_gain']
+        control.observer_time = tuning['observer_time']
+        control.output_slew_rate = tuning['output_slew_rate']
+        control.control_band = tuning['control_band']
+        control.ambient = ambient
+        control.selection = selection
+        control.model_status = dict(model)
+        control.model_status.update({
+            'horizon': control.horizon,
+            'effort_penalty': control.effort,
+            'integral_gain': control.integral_gain,
+            'observer_time': control.observer_time,
+            'output_slew_rate': control.output_slew_rate,
+            'control_band': control.control_band,
+        })
+        control.max_output = heater.get_max_power()
+        control.retention = math.exp(-control.horizon / control.tau)
+        response_horizon = max(period, control.horizon - control.delay)
+        control.response = control.gain * (
+            1. - math.exp(-response_horizon / control.tau))
+        control.observer_alpha = 1. - math.exp(
+            -period / control.observer_time)
+        control.max_step = control.output_slew_rate * period
+        control.filtered = None
+        control.bias = control.output = 0.
+        control.rebase_output = False
+        control.prev_temp = AMBIENT_TEMP
+        control.prev_temp_time = 0.
+        control.prev_temp_deriv = 0.
+        control.loop_samples = 0
+        control.loop_clock = 0.
+        control.loop_dt_count = 0
+        control.loop_dt_mean = control.loop_dt_m2 = 0.
+        control.loop_dt_min = control.loop_dt_max = None
+        return control
+
+    def _record_timing(self):
+        self.loop_samples += 1
+        loop_clock = self.heater.printer.get_reactor().monotonic()
+        if self.loop_clock:
+            dt = loop_clock - self.loop_clock
+            self.loop_dt_count += 1
+            delta = dt - self.loop_dt_mean
+            self.loop_dt_mean += delta / self.loop_dt_count
+            self.loop_dt_m2 += delta * (dt - self.loop_dt_mean)
+            self.loop_dt_min = (dt if self.loop_dt_min is None
+                                else min(self.loop_dt_min, dt))
+            self.loop_dt_max = (dt if self.loop_dt_max is None
+                                else max(self.loop_dt_max, dt))
+        self.loop_clock = loop_clock
+
+    def temperature_update(self, read_time, temp, target_temp):
+        self._record_timing()
+        if self.prev_temp_time:
+            time_diff = read_time - self.prev_temp_time
+            if time_diff > 0.:
+                self.prev_temp_deriv = (temp - self.prev_temp) / time_diff
+        self.prev_temp = temp
+        self.prev_temp_time = read_time
+        error = target_temp - temp
+        if not target_temp:
+            self.output = self.bias = 0.
+            self.filtered = None
+            self.rebase_output = False
+        elif abs(error) > self.control_band:
+            desired = self.max_output if error > 0. else 0.
+            low = max(0., self.output - self.max_step)
+            high = min(self.max_output, self.output + self.max_step)
+            self.output = max(low, min(high, desired))
+            self.filtered = None
+            self.bias = 0.
+            self.rebase_output = bool(self.output)
+        else:
+            if self.filtered is None:
+                self.filtered = temp
+            else:
+                self.filtered += self.observer_alpha * (
+                    temp - self.filtered)
+            free_temp = (self.ambient + self.retention
+                         * (self.filtered - self.ambient))
+            residual = target_temp - free_temp
+            response_sq = self.response * self.response
+            effort_sq = self.effort * self.effort
+            model_output = ((self.response * residual
+                             + effort_sq * self.output)
+                            / (response_sq + effort_sq))
+            if self.rebase_output:
+                self.bias = self.output - model_output
+                self.rebase_output = False
+            filtered_error = target_temp - self.filtered
+            bias_candidate = max(-self.max_output, min(
+                self.max_output,
+                self.bias + self.integral_gain * self.period
+                * filtered_error))
+            low = max(0., self.output - self.max_step)
+            high = min(self.max_output, self.output + self.max_step)
+            candidate = model_output + bias_candidate
+            if ((low <= candidate <= high)
+                    or (candidate > high and filtered_error < 0.)
+                    or (candidate < low and filtered_error > 0.)):
+                self.bias = bias_candidate
+            self.output = max(low, min(
+                high, model_output + self.bias))
+        self.heater.set_pwm(read_time, self.output)
+
+    def check_busy(self, eventtime, smoothed_temp, target_temp):
+        return (abs(target_temp - smoothed_temp) > PID_SETTLE_DELTA
+                or abs(self.prev_temp_deriv) > PID_SETTLE_SLOPE)
+
+    def deactivate(self):
+        self.heater.set_pwm(self.prev_temp_time, 0.)
+
+    def get_status(self):
+        variance = (self.loop_dt_m2 / self.loop_dt_count
+                    if self.loop_dt_count else 0.)
+        return {
+            'state': 'host',
+            'samples': self.loop_samples,
+            'loop_clock': self.loop_clock,
+            'loop_clock_frequency': 1.,
+            'loop_clock_source': 'host',
+            'loop_dt_count': self.loop_dt_count,
+            'loop_dt_mean': self.loop_dt_mean,
+            'loop_dt_stddev': math.sqrt(max(0., variance)),
+            'loop_dt_min': self.loop_dt_min or 0.,
+            'loop_dt_max': self.loop_dt_max or 0.,
+            'host_predictive_output': self.output,
+            'host_predictive_bias': self.bias,
+            'host_predictive_filtered_temperature': self.filtered,
+            'host_predictive_ambient': self.ambient,
+            'host_predictive_model': dict(self.model_status),
+        }
+
+
+######################################################################
 # MCU-executed PID control
 ######################################################################
 

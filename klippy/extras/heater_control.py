@@ -455,6 +455,23 @@ class MCUHeaterControl:
     def _set_predictive_model(self, target):
         if self.predictive_cmd is None:
             return
+        selection = self._select_predictive_model(target)
+        selected_model = selection['model']
+        self._configure_predictive_model(
+            selected_model['gain'], selected_model['tau'],
+            selected_model['delay'])
+        self.predictive_selection = selection
+        model = self.predictive_model
+        ambient = self._ambient_temperature()
+        self.predictive_cmd.send([
+            self.oid, model['retention_q15'],
+            model['observer_alpha_q15'], model['response_mdeg'],
+            model['effort_mdeg'], model['control_band_mdeg'],
+            model['integral_step_q20'], model['max_step'],
+            int(ambient * 1000. + .5)])
+        self.predictive_ambient = ambient
+
+    def _select_predictive_model(self, target):
         selection = self.thermal_model_manager.select(target)
         selected_model = selection['model']
         # A persisted model is untrusted input.  Do not let a validated but
@@ -475,19 +492,7 @@ class MCUHeaterControl:
                 'kind': selection.get('kind', 'base'),
             }
             selected_model = base
-        self._configure_predictive_model(
-            selected_model['gain'], selected_model['tau'],
-            selected_model['delay'])
-        self.predictive_selection = selection
-        model = self.predictive_model
-        ambient = self._ambient_temperature()
-        self.predictive_cmd.send([
-            self.oid, model['retention_q15'],
-            model['observer_alpha_q15'], model['response_mdeg'],
-            model['effort_mdeg'], model['control_band_mdeg'],
-            model['integral_step_q20'], model['max_step'],
-            int(ambient * 1000. + .5)])
-        self.predictive_ambient = ambient
+        return selection
 
     def set_target(self, temp):
         if self.set_target_cmd is None:
@@ -623,12 +628,23 @@ class MCUHeaterControl:
             status.update(host_status)
             status['control_mode'] = 'host'
             selection = self.host_selection
-            status['pid_gains'] = dict(selection['gains'])
-            status['pid_profile_raw_gains'] = dict(selection['raw_gains'])
-            status['pid_profile_bounded'] = selection['bounded']
-            status['pid_profile_clamped_gains'] = list(
-                selection['clamped_gains'])
-            status['pid_profile_source'] = selection['source']
+            if self.is_predictive:
+                status['thermal_model'] = dict(
+                    self.host_control.model_status)
+                status['thermal_model_raw'] = dict(selection['raw_model'])
+                status['thermal_model_bounded'] = selection['bounded']
+                status['thermal_model_clamped_parameters'] = list(
+                    selection['clamped_parameters'])
+                status['thermal_model_source'] = selection['source']
+                status['thermal_ambient'] = self.host_control.ambient
+            else:
+                status['pid_gains'] = dict(selection['gains'])
+                status['pid_profile_raw_gains'] = dict(
+                    selection['raw_gains'])
+                status['pid_profile_bounded'] = selection['bounded']
+                status['pid_profile_clamped_gains'] = list(
+                    selection['clamped_gains'])
+                status['pid_profile_source'] = selection['source']
         return status
 
     cmd_HEATER_CONTROL_STATUS_help = "Report the MCU heater controller state"
@@ -638,7 +654,7 @@ class MCUHeaterControl:
                     if status['mcu_temperature_valid'] else
                     "n/a (local tangent %.3f)" % (
                         status['mcu_temperature_estimate'],))
-        if self.is_predictive and status['control_mode'] == 'mcu':
+        if self.is_predictive:
             model = status['thermal_model']
             gcmd.respond_info(
                 "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
@@ -678,7 +694,7 @@ class MCUHeaterControl:
         gcmd.respond_info("%s MCU heater fault cleared" % (self.name,))
 
     cmd_HELIX_HEATER_CONTROL_MODE_help = (
-        "Select guarded MCU or host PID execution for qualification")
+        "Select guarded MCU or host controller execution for qualification")
     def cmd_HELIX_HEATER_CONTROL_MODE(self, gcmd):
         if gcmd.get('CONFIRM', '').strip().upper() != 'YES':
             raise gcmd.error('HELIX_HEATER_CONTROL_MODE requires CONFIRM=YES')
@@ -689,10 +705,30 @@ class MCUHeaterControl:
         mode = gcmd.get('MODE').strip().upper()
         if mode == 'HOST':
             if self.control_mode == 'host':
-                raise gcmd.error('%s is already in host PID mode' % self.name)
+                raise gcmd.error('%s is already in host control mode'
+                                 % self.name)
             target = gcmd.get_float(
                 'TARGET', minval=self.heater.min_temp,
                 maxval=self.heater.max_temp)
+            from . import heaters
+            if self.is_predictive:
+                selection = self._select_predictive_model(target)
+                selected_model = selection['model']
+                ambient = self._ambient_temperature()
+                self.host_control = heaters.ControlPredictive.from_model(
+                    self.heater, self.period, selected_model,
+                    self.predictive_tuning, ambient, selection)
+                self.host_selection = selection
+                self.heater.set_control(self.host_control)
+                self.control_mode = 'host'
+                gcmd.respond_info(
+                    '%s control mode=host algorithm=predictive '
+                    'target_profile=%.3f source=%s gain=%.6f tau=%.6f '
+                    'delay=%.6f ambient=%.3f' % (
+                        self.name, target, selection['source'],
+                        selected_model['gain'], selected_model['tau'],
+                        selected_model['delay'], ambient))
+                return
             if self.profile_manager is None:
                 gains = dict(zip(
                     heater_profiles.GAIN_NAMES, self.base_pid))
@@ -704,7 +740,6 @@ class MCUHeaterControl:
             else:
                 selection = self.profile_manager.select(target)
             gains = selection['gains']
-            from . import heaters
             self.host_control = heaters.ControlPID.from_gains(
                 self.heater,
                 tuple(gains[name] for name in heater_profiles.GAIN_NAMES))
