@@ -47,7 +47,7 @@ command_enter_bootloader(uint32_t *args)
     // src/boot_app/ bootloader reads at startup. Survives the reset.
     uint64_t *req = (uint64_t *)(uintptr_t)INTENTPROTO_BOOT_REQ_ADDR;
     *req = INTENTPROTO_BOOT_REQUEST;
-#if __CORTEX_M >= 7
+#if defined(__DCACHE_PRESENT) && __DCACHE_PRESENT == 1U
     SCB_CleanDCache_by_Addr((void *)req, sizeof(*req));
 #endif
 
