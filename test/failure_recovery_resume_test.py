@@ -377,6 +377,10 @@ def test_autonomous_hold_filters_stale_and_competing_host_pwm():
     heater = heaters_mod.Heater.__new__(heaters_mod.Heater)
     heater.printer = Printer()
     heater.mcu_pwm = Pwm()
+    # Heater.__init__ always installs this compatibility field, including for
+    # host-controlled heaters.  This fixture bypasses __init__, so mirror the
+    # production object contract explicitly.
+    heater.mcu_heater_control = None
     heater.autonomous_hold = Hold()
     heater.pwm_delay = .300
     heater.target_temp = 50.
