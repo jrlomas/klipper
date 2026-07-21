@@ -3,12 +3,22 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import math, statistics
+import math
 
 
 TRIGGER_SOURCE_TRIGGERED = 1 << 1
 RATE_SHIFT = 24
 U32_MASK = (1 << 32) - 1
+
+
+def _mean(values):
+    return sum(values) / float(len(values))
+
+
+def _pstdev(values):
+    mean = _mean(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values)
+                     / float(len(values)))
 
 
 def _signed32(value):
@@ -31,8 +41,8 @@ def fit_affine_residuals(samples):
     x0, y0 = samples[0]
     xs = [float(x - x0) for x, _ in samples]
     ys = [float(y - y0) for _, y in samples]
-    xmean = statistics.fmean(xs)
-    ymean = statistics.fmean(ys)
+    xmean = _mean(xs)
+    ymean = _mean(ys)
     denom = sum((x - xmean) ** 2 for x in xs)
     slope = (sum((x - xmean) * (y - ymean)
                  for x, y in zip(xs, ys)) / denom) if denom else 0.
@@ -156,9 +166,9 @@ class MachineTimeSyncLine:
         }
         residual_us = [r / mapping['mcu_freq'] * 1.e6
                        for r in residual_ticks]
-        map_mean = statistics.fmean(map_errors_us)
-        map_sigma = statistics.pstdev(map_errors_us)
-        residual_sigma = statistics.pstdev(residual_us)
+        map_mean = _mean(map_errors_us)
+        map_sigma = _pstdev(map_errors_us)
+        residual_sigma = _pstdev(residual_us)
         residual_peak = max(abs(r) for r in residual_us)
         expected_slope = (mapping['mcu_freq']
                           / self.source_mcu.get_constant_float('CLOCK_FREQ'))

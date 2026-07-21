@@ -3,7 +3,7 @@
 # Copyright (C) 2026  JR Lomas <lomas.jr@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import statistics
+import math
 
 try:
     from .machine_time_sync_line import fit_affine_residuals
@@ -12,6 +12,16 @@ except ImportError:
 
 
 SOF_LATEST = 0xffff
+
+
+def _mean(values):
+    return sum(values) / float(len(values))
+
+
+def _pstdev(values):
+    mean = _mean(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values)
+                     / float(len(values)))
 
 
 def _lookup_mcu(printer, name):
@@ -145,9 +155,9 @@ class UsbSofSync:
             "affine residual sigma=%.4fus peak=%.4fus\n"
             "sample,frame,primary_clock,secondary_clock,phase_us\n%s"
             % (self.primary.name, self.secondary.name, count, attempts,
-               statistics.fmean(phases), statistics.pstdev(phases),
+               _mean(phases), _pstdev(phases),
                min(phases), max(phases),
-               statistics.pstdev(residual_us),
+               _pstdev(residual_us),
                max(abs(value) for value in residual_us),
                "\n".join("%d,%d,%d,%d,%+.6f" % row for row in rows)))
 

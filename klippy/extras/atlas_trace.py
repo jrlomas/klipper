@@ -88,7 +88,12 @@ class JsonlWriter:
 
     def _open(self):
         directory = os.path.dirname(self.path)
-        os.makedirs(directory, mode=0o700, exist_ok=True)
+        if not os.path.isdir(directory):
+            try:
+                os.makedirs(directory, mode=0o700)
+            except OSError:
+                if not os.path.isdir(directory):
+                    raise
         self.fd = os.open(
             self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         os.chmod(self.path, 0o600)
@@ -97,7 +102,7 @@ class JsonlWriter:
         try:
             current = os.stat(self.path)
             opened = os.fstat(self.fd)
-        except (FileNotFoundError, OSError):
+        except OSError:
             current = opened = None
         if (current is None or opened is None
                 or (current.st_dev, current.st_ino)

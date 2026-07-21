@@ -208,7 +208,9 @@ class HeaterProfileStore:
                 stream.write('\n')
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(tmppath, self.path)
+            # POSIX rename atomically replaces an existing destination and is
+            # available on both Python 2 and Python 3.
+            os.rename(tmppath, self.path)
             dirfd = os.open(directory, os.O_RDONLY)
             try:
                 os.fsync(dirfd)

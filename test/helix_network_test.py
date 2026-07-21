@@ -113,6 +113,15 @@ class GCmd:
 
 
 def main():
+    assert helix_network._ipv4('192.168.1.100', 'ip') == 0xc0a80164
+    assert helix_network._ipv4_text(0xc0a80164) == '192.168.1.100'
+    try:
+        helix_network._ipv4('192.168.1', 'ip')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('abbreviated IPv4 address was accepted')
+
     config = Config()
     fake_mcu.get_printer_mcu = lambda printer, name: printer.mcu
     network = helix_network.HelixNetwork(config)

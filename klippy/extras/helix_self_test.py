@@ -22,6 +22,8 @@
 import logging
 import time
 
+_MONOTONIC = getattr(time, 'monotonic', time.time)
+
 STATUS = {0: 'PASS', 1: 'FAIL', 2: 'skip'}
 
 
@@ -75,11 +77,11 @@ class HelixSelfTest:
         # Link round-trip fingerprint: time a burst of no-op queries.
         uptime = mcu.lookup_query_command("get_uptime",
                                           "uptime high=%u clock=%u")
-        t0 = time.monotonic()
+        t0 = _MONOTONIC()
         n = 8
         for _ in range(n):
             uptime.send([])
-        rtt_ms = (time.monotonic() - t0) * 1000.0 / n
+        rtt_ms = (_MONOTONIC() - t0) * 1000.0 / n
         return results, rtt_ms
 
     def _run_all(self, only=None):
@@ -160,7 +162,7 @@ class HelixSelfTest:
         # 64-byte carrier frame.  Hold plus two nops therefore consume exactly
         # the protocol's three-frame receive window.
         padding = bytes(range(44))
-        started = time.monotonic()
+        started = _MONOTONIC()
         for _ in range(iterations):
             hold.send([duration, padding])
             nop.send([padding])
@@ -168,7 +170,7 @@ class HelixSelfTest:
             # Wait until the three-record burst has executed before repeating;
             # this preserves the bounded protocol credit under test.
             uptime.send([])
-        elapsed = time.monotonic() - started
+        elapsed = _MONOTONIC() - started
         gcmd.respond_info(
             "HELIX CAN RX stress complete: mcu=%s iterations=%d"
             " hold_us=%d elapsed=%.3fs"

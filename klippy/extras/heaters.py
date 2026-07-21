@@ -601,12 +601,13 @@ class ControlHelixMPC(ControlHelixPID):
     def __init__(self, heater, config):
         # Retain explicit PID gains as the qualification/fallback baseline,
         # but do not use them in the predictive MCU loop.
-        super().__init__(heater, config)
+        ControlHelixPID.__init__(self, heater, config)
         config.getfloat('thermal_model_gain', above=0.)
         config.getfloat('thermal_model_tau', above=0.)
 
     def temperature_update(self, read_time, temp, target_temp):
-        super().temperature_update(read_time, temp, target_temp)
+        ControlHelixPID.temperature_update(
+            self, read_time, temp, target_temp)
         if self.controller is not None:
             self.controller.observe_temperature(temp, target_temp)
 

@@ -11,10 +11,14 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import importlib.util
 import logging
 import os
 import sys
+
+try:
+    from importlib import util as importlib_util
+except ImportError:
+    importlib_util = None
 
 # (label, a representative command format the firmware registers when the
 # feature is built). Presence is checked against the served dictionary.
@@ -39,6 +43,8 @@ MCU_FEATURES = [
 
 
 def _load_fleet_modules():
+    if importlib_util is None:
+        raise RuntimeError("fleet contract requires Python 3")
     root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))))
     loaded = []
@@ -47,8 +53,8 @@ def _load_fleet_modules():
             ("_helix_fleet_coherence",
              ("atlas", "fleet", "coherence.py"))):
         path = os.path.join(root, *relpath)
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
+        spec = importlib_util.spec_from_file_location(name, path)
+        module = importlib_util.module_from_spec(spec)
         # dataclasses resolves annotations through sys.modules while loading.
         sys.modules[name] = module
         spec.loader.exec_module(module)

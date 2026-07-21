@@ -2,8 +2,9 @@
 
 import json
 import logging
-import secrets
+import os
 import socket
+import struct
 
 from helix_fabric import CanFabricEndpoint
 
@@ -31,6 +32,10 @@ PROFILE_MASKS = {
     'FD_5M_BRS': 1 << 2,
     'FD_8M_BRS': 1 << 3,
 }
+
+
+def _random_epoch():
+    return struct.unpack('!I', os.urandom(4))[0] or 1
 
 
 class HelixCANManagerClient:
@@ -337,7 +342,7 @@ class HelixCANBus:
             ' require_discipline=%c',
             'can_time_bridge_state enabled=%c epoch=%u quality=%c'
             ' sync_count=%u followup_count=%u invalid_count=%u')
-        self.time_epoch = secrets.randbits(32) or 1
+        self.time_epoch = _random_epoch()
         params = command.send([self.time_epoch, self.time_beacon_us, 1,
                                int(not self.bridge_is_primary)])
         if not params['enabled'] or params['epoch'] != self.time_epoch:
@@ -412,7 +417,7 @@ class HelixCANBus:
         mtu, brs, data_bitrate = PROFILE_DATA[selected]
         profile.update({'name': selected, 'mtu': mtu, 'brs': brs,
                         'data_bitrate': data_bitrate})
-        epoch = secrets.randbits(32) or 1
+        epoch = _random_epoch()
         prepared = []
         try:
             self.state = 'preparing'

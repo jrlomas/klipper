@@ -1,8 +1,9 @@
 """Transactional native-Ethernet provisioning from printer.cfg."""
 
-import ipaddress
 import logging
-import secrets
+import os
+import socket
+import struct
 
 import mcu
 
@@ -16,9 +17,14 @@ RESPONSE = (
 
 def _ipv4(value, name):
     try:
-        return int(ipaddress.IPv4Address(value))
-    except ipaddress.AddressValueError as exc:
+        packed = socket.inet_pton(socket.AF_INET, value)
+        return struct.unpack('!I', packed)[0]
+    except (socket.error, TypeError, ValueError) as exc:
         raise ValueError("invalid %s: %s" % (name, exc))
+
+
+def _ipv4_text(value):
+    return socket.inet_ntop(socket.AF_INET, struct.pack('!I', value))
 
 
 class HelixNetwork:
@@ -99,7 +105,7 @@ class HelixNetwork:
         if self.prepare_cmd is None:
             raise self.printer.command_error(
                 'native-Ethernet MCU is not identified')
-        epoch = secrets.randbits(32) or 1
+        epoch = struct.unpack('!I', os.urandom(4))[0] or 1
         try:
             prepared = self.prepare_cmd.send([
                 epoch, self.mode, self.ip, self.netmask,
@@ -153,9 +159,8 @@ class HelixNetwork:
             "gateway=%s port=%u epoch=%u generation=%u dhcp_state=%u "
             "rejected=%u malformed=%u naks=%u retries=%u" % (
                 self.name, status['state'], status['mode'],
-                ipaddress.IPv4Address(status['ip']),
-                ipaddress.IPv4Address(status['netmask']),
-                ipaddress.IPv4Address(status['gateway']), status['port'],
+                _ipv4_text(status['ip']), _ipv4_text(status['netmask']),
+                _ipv4_text(status['gateway']), status['port'],
                 status['epoch'], status['generation'], status['dhcp_state'],
                 status['rejected'], status['dhcp_malformed'],
                 status['dhcp_naks'], status['dhcp_retries']))
