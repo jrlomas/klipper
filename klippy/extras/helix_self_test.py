@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # HELIX built-in self test: run the boards' live verification gates
 # through the protocol (FD-0001; docs/Helix_Test_Plan.md).
 #

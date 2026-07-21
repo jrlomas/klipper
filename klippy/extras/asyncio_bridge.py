@@ -15,10 +15,10 @@
 #       callback from asyncio context; await its result on the loop)
 #
 # Both directions use only documented primitives:
-#   * reactor -> asyncio: asyncio.run_coroutine_threadsafe() hands the
-#     coroutine to the loop thread; its concurrent.futures.Future
-#     done-callback relays the outcome back with reactor.async_complete()
-#     onto a ReactorCompletion the reactor greenlet waits on.
+#   * reactor -> asyncio: loop.call_soon_threadsafe() hands an awaitable
+#     factory to the loop thread; ensure_future() starts it there and its
+#     done-callback relays the outcome with reactor.async_complete() onto a
+#     ReactorCompletion the reactor greenlet waits on.
 #   * asyncio -> reactor: reactor.register_async_callback() (klippy's
 #     own cross-thread wake, pipe + async queue) runs fn in reactor
 #     context; loop.call_soon_threadsafe() resolves the asyncio Future
@@ -33,7 +33,10 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import asyncio
+try:
+    import asyncio
+except ImportError:
+    asyncio = None
 import logging
 import os
 import threading
@@ -66,6 +69,8 @@ class AsyncioBridge:
     def start(self):
         if self._running:
             return
+        if asyncio is None:
+            raise BridgeError("asyncio bridge requires Python 3")
         # The worker creates as well as runs the loop.  In particular, the
         # selector loop's cross-thread wakeup pipe must belong to the thread
         # that dispatches it; creating the loop here and moving it to the
@@ -75,7 +80,8 @@ class AsyncioBridge:
         self._wakeup_confirmed.clear()
         self._running = True
         self._thread = threading.Thread(target=self._thread_main,
-                                        name=self._name, daemon=True)
+                                        name=self._name)
+        self._thread.daemon = True
         self._thread.start()
         if not self._ready.wait(self._start_timeout):
             raise BridgeError("asyncio bridge failed to start")
@@ -155,12 +161,14 @@ class AsyncioBridge:
         return self._running
 
     # ---- reactor context -> asyncio ----
-    def run_coro(self, coro):
-        # Schedule `coro` on the bridge loop from reactor context.
+    def run_coro_factory(self, factory):
+        # Run factory() on the bridge loop and schedule the awaitable it
+        # returns.  Creating asyncio Futures on their owning loop thread is
+        # important for factories that call call_reactor().
         # Returns a ReactorCompletion the reactor greenlet can wait()
-        # on; its result is a (ok, value) pair - (True, coro_result)
+        # on; its result is a (ok, value) pair - (True, awaitable_result)
         # or (False, exception). Never raises across the thread
-        # boundary; use run_coro_wait() for the raise-on-error form.
+        # boundary; use run_coro_factory_wait() for the raise-on-error form.
         completion = self.reactor.completion()
         if not self._running or self.loop is None:
             completion.complete((False, BridgeError("bridge not running")))
@@ -171,14 +179,29 @@ class AsyncioBridge:
                 self.reactor.async_complete(completion, (True, fut.result()))
             except BaseException as e:  # relay, do not swallow
                 self.reactor.async_complete(completion, (False, e))
+
+        def _start():
+            try:
+                awaitable = factory()
+                task = asyncio.ensure_future(awaitable)
+                task.add_done_callback(_relay)
+            except BaseException as e:
+                self.reactor.async_complete(completion, (False, e))
         try:
-            cfut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+            self.loop.call_soon_threadsafe(_start)
             self._wake_loop()
         except RuntimeError as e:
             completion.complete((False, BridgeError(str(e))))
             return completion
-        cfut.add_done_callback(_relay)
         return completion
+
+    def run_coro(self, coro):
+        # Schedule an already-created coroutine or Future on the loop.
+        return self.run_coro_factory(lambda: coro)
+
+    def run_coro_factory_wait(self, factory, waketime=None):
+        completion = self.run_coro_factory(factory)
+        return self._wait_completion(completion, waketime)
 
     def run_coro_wait(self, coro, waketime=None):
         # Blocking (reactor-greenlet) convenience: run the coroutine on
@@ -186,6 +209,9 @@ class AsyncioBridge:
         # any exception it raised. Must be called from a reactor
         # greenlet (it pauses via ReactorCompletion.wait()).
         completion = self.run_coro(coro)
+        return self._wait_completion(completion, waketime)
+
+    def _wait_completion(self, completion, waketime):
         if waketime is None:
             outcome = completion.wait()
         else:
@@ -257,8 +283,14 @@ class PrinterAsyncioBridge:
     def run_coro(self, coro):
         return self.bridge.run_coro(coro)
 
+    def run_coro_factory(self, factory):
+        return self.bridge.run_coro_factory(factory)
+
     def run_coro_wait(self, coro, waketime=None):
         return self.bridge.run_coro_wait(coro, waketime)
+
+    def run_coro_factory_wait(self, factory, waketime=None):
+        return self.bridge.run_coro_factory_wait(factory, waketime)
 
     def call_reactor(self, fn):
         return self.bridge.call_reactor(fn)

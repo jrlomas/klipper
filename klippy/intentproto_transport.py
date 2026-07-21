@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Host-side v2 transport for klippy: the "envelope" that lets klippy speak
 # intentproto v2 to an MCU WITHOUT changing serialqueue's v1 protocol.
 #

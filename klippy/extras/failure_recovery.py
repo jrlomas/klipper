@@ -903,19 +903,14 @@ class FailureRecovery:
                 hold.release()
                 gcmd.respond_info("Released hold on %s" % (name,))
 
-    async def _drain_all_coro(self):
-        # asyncio-native orchestration of the execlog drain. The MCU
-        # I/O itself is reactor-only, so each board's drain hops back
-        # into reactor context through the bridge's call_reactor seam -
-        # exercising BOTH directions of the doc-05 handoff on a real
-        # consumer (reactor -> run_coro -> here -> call_reactor ->
-        # reactor -> back here -> completion on the reactor).
-        out = []
-        for el in self.execlogs:
-            records = await self.bridge.call_reactor(
-                lambda et, el=el: el.drain())
-            out.append((el, records))
-        return out
+    def _drain_all_awaitable(self):
+        # This factory runs on the bridge loop, so call_reactor() creates its
+        # Future on the correct thread.  The complete drain then runs as one
+        # reactor callback.  This exercises both directions of the documented
+        # asyncio/reactor seam without embedding Python-3-only syntax in a
+        # Klippy module covered by the Python 2 import-compatibility check.
+        return self.bridge.call_reactor(
+            lambda et: [(el, el.drain()) for el in self.execlogs])
 
     def _drain_all(self):
         # [(execlog, records)] for every configured board. Uses the
@@ -925,7 +920,8 @@ class FailureRecovery:
         if (self.asyncio_drain and self.bridge is not None
                 and self.bridge.running):
             try:
-                return self.bridge.run_coro_wait(self._drain_all_coro())
+                return self.bridge.run_coro_factory_wait(
+                    self._drain_all_awaitable)
             except Exception:
                 logging.exception("failure_recovery: asyncio drain failed;"
                                   " falling back to direct reactor drain")

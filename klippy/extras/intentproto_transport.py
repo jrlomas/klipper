@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # klippy config glue for the intentproto v2 transport bridge.
 #
 # Lets klippy speak intentproto v2 to an MCU by re-framing its stock v1

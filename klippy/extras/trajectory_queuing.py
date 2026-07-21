@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Trajectory intention emitter: per-actuator opt-in motion protocol
 #
 # Owns steppers configured with 'motion_protocol: trajectory'

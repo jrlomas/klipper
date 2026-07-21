@@ -77,6 +77,14 @@ def main():
                 return total
             assert bridge.run_coro_wait(spin(20)) == sum(range(20))
 
+            # 5) An awaitable factory is invoked on the loop thread before it
+            #    creates a Future.  failure_recovery uses this exact path to
+            #    enter asyncio and then drain execution logs on the reactor.
+            def reactor_future():
+                results['factory_thread'] = threading.current_thread().name
+                return bridge.call_reactor(lambda et: 73)
+            assert bridge.run_coro_factory_wait(reactor_future) == 73
+
             results['ok'] = True
         except BaseException as e:  # record and stop the reactor
             results['error'] = repr(e)
@@ -93,6 +101,7 @@ def main():
     # The coroutine and the reactor callback must have run on different
     # threads - proof the loop really lives off the reactor thread.
     assert results['coro_thread'] != main_thread, results
+    assert results['factory_thread'] == results['coro_thread'], results
     assert results['reactor_cb_thread'] == main_thread, results
     print("asyncio_bridge_test: two-way handoff ok"
           " (coro on %s, reactor cb on %s)"
