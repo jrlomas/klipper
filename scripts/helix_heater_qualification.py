@@ -154,6 +154,8 @@ def main():
                 control_band = model["control_band_mdeg"] / 1000.
             row = {
                 "elapsed_s": now - started,
+                "heater_type": state.get(
+                    "heater_type", control.get("heater_type", "")),
                 "temperature_c": state["temperature"],
                 "target_c": state["target"],
                 "power": state["power"],
@@ -222,6 +224,7 @@ def main():
         rows, args.target, args.settle_band, args.settle_seconds)
     summary.update({
         "heater": args.heater,
+        "heater_type": rows[-1]["heater_type"],
         "controller_state": rows[-1]["controller_state"],
         "controller_algorithm": rows[-1]["controller_algorithm"],
         "control_mode": rows[-1]["control_mode"],

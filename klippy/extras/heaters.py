@@ -17,12 +17,30 @@ PID_PARAM_BASE = 255.
 MAX_MAINTHREAD_TIME = 5.0
 QUELL_STALE_TIME = 7.0
 MIN_PWM_CHANGE_RATIO = 0.05
+HEATER_TYPES = ('bed', 'hotend', 'chamber', 'generic')
+
+
+def default_heater_type(short_name):
+    """Return the compatibility type for configs without heater_type."""
+    if short_name == 'heater_bed':
+        return 'bed'
+    if short_name == 'extruder' or short_name.startswith('extruder'):
+        return 'hotend'
+    return 'generic'
+
+
+def default_heater_gain_time(heater_type):
+    return 60. if heater_type == 'bed' else 20.
 
 class Heater:
     def __init__(self, config, sensor):
         self.printer = config.get_printer()
         self.name = config.get_name()
         self.short_name = short_name = self.name.split()[-1]
+        inferred_type = default_heater_type(short_name)
+        self.heater_type = config.getchoice(
+            'heater_type', {name: name for name in HEATER_TYPES},
+            inferred_type)
         # Setup sensor
         self.sensor = sensor
         self.min_temp = config.getfloat('min_temp', minval=KELVIN_TO_CELSIUS)
@@ -211,7 +229,8 @@ class Heater:
             target_temp = self.target_temp
             smoothed_temp = self.smoothed_temp
             last_pwm_value = self.last_pwm_value
-        status = {'temperature': round(smoothed_temp, 2),
+        status = {'heater_type': self.heater_type,
+                  'temperature': round(smoothed_temp, 2),
                   'target': target_temp, 'power': last_pwm_value}
         if self.mcu_heater_control is not None:
             status['mcu_control'] = self.mcu_heater_control.get_status()

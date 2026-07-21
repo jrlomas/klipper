@@ -21,6 +21,15 @@ versioned profile, CRC, monotonic generation, wear-safe storage, boot-time
 sensor validation, and an explicit re-arm policy. A heater must never come on
 merely because old flash contains a plausible target.
 
+Heater role and controller selection are orthogonal and configured per
+heater. `heater_type` declares `bed`, `hotend`, `chamber`, or `generic`; it
+selects role-specific defaults and evidence labels. `control` independently
+selects `pid`, `helix_pid`, `helix_mpc`, or `watermark`. No safety or control
+policy may infer a heater's role solely from a special object name. Existing
+configurations remain compatible through the conventional `heater_bed` and
+`extruder*` name defaults; custom and multi-heater machines should declare the
+type explicitly.
+
 ## Why move the loop
 
 Base Klipper evaluates PID in `klippy/extras/heaters.py` when a temperature

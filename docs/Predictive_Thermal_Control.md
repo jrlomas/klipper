@@ -30,6 +30,14 @@ controller and adds a separate predictive algorithm. Neither controller is a
 safety mechanism; both run beneath the same independent MCU limits, sensor
 deadline, heating-progress verification, host-loss bound, and shutdown rules.
 
+Every heater also has an independent semantic `heater_type`: `bed`, `hotend`,
+`chamber`, or `generic`. This is deliberately separate from `control`. The
+type selects role-specific policy defaults and is reported in status and
+qualification evidence, while `control` selects the feedback algorithm. A
+machine may therefore configure several heaters of one type, or different
+controller algorithms for heaters of the same type, without relying on
+special section names.
+
 ## Plant model
 
 The first implementation uses a first-order thermal model:

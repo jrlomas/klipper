@@ -13,6 +13,12 @@ All dates in this document are approximate.
 
 ## Changes
 
+20260720: Heater sections gained an optional per-heater `heater_type` setting
+(`bed`, `hotend`, `chamber`, or `generic`). It is independent of the per-heater
+`control` algorithm and supplies role-specific policy defaults and status
+evidence without relying on special heater names. Existing `heater_bed` and
+`extruder*` sections retain compatible inferred defaults.
+
 20260719: `control: helix_pid` gained versioned characterization runs,
 candidate validation, bounded target/context gain models, dynamic bumpless MCU
 profile activation, and management G-Code. Its default autotune is now a

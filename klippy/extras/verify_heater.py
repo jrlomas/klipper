@@ -5,6 +5,8 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging
 
+from . import heaters
+
 HINT_THERMAL = """
 See the 'verify_heater' section in docs/Config_Reference.md
 for the parameters that control this check.
@@ -22,11 +24,8 @@ class HeaterCheck:
         self.hysteresis = config.getfloat('hysteresis', 5., minval=0.)
         self.max_error = config.getfloat('max_error', 120., minval=0.)
         self.heating_gain = config.getfloat('heating_gain', 2., above=0.)
-        default_gain_time = 20.
-        if self.heater_name == 'heater_bed':
-            default_gain_time = 60.
         self.check_gain_time = config.getfloat(
-            'check_gain_time', default_gain_time, minval=1.)
+            'check_gain_time', None, minval=1.)
         self.approaching_target = self.starting_approach = False
         self.last_target = self.goal_temp = self.error = 0.
         self.goal_systime = self.printer.get_reactor().NEVER
@@ -37,6 +36,9 @@ class HeaterCheck:
             return
         pheaters = self.printer.lookup_object('heaters')
         self.heater = pheaters.lookup_heater(self.heater_name)
+        if self.check_gain_time is None:
+            self.check_gain_time = heaters.default_heater_gain_time(
+                self.heater.heater_type)
         logging.info("Starting heater checks for %s", self.heater_name)
         reactor = self.printer.get_reactor()
         self.check_timer = reactor.register_timer(self.check_event, reactor.NOW)

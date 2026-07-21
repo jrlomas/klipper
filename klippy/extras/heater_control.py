@@ -6,7 +6,7 @@
 
 import json, logging, math, os
 
-from . import heater_profiles
+from . import heater_profiles, heaters
 
 
 GAIN_SHIFT = 20
@@ -28,6 +28,7 @@ class MCUHeaterControl:
         self.reactor = self.printer.get_reactor()
         self.heater = heater
         self.name = heater.short_name
+        self.heater_type = heater.heater_type
         self.control_kind = getattr(heater.control, 'control_kind', 'pid')
         self.is_predictive = self.control_kind == 'predictive'
         control_label = 'helix_mpc' if self.is_predictive else 'helix_pid'
@@ -74,7 +75,7 @@ class MCUHeaterControl:
             'max_error', 120., minval=0.)
         self.verify_heating_gain = verify.getfloat(
             'heating_gain', 2., above=0.)
-        default_gain_time = 60. if self.name == 'heater_bed' else 20.
+        default_gain_time = heaters.default_heater_gain_time(self.heater_type)
         self.verify_gain_time = verify.getfloat(
             'check_gain_time', default_gain_time, minval=1.)
 
@@ -587,6 +588,7 @@ class MCUHeaterControl:
             'host_configured': self._commands_ready,
             'algorithm': self.control_kind,
             'control_mode': self.control_mode,
+            'heater_type': self.heater_type,
         }
         if self.is_predictive:
             selection = self.predictive_selection or {
@@ -657,11 +659,13 @@ class MCUHeaterControl:
         if self.is_predictive:
             model = status['thermal_model']
             gcmd.respond_info(
-                "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
+                "%s: type=%s state=%s fault=0x%x power=%.4f samples=%d "
+                "temp=%s "
                 "algorithm=predictive gain=%.3fC tau=%.3fs delay=%.3fs "
                 "horizon=%.3fs "
                 "ambient=%s model=%s bounded=%s" % (
-                    self.name, status['state'], status['fault'],
+                    self.name, status['heater_type'], status['state'],
+                    status['fault'],
                     status['power'], status['samples'], estimate,
                     model['gain'], model['tau'], model['delay'],
                     model['horizon'],
@@ -673,9 +677,11 @@ class MCUHeaterControl:
                      if status['thermal_model_bounded'] else 'no')))
         else:
             gcmd.respond_info(
-                "%s: state=%s fault=0x%x power=%.4f samples=%d temp=%s "
+                "%s: type=%s state=%s fault=0x%x power=%.4f samples=%d "
+                "temp=%s "
                 "profile=%s bounded=%s" % (
-                    self.name, status['state'], status['fault'],
+                    self.name, status['heater_type'], status['state'],
+                    status['fault'],
                     status['power'], status['samples'], estimate,
                     status['pid_profile_source'],
                     (','.join(status['pid_profile_clamped_gains'])

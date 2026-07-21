@@ -886,9 +886,10 @@ heater. If a target temperature is not supplied, the target is 0.
 #### HEATER_CONTROL_STATUS
 `HEATER_CONTROL_STATUS HEATER=<heater_name>`: Query an MCU-autonomous
 `helix_pid` controller. Reports controller state, fault bits, applied power,
-local sample count, and MCU-measured control-loop cadence. The temperature is
-`n/a` while the target-local ADC tangent is idle or too far from its setpoint
-to be a truthful thermistor conversion.
+local sample count, the heater's configured semantic type, and MCU-measured
+control-loop cadence. The temperature is `n/a` while the target-local ADC
+tangent is idle or too far from its setpoint to be a truthful thermistor
+conversion.
 
 #### HEATER_CONTROL_CLEAR
 `HEATER_CONTROL_CLEAR HEATER=<heater_name>`: Clear a latched local

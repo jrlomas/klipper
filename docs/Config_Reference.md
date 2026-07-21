@@ -1434,6 +1434,13 @@ filament_diameter:
 #   default is 0.040 (40 milliseconds).
 #
 # The remaining variables describe the extruder heater.
+#heater_type: hotend
+#   Semantic role of this individual heater. Valid values are "bed",
+#   "hotend", "chamber", and "generic". Helix uses the role for
+#   type-specific policy defaults independently of the control algorithm.
+#   The default is "bed" for heater_bed, "hotend" for extruder sections,
+#   and "generic" for other heater names. Set this explicitly for custom
+#   names and for machines with multiple beds, hotends, or chamber heaters.
 heater_pin:
 #   PWM output pin controlling the heater. This parameter must be
 #   provided.
@@ -1644,6 +1651,7 @@ settings described in the "extruder" section.
 
 ```
 [heater_bed]
+#heater_type: bed
 heater_pin:
 sensor_type:
 sensor_pin:
@@ -3305,8 +3313,8 @@ printer. Use verify_heater sections to change the default settings.
 #   more time before an error is reported. Specifically, during
 #   initial heating, as long as the heater increases in temperature
 #   within this time frame (specified in seconds) then the internal
-#   "error counter" is reset. The default is 20 seconds for extruders
-#   and 60 seconds for heater_bed.
+#   "error counter" is reset. The default is 60 seconds for heaters whose
+#   heater_type is "bed", and 20 seconds for all other heater types.
 #hysteresis: 5
 #   The maximum temperature difference (in Celsius) to a target
 #   temperature that is considered in range of the target. This
@@ -3416,6 +3424,7 @@ target temperature.
 #gcode_id:
 #   The id to use when reporting the temperature in the M105 command.
 #   This parameter must be provided.
+#heater_type: generic
 #heater_pin:
 #max_power:
 #sensor_type:
