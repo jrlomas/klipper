@@ -45,5 +45,13 @@ canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock)
 void
 canbus_notify_protocol_error(void)
 {
-    canserial_notify_protocol_error();
+    // FDCAN already confines and retransmits physical protocol errors.  The
+    // low-level driver accounts each observation for diagnostics; do not turn
+    // a recoverable retransmission burst into a global firmware shutdown.
+}
+
+void
+canbus_notify_bus_off(void)
+{
+    canserial_notify_bus_off();
 }

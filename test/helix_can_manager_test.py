@@ -113,6 +113,31 @@ def main():
             'bitrate', '1000000', 'fd', 'off'] in no_restart_calls
     assert ['ip', 'link', 'set', 'dev', 'helixcan0', 'up'] \
         in no_restart_calls
+
+    # A composite bridge reset can expose CDC before gs_usb has recreated the
+    # netdevice.  Retry the whole transaction rather than making
+    # FIRMWARE_RESTART fail nondeterministically.
+    transient_calls = []
+    transient_sleeps = []
+    failed_up = [True]
+    def transient_runner(argv, **kwargs):
+        transient_calls.append(argv)
+        if argv[-1:] == ['up'] and failed_up[0]:
+            failed_up[0] = False
+            return Result(1)
+        if '-json' in argv:
+            return Result(stdout=json.dumps([{
+                'ifname': 'helixcan0', 'mtu': 16,
+                'linkinfo': {'info_data': {
+                    'ctrlmode': [],
+                    'bittiming': {'bitrate': 1000000}}}}]))
+        return Result()
+    result = manager_module.LinkManager(
+        transient_runner, transient_sleeps.append).apply(
+            'helixcan0', 'CLASSIC_1M')
+    assert result['ok']
+    assert transient_sleeps == [0.1]
+    assert sum(call[-1:] == ['up'] for call in transient_calls) == 2
     print('PASS: CAN manager uses fixed argv and rolls FD failure back')
 
 

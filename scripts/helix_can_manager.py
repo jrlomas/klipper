@@ -13,6 +13,7 @@ import os
 import re
 import socketserver
 import subprocess
+import time
 
 
 PROFILES = {
@@ -36,8 +37,9 @@ class ManagerError(Exception):
 
 
 class LinkManager:
-    def __init__(self, runner=None):
+    def __init__(self, runner=None, sleeper=None):
         self.runner = runner or subprocess.run
+        self.sleeper = sleeper or time.sleep
 
     def _run(self, argv, capture=False):
         result = self.runner(argv, check=False, text=True,
@@ -47,7 +49,7 @@ class LinkManager:
             raise ManagerError('%s failed: %s' % (' '.join(argv), detail))
         return result.stdout if capture else ''
 
-    def _configure(self, interface, profile_name):
+    def _configure_once(self, interface, profile_name):
         profile = PROFILES[profile_name]
         self._run(['ip', 'link', 'set', 'dev', interface, 'down'])
         argv = ['ip', 'link', 'set', 'dev', interface, 'type', 'can',
@@ -71,6 +73,28 @@ class LinkManager:
                    '1024'])
         self._run(['ip', 'link', 'set', 'dev', interface, 'up'])
         return automatic_restart
+
+    @staticmethod
+    def _is_transient_link_error(error):
+        detail = str(error)
+        return (detail.rstrip().endswith(' up failed:')
+                or any(token in detail for token in (
+                    'No such device', 'Cannot find device', 'Broken pipe',
+                    'Network is down')))
+
+    def _configure(self, interface, profile_name):
+        # A firmware restart resets the composite USB device.  The CDC ACM
+        # endpoint may be ready just before gs_usb finishes recreating the CAN
+        # netdevice, and an early RTM_NEWLINK can also fail with EPIPE.  Retry
+        # the complete down/configure/up transaction for a bounded three
+        # seconds; permanent timing/profile errors still fail immediately.
+        for attempt in range(31):
+            try:
+                return self._configure_once(interface, profile_name)
+            except ManagerError as exc:
+                if attempt == 30 or not self._is_transient_link_error(exc):
+                    raise
+                self.sleeper(0.1)
 
     def _readback(self, interface):
         output = self._run(['ip', '-details', '-json', 'link', 'show', 'dev',

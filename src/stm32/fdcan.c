@@ -465,13 +465,12 @@ CAN_IRQHandler(void)
             fdcan_account_protocol_error(lec);
             canbus_notify_protocol_error();
         }
-        if (psr & FDCAN_PSR_BO) {
-            // Bus-off is an immediate transport hold, not eight independent
-            // transient errors. Feed the same bounded-burst gate to preserve
-            // one recovery path in the generic carrier.
-            for (uint_fast8_t i = 0; i < 8; i++)
-                canbus_notify_protocol_error();
-        }
+    }
+    if (ir & FDCAN_IR_BO) {
+        // Hardware error confinement, rather than an arbitrary transient
+        // error count, is the fail-closed boundary.
+        SOC_CAN->IR = FDCAN_IR_BO;
+        canbus_notify_bus_off();
     }
 }
 
@@ -750,7 +749,8 @@ can_init(void)
     SOC_CAN->ILE = FDCAN_ILE_EINT0;
     SOC_CAN->IE = (FDCAN_IE_RF0NE | FDCAN_IE_RF0LE | FDCAN_IE_TC
                    | FDCAN_IE_PEDE
-                   | FDCAN_IE_PEAE | FDCAN_IE_TEFNE | FDCAN_IE_TEFLE);
+                   | FDCAN_IE_PEAE | FDCAN_IE_BOE
+                   | FDCAN_IE_TEFNE | FDCAN_IE_TEFLE);
 }
 DECL_INIT(can_init);
 

@@ -18,5 +18,6 @@ struct canbus_msg;
 void canserial_process_data(struct canbus_msg *msg);
 void canserial_set_uuid(uint8_t *raw_uuid, uint32_t raw_uuid_len);
 void canserial_notify_protocol_error(void);
+void canserial_notify_bus_off(void);
 
 #endif // canserial.h

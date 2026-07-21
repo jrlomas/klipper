@@ -150,8 +150,7 @@ static struct usbcan_data {
     // A gs_usb FD frame spans two full-speed USB packets.
     uint8_t host_tx_staging[GS_HOST_FRAME_FD_SIZE];
     uint8_t host_tx_pos, host_tx_len;
-    uint32_t fd_error_window_start;
-    uint8_t fd_error_count, fd_error_hold;
+    uint8_t fd_bus_off_hold;
 
     // Data from physical canbus interface
     uint32_t canhw_pull_pos, canhw_push_pos;
@@ -416,10 +415,10 @@ usbcan_task(void)
 {
     if (!sched_check_wake(&UsbCan.wake) && !check_need_discard())
         return;
-    if (UsbCan.fd_error_hold) {
-        UsbCan.fd_error_hold = 0;
+    if (UsbCan.fd_bus_off_hold) {
+        UsbCan.fd_bus_off_hold = 0;
         UsbCan.fd_mode = 0;
-        shutdown("CAN FD protocol error burst");
+        shutdown("CAN bus-off");
     }
 
 #if CONFIG_HELIX_USB_CAN_COMPOSITE
@@ -600,17 +599,15 @@ canbus_notify_tx(void)
 void
 canbus_notify_protocol_error(void)
 {
-    if (!readb(&UsbCan.fd_mode))
-        return;
-    uint32_t now = timer_read_time();
-    if (now - UsbCan.fd_error_window_start > timer_from_us(10000)) {
-        UsbCan.fd_error_window_start = now;
-        UsbCan.fd_error_count = 0;
-    }
-    if (++UsbCan.fd_error_count >= 8) {
-        UsbCan.fd_error_hold = 1;
-        wake_usbcan_task();
-    }
+    // Hardware CAN error confinement owns retry/warning/passive behavior.
+    // The low-level driver retains detailed cumulative diagnostics.
+}
+
+void
+canbus_notify_bus_off(void)
+{
+    UsbCan.fd_bus_off_hold = 1;
+    wake_usbcan_task();
 }
 
 // Handle incoming data from hw canbus interface (called from IRQ handler)

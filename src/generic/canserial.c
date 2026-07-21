@@ -41,7 +41,7 @@ static struct canbus_data {
     uint32_t time_matched, time_missed, time_invalid;
     uint8_t time_seq, time_quality, time_pending;
     uint32_t fd_error_window_start;
-    uint8_t fd_error_count, fd_error_hold;
+    uint8_t fd_error_count, fd_error_hold, fd_bus_off_hold;
 
     // Rx data
     struct task_wake rx_wake;
@@ -112,6 +112,13 @@ canserial_notify_protocol_error(void)
         CanData.fd_error_hold = 1;
         sched_wake_task(&CanData.rx_wake);
     }
+}
+
+void
+canserial_notify_bus_off(void)
+{
+    CanData.fd_bus_off_hold = 1;
+    sched_wake_task(&CanData.rx_wake);
 }
 
 void
@@ -720,6 +727,16 @@ canserial_rx_task(void)
     if (!sched_check_wake(&CanData.rx_wake))
         return;
 
+    if (CanData.fd_bus_off_hold) {
+        CanData.fd_bus_off_hold = 0;
+        CanData.fd_active = CanData.fd_brs = 0;
+        CanData.carrier_mtu = 8;
+        CanData.transport_state = 3;
+#if CONFIG_CANBUS_FD
+        canhw_abort_fd();
+#endif
+        shutdown("CAN bus-off");
+    }
     if (CanData.fd_error_hold) {
         CanData.fd_error_hold = 0;
         CanData.fd_active = CanData.fd_brs = 0;
@@ -728,7 +745,7 @@ canserial_rx_task(void)
 #if CONFIG_CANBUS_FD
         canhw_abort_fd();
 #endif
-        shutdown("CAN FD protocol error burst");
+        shutdown("CAN FD carrier error burst");
     }
 
     // Process pending admin messages

@@ -59,7 +59,11 @@ def main():
     assert 'timesync_local_to_clock(local_clock)' in bridge
     assert 'timesync_ingest_can_sample(seq, machine_clock' in node
     assert 'CANBUS_TIME_FOLLOWUP' in node
-    assert 'CAN FD protocol error burst' in node
+    assert 'CAN FD carrier error burst' in node
+    assert 'canbus_notify_bus_off();' in fdcan
+    assert 'if (ir & FDCAN_IR_BO)' in fdcan
+    assert 'FDCAN_IE_BOE' in fdcan
+    assert 'shutdown("CAN bus-off")' in bridge
     assert 'SOC_CAN->TXBCR = cancel' in fdcan
     assert 'SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT' in fdcan
     assert 'fdcan_ram_write(txfifo->data' in fdcan

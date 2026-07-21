@@ -268,12 +268,16 @@ itself before transmitting. A Classical-only HELIX node announces its
 limitation and triggers the configured hold/refuse/fallback policy.
 
 An arbitrary non-HELIX controller cannot be guaranteed to announce itself.
-The first evidence may be an error frame against an FD transmission. Every
-HELIX node therefore has a local FD error-burst guard: it ceases FDF/BRS
-transmission, preserves the Classical receiver, and enters transport hold
-without waiting for the host. The bridge sends high-priority Classical
-`PROFILE_ABORT`, re-discovers the bus, and latches `CLASSIC_DEGRADED`. FD is
-not re-enabled automatically. Machines that require simultaneous legacy and
+The first evidence may be an error frame against an FD transmission. That
+evidence is not by itself sufficient to force a global shutdown: FDCAN already
+retransmits and moves through error-warning, error-passive, and bus-off using
+the protocol's standardized confinement counters. HELIX reports the physical
+errors and state transitions to the host; hardware bus-off is the local
+fail-closed boundary. A malformed logical HELIX carrier remains independently
+fatal because it indicates incompatible software or a violated negotiated
+profile, not ordinary line noise. Recovery sends high-priority Classical
+`PROFILE_ABORT`, re-discovers the bus, and latches `CLASSIC_DEGRADED`; FD is
+never re-enabled automatically. Machines that require simultaneous legacy and
 FD equipment must use separate electrical segments or a gateway.
 
 ## CAN frame use and traffic classes
@@ -337,10 +341,21 @@ context. A cancellation race is resolved from the Tx Event/cancellation-finish
 result: successfully transmitted is accounted as sent, successfully cancelled
 as unsent, and neither state is guessed.
 
-Persistent error growth, cancellation failure, bus-off, or an FD error burst
-forces distributed hold and the explicit `CLASSIC_DEGRADED` recovery path.
+Persistent error growth or warning/passive state is surfaced to host policy;
+the CAN controller continues its specified retransmission and error-confinement
+behavior. Cancellation failure, malformed Helix FD carriers, or hardware
+bus-off force distributed hold and the explicit `CLASSIC_DEGRADED` recovery
+path. An arbitrary count of recoverable physical errors is not itself a global
+firmware-shutdown threshold.
 Safety never depends on an emergency frame eventually winning an unhealthy
 bus: each node's local watchdog and epoch rules remain authoritative.
+
+Composite-bridge reset creates a short enumeration race: CDC ACM can reconnect
+before `gs_usb` has recreated the named SocketCAN interface. The profile
+manager therefore retries the complete down/configure/up transaction for only
+the transient missing-device, broken-pipe, network-down, and early-link-up
+cases, bounded to three seconds. All other configuration errors fail
+immediately, and exhaustion remains a Klippy configuration error.
 
 ## USB SOF to hardware-timestamped CAN machine time
 
@@ -653,6 +668,19 @@ underrun boundary and completed its end macro without trajectory recovery or
 `Timer too close`. This closes the EBB receive-drain physical regression for
 the 1 Mbit `FD_1M_NOBRS` profile; injected bus faults and faster BRS profiles
 remain separate qualification items.
+
+On 2026-07-20 a later print exposed an incorrect policy boundary in the first
+implementation: eight recoverable physical FDCAN errors inside 10 ms caused
+`MCU 'canbridge' shutdown: CAN FD protocol error burst`, although the
+controller was still capable of retransmission and error confinement. The
+physical-error counter is now diagnostic; malformed logical carriers retain
+their bounded fatal gate, and the explicitly enabled hardware bus-off IRQ is
+the physical fail-closed signal. The same incident exposed a composite-reset
+enumeration race in which CDC returned before `gs_usb` recreated
+`helixcan0`. A bounded transient-only manager retry was installed, and a live
+`FIRMWARE_RESTART` subsequently returned the printer to Ready with
+`FD_1M_NOBRS`, zero bridge errors/drops, and exact accepted/forwarded frame
+conservation without USB replug.
 
 The resumed run produced the same signature again: the EBB36 aggregate reached
 20,534 receive errors and 1,226,991 retransmitted bytes while bridge

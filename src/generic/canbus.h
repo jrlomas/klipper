@@ -90,5 +90,6 @@ void canbus_notify_tx(void);
 void canbus_process_data(struct canbus_msg *msg);
 void canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock);
 void canbus_notify_protocol_error(void);
+void canbus_notify_bus_off(void);
 
 #endif // canbus.h

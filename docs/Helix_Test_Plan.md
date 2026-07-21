@@ -913,7 +913,8 @@ Phases 3/7/8 over each real transport.
     refusal; named `helixcan0`; 0..64-byte ISO FD carrier; exact 1/2/5/8 Mbit
     capability masks; prepare/commit/apply/enable rollback; composite
     `gs_usb` + CDC bridge with no fake CAN node; bounded FDCAN cancellation;
-    FD error-burst hold; Classical bridge-restart quiesce; and two-step FDCAN
+    malformed-carrier hold, physical error confinement, bus-off hold;
+    Classical bridge-restart quiesce; and two-step FDCAN
     Tx-Event/RX timestamp transfer are implemented. Focused tests, chelper,
     and STM32G0B1 node/bridge builds pass on 2026-07-16.
   - [x] **9.2a — Conservative electrical bring-up:** flash the FPS as the
@@ -928,7 +929,8 @@ Phases 3/7/8 over each real transport.
     frames through repeated Klipper process restarts.
   - [ ] **9.2b — Carrier and recovery:** exercise all FD DLCs, sustained MCU
     protocol traffic, stale-recipient cancellation, bridge replug, bus-off,
-    FD error-burst Classical fallback, and bridge firmware-restart quiesce.
+    malformed-carrier rejection, recoverable physical-error confinement, and
+    bridge firmware-restart quiesce.
     - [x] Every legal payload length (0..8, 12, 16, 20, 24, 32, 48, and 64)
       was emitted and captured over the physical FPS/EBB36 bus with
       `can-utils`; the post-sweep controller counters remained zero.
@@ -953,8 +955,16 @@ Phases 3/7/8 over each real transport.
       received the EBB36 session-reset acknowledgement, reactivated
       `FD_1M_NOBRS`, loaded the full command dictionary, and returned ready
       without a power cycle.
-    - [ ] Physically inject stale-recipient expiry, bridge replug, bus-off,
-      FD error-burst fallback, and bridge-firmware quiesce/re-entry.
+    - [x] A 2026-07-20 live `FIRMWARE_RESTART` reset the composite FPS bridge,
+      tolerated the bounded CDC-before-`gs_usb` enumeration race, recreated
+      `helixcan0`, restored `FD_1M_NOBRS`, and returned Ready without a USB
+      replug. Bridge errors/drops remained zero and accepted/forwarded frame
+      conservation was exact.
+    - [ ] Physically inject stale-recipient expiry, bridge replug, hardware
+      bus-off, recoverable physical errors, malformed logical carriers, and
+      bridge-firmware quiesce/re-entry. Transient physical errors must use
+      FDCAN retransmission/confinement without global shutdown; malformed
+      carriers and bus-off must fail closed.
     - [x] The FPS bridge applied and read back both the 1 Mbit Classical floor
       and a maintenance-only 500 kbit Classical profile through mainline
       `gs_usb`; the firmware now programs exact SocketCAN nominal timing rather

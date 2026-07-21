@@ -169,6 +169,16 @@ Controller automatic retransmission remains enabled for arbitration loss and
 isolated line errors. STM32 FDCAN transmit buffers are nevertheless bounded:
 normal protocol traffic is cancelled after 25 ms and administration/time
 traffic after 100 ms. The framed protocol's ACK and sequence layer remains the
-end-to-end delivery authority. A burst of eight FD protocol errors in 10 ms or
-bus-off suppresses FD emission, initiates Classical recovery, and latches a
-transport shutdown instead of continuing stale motion traffic.
+end-to-end delivery authority. Physical stuff/form/CRC/bit/ACK errors remain
+visible in cumulative diagnostics, while the CAN controller's standard error
+confinement and retransmission handle transient bursts. A malformed Helix FD
+carrier still latches after eight observations in 10 ms because that indicates
+a software/profile mismatch rather than line noise. Hardware bus-off is the
+physical fail-closed boundary: it suppresses FD emission and latches transport
+shutdown instead of continuing stale motion traffic.
+
+Restarting the composite bridge briefly removes and recreates the SocketCAN
+netdevice. The privileged profile manager retries only transient
+missing-device, broken-pipe, network-down, and early-link-up failures for a
+bounded three seconds. This closes the CDC-before-`gs_usb` enumeration race
+without masking permanent bit-timing or profile errors.
