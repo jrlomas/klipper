@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, threading, os, time
+import logging, threading, os
 import serial
 
 import msgproto, chelper, util
@@ -171,10 +171,11 @@ class SerialReader:
             # stream and restoring the Classical bootstrap carrier.  The
             # response is an ordering barrier.  A short timeout preserves
             # compatibility with stock nodes that do not implement it.
-            reset_deadline = time.monotonic() + .150
+            reset_deadline = self.reactor.monotonic() + .150
             reset_ack = False
-            while time.monotonic() < reset_deadline:
-                msg = bus.recv(max(0., reset_deadline - time.monotonic()))
+            while self.reactor.monotonic() < reset_deadline:
+                timeout = reset_deadline - self.reactor.monotonic()
+                msg = bus.recv(max(0., timeout))
                 if msg is None:
                     break
                 data = bytes(msg.data)

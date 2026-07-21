@@ -3,6 +3,9 @@
 import time
 
 
+_MONOTONIC = getattr(time, 'monotonic', time.time)
+
+
 CANBUS_ID_ADMIN = 0x3f0
 CMD_QUERY_UNASSIGNED = 0x00
 CMD_QUERY_BOARD_ID = 0x03
@@ -26,7 +29,7 @@ class IdentityError(Exception):
 
 
 def drain_session_tail(bus, max_time=.150, quiet_time=.025,
-                       monotonic=time.monotonic):
+                       monotonic=_MONOTONIC):
     """Discard old node frames after a session-reset acknowledgement.
 
     A response block may already be split across FDCAN hardware buffers when
@@ -80,7 +83,7 @@ def normalize_board_id(board_id):
 
 def _recv_until(bus, deadline):
     while True:
-        remaining = deadline - time.monotonic()
+        remaining = deadline - _MONOTONIC()
         if remaining <= 0.:
             return
         msg = bus.recv(remaining)
@@ -101,7 +104,7 @@ def _query_identity(bus, can_module, legacy_uuid, response_window=.12):
             is_extended_id=False)
         bus.send(request)
         replies = set()
-        deadline = time.monotonic() + response_window
+        deadline = _MONOTONIC() + response_window
         for msg in _recv_until(bus, deadline):
             data = bytes(msg.data)
             if (msg.arbitration_id == CANBUS_ID_ADMIN + 1
@@ -148,7 +151,7 @@ def scan_bus(interface, timeout=1.0, response_window=.12, bus_factory=None,
                                        data=[query_code],
                                        is_extended_id=False)
             bus.send(query)
-            deadline = time.monotonic() + timeout
+            deadline = _MONOTONIC() + timeout
             for msg in _recv_until(bus, deadline):
                 data = bytes(msg.data)
                 if (msg.arbitration_id != CANBUS_ID_ADMIN + 1
