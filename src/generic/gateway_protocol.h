@@ -44,6 +44,22 @@ enum helix_gateway_can_opcode {
     HELIX_GATEWAY_CAN_CONFIG = 2,
     HELIX_GATEWAY_CAN_STATUS = 3,
     HELIX_GATEWAY_CAN_BUS_OFF = 4,
+    HELIX_GATEWAY_CAN_DELIVERY = 5,
+};
+
+enum helix_gateway_can_config_action {
+    HELIX_GATEWAY_CAN_CONFIG_QUERY = 0,
+    HELIX_GATEWAY_CAN_CONFIG_PREPARE = 1,
+    HELIX_GATEWAY_CAN_CONFIG_COMMIT = 2,
+    HELIX_GATEWAY_CAN_CONFIG_ABORT = 3,
+};
+
+enum helix_gateway_delivery_state {
+    HELIX_GATEWAY_DELIVERY_ADMITTED = 1,
+    HELIX_GATEWAY_DELIVERY_SUBMITTED = 2,
+    HELIX_GATEWAY_DELIVERY_COMPLETED = 3,
+    HELIX_GATEWAY_DELIVERY_FAILED = 4,
+    HELIX_GATEWAY_DELIVERY_UNKNOWN = 5,
 };
 
 enum helix_gateway_serial_opcode {
@@ -79,6 +95,23 @@ struct helix_gateway_can_frame {
     const uint8_t *data;
 };
 
+struct helix_gateway_can_config {
+    uint8_t action;
+    uint8_t fd;
+    uint8_t brs;
+    uint32_t epoch;
+    uint32_t nominal_bitrate;
+    uint32_t data_bitrate;
+};
+
+struct helix_gateway_delivery {
+    uint8_t state;
+    uint8_t error;
+    uint32_t cookie;
+    uint32_t hw_clock;
+    uint32_t detail;
+};
+
 int helix_gateway_packet_encode(uint8_t *out, uint32_t cap,
                                 const struct helix_gateway_packet *packet);
 int helix_gateway_packet_decode(struct helix_gateway_packet *packet,
@@ -91,5 +124,17 @@ int helix_gateway_can_encode(uint8_t *out, uint32_t cap,
                              const struct helix_gateway_can_frame *frame);
 int helix_gateway_can_decode(struct helix_gateway_can_frame *frame,
                              const uint8_t *data, uint32_t length);
+int helix_gateway_can_config_encode(
+    uint8_t *out, uint32_t cap,
+    const struct helix_gateway_can_config *config);
+int helix_gateway_can_config_decode(
+    struct helix_gateway_can_config *config,
+    const uint8_t *data, uint32_t length);
+int helix_gateway_delivery_encode(
+    uint8_t *out, uint32_t cap,
+    const struct helix_gateway_delivery *delivery);
+int helix_gateway_delivery_decode(
+    struct helix_gateway_delivery *delivery,
+    const uint8_t *data, uint32_t length);
 
 #endif

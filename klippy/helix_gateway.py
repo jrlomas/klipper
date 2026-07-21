@@ -37,6 +37,16 @@ CAN_FRAME = 1
 CAN_CONFIG = 2
 CAN_STATUS = 3
 CAN_BUS_OFF = 4
+CAN_DELIVERY = 5
+CAN_CONFIG_QUERY = 0
+CAN_CONFIG_PREPARE = 1
+CAN_CONFIG_COMMIT = 2
+CAN_CONFIG_ABORT = 3
+DELIVERY_ADMITTED = 1
+DELIVERY_SUBMITTED = 2
+DELIVERY_COMPLETED = 3
+DELIVERY_FAILED = 4
+DELIVERY_UNKNOWN = 5
 SERIAL_DATA = 1
 SERIAL_CONFIG = 2
 SERIAL_STATUS = 3
@@ -60,7 +70,9 @@ class Record:
         data = bytes(self.data)
         if not 0 <= self.service < MAX_SERVICES:
             raise GatewayProtocolError('service is out of range')
-        if len(data) > MAX_RECORD_DATA:
+        if (len(data) > MAX_RECORD_DATA
+                or self.flags & ~(RECORD_REPLY | RECORD_ERROR | RECORD_MORE
+                                  | RECORD_TIMESTAMP_VALID)):
             raise GatewayProtocolError('record data exceeds bounded MTU')
         return RECORD_HEADER.pack(self.service, self.opcode, self.channel,
                                   self.flags, len(data), self.cookie) + data
@@ -71,7 +83,9 @@ class Record:
             raise GatewayProtocolError('truncated record header')
         service, opcode, channel, flags, length, cookie = \
             RECORD_HEADER.unpack_from(data, offset)
-        if service >= MAX_SERVICES or length > MAX_RECORD_DATA:
+        if (service >= MAX_SERVICES or length > MAX_RECORD_DATA
+                or flags & ~(RECORD_REPLY | RECORD_ERROR | RECORD_MORE
+                             | RECORD_TIMESTAMP_VALID)):
             raise GatewayProtocolError('invalid record geometry')
         end = offset + RECORD_HEADER.size + length
         if end > len(data):
@@ -88,6 +102,8 @@ class Packet:
     flags: int = 0
 
     def encode(self):
+        if self.flags & ~(PACKET_RESET | PACKET_ACK_ONLY):
+            raise GatewayProtocolError('invalid packet flags')
         payload = b''.join(record.encode() for record in self.records)
         return HEADER.pack(MAGIC, VERSION, self.flags, self.epoch,
                            self.sequence, len(self.records), len(payload)) \
@@ -100,7 +116,8 @@ class Packet:
             raise GatewayProtocolError('truncated packet header')
         magic, version, flags, epoch, sequence, count, plen = \
             HEADER.unpack_from(data)
-        if magic != MAGIC or version != VERSION:
+        if (magic != MAGIC or version != VERSION
+                or flags & ~(PACKET_RESET | PACKET_ACK_ONLY)):
             raise GatewayProtocolError('unsupported gateway packet')
         if plen != len(data) - HEADER.size:
             raise GatewayProtocolError('packet length mismatch')
@@ -123,7 +140,13 @@ class CanFrame:
 
     def encode(self):
         data = bytes(self.data)
-        if len(data) > 64:
+        eff = bool(self.can_id & 0x80000000)
+        if (len(data) > 64 or self.flags & ~0x17
+                or (self.flags & 0x06 and not self.flags & 0x01)
+                or (not self.flags & 0x01 and len(data) > 8)
+                or self.can_id & 0x20000000
+                or (not eff and (self.can_id & 0x1fffffff) > 0x7ff)
+                or (self.can_id & 0x40000000 and self.flags & 0x01)):
             raise GatewayProtocolError('CAN frame exceeds CAN FD MTU')
         return CAN_HEADER.pack(self.can_id, self.hw_clock, len(data),
                                self.flags, 0) + data
@@ -133,9 +156,77 @@ class CanFrame:
         if len(data) < CAN_HEADER.size:
             raise GatewayProtocolError('truncated CAN frame')
         can_id, hw_clock, length, flags, reserved = CAN_HEADER.unpack_from(data)
-        if reserved or length > 64 or len(data) != CAN_HEADER.size + length:
+        eff = bool(can_id & 0x80000000)
+        if (reserved or length > 64 or len(data) != CAN_HEADER.size + length
+                or flags & ~0x17 or (flags & 0x06 and not flags & 0x01)
+                or (not flags & 0x01 and length > 8)
+                or can_id & 0x20000000
+                or (not eff and (can_id & 0x1fffffff) > 0x7ff)
+                or (can_id & 0x40000000 and flags & 0x01)):
             raise GatewayProtocolError('invalid CAN frame geometry')
         return cls(can_id, bytes(data[CAN_HEADER.size:]), flags, hw_clock)
+
+
+CAN_CONFIG_FORMAT = struct.Struct('<BBHIII')
+DELIVERY_FORMAT = struct.Struct('<BBHIII')
+
+
+@dataclasses.dataclass(frozen=True)
+class CanConfig:
+    action: int
+    epoch: int
+    nominal_bitrate: int
+    data_bitrate: int
+    fd: bool = False
+    brs: bool = False
+
+    def encode(self):
+        if self.action not in (CAN_CONFIG_QUERY, CAN_CONFIG_PREPARE,
+                               CAN_CONFIG_COMMIT, CAN_CONFIG_ABORT):
+            raise GatewayProtocolError('invalid CAN config action')
+        if self.brs and not self.fd:
+            raise GatewayProtocolError('BRS requires CAN FD')
+        flags = int(self.fd) | (int(self.brs) << 1)
+        return CAN_CONFIG_FORMAT.pack(self.action, flags, 0,
+                                      self.epoch, self.nominal_bitrate,
+                                      self.data_bitrate)
+
+    @classmethod
+    def decode(cls, data):
+        if len(data) != CAN_CONFIG_FORMAT.size:
+            raise GatewayProtocolError('invalid CAN config length')
+        action, flags, reserved, epoch, nominal, rate = \
+            CAN_CONFIG_FORMAT.unpack(data)
+        if (action > CAN_CONFIG_ABORT or flags > 3 or reserved
+                or (flags & 2 and not flags & 1)):
+            raise GatewayProtocolError('invalid CAN config')
+        return cls(action, epoch, nominal, rate, bool(flags & 1),
+                   bool(flags & 2))
+
+
+@dataclasses.dataclass(frozen=True)
+class Delivery:
+    state: int
+    cookie: int
+    hw_clock: int = 0
+    detail: int = 0
+    error: int = 0
+
+    def encode(self):
+        if not DELIVERY_ADMITTED <= self.state <= DELIVERY_UNKNOWN:
+            raise GatewayProtocolError('invalid delivery state')
+        return DELIVERY_FORMAT.pack(self.state, self.error, 0, self.cookie,
+                                    self.hw_clock, self.detail)
+
+    @classmethod
+    def decode(cls, data):
+        if len(data) != DELIVERY_FORMAT.size:
+            raise GatewayProtocolError('invalid delivery length')
+        state, error, reserved, cookie, clock, detail = \
+            DELIVERY_FORMAT.unpack(data)
+        if not DELIVERY_ADMITTED <= state <= DELIVERY_UNKNOWN or reserved:
+            raise GatewayProtocolError('invalid delivery')
+        return cls(state, cookie, clock, detail, error)
 
 
 class Runtime:
@@ -155,7 +246,8 @@ class Runtime:
         if service in self.services or not 0 <= service < MAX_SERVICES:
             raise GatewayProtocolError('invalid or duplicate service')
         self.services[service] = callback
-        self.credits[service] = self.credit_limit if credits is None else credits
+        self.credits[service] = (self.credit_limit if credits is None
+                                 else credits)
 
     def set_owner(self, epoch):
         self.owner_epoch = epoch
@@ -175,8 +267,9 @@ class Runtime:
         if self.owner_epoch is None or (packet.flags & PACKET_RESET
                 and packet.epoch != self.owner_epoch):
             self.set_owner(packet.epoch)
+        delta = (packet.sequence - (self.last_sequence or 0)) & 0xffffffff
         if packet.epoch != self.owner_epoch or (self.last_sequence is not None
-                and packet.sequence <= self.last_sequence):
+                and (not delta or delta > 0x7fffffff)):
             self.stats['stale_epochs'] += 1
             raise GatewayProtocolError('stale epoch or replayed sequence')
         needed = {}

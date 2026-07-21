@@ -510,8 +510,10 @@ CAN_IRQHandler(void)
     }
     if (ir & (FDCAN_IR_TEFN | FDCAN_IR_TEFL)) {
         SOC_CAN->IR = FDCAN_IR_TEFN | FDCAN_IR_TEFL;
-        if (ir & FDCAN_IR_TEFL)
+        if (ir & FDCAN_IR_TEFL) {
             CAN_Errors.tx_error++;
+            canbus_notify_tx_event_lost();
+        }
         for (;;) {
             uint32_t txefs = SOC_CAN->TXEFS;
             if (!(txefs & FDCAN_TXEFS_EFFL_Msk))

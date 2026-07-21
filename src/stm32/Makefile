@@ -109,8 +109,11 @@ src-$(CONFIG_MACH_STM32G0) += stm32/comp.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/gpio_exti.c
 src-$(CONFIG_WANT_TRIGGER_SOURCE) += stm32/adc_watchdog.c stm32/timer_capture.c
 
-# Native RMII Ethernet MAC/DMA datagram console
-src-$(CONFIG_WANT_ETHERNET_RMII) += stm32/eth_mac.c
+# Native RMII Ethernet MAC/DMA datagram console.  STM32H7 uses the newer
+# Synopsys descriptor/register layout and must not share the F4/F7 backend.
+eth-mac-src-y := stm32/eth_mac.c
+eth-mac-src-$(CONFIG_MACH_STM32H7) := stm32/eth_mac_h7.c
+src-$(CONFIG_WANT_ETHERNET_RMII) += $(eth-mac-src-y)
 
 # Ethernet datagram console: the intentproto datagram codec is
 # freestanding C++ (no exceptions/rtti/heap); compile it with the ARM

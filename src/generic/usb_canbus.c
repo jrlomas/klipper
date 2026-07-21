@@ -589,6 +589,29 @@ DECL_COMMAND_FLAGS(command_get_can_time_bridge_status, HF_IN_SHUTDOWN,
                    "get_can_time_bridge_status");
 #endif
 
+#if !CONFIG_HELIX_USB_CAN_COMPOSITE
+void
+canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock)
+{
+    (void)tag;
+    (void)local_clock;
+}
+#endif
+
+void
+canbus_notify_tx_failed(uint8_t tag)
+{
+    (void)tag;
+}
+
+void
+canbus_notify_tx_event_lost(void)
+{
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    UsbCan.time_invalid_count++;
+#endif
+}
+
 
 /****************************************************************
  * Interface to canbus hardware (read canbus hw msgs and tx notifications)

@@ -1,6 +1,6 @@
 # HELIX 0.9 Implementation Status
 
-Last workstation and V0 hardware audit: 2026-07-17.
+Last workstation and V0 hardware audit: 2026-07-21.
 
 This page is the boundary between code that exists, code that has actually
 run in workstation verification, target integration that remains, and tests
@@ -190,6 +190,20 @@ pass.
   actual MCU console hooks, fail-closed PSK setup, and a stateful regression
   proving a dropped packet cannot replace the authenticated candidate peer.
   This is compiler/linker and host-test evidence, not PHY runtime evidence.
+* The first unified CAN-gateway release now has one typed, bounded service
+  protocol for USB and authenticated Ethernet host links. It preserves real
+  downstream CAN identities, batches records, applies whole-packet admission,
+  transactionally prepares/commits CAN profiles, and reports cookie-correlated
+  `ADMITTED`, `SUBMITTED`, `COMPLETED`, `FAILED`, and `UNKNOWN` delivery states.
+  F767 RMII/bxCAN, H723 RMII/FDCAN, G0B1 USB/FDCAN, and H723 USB/FDCAN images
+  cross-build; the live `helixcan0` bridge remains error-active after more than
+  2.1 million received frames with zero kernel-reported errors or drops. H723
+  FDCAN uses a dedicated 80 MHz PLL2Q clock so 1/2/5/8 Mbit/s profiles are
+  exact, and its HS USB core supports the same `gs_usb` plus independent CDC
+  control interface without a fake downstream UUID. Ethernet PHY traffic,
+  hardware MAC/PTP timestamps, and physical 2/5/8 Mbit/s BRS remain explicit
+  hardware gates in
+  [FD-0001 doc 19](founding/0001-motion-intentions/19-Unified_CAN_Gateway.md).
 * The authenticated W5500 console has a persistent STM32F407 CI configuration.
   Its SPI command waits and counter reads are bounded, malformed receive
   lengths are rejected, an authenticated peer is cleared across hardware

@@ -1,12 +1,19 @@
 # FD-0001: Unified USB/Ethernet-to-CAN Gateway Architecture
 
-Status: Workstation implementation in progress. The typed gateway codec,
-bounded runtime, shared CAN queue, authenticated RMII gateway binding,
-SocketCAN/serial host proxy, F767 bxCAN port, and USB compatibility adapter
-are implemented and compile-tested. Ethernet silicon, PTP, and H723 CAN-FD
+Status: Workstation implementation complete for the first gateway release.
+The typed gateway codec, bounded runtime, shared CAN queue, authenticated RMII
+gateway binding, SocketCAN/serial host proxy, F767 bxCAN port, H723 RMII/FDCAN
+port, and USB compatibility adapter are implemented and compile-tested.
+Ethernet silicon, PTP timestamp discipline, and physical H723 CAN-FD
 qualification remain hardware gates. The NUCLEO-F767ZI remains the
 native-Ethernet proof target; the NUCLEO-H723ZG with a CAN FD 7 Click remains
 the preferred Ethernet-to-CAN-FD qualification target.
+
+The H723 implementation uses an independent 80 MHz PLL2Q FDCAN kernel clock,
+not the 130 MHz APB clock. This makes every negotiated Helix rate (1, 2, 5,
+and 8 Mbit/s) exactly divisible. Its USB-OTG bridge target also exposes the
+same composite `gs_usb` plus independent CDC control interface as the G0B1
+bridge, preserving the no-fake-UUID rule across MCU families.
 
 This document defines one HELIX CAN gateway architecture with interchangeable
 host links, time sources, and CAN controllers. It extends the CAN FD rules in
@@ -323,9 +330,11 @@ adapter is `scripts/helix_gateway_proxy.py`: it binds ordinary SocketCAN for
 the CAN service and explicitly configured file descriptors for numbered
 serial services. Consequently downstream Klipper nodes retain their real CAN
 identities; the gateway does not invent a downstream UUID. Static-PSK mode is
-implemented now. Rotating-key HostSession binding, delivery acknowledgements,
-multi-record transmit batching, and redundant-host leases remain before the
-network path is safety-qualified.
+implemented, as is the rotating-key HostSession with authenticated gateway
+identity and downgrade pinning. Multi-record transmit batching, bounded
+credits, transactional CAN profile controls, and cookie-correlated delivery
+milestones are implemented. Datagram acknowledgement/retransmit policy and
+redundant-host leases remain before the network path is safety-qualified.
 
 ### CAN hardware adapter
 
@@ -548,15 +557,22 @@ diagnoses or incidents.
 
 - [x] Specify and cross-test exact version-1 binary envelope, record, CAN, and
   serial layouts.
-- [ ] Reuse HostSession authentication, replay, and epoch handling.
-- [ ] Implement batching, acknowledgements, credits, and delivery records.
+- [x] Reuse HostSession authentication, replay, board identity, and epoch
+  handling, while retaining explicit static-PSK compatibility.
+- [x] Implement bounded multi-record batching, credits, transactional CAN
+  profiles, and `ADMITTED`/`SUBMITTED`/`COMPLETED`/`FAILED`/`UNKNOWN`
+  delivery records.
+- [ ] Add explicit gateway-datagram acknowledgement/retransmit policy; do not
+  conflate it with upper HELIX command ARQ or blindly replay uncertain CAN.
 - [x] Implement bounded per-service credits and whole-packet validation before
   dispatch.
 - [x] Build cross-language C/Python gateway-core fixtures.
 - [x] Test malformed lengths, epochs, replayed packets, service exhaustion,
   and binary golden vectors.
-- [ ] Fuzz reordered packets, duplicate
-  controls, and authentication failures.
+- [x] Exercise deterministic malformed-packet mutations, wraparound, duplicate
+  sequences, whole-packet atomic validation, and authentication failures.
+- [ ] Add a coverage-guided native fuzzer for duplicate transactional controls
+  and long reorder/loss traces.
 
 ### Phase 4 — F767 Ethernet proof
 
@@ -571,12 +587,18 @@ diagnoses or incidents.
 
 ### Phase 5 — H723 Ethernet-to-CAN-FD bridge
 
-- [ ] Add a NUCLEO-H723ZG gateway preset and persistent CI configuration.
-- [ ] Port/verify Ethernet DMA, MPU arena, MAC timestamps, and FDCAN message
-  RAM on the H723.
+- [x] Add a NUCLEO-H723ZG gateway preset and persistent CI configuration.
+- [x] Port and cross-build the H723 Ethernet DMA with native four-word
+  descriptors, explicit ring lengths/tail pointers, the shared non-cacheable
+  MPU arena, and the existing H723 FDCAN message RAM.
+- [ ] Enable and qualify H723 MAC ingress/egress timestamps and PTP discipline
+  on physical Ethernet hardware; compile success is not timestamp evidence.
 - [ ] Verify H723 pin routing, the CAN FD 7 Click's VIO and standby settings,
   termination, and controller timing at `FD_1M_NOBRS`.
-- [ ] Run the same gateway protocol and core used on the F767/USB targets.
+- [x] Build the same authenticated gateway protocol and core used on the
+  F767/USB targets into the H723 image.
+- [x] Add the dedicated 80 MHz FDCAN clock domain and cross-build the H723
+  USB-OTG composite bridge with exact 1/2/5/8 Mbit/s timing support.
 - [ ] Qualify 2, 5, and 8 Mbit/s BRS profiles against compatible nodes.
 
 ### Phase 6 — fault and saturation qualification

@@ -32,7 +32,7 @@ struct helix_gateway_runtime_stats {
 struct helix_gateway_runtime {
     uint32_t owner_epoch;
     uint32_t last_sequence;
-    uint8_t have_owner;
+    uint8_t have_owner, have_sequence;
     struct helix_gateway_service_slot services[HELIX_GATEWAY_MAX_SERVICES];
     struct helix_gateway_runtime_stats stats;
 };

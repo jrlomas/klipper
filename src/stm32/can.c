@@ -9,6 +9,7 @@
 #include <string.h> // memcpy
 #include "autoconf.h" // CONFIG_MACH_STM32F1
 #include "board/irq.h" // irq_disable
+#include "board/misc.h" // timer_read_time
 #include "command.h" // DECL_CONSTANT_STR
 #include "generic/armcm_boot.h" // armcm_enable_irq
 #include "generic/canbus.h" // canbus_notify_tx
@@ -94,6 +95,9 @@
  #error No known CAN device for configured MCU
 #endif
 
+static uint8_t TxTags[3];
+static uint8_t TxTagValid;
+
 // Transmit a packet
 int
 canhw_send(struct canbus_msg *msg)
@@ -114,6 +118,11 @@ canhw_send(struct canbus_msg *msg)
     else if (tsr & CAN_TSR_TME1)
         mbox = 1;
     CAN_TxMailBox_TypeDef *mb = &SOC_CAN->sTxMailBox[mbox];
+
+    if (msg->flags & CANMSG_FLAG_TX_EVENT) {
+        TxTags[mbox] = msg->tx_tag;
+        TxTagValid |= 1 << mbox;
+    }
 
     /* Set up the DLC */
     mb->TDTR = (mb->TDTR & 0xFFFFFFF0) | (msg->dlc & 0x0F);
@@ -220,8 +229,30 @@ CAN_IRQHandler(void)
 
     // Check for transmit ready
     uint32_t ier = SOC_CAN->IER;
-    if (ier & CAN_IER_TMEIE
-        && SOC_CAN->TSR & (CAN_TSR_RQCP0|CAN_TSR_RQCP1|CAN_TSR_RQCP2)) {
+    uint32_t tsr = SOC_CAN->TSR;
+    uint32_t completed = tsr & (CAN_TSR_RQCP0|CAN_TSR_RQCP1|CAN_TSR_RQCP2);
+    if (completed) {
+        static const uint32_t rqcp[3] = {
+            CAN_TSR_RQCP0, CAN_TSR_RQCP1, CAN_TSR_RQCP2
+        };
+        static const uint32_t txok[3] = {
+            CAN_TSR_TXOK0, CAN_TSR_TXOK1, CAN_TSR_TXOK2
+        };
+        uint_fast8_t i;
+        for (i = 0; i < 3; i++) {
+            if (!(completed & rqcp[i]))
+                continue;
+            SOC_CAN->TSR = rqcp[i];
+            if (!(TxTagValid & (1 << i)))
+                continue;
+            TxTagValid &= ~(1 << i);
+            if (tsr & txok[i])
+                canbus_notify_tx_timestamp(TxTags[i], timer_read_time());
+            else
+                canbus_notify_tx_failed(TxTags[i]);
+        }
+    }
+    if (ier & CAN_IER_TMEIE && completed) {
         // Tx
         SOC_CAN->IER = ier & ~CAN_IER_TMEIE;
         canbus_notify_tx();

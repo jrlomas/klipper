@@ -32,6 +32,7 @@ helix_gateway_runtime_set_owner(struct helix_gateway_runtime *runtime,
 {
     runtime->owner_epoch = epoch;
     runtime->last_sequence = 0;
+    runtime->have_sequence = 0;
     runtime->have_owner = 1;
     runtime->stats.takeovers++;
     uint_fast8_t i;
@@ -69,8 +70,10 @@ helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
         || ((packet.flags & HELIX_GATEWAY_PACKET_RESET)
             && packet.epoch != runtime->owner_epoch))
         helix_gateway_runtime_set_owner(runtime, packet.epoch);
+    uint32_t delta = packet.sequence - runtime->last_sequence;
     if (packet.epoch != runtime->owner_epoch
-        || packet.sequence <= runtime->last_sequence) {
+        || (runtime->have_sequence
+            && (!delta || delta > 0x7fffffffu))) {
         runtime->stats.stale_epochs++;
         return -1;
     }
@@ -105,6 +108,7 @@ helix_gateway_runtime_dispatch(struct helix_gateway_runtime *runtime,
         return -1;
     }
     runtime->last_sequence = packet.sequence;
+    runtime->have_sequence = 1;
     runtime->stats.packets++;
     for (count = 0; count < packet.record_count; count++) {
         struct helix_gateway_record record;

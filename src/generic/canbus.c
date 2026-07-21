@@ -43,6 +43,17 @@ canbus_notify_tx_timestamp(uint8_t tag, uint32_t local_clock)
 }
 
 void
+canbus_notify_tx_failed(uint8_t tag)
+{
+    (void)tag;
+}
+
+void
+canbus_notify_tx_event_lost(void)
+{
+}
+
+void
 canbus_notify_protocol_error(void)
 {
     // FDCAN already confines and retransmits physical protocol errors.  The

@@ -36,7 +36,9 @@ int
 helix_gateway_packet_encode(uint8_t *out, uint32_t cap,
                             const struct helix_gateway_packet *packet)
 {
-    if (!out || !packet || cap < HELIX_GATEWAY_HEADER_SIZE)
+    if (!out || !packet || cap < HELIX_GATEWAY_HEADER_SIZE
+        || packet->flags & ~(HELIX_GATEWAY_PACKET_RESET
+                             | HELIX_GATEWAY_PACKET_ACK_ONLY))
         return -1;
     wr16(out, HELIX_GATEWAY_MAGIC);
     out[2] = HELIX_GATEWAY_VERSION;
@@ -54,7 +56,9 @@ helix_gateway_packet_decode(struct helix_gateway_packet *packet,
 {
     if (!packet || !data || length < HELIX_GATEWAY_HEADER_SIZE
         || rd16(data) != HELIX_GATEWAY_MAGIC
-        || data[2] != HELIX_GATEWAY_VERSION)
+        || data[2] != HELIX_GATEWAY_VERSION
+        || data[3] & ~(HELIX_GATEWAY_PACKET_RESET
+                       | HELIX_GATEWAY_PACKET_ACK_ONLY))
         return -1;
     uint16_t payload_length = rd16(data + 14);
     if (payload_length != length - HELIX_GATEWAY_HEADER_SIZE)
@@ -73,6 +77,10 @@ helix_gateway_record_encode(uint8_t *out, uint32_t cap,
 {
     if (!out || !record || record->service >= HELIX_GATEWAY_MAX_SERVICES
         || record->length > HELIX_GATEWAY_MAX_RECORD_DATA
+        || record->flags & ~(HELIX_GATEWAY_RECORD_REPLY
+                             | HELIX_GATEWAY_RECORD_ERROR
+                             | HELIX_GATEWAY_RECORD_MORE
+                             | HELIX_GATEWAY_RECORD_TIMESTAMP_VALID)
         || cap < (uint32_t)HELIX_GATEWAY_RECORD_HEADER_SIZE + record->length
         || (record->length && !record->data))
         return -1;
@@ -93,7 +101,11 @@ helix_gateway_record_decode(struct helix_gateway_record *record,
                             const uint8_t *data, uint32_t length)
 {
     if (!record || !data || length < HELIX_GATEWAY_RECORD_HEADER_SIZE
-        || data[0] >= HELIX_GATEWAY_MAX_SERVICES)
+        || data[0] >= HELIX_GATEWAY_MAX_SERVICES
+        || rd16(data + 4) & ~(HELIX_GATEWAY_RECORD_REPLY
+                              | HELIX_GATEWAY_RECORD_ERROR
+                              | HELIX_GATEWAY_RECORD_MORE
+                              | HELIX_GATEWAY_RECORD_TIMESTAMP_VALID))
         return -1;
     uint16_t record_length = rd16(data + 6);
     if (record_length > HELIX_GATEWAY_MAX_RECORD_DATA
@@ -113,7 +125,15 @@ int
 helix_gateway_can_encode(uint8_t *out, uint32_t cap,
                          const struct helix_gateway_can_frame *frame)
 {
+    uint32_t can_id = frame ? frame->can_id : 0;
+    uint8_t flags = frame ? frame->flags : 0;
     if (!out || !frame || frame->length > 64
+        || flags & ~0x17u || ((flags & 0x06u) && !(flags & 0x01u))
+        || (!(flags & 0x01u) && frame->length > 8)
+        || (can_id & 0x20000000u)
+        || (!(can_id & 0x80000000u)
+            && (can_id & 0x1fffffffu) > 0x7ffu)
+        || ((can_id & 0x40000000u) && (flags & 0x01u))
         || cap < (uint32_t)12 + frame->length
         || (frame->length && !frame->data))
         return -1;
@@ -131,13 +151,88 @@ int
 helix_gateway_can_decode(struct helix_gateway_can_frame *frame,
                          const uint8_t *data, uint32_t length)
 {
-    if (!frame || !data || length < 12 || data[8] > 64
-        || length != 12u + data[8] || data[10] || data[11])
+    if (!frame || !data || length < 12)
         return -1;
-    frame->can_id = rd32(data);
+    uint32_t can_id = rd32(data);
+    uint8_t flags = data[9];
+    if (data[8] > 64
+        || length != 12u + data[8] || data[10] || data[11]
+        || flags & ~0x17u
+        || ((flags & 0x06u) && !(flags & 0x01u))
+        || (!(flags & 0x01u) && data[8] > 8)
+        || (can_id & 0x20000000u)
+        || (!(can_id & 0x80000000u)
+            && (can_id & 0x1fffffffu) > 0x7ffu)
+        || ((can_id & 0x40000000u) && (flags & 0x01u)))
+        return -1;
+    frame->can_id = can_id;
     frame->hw_clock = rd32(data + 4);
     frame->length = data[8];
-    frame->flags = data[9];
+    frame->flags = flags;
     frame->data = data + 12;
     return length;
+}
+
+int
+helix_gateway_can_config_encode(uint8_t *out, uint32_t cap,
+                                const struct helix_gateway_can_config *config)
+{
+    if (!out || !config || cap < 16
+        || config->action > HELIX_GATEWAY_CAN_CONFIG_ABORT
+        || (config->brs && !config->fd))
+        return -1;
+    out[0] = config->action;
+    out[1] = (!!config->fd) | ((!!config->brs) << 1);
+    out[2] = out[3] = 0;
+    wr32(out + 4, config->epoch);
+    wr32(out + 8, config->nominal_bitrate);
+    wr32(out + 12, config->data_bitrate);
+    return 16;
+}
+
+int
+helix_gateway_can_config_decode(struct helix_gateway_can_config *config,
+                                const uint8_t *data, uint32_t length)
+{
+    if (!config || !data || length != 16 || data[0] > 3 || data[1] > 3
+        || data[2] || data[3] || ((data[1] & 2) && !(data[1] & 1)))
+        return -1;
+    config->action = data[0];
+    config->fd = data[1] & 1;
+    config->brs = !!(data[1] & 2);
+    config->epoch = rd32(data + 4);
+    config->nominal_bitrate = rd32(data + 8);
+    config->data_bitrate = rd32(data + 12);
+    return 16;
+}
+
+int
+helix_gateway_delivery_encode(uint8_t *out, uint32_t cap,
+                              const struct helix_gateway_delivery *delivery)
+{
+    if (!out || !delivery || cap < 16 || !delivery->state
+        || delivery->state > HELIX_GATEWAY_DELIVERY_UNKNOWN)
+        return -1;
+    out[0] = delivery->state;
+    out[1] = delivery->error;
+    out[2] = out[3] = 0;
+    wr32(out + 4, delivery->cookie);
+    wr32(out + 8, delivery->hw_clock);
+    wr32(out + 12, delivery->detail);
+    return 16;
+}
+
+int
+helix_gateway_delivery_decode(struct helix_gateway_delivery *delivery,
+                              const uint8_t *data, uint32_t length)
+{
+    if (!delivery || !data || length != 16 || !data[0] || data[0] > 5
+        || data[2] || data[3])
+        return -1;
+    delivery->state = data[0];
+    delivery->error = data[1];
+    delivery->cookie = rd32(data + 4);
+    delivery->hw_clock = rd32(data + 8);
+    delivery->detail = rd32(data + 12);
+    return 16;
 }

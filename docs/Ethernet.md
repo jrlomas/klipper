@@ -8,13 +8,13 @@ Two paths are provided:
 * the **W5500** - a WIZnet SPI Ethernet controller that runs the
   IP/UDP/ARP stack in silicon, usable on any board with an SPI bus;
 * the **native RMII MAC** - the Ethernet MAC built into supported STM32F4/F7
-  parts, driving an external RMII PHY, with a software IP layer above
-  it.
+  and STM32H723 parts, driving an external RMII PHY, with a software IP layer
+  above it.
 
 !!! warning "Compile-checked, not hardware-validated here"
     The W5500 and native paths **build and link with the real ARM toolchain**;
-    native RMII is covered on STM32F407, STM32F765, and the F767 reference
-    configuration, and its framing and
+    native RMII is covered on STM32F407, STM32F765, the F767 reference
+    configuration, and the H723 Ethernet-to-CAN-FD gateway; its framing and
     stateful socket adapter pass host tests. Neither Ethernet transport has
     been run against a
     physical PHY in this project. Register, DMA, clock, and pin behavior
@@ -145,7 +145,7 @@ configuration instead.
 
 ## Native RMII MAC
 
-Supported STM32F4/F7 parts have a built-in Ethernet MAC that needs an
+Supported STM32F4/F7 and STM32H723 parts have a built-in Ethernet MAC that needs an
 external RMII PHY **and a software IP/UDP stack** above it (the MAC delivers
 only raw Ethernet frames). The implementation stays deliberately small and
 is split at one replaceable seam:
@@ -155,13 +155,17 @@ is split at one replaceable seam:
    tx frame  <-- eth_mac_emit()        (or lwIP: low_level_output)
 ```
 
-* `src/stm32/eth_mac.c` is the **MAC/DMA half and console binding**:
+* `src/stm32/eth_mac.c` (F4/F7) and `src/stm32/eth_mac_h7.c` (H723) are the
+  **MAC/DMA half and console binding**:
   configurable AF11 pins and PHY reset, an HCLK-correct bounded MDIO path,
   PHY identity checks, IEEE 10/100 auto-negotiation and reconnect polling,
   DMA descriptor rings allocated from the shared non-cacheable arena,
   IRQ-to-`acq_ring` RX publication with bounded overrun accounting, a
   UID-derived local MAC,
-  and the standard `console_sendf()` / `console_receive_buffer()` hooks.
+  and the standard `console_sendf()` / `console_receive_buffer()` hooks. The
+  H723 backend uses its four-word descriptor format, explicit ring lengths,
+  absolute tail pointers, and a 16-byte descriptor stride instead of treating
+  the H7 block as register-compatible with F4/F7.
 * `src/generic/nano_udp.c` is the **pluggable IP layer**: a minimal
   single-socket UDP/IP/ARP responder (ARP replies so a host can find
   us, validated IPv4 and UDP checksums and lengths, fragment rejection,
@@ -176,15 +180,16 @@ the same layer-2 subnet. A broader network stack is outside this deterministic
 single-socket console's scope.
 
 `eth_mac_get_status` reports link/ready state, RX/TX frames, RX-ring overruns,
-fatal DMA errors, ready-queue high-water, and shared pool size/use. ETH MAC and
-ETH DMA are exclusive `dma_resource` claims; descriptors and payload buffers
-are no longer a second static DMA arena. On F7 the same MPU policy therefore
-covers Ethernet and ADC cache coherency.
+fatal DMA errors, ready-queue high-water, and shared pool size/use. The H723
+backend additionally reports descriptor Tx errors. ETH MAC and ETH DMA are
+exclusive `dma_resource` claims; descriptors and payload buffers are no
+longer a second static DMA arena. On both M7 families the same MPU policy
+therefore covers Ethernet and ADC cache coherency.
 
 ### Build configuration
 
 Select **Communication interface -> Ethernet datagram console via native
-RMII MAC** on STM32F407, STM32F429, or a supported STM32F7 target. This is a
+RMII MAC** on STM32F407, STM32F429, a supported STM32F7 target, or STM32H723. This is a
 console choice, so USB, UART, and CAN console implementations are not linked
 beside it. The generated configuration contains:
 
@@ -206,7 +211,7 @@ CONFIG_RMII_TXD0_PIN=28          # PB12
 CONFIG_RMII_TXD1_PIN=29          # PB13
 ```
 
-The pin defaults are the common AF11 mapping, not a promise that a particular
+The pin defaults are the common F4 AF11 mapping, not a promise that a particular
 board routes them to its PHY. Confirm the schematic, PHY strap address,
 50MHz reference-clock direction, reset polarity, and power/reset timing
 before flashing. An empty PSK fails closed unless
@@ -216,8 +221,9 @@ normally should leave it off.
 
 ### Workstation evidence
 
-Persistent CI configurations cover both native-RMII families, the F767
-reference image, and the W5500 console. With `arm-none-eabi-gcc` 13.2.1 the
+Persistent CI configurations cover the F4/F7 native-RMII family, the F767
+reference image, the H723 gateway, and the W5500 console. With
+`arm-none-eabi-gcc` 13.2.1 the
 earlier isolated transports compile as follows:
 
 | configuration | session mode | text | data | bss |
@@ -227,6 +233,27 @@ earlier isolated transports compile as follows:
 | `stm32f765-rmii.config` | authenticated + pair FEC | 63,230 | 64 | 27,632 |
 
 These configurations are included automatically by `scripts/ci-build.sh`.
+
+The compile-qualified `stm32h723-nucleo-ethernet-canfd-gateway.config` image
+uses the Nucleo LAN8742A RMII route, an authenticated HostSession, FDCAN at a
+1 Mbit/s nominal / 8 Mbit/s data ceiling, and a single 16 KiB non-cacheable
+DMA arena at `0x24000000`. Its workstation build is 101,538 bytes of text,
+64 bytes of data, and 64,904 bytes of BSS (including the separately located
+16 KiB DMA section). These are compiler, linker, MPU-layout, and RAM-fit facts;
+the PHY, Click-board pin route, MAC timestamps, and sustained traffic remain
+physical gates.
+
+H7 FDCAN is clocked independently from PLL2Q at 80 MHz. This is intentional:
+the H723's normal 130 MHz peripheral clock cannot represent an exact 8 Mbit/s
+CAN-FD data phase, while 80 MHz exactly represents every advertised Helix
+profile (1, 2, 5, and 8 Mbit/s). The CPU remains at 520 MHz and USB remains on
+HSI48. `stm32h723-fk723m1-usb-canfd.config` is the no-PHY smoke target for
+that clock path. It also exercises the H7 USB-OTG composite device: mainline
+`gs_usb` remains interface 0 and the bridge's own Helix control console uses a
+separate CDC-ACM function, so the bridge needs no synthetic downstream CAN
+UUID. An external CAN-FD transceiver is required before using its PB8/PB9 bus.
+That smoke image builds at 93,756 bytes of text, 76 bytes of data, and 46,856
+bytes of BSS.
 
 The combined `stm32f767-nucleo-ethernet-adc.config` image has text 86,586,
 data 64, and BSS 36,920 bytes. Its single 16 KiB `.dma_buffer` is map-verified
@@ -254,6 +281,8 @@ stability while the receive slot is occupied.
 | `src/generic/w5500.c` / `.h` | W5500 SPI Ethernet transport + `config_w5500` |
 | `src/generic/nano_udp.c` / `.h` | minimal UDP/IP/ARP responder (RMII IP layer) |
 | `src/stm32/eth_mac.c` | STM32F4/F7 RMII MAC/DMA console + lwIP/nano-UDP seam |
+| `src/stm32/eth_mac_h7.c` | STM32H723 four-word-ring RMII MAC/DMA gateway backend |
+| `src/stm32/usbotg.c` | USB-OTG backend; H723 HS-core builds include independent composite gateway control endpoints |
 | `src/generic/udp_console.c` | shared, transport-independent datagram console glue (unchanged) |
 | `test/nano_udp/nano_udp_test.c` | host unit test for the nano-UDP framing helpers |
 | `test/nano_udp/nano_udp_state_test.c` | host unit test for receive/candidate-peer state |

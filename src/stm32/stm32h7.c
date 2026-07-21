@@ -22,6 +22,7 @@
  ****************************************************************/
 
 #define FREQ_PERIPH (CONFIG_CLOCK_FREQ / 4)
+#define FREQ_FDCAN 80000000
 
 // Map a peripheral address to its enable bits
 struct cline
@@ -73,6 +74,14 @@ lookup_clock_line(uint32_t periph_base)
 uint32_t
 get_pclock_frequency(uint32_t periph_base)
 {
+#if CONFIG_HAVE_STM32_FDCANBUS
+    if (periph_base == FDCAN1_BASE || periph_base == FDCAN2_BASE
+#ifdef FDCAN3_BASE
+        || periph_base == FDCAN3_BASE
+#endif
+        )
+        return FREQ_FDCAN;
+#endif
     return FREQ_PERIPH;
 }
 
@@ -119,19 +128,38 @@ clock_setup(void)
         RCC->PLLCKSELR = RCC_PLLCKSELR_PLLSRC_HSI
             | ((64000000/pll_base) << RCC_PLLCKSELR_DIVM1_Pos);
     }
+#if CONFIG_HAVE_STM32_FDCANBUS
+    // Give FDCAN a dedicated 80MHz PLL2Q clock.  Unlike the 130MHz APB
+    // clock at a 520MHz CPU rate, 80MHz divides exactly to every supported
+    // Helix CAN-FD rate (1, 2, 5, and 8Mbit/s).
+    uint32_t pll_input = (CONFIG_STM32_CLOCK_REF_INTERNAL
+                          ? 64000000 : CONFIG_CLOCK_REF_FREQ);
+    RCC->PLLCKSELR |= ((pll_input / pll_base)
+                       << RCC_PLLCKSELR_DIVM2_Pos);
+#endif
     // Set input frequency range of PLL1 according to pll_base
     // 3 = 8-16Mhz, 2 = 4-8Mhz
     RCC->PLLCFGR = (2 << RCC_PLLCFGR_PLL1RGE_Pos)
         // Enable PLL1Q (used by some peripherals)
         | RCC_PLLCFGR_DIVQ1EN
         // Enable PLL1P (for cpu clock)
-        | RCC_PLLCFGR_DIVP1EN;
+        | RCC_PLLCFGR_DIVP1EN
+#if CONFIG_HAVE_STM32_FDCANBUS
+        | (2 << RCC_PLLCFGR_PLL2RGE_Pos) | RCC_PLLCFGR_DIVQ2EN
+#endif
+        ;
     // Set multiplier DIVN1 and post divider DIVP1
     RCC->PLL1DIVR = ((pll_freq/pll_base - 1) << RCC_PLL1DIVR_N1_Pos)
         // Set PLL1Q frequency (some peripherals directly use pll1_q_ck)
         | ((pll_freq/FREQ_PERIPH - 1) << RCC_PLL1DIVR_Q1_Pos)
         // Set PLL1P cpu clock frequency
         | ((pll_freq/CONFIG_CLOCK_FREQ - 1) << RCC_PLL1DIVR_P1_Pos);
+#if CONFIG_HAVE_STM32_FDCANBUS
+    uint32_t pll2_freq = 400000000;
+    RCC->PLL2DIVR = ((pll2_freq / pll_base - 1)
+                     << RCC_PLL2DIVR_N2_Pos)
+        | ((pll2_freq / FREQ_FDCAN - 1) << RCC_PLL2DIVR_Q2_Pos);
+#endif
 
     // Enable VOS1 power mode (or VOS0 if freq>400Mhz)
     if (CONFIG_MACH_STM32H723) {
@@ -172,17 +200,27 @@ clock_setup(void)
     RCC->D3CFGR = RCC_D3CFGR_D3PPRE_DIV2;
 
     // Switch on PLL1
-    RCC->CR = rcc_cr = rcc_cr | RCC_CR_PLL1ON;
+    RCC->CR = rcc_cr = rcc_cr | RCC_CR_PLL1ON
+#if CONFIG_HAVE_STM32_FDCANBUS
+        | RCC_CR_PLL2ON
+#endif
+        ;
     while (!(RCC->CR & RCC_CR_PLL1RDY))
         ;
+#if CONFIG_HAVE_STM32_FDCANBUS
+    while (!(RCC->CR & RCC_CR_PLL2RDY))
+        ;
+#endif
 
     // Switch system clock source (SYSCLK) to PLL1
     RCC->CFGR = RCC_CFGR_SW_PLL1;
     while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL1)
         ;
 
-    // Set the source of FDCAN clock to pll1_q_ck
-    RCC->D2CCIP1R = 1 << RCC_D2CCIP1R_FDCANSEL_Pos;
+    // Set the source of FDCAN clock to pll2_q_ck.
+#if CONFIG_HAVE_STM32_FDCANBUS
+    RCC->D2CCIP1R = 2 << RCC_D2CCIP1R_FDCANSEL_Pos;
+#endif
 
     // Configure USB to use HSI48 clock
     if (CONFIG_USB) {

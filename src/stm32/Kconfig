@@ -19,8 +19,9 @@ config STM32_SELECT
     select HAVE_BOOTLOADER_REQUEST
     select HAVE_LIMITED_CODE_SIZE if FLASH_SIZE < 0x10000
     # Parts with a built-in Ethernet MAC (external RMII PHY) - enables
-    # the native RMII datagram-console path (src/stm32/eth_mac.c)
-    select HAVE_ETH_MAC if MACH_STM32F407 || MACH_STM32F429 || MACH_STM32F7
+    # the native RMII datagram-console path.  H723 uses the newer Synopsys
+    # descriptor/register model in stm32/eth_mac_h7.c.
+    select HAVE_ETH_MAC if MACH_STM32F407 || MACH_STM32F429 || MACH_STM32F7 || MACH_STM32H723
 
 config BOARD_DIRECTORY
     string
@@ -537,7 +538,7 @@ choice
         depends on HAVE_ETH_MAC
         select CONSOLE_RMII
         help
-            Use the STM32F4/F7 on-chip Ethernet MAC with an external
+            Use the STM32 on-chip Ethernet MAC with an external
             RMII PHY as the board's console transport.  No USART/USB/CAN
             console is built.  Configure the board's PHY, reset pin,
             RMII pins, static IP, and PSK under "Ethernet transport".
@@ -554,7 +555,10 @@ endchoice
 
 config HELIX_USB_CAN_COMPOSITE
     bool "Expose a separate Helix CDC control interface" if LOW_LEVEL_OPTIONS && USBCANBUS
-    depends on USBCANBUS && HAVE_STM32_USBFS
+    # The H723 routes PA11/PA12 through its HS core, which has enough endpoint
+    # numbers for gs_usb plus CDC.  Do not enable this on smaller OTG-FS cores
+    # (for example F4/F7), whose endpoint count stops below EP5.
+    depends on USBCANBUS && (HAVE_STM32_USBFS || MACH_STM32H723)
     help
         Build a composite USB device with a Linux gs_usb CAN network
         interface and an independent CDC-ACM Klipper control interface.

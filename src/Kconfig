@@ -326,7 +326,7 @@ config WANT_SELF_TEST
 # DTLS-class authenticated session over the datagram transport (doc 07).
 config WANT_DATAGRAM_SESSION
     bool "DTLS-class session over the UDP datagram transport"
-    depends on NEED_UDP_CONSOLE || MACH_LINUX
+    depends on NEED_UDP_CONSOLE || NEED_UDP_GATEWAY || MACH_LINUX
     default n
     help
         Offer the intentproto secure session (session_sec.hpp) on top of

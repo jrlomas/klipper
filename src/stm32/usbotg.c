@@ -74,6 +74,9 @@ fifo_configure(void)
     // Reserve memory for Rx fifo
     uint32_t sz = ((4 * 1 + 6)
                    + 4 * ((USB_CDC_EP_BULK_OUT_SIZE / 4) + 1)
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+                   + 4 * ((USB_CDC_EP_BULK_OUT_SIZE / 4) + 1)
+#endif
                    + (2 * 1));
     OTG->GRXFSIZ = sz;
 
@@ -92,6 +95,12 @@ fifo_configure(void)
         (fpos << USB_OTG_DIEPTXF_INEPTXSA_Pos)
         | (ep_size << USB_OTG_DIEPTXF_INEPTXFD_Pos));
     fpos += ep_size;
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    OTG->DIEPTXF[USB_CDC_LOCAL_EP_BULK_IN - 1] = (
+        (fpos << USB_OTG_DIEPTXF_INEPTXSA_Pos)
+        | (ep_size << USB_OTG_DIEPTXF_INEPTXFD_Pos));
+    fpos += ep_size;
+#endif
 }
 
 // Write a packet to a tx fifo
@@ -186,14 +195,22 @@ peek_rx_queue(uint32_t ep)
         uint32_t grx = OTG->GRXSTSR, grx_ep = grx & USB_OTG_GRXSTSP_EPNUM_Msk;
         uint32_t pktsts = ((grx & USB_OTG_GRXSTSP_PKTSTS_Msk)
                            >> USB_OTG_GRXSTSP_PKTSTS_Pos);
-        if ((grx_ep == 0 || grx_ep == USB_CDC_EP_BULK_OUT)
+        if ((grx_ep == 0 || grx_ep == USB_CDC_EP_BULK_OUT
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+             || grx_ep == USB_CDC_LOCAL_EP_BULK_OUT
+#endif
+             )
             && (pktsts == 2 || pktsts == 4 || pktsts == 6)) {
             // A packet is ready
             if (grx_ep != ep)
                 return 0;
             return grx;
         }
-        if ((grx_ep != 0 && grx_ep != USB_CDC_EP_BULK_OUT)
+        if ((grx_ep != 0 && grx_ep != USB_CDC_EP_BULK_OUT
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+             && grx_ep != USB_CDC_LOCAL_EP_BULK_OUT
+#endif
+             )
             || (pktsts != 1 && pktsts != 3 && pktsts != 4)) {
             // Rx queue has bogus value - just pop it
             sts = OTG->GRXSTSP;
@@ -264,6 +281,45 @@ usb_send_bulk_in(void *data, uint_fast8_t len)
     usb_irq_enable();
     return ret;
 }
+
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+int_fast8_t
+usb_read_local_bulk_out(void *data, uint_fast8_t max_len)
+{
+    usb_irq_disable();
+    uint32_t grx = peek_rx_queue(USB_CDC_LOCAL_EP_BULK_OUT);
+    if (!grx) {
+        OTG->GINTMSK |= USB_OTG_GINTMSK_RXFLVLM;
+        usb_irq_enable();
+        return -1;
+    }
+    int_fast8_t ret = fifo_read_packet(data, max_len);
+    enable_rx_endpoint(USB_CDC_LOCAL_EP_BULK_OUT);
+    usb_irq_enable();
+    return ret;
+}
+
+int_fast8_t
+usb_send_local_bulk_in(void *data, uint_fast8_t len)
+{
+    usb_irq_disable();
+    USB_OTG_INEndpointTypeDef *epi = EPIN(USB_CDC_LOCAL_EP_BULK_IN);
+    uint32_t ctl = epi->DIEPCTL;
+    if (!(ctl & USB_OTG_DIEPCTL_USBAEP)) {
+        usb_irq_enable();
+        return len;
+    }
+    if (ctl & USB_OTG_DIEPCTL_EPENA) {
+        OTGD->DAINTMSK |= 1 << USB_CDC_LOCAL_EP_BULK_IN;
+        usb_irq_enable();
+        return -1;
+    }
+    int_fast8_t ret = fifo_write_packet(
+        USB_CDC_LOCAL_EP_BULK_IN, data, len);
+    usb_irq_enable();
+    return ret;
+}
+#endif
 
 int_fast8_t
 usb_read_ep0(void *data, uint_fast8_t max_len)
@@ -411,6 +467,38 @@ usb_set_configure(void)
         ;
     if (CONFIG_STM32_USB_DOUBLE_BUFFER_TX)
         TX_BUF.len = 0;
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+    // Configure and enable the independent CDC console OUT endpoint.
+    epo = EPOUT(USB_CDC_LOCAL_EP_BULK_OUT);
+    epo->DOEPTSIZ = (USB_CDC_EP_BULK_OUT_SIZE
+                     | (1 << USB_OTG_DOEPTSIZ_PKTCNT_Pos));
+    epo->DOEPCTL = (
+        USB_OTG_DOEPCTL_CNAK | USB_OTG_DOEPCTL_USBAEP
+        | USB_OTG_DOEPCTL_EPENA
+        | (0x02 << USB_OTG_DOEPCTL_EPTYP_Pos)
+        | USB_OTG_DOEPCTL_SD0PID_SEVNFRM
+        | (USB_CDC_EP_BULK_OUT_SIZE << USB_OTG_DOEPCTL_MPSIZ_Pos));
+
+    // Configure and flush the independent CDC console IN endpoint.
+    epi = EPIN(USB_CDC_LOCAL_EP_BULK_IN);
+    epi->DIEPTSIZ = (USB_CDC_EP_BULK_IN_SIZE
+                     | (1 << USB_OTG_DIEPTSIZ_PKTCNT_Pos));
+    epi->DIEPCTL = (
+        USB_OTG_DIEPCTL_SNAK | USB_OTG_DIEPCTL_EPDIS
+        | USB_OTG_DIEPCTL_USBAEP
+        | (0x02 << USB_OTG_DIEPCTL_EPTYP_Pos)
+        | USB_OTG_DIEPCTL_SD0PID_SEVNFRM
+        | (USB_CDC_LOCAL_EP_BULK_IN << USB_OTG_DIEPCTL_TXFNUM_Pos)
+        | (USB_CDC_EP_BULK_IN_SIZE << USB_OTG_DIEPCTL_MPSIZ_Pos));
+    while (epi->DIEPCTL & USB_OTG_DIEPCTL_EPENA)
+        ;
+    OTG->GRSTCTL = (
+        (USB_CDC_LOCAL_EP_BULK_IN << USB_OTG_GRSTCTL_TXFNUM_Pos)
+        | USB_OTG_GRSTCTL_TXFFLSH);
+    while (OTG->GRSTCTL & USB_OTG_GRSTCTL_TXFFLSH)
+        ;
+    usb_local_console_configure();
+#endif
     usb_irq_enable();
 }
 
@@ -430,6 +518,10 @@ OTG_FS_IRQHandler(void)
         uint32_t grx = OTG->GRXSTSR, ep = grx & USB_OTG_GRXSTSP_EPNUM_Msk;
         if (ep == 0)
             usb_notify_ep0();
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+        else if (ep == USB_CDC_LOCAL_EP_BULK_OUT)
+            usb_notify_local_bulk_out();
+#endif
         else
             usb_notify_bulk_out();
     }
@@ -448,6 +540,10 @@ OTG_FS_IRQHandler(void)
                     TX_BUF.len = 0;
             }
         }
+#if CONFIG_HELIX_USB_CAN_COMPOSITE
+        if (pend & (1 << USB_CDC_LOCAL_EP_BULK_IN))
+            usb_notify_local_bulk_in();
+#endif
     }
 }
 
