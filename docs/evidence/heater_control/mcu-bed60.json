@@ -1,0 +1,23 @@
+{
+  "controller_execution": "mcu-fixed-point-pid",
+  "fault_samples": 0,
+  "heater": "heater_bed",
+  "initial_temperature_c": 30.15,
+  "maximum_temperature_c": 60.71,
+  "overshoot_c": 0.7100000000000009,
+  "qualification_duration_s": 195.40817811200395,
+  "ready_band_c": 1.0,
+  "ready_hold_s": 60.0,
+  "source_csv": "mcu-bed60.csv",
+  "steady_power_delta_rms": 0.08662344965895978,
+  "steady_power_mean": 0.6093216229798347,
+  "steady_power_stddev": 0.10041699355431988,
+  "steady_samples": 121,
+  "steady_temperature_error_rms_c": 0.5217944245462989,
+  "steady_temperature_mean_c": 60.21355371900827,
+  "steady_temperature_peak_error_c": 0.9799999999999969,
+  "steady_temperature_stddev_c": 0.4760926701655282,
+  "target_c": 60.0,
+  "time_to_first_crossing_s": 130.7607438879786,
+  "time_to_print_s": 105.20356196101056
+}

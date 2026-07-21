@@ -183,15 +183,23 @@ test_predictive_target_local_band(void)
     assert(first == cfg.max_output_step);
     assert(!state.initialized);
     // Crossing into the locally calibrated band initializes the observer and
-    // rebases around the approach duty rather than jumping.
+    // blends continuously instead of inheriting approach duty as a bias.
     uint16_t second = heater_predictive_update(
         &state, &cfg, 50000, 55000, 25000, 5000);
     assert(state.initialized);
-    assert(second >= first && second - first < 200);
+    assert(second >= first);
+    assert(second - first <= cfg.max_output_step);
+    // The transition region between one and two bands must taper duty without
+    // a discrete full-power/predictive toggle.
+    uint16_t blended = heater_predictive_update(
+        &state, &cfg, 39500, 55000, 25000, 15500);
+    assert(state.initialized);
+    assert(blended >= second);
+    assert(blended - second <= cfg.max_output_step);
     // Far above target uses the same slew bound toward zero.
     uint16_t third = heater_predictive_update(
-        &state, &cfg, 70000, 55000, 25000, -15000);
-    assert(third + cfg.max_output_step == second || third == 0);
+        &state, &cfg, 80000, 55000, 25000, -25000);
+    assert(third + cfg.max_output_step == blended || third == 0);
     assert(!state.initialized);
 }
 

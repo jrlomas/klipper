@@ -374,6 +374,10 @@ commands require `CONFIRM=YES`.
 - [x] Guarded PWM-sine runs at 260 C and 30/60 s periods establish installed
   thermal-chain gain, phase, drift, residual, and effective control resolution.
 - [ ] Paired physical `helix_pid` versus `helix_mpc` qualification on the bed.
+  - [x] The host-first 75 C open-printer smooth-blend candidate passed its
+    promotion gate and compiled fixed-point replay stayed within 0.0001746
+    maximum duty error. The same-target paired PID and MCU physical repeat
+    remain open.
 
 `helix_pid` has passed nominal heated operation, physical printing, and
 host-loss continuity; the remaining injected cutoff cases stay explicit above.

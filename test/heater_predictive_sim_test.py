@@ -30,18 +30,36 @@ class PredictiveController:
         self.filtered = None
         self.bias, self.output = 0., 0.
         self.rebase_output = False
+        self.approach_active = True
+        self.approach_blend = 1.
+        self.last_target = 0.
 
     def update(self, temperature, target, ambient):
+        if target != self.last_target:
+            self.last_target = target
+            self.approach_active = True
+            self.approach_blend = 1.
+            self.filtered = None
+            self.bias = 0.
+            self.rebase_output = False
         target_error = target - temperature
-        if abs(target_error) > self.control_band:
+        if abs(target_error) >= 2. * self.control_band:
+            self.approach_active = True
+            self.approach_blend = 1.
             desired = 1. if target_error > 0. else 0.
             self.output = max(
                 max(0., self.output - self.max_step),
                 min(min(1., self.output + self.max_step), desired))
             self.filtered = None
             self.bias = 0.
-            self.rebase_output = bool(self.output)
+            self.rebase_output = False
             return self.output
+        blend = max(0., min(
+            1., (abs(target_error) - self.control_band)
+            / self.control_band))
+        self.approach_blend = blend
+        self.approach_active = bool(blend)
+        desired = 1. if target_error > 0. else 0.
         if self.filtered is None:
             self.filtered = temperature
         else:
@@ -61,12 +79,15 @@ class PredictiveController:
             1., self.bias + self.integral_gain * self.dt * error))
         low = max(0., self.output - self.max_step)
         high = min(1., self.output + self.max_step)
-        candidate = model_output + bias_candidate
+        candidate = (blend * desired
+                     + (1. - blend) * (model_output + bias_candidate))
         if ((low <= candidate <= high)
                 or (candidate > high and error < 0.)
                 or (candidate < low and error > 0.)):
             self.bias = bias_candidate
-        self.output = max(low, min(high, model_output + self.bias))
+        blended_output = (blend * desired
+                          + (1. - blend) * (model_output + self.bias))
+        self.output = max(low, min(high, blended_output))
         return self.output
 
 

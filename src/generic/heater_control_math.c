@@ -96,6 +96,16 @@ filter_mdeg(int32_t previous, int32_t sample, uint16_t alpha)
         step, HEATER_CONTROL_ALPHA_ONE));
 }
 
+static int64_t
+blend_output(int64_t predictive, uint16_t approach, uint32_t blend_q15)
+{
+    if (blend_q15 > HEATER_CONTROL_ALPHA_ONE)
+        blend_q15 = HEATER_CONTROL_ALPHA_ONE;
+    int64_t mixed = ((int64_t)approach * blend_q15
+                     + predictive * (HEATER_CONTROL_ALPHA_ONE - blend_q15));
+    return div_round_s64(mixed, HEATER_CONTROL_ALPHA_ONE);
+}
+
 uint16_t
 heater_predictive_update(struct heater_predictive_state *state,
                          const struct heater_predictive_config *config,
@@ -106,7 +116,7 @@ heater_predictive_update(struct heater_predictive_state *state,
     int64_t absolute_error = target_error_mdeg;
     if (absolute_error < 0)
         absolute_error = -absolute_error;
-    if (band && absolute_error > band) {
+    if (band && absolute_error >= (int64_t)band * 2) {
         uint16_t desired = target_error_mdeg > 0 ? config->max_output : 0;
         uint32_t max_step = config->max_output_step;
         if (max_step) {
@@ -123,9 +133,18 @@ heater_predictive_update(struct heater_predictive_state *state,
         state->output_q16 = desired;
         state->bias_q16 = 0;
         state->initialized = 0;
-        state->rebase_output = !!desired;
+        // Ordinary approach-to-model entry is not a model reconfiguration.
+        // A separate cross-fade below makes the handoff continuous without
+        // retaining full approach duty as a slow-unwinding integral bias.
+        state->rebase_output = 0;
         return desired;
     }
+    uint32_t blend_q15 = 0;
+    if (band && absolute_error > band)
+        blend_q15 = (uint64_t)(absolute_error - band)
+                    * HEATER_CONTROL_ALPHA_ONE / band;
+    uint16_t approach_output = target_error_mdeg > 0
+                               ? config->max_output : 0;
     if (!state->initialized) {
         state->filtered_temp_mdeg = temp_mdeg;
         state->initialized = 1;
@@ -187,7 +206,8 @@ heater_predictive_update(struct heater_predictive_state *state,
         if (high > max_output)
             high = max_output;
     }
-    int64_t candidate = model_output + bias_candidate;
+    int64_t candidate = blend_output(
+        model_output + bias_candidate, approach_output, blend_q15);
     // Apply the same directional anti-windup rule to both hard output bounds
     // and the output-movement constraint.
     if ((candidate >= low && candidate <= high)
@@ -195,7 +215,8 @@ heater_predictive_update(struct heater_predictive_state *state,
         || (candidate < low && error_mdeg > 0))
         state->bias_q16 = bias_candidate;
 
-    int64_t output = model_output + state->bias_q16;
+    int64_t output = blend_output(
+        model_output + state->bias_q16, approach_output, blend_q15);
     if (output < low)
         output = low;
     else if (output > high)

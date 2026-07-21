@@ -771,9 +771,18 @@ a faster stop — test both the latency and the things polling could not do.
     manual-output safety guards. Pass the paired cold-start PID comparison:
     enter and remain within +/-1 C for 60 s no more than 5 percent later than
     PID, while meeting the temperature, duty, overshoot, and recovery gates.
+    - [x] Host-law promotion gate: the 75 C open-printer smooth-blend run used
+      a 46.91 C target-to-ambient delta, reached sustained readiness in
+      51.62 s, overshot 0.24 C, produced 0.00152 RMS duty change, and had zero
+      faults. The earlier hard-boundary controller was rejected and archived.
+      A same-target paired PID run remains open, so the parent item is not
+      checked.
   - [ ] Replay the accepted host trace through MCU fixed-point arithmetic,
     bound parity error, then perform one MCU execution and host-loss safety
     qualification. Host acceptance must precede this promotion.
+    - [x] Physical-envelope host/fixed-point replay passed: maximum duty error
+      0.0001746, mean 0.0000309.
+    - [ ] Flash and physically confirm the promoted MCU smooth-blend law.
 - [ ] **7.6 — Input-capture timestamps.** Confirm timer input-capture
   timestamps a trigger to the tick.
   Pass: timestamp precision matches the doc-09 claim.

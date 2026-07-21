@@ -120,6 +120,9 @@ def main():
     parser.add_argument(
         "--summary", help="JSON summary path (default: OUTPUT.json)")
     parser.add_argument("--interval", type=float, default=.25)
+    parser.add_argument(
+        "--max-initial-temperature", type=float,
+        help="Refuse a warm-start capture above this temperature")
     parser.add_argument("--settle-band", type=float, default=1.)
     parser.add_argument("--settle-seconds", type=float, default=60.)
     parser.add_argument("--max-seconds", type=float, default=900.)
@@ -128,6 +131,12 @@ def main():
     first = query_heater(args.url, args.heater)
     if first["target"] or first["power"]:
         raise RuntimeError("heater is not idle at qualification start")
+    if (args.max_initial_temperature is not None
+            and first["temperature"] > args.max_initial_temperature):
+        raise RuntimeError(
+            "heater is too warm for qualification start "
+            "(%.2fC > %.2fC)" % (
+                first["temperature"], args.max_initial_temperature))
     started = time.monotonic()
     settled_since = None
     rows = []
@@ -139,12 +148,15 @@ def main():
             control = state.get("mcu_control", {})
             if not control:
                 control = state.get("control_stats", {})
+            model = control.get("thermal_model", {})
             row = {
                 "elapsed_s": now - started,
                 "temperature_c": state["temperature"],
                 "target_c": state["target"],
                 "power": state["power"],
                 "controller_state": control.get("state", "host"),
+                "controller_algorithm": control.get("algorithm", ""),
+                "control_mode": control.get("control_mode", "host"),
                 "fault": control.get("fault", 0),
                 "mcu_samples": control.get("samples", ""),
                 "mcu_temperature_c": control.get("mcu_temperature", ""),
@@ -161,6 +173,25 @@ def main():
                 "loop_dt_stddev_s": control.get("loop_dt_stddev", ""),
                 "loop_dt_min_s": control.get("loop_dt_min", ""),
                 "loop_dt_max_s": control.get("loop_dt_max", ""),
+                "thermal_model_source": control.get(
+                    "thermal_model_source", ""),
+                "thermal_model_gain": model.get("gain", ""),
+                "thermal_model_tau_s": model.get("tau", ""),
+                "thermal_model_delay_s": model.get("delay", ""),
+                "thermal_model_horizon_s": model.get("horizon", ""),
+                "thermal_control_band_c": model.get("control_band", ""),
+                "host_predictive_output": control.get(
+                    "host_predictive_output", ""),
+                "host_predictive_bias": control.get(
+                    "host_predictive_bias", ""),
+                "host_predictive_filtered_temperature_c": control.get(
+                    "host_predictive_filtered_temperature", ""),
+                "host_predictive_ambient_c": control.get(
+                    "host_predictive_ambient", ""),
+                "host_predictive_approach_active": control.get(
+                    "host_predictive_approach_active", ""),
+                "host_predictive_approach_blend": control.get(
+                    "host_predictive_approach_blend", ""),
             }
             rows.append(row)
             print("%.1fs %.2fC / %.1fC power=%.3f state=%s fault=%s" % (
@@ -189,6 +220,14 @@ def main():
     summary.update({
         "heater": args.heater,
         "controller_state": rows[-1]["controller_state"],
+        "controller_algorithm": rows[-1]["controller_algorithm"],
+        "control_mode": rows[-1]["control_mode"],
+        "thermal_model_source": rows[-1]["thermal_model_source"],
+        "thermal_model_gain": rows[-1]["thermal_model_gain"],
+        "thermal_model_tau_s": rows[-1]["thermal_model_tau_s"],
+        "thermal_model_delay_s": rows[-1]["thermal_model_delay_s"],
+        "thermal_model_horizon_s": rows[-1]["thermal_model_horizon_s"],
+        "thermal_control_band_c": rows[-1]["thermal_control_band_c"],
         "source_csv": args.output,
     })
     summary_path = args.summary or args.output + ".json"

@@ -42,8 +42,8 @@ struct heater_predictive_config {
     uint32_t response_mdeg;
     // Equivalent milli-degree cost assigned to a full-duty output change.
     uint32_t effort_mdeg;
-    // Predict only while the target-local sensor tangent reports an absolute
-    // error inside this band. Outside it use slew-bounded approach control.
+    // Prediction owns duty inside this band, approach owns duty outside twice
+    // the band, and firmware cross-fades continuously between the boundaries.
     uint32_t control_band_mdeg;
     // Q20 Q16-duty increment per milli-degree error per update.
     int32_t integral_step_q20;

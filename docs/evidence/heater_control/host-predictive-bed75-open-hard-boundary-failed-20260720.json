@@ -1,0 +1,12 @@
+{
+  "acceptance_status": "rejected",
+  "controller_execution": "host-float-predictive",
+  "environment": "printer open",
+  "fault_samples": 0,
+  "initial_temperature_c": 45.29,
+  "observed_failure": "stateless approach/predictive boundary duty chatter",
+  "rejection_reason": "Duty repeatedly toggled between approximately 0.68 and 1.0 near the 1 C boundary; the run was stopped before false settling.",
+  "source_csv": "host-predictive-bed75-open-hard-boundary-failed-20260720.csv",
+  "target_c": 75.0,
+  "target_to_ambient_delta_c": 47.03
+}

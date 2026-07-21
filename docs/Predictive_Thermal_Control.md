@@ -179,6 +179,44 @@ this order:
 4. Enable MCU execution once, then repeat thermal performance and host-loss
    safety gates. Do not use repeated firmware heat cycles as the tuning loop.
 
+The first host candidate deliberately does not rebase the model-error bias when
+ordinary full-power approach enters the predictive band. That handoff is not a
+model change, and inherited full-power bias was the principal cause of the
+206.95-second feasibility result. The independent duty slew limit already
+bounds the transition. Bumpless bias rebase remains required for an actual
+model/profile change; the MCU implementation is not changed until this host
+candidate passes physically.
+
+The first 75 C open-printer host run found a second handoff defect: a stateless
+1 C boundary repeatedly alternated between full approach power and predictive
+duty as the bed crossed 74 C. The run was stopped with zero faults rather than
+allowing boundary chatter to masquerade as settling. The replacement is a
+continuous cross-fade: prediction owns duty inside the configured band,
+approach owns it outside twice the band, and their requested duties are mixed
+linearly between those boundaries before the independent slew clamp. This
+removes both mode chatter and a discrete hysteresis transition.
+
+The rerun passed physically on 2026-07-20 with the printer open, a 75 C target,
+28.09 C ambient, and therefore a 46.91 C target-to-ambient excitation. From a
+51.92 C warm start it became print-ready in 51.62 seconds, then remained inside
++/-1 C for the required 60 seconds. Overshoot was 0.24 C, steady temperature
+standard deviation was 0.235 C, RMS duty change was 0.00152, and there were no
+fault samples. This accepts the floating-point host candidate for fixed-point
+promotion; it does not close the separately required paired PID comparison or
+closed-enclosure 110 C characterization. The
+[accepted trace](evidence/heater_control/host-predictive-bed75-open-blend-20260720.csv),
+[accepted summary](evidence/heater_control/host-predictive-bed75-open-blend-20260720.json),
+[rejected hard-boundary trace](evidence/heater_control/host-predictive-bed75-open-hard-boundary-failed-20260720.csv),
+and [rejection record](evidence/heater_control/host-predictive-bed75-open-hard-boundary-failed-20260720.json)
+preserve the complete decision.
+
+The recorded thermal envelope was resampled at the 0.3-second control period
+and replayed through the accepted floating-point law and the real compiled C
+fixed-point arithmetic. Maximum duty disagreement was 0.0001746 and mean
+disagreement was 0.0000309. That parity result clears promotion to a single MCU
+physical confirmation; it is not permission to skip the remaining safety
+injection gates.
+
 `HELIX_HEATER_CONTROL_MODE HEATER=<name> MODE=HOST TARGET=<C> CONFIRM=YES`
 selects the floating-point predictive law for `control: helix_mpc` and ordinary
 host PID for `control: helix_pid`. The target and output must be zero during a
@@ -206,3 +244,11 @@ paired physical experiment passes all of the following:
 The goal is not to declare model-based control superior by construction. The
 goal is to make the objective measurable and retain the new algorithm only if
 the installed hardware confirms the expected advantage.
+
+`scripts/helix_heater_qualification.py` refuses a configured warm start,
+records the controller/model identity in every raw row, and writes summary
+metrics. `scripts/helix_heater_compare.py` then checks target/readiness
+identity, initial temperature within 1 C, the 5-percent time-to-print bound,
+temperature RMS/peak error, at least 50-percent duty-delta reduction,
+overshoot, and zero faults. A passing comparison is necessary but does not
+replace the separate step-down and host-loss safety gates.

@@ -391,6 +391,9 @@ class ControlPredictive:
         control.filtered = None
         control.bias = control.output = 0.
         control.rebase_output = False
+        control.approach_active = True
+        control.approach_blend = 1.
+        control.last_target = 0.
         control.prev_temp = AMBIENT_TEMP
         control.prev_temp_time = 0.
         control.prev_temp_deriv = 0.
@@ -424,20 +427,44 @@ class ControlPredictive:
                 self.prev_temp_deriv = (temp - self.prev_temp) / time_diff
         self.prev_temp = temp
         self.prev_temp_time = read_time
+        if target_temp != self.last_target:
+            self.last_target = target_temp
+            self.approach_active = True
+            self.approach_blend = 1.
+            self.filtered = None
+            self.bias = 0.
+            self.rebase_output = False
         error = target_temp - temp
         if not target_temp:
             self.output = self.bias = 0.
             self.filtered = None
             self.rebase_output = False
-        elif abs(error) > self.control_band:
+            self.approach_active = True
+            self.approach_blend = 1.
+        elif abs(error) >= 2. * self.control_band:
+            self.approach_active = True
+            self.approach_blend = 1.
             desired = self.max_output if error > 0. else 0.
             low = max(0., self.output - self.max_step)
             high = min(self.max_output, self.output + self.max_step)
             self.output = max(low, min(high, desired))
             self.filtered = None
             self.bias = 0.
-            self.rebase_output = bool(self.output)
+            # Entering the predictive band is an ordinary control transition,
+            # not a model reconfiguration.  Carrying the full-power approach
+            # output into the model as a bias makes that bias unwind only at
+            # the integral rate and defeats predictive braking.  The explicit
+            # output slew bound already makes this handoff continuous.
+            self.rebase_output = False
         else:
+            # Continuously cross-fade over [band, 2*band].  At the outer edge
+            # approach owns the requested duty; at the inner edge prediction
+            # owns it.  The final slew clamp remains independently binding.
+            blend = max(0., min(
+                1., (abs(error) - self.control_band) / self.control_band))
+            self.approach_blend = blend
+            self.approach_active = bool(blend)
+            desired = self.max_output if error > 0. else 0.
             if self.filtered is None:
                 self.filtered = temp
             else:
@@ -461,13 +488,15 @@ class ControlPredictive:
                 * filtered_error))
             low = max(0., self.output - self.max_step)
             high = min(self.max_output, self.output + self.max_step)
-            candidate = model_output + bias_candidate
+            candidate = (blend * desired
+                         + (1. - blend) * (model_output + bias_candidate))
             if ((low <= candidate <= high)
                     or (candidate > high and filtered_error < 0.)
                     or (candidate < low and filtered_error > 0.)):
                 self.bias = bias_candidate
-            self.output = max(low, min(
-                high, model_output + self.bias))
+            blended_output = (blend * desired
+                              + (1. - blend) * (model_output + self.bias))
+            self.output = max(low, min(high, blended_output))
         self.heater.set_pwm(read_time, self.output)
 
     def check_busy(self, eventtime, smoothed_temp, target_temp):
@@ -496,6 +525,8 @@ class ControlPredictive:
             'host_predictive_filtered_temperature': self.filtered,
             'host_predictive_ambient': self.ambient,
             'host_predictive_model': dict(self.model_status),
+            'host_predictive_approach_active': self.approach_active,
+            'host_predictive_approach_blend': self.approach_blend,
         }
 
 
