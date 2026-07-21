@@ -899,11 +899,20 @@ ADC_STREAM_SUMMARY_FORMAT = (
     " sum_lo=%u sum_hi=%u shift=%c")
 
 
+def _gcd(left, right):
+    # math.gcd is unavailable on Python 2, which Klipper's compatibility
+    # matrix still executes.  The positive ADC cadence values only need the
+    # standard Euclidean algorithm.
+    while right:
+        left, right = right, left % right
+    return left
+
+
 def _largest_common_divisor_at_most(values, limit):
     """Return the slowest exact base cadence bounded by a backend limit."""
     common = values[0]
     for value in values[1:]:
-        common = math.gcd(common, value)
+        common = _gcd(common, value)
     if not limit or common <= limit:
         return common
     # Backend limits are intentionally small hardware counter ranges (the
