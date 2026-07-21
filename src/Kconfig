@@ -449,6 +449,19 @@ config RMII_UDP_PORT
 config RMII_IP
     hex "Static IPv4 address (0xC0A800FE == 192.168.0.254)"
     default 0xC0A800FE
+config RMII_NETMASK
+    hex "Static IPv4 netmask"
+    default 0xFFFFFF00
+config RMII_GATEWAY
+    hex "Static IPv4 gateway (zero for same-subnet only)"
+    default 0
+config RMII_DHCP
+    bool "Acquire IPv4 configuration with bounded DHCP"
+    default n
+    help
+        Start with DHCP discovery and fall back to the configured static
+        address after 30 seconds. Lease renewal, rebinding, expiry, NAK, and
+        malformed replies are handled without changing the board identity.
 config RMII_PHY_ADDR
     int "PHY MDIO address"
     range 0 31

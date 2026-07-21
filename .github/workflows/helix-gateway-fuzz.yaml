@@ -1,0 +1,21 @@
+name: Helix gateway fuzz
+
+on:
+  push:
+    branches: ["claude/software-redesign-impl-finn0j"]
+  pull_request:
+
+jobs:
+  libfuzzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build gateway libFuzzer target
+        run: |
+          clang -std=c11 -O1 -g -fsanitize=fuzzer,address,undefined \
+            -fno-omit-frame-pointer -Isrc \
+            test/fuzz/helix_gateway_fuzz.c \
+            src/generic/gateway_protocol.c src/generic/gateway_runtime.c \
+            -o /tmp/helix-gateway-fuzz
+      - name: Run bounded coverage-guided campaign
+        run: /tmp/helix-gateway-fuzz -max_total_time=60 -timeout=2

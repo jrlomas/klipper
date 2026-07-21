@@ -129,6 +129,21 @@ node, asks Linux to apply and read back the SocketCAN timing, and enables FD
 only after the complete transaction succeeds. A profile request is never
 silently rounded or downgraded.
 
+`[helix_can]` now owns a transport-neutral `CanFabricEndpoint`. The normal USB
+bridge still projects through AF_CAN and remains the default; an authenticated
+Ethernet gateway may project the same fabric without inventing a CAN UUID or
+changing any downstream `board_id`. Versioned status keeps profile/owner
+epochs, board identities, and the accepted/forwarded/dropped/queued
+conservation identity above that backend choice. Atlas treats ordinary status
+as telemetry and only records explicit gateway incidents.
+
+The typed Ethernet gateway adds selective packet acknowledgements, but it does
+not turn raw CAN into a replayable datagram stream. Idempotent profile/status
+controls may retry within a fixed window. If a CAN or serial packet times out,
+its delivery becomes `UNKNOWN`; upper Klipper/HELIX recovery decides what to
+do, and the proxy never duplicates an actuator frame merely to improve packet
+statistics.
+
 ## USB to CAN bus bridge mode
 
 ### HELIX composite bridge

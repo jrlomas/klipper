@@ -97,21 +97,30 @@ class Config:
 
 
 class Manager:
-    def __init__(self):
+    def __init__(self, fail_profile=None):
         self.requests = []
+        self.fail_profile = fail_profile
 
     def request(self, payload):
         self.requests.append(payload)
+        if payload.get('profile') == self.fail_profile:
+            self.fail_profile = None
+            raise RuntimeError('netdevice profile apply failed')
         return {'ok': True}
 
 
 class Connection:
     def __init__(self, name, log, bitrate_mask=0x0f,
-                 transceiver_max=8000000):
+                 transceiver_max=8000000, fail_on=None):
         self.name = name
         self.log = log
         self.bitrate_mask = bitrate_mask
         self.transceiver_max = transceiver_max
+        self.fail_on = fail_on
+
+    def _maybe_fail(self, stage):
+        if self.fail_on == stage:
+            raise RuntimeError('%s failed at %s' % (self.name, stage))
 
     def get_mcu(self):
         return self
@@ -126,12 +135,15 @@ class Connection:
 
     def prepare_can_profile(self, profile, epoch):
         self.log.append(('prepare', self.name, profile['name'], epoch))
+        self._maybe_fail('prepare')
 
     def commit_can_profile(self, profile, epoch):
         self.log.append(('commit', self.name, profile['name'], epoch))
+        self._maybe_fail('commit')
 
     def enable_can_profile(self, profile, epoch):
         self.log.append(('enable', self.name, profile['name'], epoch))
+        self._maybe_fail('enable')
 
     def abort_can_profile(self, epoch):
         self.log.append(('abort', self.name, epoch))
@@ -258,6 +270,50 @@ def main():
                           ('CLASSIC_250K', 250000)):
         bus.active_profile = name
         assert bus.get_connection_profile()['data_bitrate'] == bitrate
+
+    # Every MCU transaction boundary is fail-closed: all nodes which may
+    # have staged state are aborted and the Linux netdevice is returned to
+    # the universally recoverable classic profile.
+    for stage in ('prepare', 'commit', 'enable'):
+        config = Config()
+        failed = helix_can.HelixCANBus(config)
+        failed.manager = fail_manager = Manager()
+        fault_log = []
+        failed.register_connection(Connection('first', fault_log))
+        failed.register_connection(Connection(
+            'faulting', fault_log, fail_on=stage))
+        try:
+            failed._activate()
+        except ConfigError as exc:
+            assert stage in str(exc)
+        else:
+            raise AssertionError('%s failure did not fail activation' % stage)
+        assert failed.state == 'failed'
+        assert failed.active_profile == 'CLASSIC_1M'
+        assert fail_manager.requests[-1]['profile'] == 'CLASSIC_1M'
+        aborted = [entry[1] for entry in fault_log if entry[0] == 'abort']
+        assert aborted == ['first', 'faulting'], (stage, fault_log)
+        incidents = [payload for event, payload in config.printer.events
+                     if event == 'helix_can:incident']
+        assert incidents[-1]['kind'] == 'profile_activation_failed'
+
+    config = Config()
+    failed = helix_can.HelixCANBus(config)
+    failed.manager = fail_manager = Manager('FD_8M_BRS')
+    fault_log = []
+    failed.register_connection(Connection('first', fault_log))
+    failed.register_connection(Connection('second', fault_log))
+    try:
+        failed._activate()
+    except ConfigError as exc:
+        assert 'netdevice profile apply failed' in str(exc)
+    else:
+        raise AssertionError('netdevice failure did not fail activation')
+    assert failed.state == 'failed' and failed.active_profile == 'CLASSIC_1M'
+    assert [item['profile'] for item in fail_manager.requests[-2:]] == [
+        'FD_8M_BRS', 'CLASSIC_1M']
+    assert [entry[1] for entry in fault_log if entry[0] == 'abort'] == [
+        'first', 'second']
     print('PASS: profile prepare/commit/netdevice/enable transaction')
 
 

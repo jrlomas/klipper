@@ -57,4 +57,5 @@ src-$(CONFIG_NEED_UDP_GATEWAY) += generic/udp_gateway.c \
 # objects are wired in the port Makefiles (like the datagram glue).
 src-$(CONFIG_WANT_CONSOLE_FRAMING_V2) += generic/console_v2.c
 src-$(CONFIG_WANT_ETHERNET_W5500) += generic/w5500.c
-src-$(CONFIG_WANT_NANO_UDP) += generic/nano_udp.c
+src-$(CONFIG_WANT_NANO_UDP) += generic/nano_udp.c generic/nano_dhcp.c \
+    generic/network_config.c

@@ -84,6 +84,7 @@ static struct task_wake eth_wake;
 static uint8_t rx_publish_idx, tx_idx;
 static uint8_t eth_ready, eth_link_up;
 static uint32_t eth_link_poll_next;
+static uint32_t eth_network_ms;
 static uint32_t eth_rx_frames, eth_tx_frames, eth_rx_overruns;
 static uint32_t eth_dma_errors;
 
@@ -415,6 +416,8 @@ eth_mac_task(void)
     if (timer_is_before(eth_link_poll_next, now)) {
         eth_link_poll_next = now + timer_from_us(250000);
         eth_phy_poll();
+        eth_network_ms += 250;
+        nano_udp_poll(eth_network_ms);
     }
     for (;;) {
         uint8_t index;
@@ -507,6 +510,63 @@ command_eth_mac_get_status(uint32_t *args)
 }
 DECL_COMMAND_FLAGS(command_eth_mac_get_status, HF_IN_SHUTDOWN,
                    "eth_mac_get_status");
+
+static void
+eth_network_reply(uint8_t result, uint8_t state)
+{
+    struct helix_network_params params;
+    uint32_t epoch, generation, rejected, malformed, naks, retries;
+    uint8_t dhcp_state;
+    nano_udp_network_get_status(&params, &epoch, &generation, &dhcp_state,
+                                &rejected, &malformed, &naks, &retries);
+    sendf("eth_network_config result=%c state=%c mode=%c ip=%u netmask=%u"
+          " gateway=%u port=%hu epoch=%u generation=%u dhcp_state=%c"
+          " rejected=%u dhcp_malformed=%u dhcp_naks=%u dhcp_retries=%u",
+          result, state, params.mode, params.ip,
+          params.netmask, params.gateway, params.port, epoch, generation,
+          dhcp_state, rejected, malformed, naks, retries);
+}
+
+void
+command_eth_network_prepare(uint32_t *args)
+{
+    struct helix_network_params params = {
+        .mode = args[1], .ip = args[2], .netmask = args[3],
+        .gateway = args[4], .port = args[5],
+    };
+    int ret = nano_udp_network_prepare(args[0], &params);
+    eth_network_reply(!!ret, ret ? 0 : 1);
+}
+DECL_COMMAND_FLAGS(command_eth_network_prepare, HF_IN_SHUTDOWN,
+                   "eth_network_prepare epoch=%u mode=%c ip=%u netmask=%u"
+                   " gateway=%u port=%hu");
+
+void
+command_eth_network_commit(uint32_t *args)
+{
+    int ret = nano_udp_network_commit(args[0]);
+    eth_network_reply(!!ret, ret ? 0 : 2);
+}
+DECL_COMMAND_FLAGS(command_eth_network_commit, HF_IN_SHUTDOWN,
+                   "eth_network_commit epoch=%u");
+
+void
+command_eth_network_abort(uint32_t *args)
+{
+    nano_udp_network_abort(args[0]);
+    eth_network_reply(0, 0);
+}
+DECL_COMMAND_FLAGS(command_eth_network_abort, HF_IN_SHUTDOWN,
+                   "eth_network_abort epoch=%u");
+
+void
+command_eth_network_get_status(uint32_t *args)
+{
+    (void)args;
+    eth_network_reply(0, 0);
+}
+DECL_COMMAND_FLAGS(command_eth_network_get_status, HF_IN_SHUTDOWN,
+                   "eth_network_get_status");
 
 void
 console_sendf(const struct command_encoder *ce, va_list args)

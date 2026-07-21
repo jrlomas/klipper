@@ -38,6 +38,7 @@ enum helix_gateway_control_opcode {
     HELIX_GATEWAY_CONTROL_STATUS = 3,
     HELIX_GATEWAY_CONTROL_TAKEOVER = 4,
     HELIX_GATEWAY_CONTROL_ACK = 5,
+    HELIX_GATEWAY_CONTROL_TIME_SYNC = 6,
 };
 
 enum helix_gateway_can_opcode {
@@ -119,6 +120,20 @@ struct helix_gateway_ack {
     uint32_t mask;
 };
 
+enum helix_gateway_time_action {
+    HELIX_GATEWAY_TIME_REQUEST = 0,
+    HELIX_GATEWAY_TIME_RESPONSE = 1,
+};
+
+struct helix_gateway_time_exchange {
+    uint8_t action;
+    uint8_t quality;
+    uint32_t epoch;
+    uint64_t t1;
+    uint64_t t2;
+    uint64_t t3;
+};
+
 int helix_gateway_packet_encode(uint8_t *out, uint32_t cap,
                                 const struct helix_gateway_packet *packet);
 int helix_gateway_packet_decode(struct helix_gateway_packet *packet,
@@ -147,5 +162,11 @@ int helix_gateway_ack_encode(uint8_t *out, uint32_t cap,
                              const struct helix_gateway_ack *ack);
 int helix_gateway_ack_decode(struct helix_gateway_ack *ack,
                              const uint8_t *data, uint32_t length);
+int helix_gateway_time_encode(
+    uint8_t *out, uint32_t cap,
+    const struct helix_gateway_time_exchange *exchange);
+int helix_gateway_time_decode(
+    struct helix_gateway_time_exchange *exchange,
+    const uint8_t *data, uint32_t length);
 
 #endif

@@ -4,6 +4,7 @@
 // Ethernet datagram console (FD-0001 doc 07).  See nano_udp.c.
 
 #include <stdint.h> // uint32_t
+#include "network_config.h"
 
 // Ethernet / protocol geometry
 #define NANO_ETH_HLEN 14
@@ -64,5 +65,19 @@ void nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
 // answered immediately (via emit); UDP datagrams to the listen port are
 // queued for the console (ops->recv) and wake it.
 void nano_udp_input(const uint8_t *frame, uint32_t len);
+
+// Poll DHCP and deferred network transactions from the MAC task.  now_ms is
+// a wrapping monotonic millisecond counter owned by the MAC backend.
+void nano_udp_poll(uint32_t now_ms);
+int nano_udp_network_prepare(uint32_t epoch,
+                             const struct helix_network_params *params);
+int nano_udp_network_commit(uint32_t epoch);
+void nano_udp_network_abort(uint32_t epoch);
+void nano_udp_network_get_status(struct helix_network_params *params,
+                                 uint32_t *epoch, uint32_t *generation,
+                                 uint8_t *dhcp_state, uint32_t *rejected,
+                                 uint32_t *dhcp_malformed,
+                                 uint32_t *dhcp_naks,
+                                 uint32_t *dhcp_retries);
 
 #endif // nano_udp.h

@@ -1,7 +1,8 @@
 # FD-0001: STM32F767 Ethernet Reference Board Plan
 
-Status: DMA/ADC and Ethernet IRQ foundation implemented and cross-built;
-NUCLEO-F767ZI hardware/network qualification pending board availability.
+Status: DMA/ADC, Ethernet IRQ, atomic network provisioning, bounded DHCP, and
+the four-timestamp wire/filter foundation are implemented and cross-built;
+NUCLEO-F767ZI PHY/PTP/network qualification is pending board availability.
 
 The unified DMA ownership, block-stream, ADC acquisition, and oversampling
 substrate is specified in
@@ -302,9 +303,15 @@ build.
 - [x] Implement RX, TX-complete, and abnormal-condition IRQ service plus the
   bounded task drain.
 - [x] Export ring high-water marks and complete DMA/MAC error counters.
-- [ ] Add bootstrap `printer.cfg` provisioning and atomic network handover.
-- [ ] Run ARP, authenticated UDP/session, FEC-off and FEC-on, reconnect, peer
-  rejection, malformed-frame, ring-exhaustion, and link-flap tests.
+- [x] Add bootstrap `printer.cfg` provisioning and atomic network handover.
+  `[helix_network]` uses prepare/commit/abort epochs; firmware defers the
+  committed address change until the reply can leave on the old session and
+  then clears that authenticated peer.
+- [x] Run workstation ARP/checksum, authenticated UDP/session, peer-rejection,
+  malformed-frame, bounded-ring, and deterministic loss/duplicate/reorder/
+  corruption tests.
+- [ ] Repeat FEC-off/FEC-on, reconnect, ring exhaustion, and link flap against
+  the physical PHY while solver/execution-log load is active.
 
 Gate: a one-hour bidirectional saturation run concurrent with maximum solver
 and execution-log load has no unexplained loss, starvation, memory corruption,
@@ -313,7 +320,12 @@ or ISR-budget violation. All induced drops appear in an accountable counter.
 ### Phase 4 - hardware time discipline
 
 - [ ] Enable the PTP timer and enhanced descriptor RX/TX timestamps.
-- [ ] Add authenticated four-timestamp exchanges and host NIC timestamping.
+- [x] Add the authenticated, cross-language four-timestamp record and the
+  host offset/path-delay/drift discipline with bounded holdover, epoch reset,
+  delay filtering, median/MAD outlier rejection, and simulated asymmetry,
+  reordering, outlier, and 25 ppm drift coverage.
+- [ ] Bind `t1`/`t4` to host NIC timestamps and `t2`/`t3` to enhanced MAC
+  descriptors. Simulated timestamp tests are not hardware timestamp evidence.
 - [ ] Characterize direct cable, switched link, idle, saturation, link flap,
   oscillator holdover, and simultaneous motion load.
 - [ ] Compare the full distribution against USB SOF and publish raw evidence.
@@ -323,12 +335,15 @@ is accepted merely because its IRQ arrived promptly.
 
 ### Phase 5 - DHCP and fleet behavior
 
-- [ ] Implement DHCP acquisition, renewal, rebinding, expiry, and static
+- [x] Implement DHCP acquisition, renewal, rebinding, expiry, NAK handling,
+  strict bounded option parsing, exponential retry, and 30-second static
   fallback/bootstrap behavior.
-- [ ] Key host inventory by board ID and survive address changes without
-  configuration identity churn.
-- [ ] Test multiple boards, reservation changes, server restart, duplicate
-  offers, malformed replies, lease expiry during motion, and network partition.
+- [x] Keep the host fabric inventory keyed by canonical board ID; address
+  changes clear the old reply peer without changing downstream identity.
+- [x] Unit-test offers, ACK, NAK, malformed replies, renewal, rebinding,
+  expiry, retry, fallback, and atomic configuration rollback.
+- [ ] Test multiple physical boards, reservation changes, DHCP-server restart,
+  duplicate offers, lease expiry during motion, and network partition.
 
 Gate: a fleet can reboot and re-address without manual reflashing, accidental
 cross-connection, or unsafe continuation on a stale authenticated peer.

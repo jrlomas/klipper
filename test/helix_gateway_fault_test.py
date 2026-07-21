@@ -81,6 +81,30 @@ def test_reset_marks_inflight_unknown():
     assert snap['residual'] == 0
 
 
+def test_queue_busoff_and_lost_event_contracts():
+    # Queue admission is bounded and fails before an untracked cookie enters
+    # the conservation identity.
+    bounded = DeliveryLedger(capacity=1)
+    bounded.update(Delivery(DELIVERY_ADMITTED, 10))
+    try:
+        bounded.update(Delivery(DELIVERY_ADMITTED, 11))
+    except GatewayProtocolError as exc:
+        assert 'full' in str(exc)
+    else:
+        raise AssertionError('delivery ledger exceeded its fixed capacity')
+    assert bounded.snapshot()['admitted'] == 1
+
+    # Bus-off and a missing Tx-event have the same fail-closed accounting
+    # result: completion is unknowable, so the frame is never blindly replayed.
+    for fault in ('bus_off', 'tx_event_lost'):
+        ledger = DeliveryLedger()
+        ledger.update(Delivery(DELIVERY_ADMITTED, 20))
+        ledger.update(Delivery(DELIVERY_SUBMITTED, 20))
+        assert ledger.mark_nonterminal_unknown() == [20], fault
+        snap = ledger.snapshot()
+        assert snap['unknown'] == 1 and snap['residual'] == 0, fault
+
+
 def test_loss_duplicate_reorder_and_credit_faults():
     seen = []
     runtime = Runtime(credits=8)
@@ -121,5 +145,6 @@ if __name__ == '__main__':
     test_ack_window_policy()
     test_delivery_conservation_randomized()
     test_reset_marks_inflight_unknown()
+    test_queue_busoff_and_lost_event_contracts()
     test_loss_duplicate_reorder_and_credit_faults()
     print('helix_gateway_fault_test: PASS')

@@ -94,7 +94,15 @@ for TEST in \
     test/flash_usb_test.py \
     test/helix_can_manager_test.py \
     test/helix_can_profile_test.py \
+    test/helix_fabric_test.py \
+    test/helix_gateway_fault_test.py \
+    test/helix_gateway_golden_test.py \
+    test/helix_gateway_loopback_test.py \
+    test/helix_gateway_native_fuzz_test.py \
     test/helix_gateway_test.py \
+    test/helix_network_test.py \
+    test/helix_time_discipline_test.py \
+    test/network_config_test.py \
     test/extruder_trajectory_test.py \
     test/failure_recovery_resume_test.py \
     test/pause_resume_recovery_test.py \
@@ -113,6 +121,7 @@ for TEST in \
     test/traj_pwm_map_test.py ; do
     ${PYTHON} ${TEST}
 done
+test/nano_udp/run.sh
 finish_test helix_host "Test Helix workstation host paths"
 
 for TARGET in test/helix-configs/*.config ; do

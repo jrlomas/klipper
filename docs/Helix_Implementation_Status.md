@@ -195,6 +195,19 @@ pass.
   downstream CAN identities, batches records, applies whole-packet admission,
   transactionally prepares/commits CAN profiles, and reports cookie-correlated
   `ADMITTED`, `SUBMITTED`, `COMPLETED`, `FAILED`, and `UNKNOWN` delivery states.
+  `CanFabricEndpoint` now gives Klippy one board-ID/profile/conservation owner
+  above either AF_CAN or authenticated UDP. Selective gateway ACKs retransmit
+  only idempotent control records; uncertain CAN/serial delivery becomes
+  `UNKNOWN` and is never blindly replayed. Golden USB fixtures, randomized
+  conservation, deterministic queue/bus-off/Tx-event/restart faults, a
+  200,000-mutation ASAN/UBSAN run, and a real localhost UDP campaign with
+  deliberate loss, corruption, duplication, and reordering pass without
+  duplicate actuation.
+  Native RMII additionally has epoch-based atomic `printer.cfg` provisioning
+  and a bounded DHCP client covering acquire/renew/rebind/expire/NAK/static
+  fallback. A cross-language four-timestamp record and host robust
+  offset/drift/holdover filter pass simulated path-asymmetry, outlier,
+  reordering, epoch, and 25 ppm drift tests; this is not PTP hardware evidence.
   F767 RMII/bxCAN, H723 RMII/FDCAN, G0B1 USB/FDCAN, and H723 USB/FDCAN images
   cross-build; the live `helixcan0` bridge remains error-active after more than
   2.1 million received frames with zero kernel-reported errors or drops. H723

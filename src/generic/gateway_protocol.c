@@ -32,6 +32,19 @@ wr32(uint8_t *p, uint32_t v)
     p[3] = v >> 24;
 }
 
+static uint64_t
+rd64(const uint8_t *p)
+{
+    return rd32(p) | (uint64_t)rd32(p + 4) << 32;
+}
+
+static void
+wr64(uint8_t *p, uint64_t v)
+{
+    wr32(p, v);
+    wr32(p + 4, v >> 32);
+}
+
 int
 helix_gateway_packet_encode(uint8_t *out, uint32_t cap,
                             const struct helix_gateway_packet *packet)
@@ -259,4 +272,46 @@ helix_gateway_ack_decode(struct helix_gateway_ack *ack,
     ack->sequence = rd32(data + 4);
     ack->mask = rd32(data + 8);
     return 12;
+}
+
+int
+helix_gateway_time_encode(
+    uint8_t *out, uint32_t cap,
+    const struct helix_gateway_time_exchange *exchange)
+{
+    if (!out || !exchange || cap < 32
+        || exchange->action > HELIX_GATEWAY_TIME_RESPONSE
+        || !exchange->epoch || !exchange->t1
+        || (exchange->action == HELIX_GATEWAY_TIME_REQUEST
+            && (exchange->t2 || exchange->t3))
+        || (exchange->action == HELIX_GATEWAY_TIME_RESPONSE
+            && (!exchange->t2 || exchange->t3 < exchange->t2)))
+        return -1;
+    out[0] = exchange->action;
+    out[1] = exchange->quality;
+    out[2] = out[3] = 0;
+    wr32(out + 4, exchange->epoch);
+    wr64(out + 8, exchange->t1);
+    wr64(out + 16, exchange->t2);
+    wr64(out + 24, exchange->t3);
+    return 32;
+}
+
+int
+helix_gateway_time_decode(
+    struct helix_gateway_time_exchange *exchange,
+    const uint8_t *data, uint32_t length)
+{
+    if (!exchange || !data || length != 32 || data[0] > 1
+        || data[2] || data[3])
+        return -1;
+    exchange->action = data[0];
+    exchange->quality = data[1];
+    exchange->epoch = rd32(data + 4);
+    exchange->t1 = rd64(data + 8);
+    exchange->t2 = rd64(data + 16);
+    exchange->t3 = rd64(data + 24);
+    uint8_t check[32];
+    return helix_gateway_time_encode(check, sizeof(check), exchange) < 0
+           ? -1 : 32;
 }

@@ -35,6 +35,7 @@ CONTROL_CREDIT = 2
 CONTROL_STATUS = 3
 CONTROL_TAKEOVER = 4
 CONTROL_ACK = 5
+CONTROL_TIME_SYNC = 6
 CAN_FRAME = 1
 CAN_CONFIG = 2
 CAN_STATUS = 3
@@ -55,6 +56,9 @@ SERIAL_STATUS = 3
 SERIAL_BREAK = 4
 
 ACK_FORMAT = struct.Struct('<III')
+TIME_SYNC_FORMAT = struct.Struct('<BBHIQQQ')
+TIME_SYNC_REQUEST = 0
+TIME_SYNC_RESPONSE = 1
 
 
 class GatewayProtocolError(ValueError):
@@ -264,6 +268,39 @@ class Ack:
             return False
         distance = (self.sequence - sequence) & 0xffffffff
         return distance < 32 and bool(self.mask & (1 << distance))
+
+
+@dataclasses.dataclass(frozen=True)
+class TimeExchange:
+    """Authenticated four-timestamp exchange before host receipt ``t4``."""
+    action: int
+    epoch: int
+    t1: int
+    t2: int = 0
+    t3: int = 0
+    quality: int = 0
+
+    def encode(self):
+        if (self.action not in (TIME_SYNC_REQUEST, TIME_SYNC_RESPONSE)
+                or not self.epoch or not self.t1 or not 0 <= self.quality < 256
+                or (self.action == TIME_SYNC_REQUEST and (self.t2 or self.t3))
+                or (self.action == TIME_SYNC_RESPONSE
+                    and (not self.t2 or self.t3 < self.t2))):
+            raise GatewayProtocolError('invalid time exchange')
+        return TIME_SYNC_FORMAT.pack(self.action, self.quality, 0,
+                                     self.epoch, self.t1, self.t2, self.t3)
+
+    @classmethod
+    def decode(cls, data):
+        if len(data) != TIME_SYNC_FORMAT.size:
+            raise GatewayProtocolError('invalid time exchange length')
+        action, quality, reserved, epoch, t1, t2, t3 = \
+            TIME_SYNC_FORMAT.unpack(data)
+        if reserved:
+            raise GatewayProtocolError('invalid time exchange reserved field')
+        value = cls(action, epoch, t1, t2, t3, quality)
+        value.encode()
+        return value
 
 
 class PacketWindow:

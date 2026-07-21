@@ -166,18 +166,23 @@ is split at one replaceable seam:
   H723 backend uses its four-word descriptor format, explicit ring lengths,
   absolute tail pointers, and a 16-byte descriptor stride instead of treating
   the H7 block as register-compatible with F4/F7.
-* `src/generic/nano_udp.c` is the **pluggable IP layer**: a minimal
-  single-socket UDP/IP/ARP responder (ARP replies so a host can find
+* `src/generic/nano_udp.c` is the **pluggable IP layer**: a bounded
+  single-socket UDP/IP/ARP/DHCP endpoint (ARP replies so a host can find
   us, validated IPv4 and UDP checksums and lengths, fragment rejection,
   destination filtering, and UDP demultiplexing to the console. Its
   one-slot receive queue commits the candidate return address atomically
   with the datagram, so a dropped packet cannot redirect an authenticated
-  reply. Swapping in lwIP remains possible by replacing the two seam calls.
+  reply. `nano_dhcp.c` supplies strict BOOTP/DHCP option encoding and parsing;
+  `network_config.c` owns prepare/commit/abort epochs and the bounded lease
+  state. Swapping in lwIP remains possible by replacing the two seam calls.
 
-The small IP layer intentionally has no DHCP, gateway, VLAN, ICMP, TCP, or
-fragment reassembly. Configure a static address and place the host bridge on
-the same layer-2 subnet. A broader network stack is outside this deterministic
-single-socket console's scope.
+The small IP layer supports static IPv4 plus DHCP acquisition, renewal,
+rebinding, expiry, NAK, and a 30-second static fallback. It intentionally has
+no DNS resolver, VLAN, ICMP, TCP, or fragment reassembly. The configured
+gateway is retained as lease/configuration data; this endpoint still relies on
+same-subnet Ethernet delivery until ARP routing support is added. A broader
+network stack remains outside this deterministic single-socket console's
+scope.
 
 `eth_mac_get_status` reports link/ready state, RX/TX frames, RX-ring overruns,
 fatal DMA errors, ready-queue high-water, and shared pool size/use. The H723
@@ -197,7 +202,10 @@ beside it. The generated configuration contains:
 CONFIG_STM32_ETHERNET_RMII=y
 CONFIG_RMII_PSK="your-pre-shared-key"
 CONFIG_RMII_IP=0xC0A800FE
+CONFIG_RMII_NETMASK=0xFFFFFF00
+CONFIG_RMII_GATEWAY=0
 CONFIG_RMII_UDP_PORT=1234
+CONFIG_RMII_DHCP=y               # bounded DHCP; static fallback after 30 s
 CONFIG_RMII_PHY_ADDR=0
 CONFIG_RMII_PHY_RESET_PIN=-1     # or an encoded GPIO number
 CONFIG_RMII_REF_CLK_PIN=1        # PA1; pins use (port-'A')*16 + number
@@ -219,6 +227,32 @@ before flashing. An empty PSK fails closed unless
 `CONFIG_RMII_FEC_PAIR=y` enables pair parity, although switched Ethernet
 normally should leave it off.
 
+### Atomic runtime provisioning
+
+When a bootstrap MCU connection exists, Klippy can stage and commit native
+Ethernet configuration from `printer.cfg`:
+
+```
+[helix_network gateway]
+mcu: ethernet_bridge
+mode: dhcp
+ip: 192.168.0.254
+netmask: 255.255.255.0
+gateway: 192.168.0.1
+port: 41415
+apply_on_ready: false
+```
+
+`ip`, `netmask`, and `gateway` are the static fallback when `mode: dhcp` is
+selected. `HELIX_NETWORK_APPLY NETWORK=gateway` validates and prepares the
+complete tuple under a fresh epoch, commits it, lets the commit response leave
+on the old address, then changes address and clears the authenticated reply
+peer. `HELIX_NETWORK_STATUS NETWORK=gateway` reports the versioned generation,
+epoch, active mode, lease state, rejected transaction count, malformed DHCP
+replies, NAKs, and current retry count;
+`HELIX_NETWORK_ABORT` discards staged state. `apply_on_ready` should only be
+enabled when the MCU remains reachable over a separate bootstrap transport.
+
 ### Workstation evidence
 
 Persistent CI configurations cover the F4/F7 native-RMII family, the F767
@@ -237,8 +271,9 @@ These configurations are included automatically by `scripts/ci-build.sh`.
 The compile-qualified `stm32h723-nucleo-ethernet-canfd-gateway.config` image
 uses the Nucleo LAN8742A RMII route, an authenticated HostSession, FDCAN at a
 1 Mbit/s nominal / 8 Mbit/s data ceiling, and a single 16 KiB non-cacheable
-DMA arena at `0x24000000`. Its workstation build is 101,538 bytes of text,
-64 bytes of data, and 64,904 bytes of BSS (including the separately located
+DMA arena at `0x24000000`. The 2026-07-21 DHCP/atomic-provisioning build is
+104,770 bytes of text, 64 bytes of data, and 65,032 bytes of BSS (including
+the separately located
 16 KiB DMA section). These are compiler, linker, MPU-layout, and RAM-fit facts;
 the PHY, Click-board pin route, MAC timestamps, and sustained traffic remain
 physical gates.
@@ -278,6 +313,10 @@ the physical NUCLEO/PHY remains a live hardware gate.
 They establish configuration, compiler, linker, and flash/RAM-fit evidence;
 they do not establish electrical behavior or packet flow on a real PHY.
 
+The separate `stm32f767-nucleo-ethernet-can-gateway.config` image, including
+the same DHCP/configuration core and typed Classical-CAN gateway, cross-builds
+at 101,970 bytes of text, 64 bytes of data, and 64,512 bytes of BSS.
+
 ### Testing nano-UDP on the host
 
 ```
@@ -287,7 +326,9 @@ test/nano_udp/run.sh
 This runs the pure framing vectors plus the stateful socket-adapter test. The
 suite checks Internet, IPv4, and UDP checksums; ARP/UDP framing; malformed
 length and fragment rejection; destination filtering; and candidate-peer
-stability while the receive slot is occupied.
+stability while the receive slot is occupied. `test/network_config_test.py`
+adds atomic configuration rollback, DHCP retry/fallback, offer/ACK/NAK,
+renewal/rebinding/expiry, and malformed-option coverage.
 
 ## Files
 
@@ -295,6 +336,9 @@ stability while the receive slot is occupied.
 | --- | --- |
 | `src/generic/w5500.c` / `.h` | W5500 SPI Ethernet transport + `config_w5500` |
 | `src/generic/nano_udp.c` / `.h` | minimal UDP/IP/ARP responder (RMII IP layer) |
+| `src/generic/nano_dhcp.c` / `.h` | bounded DHCPv4 codec |
+| `src/generic/network_config.c` / `.h` | atomic network transaction and DHCP lease state |
+| `klippy/extras/helix_network.py` | `printer.cfg` network provisioning and G-code status |
 | `src/stm32/eth_mac.c` | STM32F4/F7 RMII MAC/DMA console + lwIP/nano-UDP seam |
 | `src/stm32/eth_mac_h7.c` | STM32H723 four-word-ring RMII MAC/DMA gateway backend |
 | `src/stm32/usbotg.c` | USB-OTG backend; H723 HS-core builds include independent composite gateway control endpoints |

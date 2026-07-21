@@ -528,10 +528,12 @@ diagnoses or incidents.
 
 ### Phase 0 — freeze behavior and fixtures
 
-- [ ] Capture USB descriptors, control transactions, representative CAN
+- [x] Capture USB descriptors, control transactions, representative CAN
   traffic, status output, and Linux interface behavior as golden fixtures.
-- [ ] Add bidirectional conservation tests around the current USB bridge.
-- [ ] Add queue-full, bus-off, restart, and Tx-event-loss fixtures.
+- [x] Add bidirectional conservation tests around the current USB bridge.
+- [x] Add deterministic queue-full, bus-off, restart, and Tx-event-loss
+  fixtures. These close the workstation contract; physical fault injection
+  remains in Phase 6.
 
 ### Phase 1 — extract the common core
 
@@ -549,11 +551,12 @@ diagnoses or incidents.
 
 - [x] Add a deployable authenticated UDP gateway proxy with typed SocketCAN
   and serial endpoints, preserving real downstream CAN identities.
-- [ ] Add `CanFabricEndpoint` directly to the Klippy bus owner.
-- [ ] Move common identity/profile/conservation logic out of USB-specific
+- [x] Add `CanFabricEndpoint` directly to the Klippy bus owner.
+- [x] Move common identity/profile/conservation logic out of USB-specific
   branches in `helix_can.py`.
-- [ ] Add versioned common status and Atlas ingestion.
-- [ ] Keep AF_CAN as the USB backend and existing configuration default.
+- [x] Add versioned common status and Atlas ingestion. Routine status remains
+  informational; only a gateway incident enters the diagnostic path.
+- [x] Keep AF_CAN as the USB backend and existing configuration default.
 
 ### Phase 3 — Ethernet gateway protocol
 
@@ -564,7 +567,7 @@ diagnoses or incidents.
 - [x] Implement bounded multi-record batching, credits, transactional CAN
   profiles, and `ADMITTED`/`SUBMITTED`/`COMPLETED`/`FAILED`/`UNKNOWN`
   delivery records.
-- [ ] Add explicit gateway-datagram acknowledgement/retransmit policy; do not
+- [x] Add explicit gateway-datagram acknowledgement/retransmit policy; do not
   conflate it with upper HELIX command ARQ or blindly replay uncertain CAN.
 - [x] Implement bounded per-service credits and whole-packet validation before
   dispatch.
@@ -573,7 +576,7 @@ diagnoses or incidents.
   and binary golden vectors.
 - [x] Exercise deterministic malformed-packet mutations, wraparound, duplicate
   sequences, whole-packet atomic validation, and authentication failures.
-- [ ] Add a coverage-guided native fuzzer for duplicate transactional controls
+- [x] Add a coverage-guided native fuzzer for duplicate transactional controls
   and long reorder/loss traces.
 
 ### Phase 4 — F767 Ethernet proof
@@ -611,20 +614,35 @@ diagnoses or incidents.
 
 ### Phase 6 — fault and saturation qualification
 
+The workstation fault model is complete, but checkboxes which explicitly
+require a PHY, real CAN error state, motion, or sustained line-rate traffic
+remain open until the Ethernet board arrives.
+
 - [ ] Saturate Ethernet-to-CAN and prove credit-bounded memory use.
 - [ ] Saturate CAN-to-Ethernet and prove exact conservation.
-- [ ] Inject UDP loss, duplicate, reorder, and corruption.
+- [x] Inject UDP loss, duplicate, reorder, and corruption over a real localhost
+  UDP socket; authenticated corruption is rejected and no accepted record is
+  actuated twice.
 - [ ] Disconnect/reconnect Ethernet during idle and scheduled work.
-- [ ] Reset the gateway with frames in every delivery state.
+- [x] Reset the gateway model with frames in every delivery state and account
+  every nonterminal frame as `UNKNOWN`, never automatic replay.
 - [ ] Inject CAN warning, passive, bus-off, and recovery.
-- [ ] Verify profile rollback and universal Classical recovery.
-- [ ] Verify unauthorized and second-writer rejection.
+- [x] Verify profile rollback and universal Classical recovery at prepare,
+  commit, Linux-netdevice, and enable boundaries. A node which fails while
+  preparing is included in the abort set because it may already have staged
+  state.
+- [x] Verify unauthorized and second-writer rejection through authenticated
+  peer latching, HostSession identity, replay epochs, and forged-source tests.
+- [x] Simulate four-timestamp convergence, asymmetric delay, reorder, outliers,
+  epoch reset, holdover expiry, and oscillator drift. The physical PTP-to-CAN
+  accuracy gate below remains open.
 - [ ] Measure Ethernet/PTP-to-CAN time-transfer accuracy under load.
 - [ ] Complete a long physical print over the Ethernet gateway.
 
 ### Phase 7 — optional Linux projection and redundancy
 
-- [ ] Add a diagnostic `vcan` mirror if it materially improves tooling.
+- [x] Add an optional `vcan`/real-UDP diagnostic lab; it is a test projection,
+  not a second production ownership path.
 - [ ] Decide from measured operational needs whether a kernel netdevice driver
   is warranted for exact rtnetlink semantics.
 - [ ] Qualify read-only observers, lease expiry, planned takeover, and

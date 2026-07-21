@@ -1063,9 +1063,23 @@ Phases 3/7/8 over each real transport.
   jitter; `bch`/erasure counters show recovery, not failure.
 - [ ] **9.4 — Ethernet (RMII).** Same as 9.3 over Ethernet.
   Pass: clean; lower jitter than WiFi (record both).
+  - [x] **Pre-silicon gateway gate (2026-07-21):** the identical typed gateway
+    core cross-builds in F767 RMII/bxCAN and H723 RMII/FDCAN images. Golden USB
+    descriptors/status/SocketCAN behavior, cross-language wire vectors,
+    atomic network prepare/commit/abort, bounded DHCP lease transitions,
+    canonical board identity, selective ACK/no-blind-CAN-replay, randomized
+    delivery conservation, deterministic restart/bus-off/Tx-event/queue
+    faults, and 200,000 native ASAN/UBSAN mutations pass. This does not check
+    the physical PHY, MAC timestamps, link flap, or line-rate saturation.
 - [ ] **9.5 — Datagram loss tolerance.** Inject packet loss on 9.3/9.4.
   Pass: FEC + retransmit hide it up to the documented loss rate; beyond
   that it degrades to a clean pause, never a crash.
+  - [x] **Gateway data-integrity gate:** a real localhost UDP campaign injects
+    deterministic loss, duplication, reordering, and authenticated corruption.
+    Corrupt datagrams fail authentication, accepted records never actuate
+    twice, idempotent controls have bounded retry, and uncertain CAN/serial
+    packets become `UNKNOWN`. Motion pause/recovery over a physical Ethernet
+    link remains part of the unchecked parent gate.
 - [ ] **9.6 — Mixed fleet: firehose + intent time agreement.** On a machine
   with at least one **stock-Klipper (firehose) board** and one **HELIX
   intent board** driving *independent* actuators (regime 1 of

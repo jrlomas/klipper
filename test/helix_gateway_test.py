@@ -79,6 +79,10 @@ def test_control_records():
     assert ack.contains(0x10203040, 17)
     assert ack.contains(0x10203040, 13)
     assert not ack.contains(0x10203040, 12)
+    request = TimeExchange(TIME_SYNC_REQUEST, 8, 123)
+    response = TimeExchange(TIME_SYNC_RESPONSE, 8, 123, 456, 460, 2)
+    assert TimeExchange.decode(request.encode()) == request
+    assert TimeExchange.decode(response.encode()) == response
 
 
 def test_runtime():
@@ -198,6 +202,12 @@ int main(void) {
   assert(ack2.epoch == 9 && ack2.sequence == 8 && ack2.mask == 3);
   assert(!helix_gateway_runtime_get_ack(&rt, &ack2));
   assert(ack2.epoch == 0x10203040 && ack2.sequence == 5);
+  struct helix_gateway_time_exchange te = {
+    HELIX_GATEWAY_TIME_RESPONSE, 2, 7, 100, 130, 140}, te2;
+  uint8_t tewire[32];
+  assert(helix_gateway_time_encode(tewire, sizeof(tewire), &te) == 32);
+  assert(helix_gateway_time_decode(&te2, tewire, sizeof(tewire)) == 32);
+  assert(te2.epoch == 7 && te2.t1 == 100 && te2.t3 == 140);
   return 0;
 }
 '''

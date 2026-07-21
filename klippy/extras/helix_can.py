@@ -417,8 +417,10 @@ class HelixCANBus:
         try:
             self.state = 'preparing'
             for conn in self.connections:
-                conn.prepare_can_profile(profile, epoch)
                 prepared.append(conn)
+                # Include the current node in rollback even when its prepare
+                # RPC fails after staging state on the MCU.
+                conn.prepare_can_profile(profile, epoch)
             for conn in prepared:
                 conn.commit_can_profile(profile, epoch)
             self._manager_apply(selected)

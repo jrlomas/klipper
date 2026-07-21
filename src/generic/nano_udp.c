@@ -24,6 +24,7 @@
 
 #include <string.h> // memcpy
 #include "nano_udp.h" // nano_udp_input
+#include "nano_dhcp.h"
 
 #define ETH_TYPE_ARP  0x0806
 #define ETH_TYPE_IPV4 0x0800
@@ -160,11 +161,12 @@ nano_udp_build_frame(uint8_t *out, uint32_t out_cap
     return total;
 }
 
-int
-nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
-               , uint16_t our_port, const uint8_t **payload
-               , uint32_t *payload_len, uint8_t peer_mac[6]
-               , uint32_t *peer_ip, uint16_t *peer_port)
+static int
+nano_udp_parse_inner(const uint8_t *frame, uint32_t len, uint32_t our_ip,
+                     uint16_t our_port, uint8_t any_ip,
+                     const uint8_t **payload, uint32_t *payload_len,
+                     uint8_t peer_mac[6], uint32_t *peer_ip,
+                     uint16_t *peer_port)
 {
     if (len < NANO_UDP_OVERHEAD)
         return 0;
@@ -178,7 +180,7 @@ nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
         return 0;
     if (ip[9] != IP_PROTO_UDP)
         return 0;
-    if (rd_be32(ip + 16) != our_ip)
+    if (!any_ip && rd_be32(ip + 16) != our_ip)
         return 0;
     if (nano_ip_checksum(ip, ihl, 0) != 0)
         return 0; // includes the stored checksum -> must fold to zero
@@ -220,17 +222,38 @@ nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
     return 1;
 }
 
+int
+nano_udp_parse(const uint8_t *frame, uint32_t len, uint32_t our_ip
+               , uint16_t our_port, const uint8_t **payload
+               , uint32_t *payload_len, uint8_t peer_mac[6]
+               , uint32_t *peer_ip, uint16_t *peer_port)
+{
+    return nano_udp_parse_inner(frame, len, our_ip, our_port, 0, payload,
+                                payload_len, peer_mac, peer_ip, peer_port);
+}
+
 /****************************************************************
  * Stateful console glue
  ****************************************************************/
 #ifndef NANO_UDP_TEST
 
+#ifdef NANO_UDP_HOST_TEST
+#define CONFIG_RMII_NETMASK 0xffffff00u
+#define CONFIG_RMII_GATEWAY 0
+#define CONFIG_RMII_DHCP 0
+#else
+#include "autoconf.h" // CONFIG_RMII_*
+#endif
 #include "generic/udp_console.h" // udp_console_ops, udp_console_note_rx
 #include "generic/udp_datagram.h" // UDPDG_DATAGRAM_MAX
 
 static uint8_t our_mac[6];
 static uint32_t our_ip;
 static uint16_t our_port;
+static struct helix_network_config network_config;
+static struct helix_dhcp_client dhcp_client;
+static uint32_t network_now_ms;
+static uint8_t network_apply_delay;
 static int (*mac_emit)(const uint8_t *frame, uint32_t len);
 static void (*rx_notify)(void);
 
@@ -246,6 +269,15 @@ static uint8_t rx_payload[UDPDG_DATAGRAM_MAX];
 static uint32_t rx_len;
 static uint8_t rx_full;
 
+static void
+nano_apply_network(const struct helix_network_params *params)
+{
+    our_ip = params->ip;
+    our_port = params->port;
+    have_peer = rx_full = 0;
+    rx_len = 0;
+}
+
 void
 nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
                , int (*emit)(const uint8_t *frame, uint32_t len)
@@ -256,6 +288,65 @@ nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
     our_port = listen_port;
     mac_emit = emit;
     rx_notify = notify_rx;
+    struct helix_network_params initial = {
+        .mode = HELIX_NETWORK_STATIC, .ip = ip,
+#ifdef CONFIG_RMII_NETMASK
+        .netmask = CONFIG_RMII_NETMASK,
+        .gateway = CONFIG_RMII_GATEWAY,
+#else
+        .netmask = 0xffffff00u, .gateway = 0,
+#endif
+        .port = listen_port,
+    };
+    helix_network_config_init(&network_config, &initial);
+#if CONFIG_RMII_DHCP
+    struct helix_network_params dhcp = initial;
+    dhcp.mode = HELIX_NETWORK_DHCP;
+    helix_dhcp_start(&dhcp_client, 0, 0x48444d50u, &initial);
+    network_config.active = dhcp;
+    nano_apply_network(&dhcp);
+#endif
+}
+
+static int
+nano_handle_dhcp(const uint8_t *frame, uint32_t len)
+{
+    if (dhcp_client.state == HELIX_DHCP_DISABLED)
+        return 0;
+    const uint8_t *payload;
+    uint32_t plen, src_ip;
+    uint16_t src_port;
+    if (!nano_udp_parse_inner(frame, len, 0, NANO_DHCP_CLIENT_PORT, 1,
+                              &payload, &plen, NULL, &src_ip, &src_port)
+        || src_port != NANO_DHCP_SERVER_PORT)
+        return 0;
+    struct nano_dhcp_message message;
+    if (nano_dhcp_parse(&message, payload, plen, our_mac, dhcp_client.xid)) {
+        dhcp_client.malformed++;
+        return 1;
+    }
+    if (message.type == NANO_DHCP_OFFER)
+        helix_dhcp_offer(&dhcp_client, message.xid, message.yiaddr,
+                         message.lease.server, network_now_ms);
+    else if (message.type == NANO_DHCP_ACK) {
+        if (!helix_dhcp_ack(&dhcp_client, message.xid, &message.lease,
+                            network_now_ms)) {
+            struct helix_network_params params = {
+                .mode = HELIX_NETWORK_DHCP, .ip = message.lease.ip,
+                .netmask = message.lease.netmask,
+                .gateway = message.lease.gateway,
+                .port = network_config.active.port,
+            };
+            network_config.active = params;
+            network_config.generation++;
+            nano_apply_network(&params);
+        }
+    } else if (message.type == NANO_DHCP_NAK) {
+        helix_dhcp_nak(&dhcp_client, message.xid, network_now_ms);
+        our_ip = 0;
+        have_peer = 0;
+    }
+    return 1;
 }
 
 void
@@ -285,7 +376,14 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     }
     if (ethertype != ETH_TYPE_IPV4)
         return;
-    if (memcmp(frame, our_mac, 6))
+    static const uint8_t broadcast[6] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    if (memcmp(frame, our_mac, 6) && memcmp(frame, broadcast, 6))
+        return;
+    if (nano_handle_dhcp(frame, len))
+        return;
+    if (memcmp(frame, our_mac, 6) || !our_ip)
         return;
     const uint8_t *payload;
     uint32_t plen;
@@ -383,5 +481,123 @@ const struct udp_console_ops nano_udp_ops = {
     .send_candidate = nano_send_candidate,
     .rx_accepted = nano_rx_accepted,
 };
+
+int
+nano_udp_network_prepare(uint32_t epoch,
+                         const struct helix_network_params *params)
+{
+    return helix_network_prepare(&network_config, epoch, params);
+}
+
+int
+nano_udp_network_commit(uint32_t epoch)
+{
+    int ret = helix_network_commit(&network_config, epoch);
+    if (!ret)
+        // Preserve the old authenticated path long enough to flush the commit
+        // response before changing source address and clearing the peer.
+        network_apply_delay = 2;
+    return ret;
+}
+
+void
+nano_udp_network_abort(uint32_t epoch)
+{
+    helix_network_abort(&network_config, epoch);
+}
+
+void
+nano_udp_network_get_status(struct helix_network_params *params,
+                            uint32_t *epoch, uint32_t *generation,
+                            uint8_t *dhcp_state, uint32_t *rejected,
+                            uint32_t *dhcp_malformed, uint32_t *dhcp_naks,
+                            uint32_t *dhcp_retries)
+{
+    if (params)
+        *params = network_config.active;
+    if (epoch)
+        *epoch = network_config.active_epoch;
+    if (generation)
+        *generation = network_config.generation;
+    if (dhcp_state)
+        *dhcp_state = dhcp_client.state;
+    if (rejected)
+        *rejected = network_config.rejected;
+    if (dhcp_malformed)
+        *dhcp_malformed = dhcp_client.malformed;
+    if (dhcp_naks)
+        *dhcp_naks = dhcp_client.naks;
+    if (dhcp_retries)
+        *dhcp_retries = dhcp_client.retries;
+}
+
+static void
+nano_send_dhcp(uint8_t action)
+{
+    uint8_t type = action == HELIX_DHCP_ACTION_DISCOVER
+                   ? NANO_DHCP_DISCOVER : NANO_DHCP_REQUEST;
+    uint32_t requested = dhcp_client.offered_ip;
+    if (action == HELIX_DHCP_ACTION_RENEW
+        || action == HELIX_DHCP_ACTION_REBIND)
+        requested = dhcp_client.lease.ip;
+    uint32_t server = action == HELIX_DHCP_ACTION_REBIND
+                      ? 0 : (dhcp_client.offered_server
+                             ? dhcp_client.offered_server
+                             : dhcp_client.lease.server);
+    uint8_t payload[320];
+    uint32_t plen = nano_dhcp_build(payload, sizeof(payload), our_mac, type,
+                                     dhcp_client.xid, requested, server);
+    if (!plen || !mac_emit)
+        return;
+    static const uint8_t broadcast[6] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    uint8_t frame[NANO_UDP_OVERHEAD + sizeof(payload)];
+    uint32_t flen = nano_udp_build_frame(
+        frame, sizeof(frame), our_mac, broadcast,
+        action == HELIX_DHCP_ACTION_RENEW ? our_ip : 0,
+        0xffffffffu, NANO_DHCP_CLIENT_PORT, NANO_DHCP_SERVER_PORT,
+        payload, plen);
+    if (flen)
+        mac_emit(frame, flen);
+}
+
+void
+nano_udp_poll(uint32_t now_ms)
+{
+    network_now_ms = now_ms;
+    if (network_apply_delay && !--network_apply_delay) {
+        struct helix_network_params params;
+        if (helix_network_take_apply(&network_config, &params, NULL)) {
+            if (params.mode == HELIX_NETWORK_DHCP) {
+                struct helix_network_params fallback = params;
+                fallback.mode = HELIX_NETWORK_STATIC;
+                if (!helix_network_params_valid(&fallback))
+                    fallback = dhcp_client.fallback;
+                helix_dhcp_start(&dhcp_client, now_ms,
+                                 0x48444d50u ^ network_config.active_epoch,
+                                 &fallback);
+                params.ip = 0;
+            } else {
+                memset(&dhcp_client, 0, sizeof(dhcp_client));
+            }
+            nano_apply_network(&params);
+        }
+    }
+    uint8_t action = helix_dhcp_poll(&dhcp_client, now_ms);
+    if (action == HELIX_DHCP_ACTION_DISCOVER
+        || action == HELIX_DHCP_ACTION_REQUEST
+        || action == HELIX_DHCP_ACTION_RENEW
+        || action == HELIX_DHCP_ACTION_REBIND)
+        nano_send_dhcp(action);
+    else if (action == HELIX_DHCP_ACTION_EXPIRE) {
+        our_ip = 0;
+        have_peer = 0;
+    } else if (action == HELIX_DHCP_ACTION_FALLBACK) {
+        network_config.active = dhcp_client.fallback;
+        network_config.generation++;
+        nano_apply_network(&dhcp_client.fallback);
+    }
+}
 
 #endif // !NANO_UDP_TEST

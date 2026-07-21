@@ -8,7 +8,8 @@ trap 'rm -rf "$OUT"' EXIT
 $CC -DNANO_UDP_TEST -Wall -Wextra -Isrc -Isrc/generic \
     test/nano_udp/nano_udp_test.c src/generic/nano_udp.c -o "$OUT/nano_udp_test"
 "$OUT/nano_udp_test"
-$CC -Wall -Wextra -Isrc -Isrc/generic \
+$CC -DNANO_UDP_HOST_TEST -Wall -Wextra -Isrc -Isrc/generic \
     test/nano_udp/nano_udp_state_test.c src/generic/nano_udp.c \
+    src/generic/nano_dhcp.c src/generic/network_config.c \
     -o "$OUT/nano_udp_state_test"
 "$OUT/nano_udp_state_test"
