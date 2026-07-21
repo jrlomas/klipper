@@ -12,7 +12,10 @@ Klipper host integration, and hardware-timestamped transfer of machine time
 from USB Start-of-Frame (SOF) to downstream CAN boards. It extends the general
 link architecture in [07-Link_Transport.md](07-Link_Transport.md), the machine
 time model in [01-Time_Model.md](01-Time_Model.md), and the mixed-fleet rules in
-[14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md).
+[14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md). The extraction of
+this USB implementation into a transport-neutral gateway core, and its native
+Ethernet frontend, are specified in
+[19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md).
 
 ## Decisions fixed by this document
 

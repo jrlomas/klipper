@@ -47,16 +47,17 @@ status line records its more precise state.
 | [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md) | NUCLEO-F767ZI native Ethernet, cache-safe DMA, IRQ service, hardware timestamping, DHCP, and ADC streaming | Adopted plan; implementation and board qualification pending |
 | [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Workstation implementation complete; F072/H723/RP2040/ESP32 live gates and RP2040 consumer/restart migration pass; remaining target/waveform/contention fixtures are explicit |
 | [18-Autonomous_Heater_Control.md](18-Autonomous_Heater_Control.md) | Host-configured MCU PID and predictive thermal control, guarded characterization, local safety, and host-loss continuity | PID physically qualified; predictive controller implemented and workstation-tested, with paired physical gates remaining |
+| [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One CAN gateway core with USB and Ethernet host links, transport-independent time sources, exact delivery accounting, and Ethernet-to-CAN-FD qualification | Adopted architecture; core extraction and Ethernet gateway implementation pending |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 11 → 13 → 12
-* *Host / klippy*: 02 → 05 → 10 → 17 → 18 → 15 → 16 → 08 → 06
+* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
+* *Host / klippy*: 02 → 05 → 10 → 17 → 18 → 15 → 16 → 19 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 02 (underrun) → 03
-* *Third-party device vendor*: 10 → 02 → 03 → 17 → 07 → 15 → 16 → 11
+* *Third-party device vendor*: 10 → 02 → 03 → 17 → 07 → 15 → 16 → 19 → 11
 
 ## Glossary
 

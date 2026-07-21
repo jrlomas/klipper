@@ -174,6 +174,7 @@ nav:
       - founding/0001-motion-intentions/16-STM32F767_Ethernet.md
       - founding/0001-motion-intentions/17-DMA_ADC_Acquisition.md
       - founding/0001-motion-intentions/18-Autonomous_Heater_Control.md
+      - founding/0001-motion-intentions/19-Unified_CAN_Gateway.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
       - founding/0002-companion-system/00-Vision.md

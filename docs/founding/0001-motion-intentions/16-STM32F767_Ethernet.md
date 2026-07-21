@@ -19,6 +19,9 @@ controllers, not FDCAN. CAN FD/BRS remains qualified on separate STM32G0/H7
 targets and joins this board through HELIX's heterogeneous-fleet model
 ([14-Heterogeneous_Fleets.md](14-Heterogeneous_Fleets.md)). There is no reason
 to weaken the Ethernet design to make one evaluation board cover both jobs.
+The common USB/Ethernet CAN gateway architecture and the separate integrated
+H735 qualification target are defined in
+[19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md).
 
 ## Why this board
 
