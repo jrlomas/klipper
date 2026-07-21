@@ -142,6 +142,8 @@ for TARGET in test/helix-configs/*.config ; do
             HELIX_REQUIRE_LIVE=1 ${PYTHON} test/datagram_session_live_test.py
             ;;
     esac
+    cp out/klipper.dict \
+        ${DICTDIR}/helix-$(basename ${TARGET} .config).dict
     finish_test helix_live "$TARGET"
 done
 

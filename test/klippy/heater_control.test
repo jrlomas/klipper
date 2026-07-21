@@ -1,5 +1,5 @@
 # Host configuration and command-encoding regression for MCU-local PID.
-DICTIONARY klipper.dict
+DICTIONARY helix-rp2040-skr-pico-adc.dict
 CONFIG heater_control.cfg
 
 M140 S60
