@@ -1164,6 +1164,13 @@ Phases 3/7/8 over each real transport.
   bootloader+app image; perform an over-the-wire update.
   Pass: update applies, verifies, boots; a failed/interrupted update
   leaves a recoverable board.
+  - [ ] **ESP32 A/B hardware follow-up (2026-07-23):** Rodent booted a
+    hash-verified full ROM-serial install of version `68c52227` with the
+    two-OTA table, but authenticated in-band `flash_begin` did not return from
+    `esp_ota_begin()` within 90 seconds while the WiFi/core-0 side remained
+    pingable. Move the flash operation onto an IDF-safe core-0 worker or
+    otherwise resolve the flash-IPC deadlock, then verify complete,
+    interrupted, and retry transfers before closing this gate.
 
 ---
 

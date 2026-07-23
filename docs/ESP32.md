@@ -112,8 +112,10 @@ maximum radio range:
 
 * Modem sleep is disabled with `esp_wifi_set_ps(WIFI_PS_NONE)` (the ESP-IDF
   equivalent of Arduino's `WiFi.setSleep(false)`).
-* The Rodent profile caps transmit power at 8.5 dBm. The Kconfig value is in
-  quarter-dBm units, so `CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34`. This is
+* The Rodent profile requests a maximum transmit power of 8.5 dBm. The Kconfig
+  value is in quarter-dBm units, so
+  `CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34`. The classic ESP32's supported
+  power table quantizes that request to an observed 8.0 dBm. This is
   appropriate for the lab board next to its access point and reduces current
   transients; other installations must qualify their own link budget.
 * The UDP receive task runs at FreeRTOS priority 17, immediately below lwIP's
@@ -722,6 +724,17 @@ table needs one final ROM-serial migration that writes the bootloader,
 partition table, blank OTA-data page, and factory app. Its NVS partition can
 be preserved, after which normal application updates use the authenticated
 in-band A/B path.
+
+**Physical qualification note (2026-07-23):** the Rodent V1.1 successfully
+accepted and hash-verified a complete ROM-serial write of the bootloader,
+two-OTA partition table, OTA metadata, and 837,984-byte application, then
+booted version `68c52227`. The same image did **not** complete an in-band
+update: `flash_begin` entered `esp_ota_begin()` but produced no
+`flash_result` within 90 seconds while core 0 remained pingable. Therefore
+the ESP32 in-band A/B implementation is not hardware-qualified and must not
+yet be used as the sole field-update path. The likely core-affinity/flash-IPC
+deadlock requires its own correction and interrupted-update test; USB-UART
+ROM flashing remains the verified recovery path.
 
 This builds the (default) component architecture; for the modem
 architecture see

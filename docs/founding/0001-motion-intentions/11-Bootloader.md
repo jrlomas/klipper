@@ -90,7 +90,14 @@ the command dictionary still advertises the in-band flash ABI, but
 one final ROM-serial migration of bootloader, partition table, blank OTA-data,
 and factory app; preserve NVS so network credentials and the PSK survive.
 Every application update after that migration uses the normal authenticated
-in-band A/B flow.
+in-band A/B flow in the architecture. Hardware qualification remains open:
+on 2026-07-23 a Rodent V1.1 booted a complete, hash-verified ROM-serial
+factory/two-OTA install, but an authenticated application-side
+`flash_begin` remained inside `esp_ota_begin()` beyond the 90-second host
+bound while the WiFi/core-0 side remained pingable. Until the likely
+core-affinity/flash-IPC deadlock is corrected and interrupted-update recovery
+is exercised, USB-UART ROM flashing is the verified ESP32 recovery path and
+the in-band path must not be the only field-update mechanism.
 
 ## Signed images
 
