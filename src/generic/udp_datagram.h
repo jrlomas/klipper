@@ -11,9 +11,14 @@
 #define UDPDG_TAG 8
 #define UDPDG_OVERHEAD (UDPDG_HEADER + UDPDG_TAG)
 #define UDPDG_FRAMES_MAX (UDPDG_DATAGRAM_MAX - UDPDG_OVERHEAD)
+#define UDPDG_SESSION_ID_MAX 24
 
 struct udpdg_stats {
     uint32_t rx_lost, rx_reordered, rx_auth_failures;
+};
+struct udpsess_stats {
+    uint32_t tx_epoch, tx_seq, rx_epoch, rx_window_top;
+    uint32_t auth_failures, replays_rejected, old_epoch_rejected;
 };
 
 // Initialize the datagram codec.  psk_len==0 selects the explicitly
@@ -72,5 +77,6 @@ uint32_t udpsess_encode(uint8_t *out, uint32_t cap, const uint8_t *frames,
 // Unwrap a session datagram in place: frames' length with *frames set;
 // <0 on auth failure / malformed / replay.
 int32_t udpsess_decode(uint8_t *data, uint32_t len, const uint8_t **frames);
+void udpsess_get_stats(struct udpsess_stats *st);
 
 #endif // udp_datagram.h

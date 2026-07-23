@@ -65,6 +65,7 @@ void nano_udp_setup(const uint8_t mac[6], uint32_t ip, uint16_t listen_port
 // answered immediately (via emit); UDP datagrams to the listen port are
 // queued for the console (ops->recv) and wake it.
 void nano_udp_input(const uint8_t *frame, uint32_t len);
+void nano_udp_get_io_stats(uint32_t *udp_rx, uint32_t *slot_drops);
 
 // Poll DHCP and deferred network transactions from the MAC task.  now_ms is
 // a wrapping monotonic millisecond counter owned by the MAC backend.

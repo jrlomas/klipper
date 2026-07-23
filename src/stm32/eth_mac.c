@@ -69,6 +69,7 @@ struct eth_desc {
 #define ETH_TDES0_TCH     0x00100000u // transmit second addr chained
 #define ETH_TDES0_FS      0x10000000u // first segment
 #define ETH_TDES0_LS      0x20000000u // last segment
+#define ETH_TDES0_ES      0x00008000u // transmit error summary
 #define ETH_RDES0_FL_MASK 0x3FFF0000u // frame length field
 #define ETH_RDES0_FL_SHIFT 16
 #define ETH_RDES0_ES      0x00008000u // error summary
@@ -83,10 +84,16 @@ static struct acq_ring rx_ready;
 static struct task_wake eth_wake;
 static uint8_t rx_publish_idx, tx_idx;
 static uint8_t eth_ready, eth_link_up;
+static uint8_t eth_link_speed100, eth_link_full;
+static uint8_t eth_init_error;
+static uint16_t eth_phy_id1, eth_phy_id2;
 static uint32_t eth_link_poll_next;
 static uint32_t eth_network_ms;
 static uint32_t eth_rx_frames, eth_tx_frames, eth_rx_overruns;
-static uint32_t eth_dma_errors;
+static uint32_t eth_rx_errors, eth_tx_errors, eth_tx_busy;
+static uint32_t eth_tx_underflows;
+static uint32_t eth_dma_errors, eth_mdio_errors;
+static uint32_t eth_irq_count, eth_link_transitions;
 
 static void
 eth_publish_ready(void)
@@ -107,9 +114,12 @@ void
 ETH_IRQHandler(void)
 {
     uint32_t status = ETH->DMASR;
+    eth_irq_count++;
     ETH->DMASR = status;
     if (status & ETH_DMASR_FBES)
         eth_dma_errors++;
+    if (status & ETH_DMASR_TUS)
+        eth_tx_underflows++;
     if (status & ETH_DMASR_RBUS)
         eth_rx_overruns++;
     if (status & ETH_DMASR_RS)
@@ -145,7 +155,10 @@ eth_mdio_wait(void)
     uint32_t guard = 1000000;
     while ((ETH->MACMIIAR & ETH_MACMIIAR_MB) && --guard)
         ;
-    return guard ? 0 : -1;
+    if (guard)
+        return 0;
+    eth_mdio_errors++;
+    return -1;
 }
 
 static int
@@ -213,6 +226,8 @@ eth_phy_start(void)
         || eth_mdio_read(CONFIG_RMII_PHY_ADDR, PHY_ID2, &id2)
         || !id1 || id1 == 0xffff || !id2 || id2 == 0xffff)
         return -1;
+    eth_phy_id1 = id1;
+    eth_phy_id2 = id2;
     if (eth_mdio_write(CONFIG_RMII_PHY_ADDR, PHY_BMCR, PHY_BMCR_RESET))
         return -1;
     uint32_t guard = 1000000;
@@ -234,6 +249,16 @@ eth_phy_start(void)
 }
 
 static void
+eth_phy_set_down(void)
+{
+    if (eth_link_up)
+        eth_link_transitions++;
+    eth_link_up = 0;
+    eth_link_speed100 = 0;
+    eth_link_full = 0;
+}
+
+static void
 eth_phy_poll(void)
 {
     uint16_t bmsr, dummy;
@@ -241,18 +266,18 @@ eth_phy_poll(void)
     if (eth_mdio_read(CONFIG_RMII_PHY_ADDR, PHY_BMSR, &dummy)
         || eth_mdio_read(CONFIG_RMII_PHY_ADDR, PHY_BMSR, &bmsr)
         || !(bmsr & PHY_BMSR_LINK)) {
-        eth_link_up = 0;
+        eth_phy_set_down();
         return;
     }
     if (!(bmsr & PHY_BMSR_ANOK)) {
-        eth_link_up = 0;
+        eth_phy_set_down();
         return;
     }
 
     uint16_t anar, anlpar;
     if (eth_mdio_read(CONFIG_RMII_PHY_ADDR, PHY_ANAR, &anar)
         || eth_mdio_read(CONFIG_RMII_PHY_ADDR, PHY_ANLPAR, &anlpar)) {
-        eth_link_up = 0;
+        eth_phy_set_down();
         return;
     }
     uint16_t common = anar & anlpar;
@@ -272,7 +297,7 @@ eth_phy_poll(void)
     } else if (common & PHY_AN_10H) {
         speed100 = full = 0;
     } else {
-        eth_link_up = 0;
+        eth_phy_set_down();
         return;
     }
     uint32_t maccr = ETH->MACCR & ~(ETH_MACCR_FES | ETH_MACCR_DM);
@@ -281,6 +306,10 @@ eth_phy_poll(void)
     if (full)
         maccr |= ETH_MACCR_DM;
     ETH->MACCR = maccr;
+    eth_link_speed100 = speed100;
+    eth_link_full = full;
+    if (!eth_link_up)
+        eth_link_transitions++;
     eth_link_up = 1;
 }
 
@@ -387,19 +416,29 @@ eth_mac_emit(const uint8_t *frame, uint32_t len)
     if (!eth_ready || !eth_link_up)
         return -1;
     struct eth_desc *d = &tx_ring[tx_idx];
-    if (d->status & ETH_DESC_OWN)
+    if (d->status & ETH_DESC_OWN) {
+        eth_tx_busy++;
         return -1; // ring full - checked callers retain/retry
+    }
+    if (d->status & ETH_TDES0_ES)
+        eth_tx_errors++;
     if (len > ETH_BUF_SZ)
         return -1;
     memcpy(&tx_buf[tx_idx * ETH_BUF_SZ], frame, len);
     d->control = len & 0x1FFF;
     __DMB(); // publish buffer + descriptor fields before DMA ownership
     d->status = ETH_TDES0_TCH | ETH_TDES0_FS | ETH_TDES0_LS | ETH_DESC_OWN;
+    // A DMB orders the descriptor writes, but it does not guarantee that the
+    // OWN write has reached the non-cacheable DMA arena before the peripheral
+    // poll-demand write below.  On Cortex-M7 that can leave the first frame
+    // pending until a later transmit happens to kick the DMA again.
+    __DSB();
     eth_tx_frames++;
     tx_idx = (tx_idx + 1) % ETH_TX_RING;
     // Kick the transmit DMA out of any suspended state
     ETH->DMASR = ETH_DMASR_TBUS;
     ETH->DMATPDR = 0;
+    __DSB();
     return 0;
 }
 
@@ -435,7 +474,8 @@ eth_mac_task(void)
                 nano_udp_input((const uint8_t *)(uintptr_t)d->buf1
                                , flen - 4 /* strip FCS */);
             eth_rx_frames++;
-        }
+        } else
+            eth_rx_errors++;
         __DMB();
         d->status = ETH_DESC_OWN; // hand the descriptor back to the DMA
         // Clear RX-buffer-unavailable and resume if the DMA suspended
@@ -501,12 +541,23 @@ command_eth_mac_get_status(uint32_t *args)
 {
     (void)args;
     struct dma_pool_status pool;
+    uint32_t udp_rx, udp_slot_drops;
     dma_pool_get_status(&pool);
-    sendf("eth_mac_status ready=%c link=%c rx=%u tx=%u overruns=%u"
-          " dma_errors=%u ready_highwater=%c dma_pool=%hu dma_used=%hu",
-          eth_ready, eth_link_up, eth_rx_frames, eth_tx_frames,
-          eth_rx_overruns, eth_dma_errors, rx_ready.highwater,
-          pool.size, pool.used);
+    nano_udp_get_io_stats(&udp_rx, &udp_slot_drops);
+    sendf("eth_mac_status ready=%c init_error=%c link=%c speed100=%c"
+          " full_duplex=%c phy_addr=%c phy_id1=%hu phy_id2=%hu"
+          " transitions=%u irq=%u rx=%u rx_errors=%u tx=%u tx_errors=%u"
+          " tx_busy=%u tx_underflows=%u"
+          " udp_rx=%u udp_slot_drops=%u overruns=%u"
+          " dma_errors=%u mdio_errors=%u"
+          " ready_highwater=%c dma_pool=%hu dma_used=%hu",
+          eth_ready, eth_init_error, eth_link_up, eth_link_speed100,
+          eth_link_full, CONFIG_RMII_PHY_ADDR, eth_phy_id1, eth_phy_id2,
+          eth_link_transitions, eth_irq_count, eth_rx_frames, eth_rx_errors,
+          eth_tx_frames, eth_tx_errors, eth_tx_busy, eth_tx_underflows,
+          udp_rx, udp_slot_drops,
+          eth_rx_overruns, eth_dma_errors, eth_mdio_errors,
+          rx_ready.highwater, pool.size, pool.used);
 }
 DECL_COMMAND_FLAGS(command_eth_mac_get_status, HF_IN_SHUTDOWN,
                    "eth_mac_get_status");
@@ -593,13 +644,17 @@ eth_mac_setup(void)
 {
     uint32_t psk_len = eth_load_psk();
 #if !CONFIG_RMII_TRUST_NETWORK
-    if (!psk_len)
+    if (!psk_len) {
         // Fail closed: this transport is the console, so there is nowhere
         // safe to report a missing mandatory network credential.
+        eth_init_error = 1;
         return;
+    }
 #endif
-    if (eth_dma_storage_init())
+    if (eth_dma_storage_init()) {
+        eth_init_error = 2;
         return;
+    }
     eth_mac_address_init();
     nano_udp_setup(eth_mac_addr, CONFIG_RMII_IP, CONFIG_RMII_UDP_PORT,
                    eth_mac_emit,
@@ -609,8 +664,10 @@ eth_mac_setup(void)
                    udp_console_note_rx
 #endif
                    );
-    if (eth_mac_init() < 0)
+    if (eth_mac_init() < 0) {
+        eth_init_error = 3;
         return; // link down; nothing to report it on (this is the console)
+    }
 #if CONFIG_RMII_FEC_PAIR && !CONFIG_GATEWAY_RMII
     udp_console_set_fec_k(2);
 #endif

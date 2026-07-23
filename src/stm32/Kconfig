@@ -400,6 +400,15 @@ config CLOCK_REF_FREQ
     default 1 if STM32_CLOCK_REF_INTERNAL
     default 8000000
 
+config STM32_HSE_BYPASS
+    bool "External clock input (HSE bypass)"
+    depends on LOW_LEVEL_OPTIONS && MACH_STM32F7 && !STM32_CLOCK_REF_INTERNAL
+    help
+        Select this when HSE is driven by an external clock source instead
+        of a crystal.  The NUCLEO-F767ZI default clock topology uses the
+        ST-LINK MCO output on PH0 and therefore requires HSEBYP.  Leave this
+        disabled for a crystal fitted at X3.
+
 config STM32F0_TRIM
     int "Internal clock trim override" if LOW_LEVEL_OPTIONS && MACH_STM32F0 && STM32_CLOCK_REF_INTERNAL && !USBSERIAL
     default 16

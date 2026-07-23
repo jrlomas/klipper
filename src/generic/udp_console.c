@@ -8,9 +8,8 @@
 //    and sequence-checked by the intentproto layer (udp_datagram.h),
 //    then their payload - whole legacy klipper frames - is fed to
 //    command_find_and_dispatch()
-//  - transmitted frames are batched for ~2ms (amortizing per-packet
-//    overhead, mirroring udp_bridge.py's host-side batching), then
-//    wrapped and sealed into one datagram
+//  - responses produced by one command dispatch are coalesced, then flushed
+//    immediately from task context and sealed into one datagram
 //
 // Erasure FEC (FD-0001 doc 07, "two layers"): when a port selects a
 // fec_k=2 (udp_console_set_fec_k), the tx side emits a parity datagram
@@ -41,12 +40,10 @@
 #include "board/irq.h" // irq_save
 #include "board/misc.h" // timer_read_time
 #include "command.h" // command_encode_and_frame
-#include "sched.h" // sched_add_timer
+#include "sched.h" // sched_wake_task
 #include "udp_console.h" // udp_console_init
 #include "udp_datagram.h" // udpdg_encode
 
-// Batch outgoing frames briefly to amortize per-datagram overhead
-#define UDP_CONSOLE_BATCH_US 2000
 #define UDP_SESSION_HANDSHAKE_TIMEOUT_US 2000000
 
 static const struct udp_console_ops *udp_ops;
@@ -63,14 +60,16 @@ static uint8_t rx_dgram[UDPDG_DATAGRAM_MAX];
 // Scratch space for a parity-reconstructed datagram (hdr + frames)
 static uint8_t rx_recovered[UDPDG_DATAGRAM_MAX];
 
-// Outbound frames pending batching (guarded by irq_save)
+// Outbound frames pending the task-context flush (guarded by irq_save)
 static uint8_t transmit_buf[UDPDG_FRAMES_MAX];
 static uint32_t transmit_pos;
-static uint8_t flush_timer_armed, flush_due;
-static struct timer flush_timer;
+static uint8_t flush_due;
 // Staging area for the sealed outbound datagram (task context only)
 static uint8_t tx_stage[UDPDG_FRAMES_MAX];
 static uint8_t tx_dgram[UDPDG_DATAGRAM_MAX];
+static uint32_t console_rx_decoded, console_responses;
+static uint32_t console_response_drops, console_flushes;
+static uint32_t console_no_peer_drops, console_send_failures;
 
 void *
 udp_console_get_rx_buf(void)
@@ -82,16 +81,6 @@ void
 udp_console_note_rx(void)
 {
     sched_wake_task(&udp_wake);
-}
-
-// Batch deadline reached - flush pending frames from task context
-static uint_fast8_t
-flush_event(struct timer *t)
-{
-    flush_timer_armed = 0;
-    flush_due = 1;
-    sched_wake_task(&udp_wake);
-    return SF_DONE;
 }
 
 // Encode and queue a "response" message (board console_sendf handler)
@@ -109,22 +98,26 @@ udp_console_sendf(const struct command_encoder *ce, va_list args)
     if (transmit_pos + msglen <= sizeof(transmit_buf)) {
         memcpy(&transmit_buf[transmit_pos], framebuf, msglen);
         transmit_pos += msglen;
-        if (!flush_timer_armed) {
-            flush_timer_armed = 1;
-            flush_timer.func = flush_event;
-            flush_timer.waketime = (timer_read_time()
-                                    + timer_from_us(UDP_CONSOLE_BATCH_US));
-            sched_add_timer(&flush_timer);
-        }
-        if (transmit_pos + MESSAGE_MAX > sizeof(transmit_buf)) {
-            // No room for another frame - drain without waiting
-            flush_due = 1;
-            sched_wake_task(&udp_wake);
-        }
-    }
-    // else: buffer full - drop the message (as wired ports do on
-    // transmit overflow; the host retransmits on a missing ack)
+        // Flush in task context without relying on a deferred timer wake.
+        // Multiple responses emitted by one command dispatch (including its
+        // ACK) still coalesce because the task drains only after dispatch.
+        flush_due = 1;
+        sched_wake_task(&udp_wake);
+        console_responses++;
+    } else
+        // Buffer full: account for the drop; v1 ARQ retransmits when the
+        // acknowledgement does not arrive.
+        console_response_drops++;
     irq_restore(flag);
+}
+
+static void
+udp_console_record_send(int result)
+{
+    if (result == UDP_CONSOLE_SEND_NO_PEER)
+        console_no_peer_drops++;
+    else if (result != UDP_CONSOLE_SEND_OK)
+        console_send_failures++;
 }
 
 // Seal and transmit the pending frame batch (task context)
@@ -140,6 +133,7 @@ udp_console_flush(void)
     irq_restore(flag);
     if (!len)
         return;
+    console_flushes++;
 #if CONFIG_WANT_DATAGRAM_SESSION
     // Once the session is established, replies go out as session
     // datagrams (rotating keys, replay-protected). The static path and
@@ -147,20 +141,35 @@ udp_console_flush(void)
     if (udpsess_established()) {
         uint32_t slen = udpsess_encode(tx_dgram, sizeof(tx_dgram),
                                        tx_stage, len);
-        if (slen)
-            udp_ops->send(udp_ops_ctx, tx_dgram, slen);
+        if (slen) {
+            if (udp_ops->send_checked) {
+                int ret = udp_ops->send_checked(udp_ops_ctx, tx_dgram, slen);
+                udp_console_record_send(ret);
+            } else
+                udp_ops->send(udp_ops_ctx, tx_dgram, slen);
+        }
         return;
     }
 #endif
     uint32_t dlen = udpdg_encode(tx_dgram, tx_stage, len);
-    if (dlen)
-        udp_ops->send(udp_ops_ctx, tx_dgram, dlen);
+    if (dlen) {
+        if (udp_ops->send_checked) {
+            int ret = udp_ops->send_checked(udp_ops_ctx, tx_dgram, dlen);
+            udp_console_record_send(ret);
+        } else
+            udp_ops->send(udp_ops_ctx, tx_dgram, dlen);
+    }
     // If FEC is on and this datagram completed a protected block, emit
     // its parity datagram.  Reuse tx_dgram: ops->send has already
     // copied the data datagram into the socket.
     uint32_t plen = udpdg_parity_flush(tx_dgram);
-    if (plen)
-        udp_ops->send(udp_ops_ctx, tx_dgram, plen);
+    if (plen) {
+        if (udp_ops->send_checked) {
+            int ret = udp_ops->send_checked(udp_ops_ctx, tx_dgram, plen);
+            udp_console_record_send(ret);
+        } else
+            udp_ops->send(udp_ops_ctx, tx_dgram, plen);
+    }
 }
 
 // Append unwrapped frame bytes to the receive stream
@@ -238,6 +247,7 @@ udp_console_task(void)
             flen = udpsess_decode(rx_dgram, got, &frames);
             if (flen < 0)
                 continue;
+            console_rx_decoded++;
             if (udp_ops->rx_accepted)
                 udp_ops->rx_accepted(udp_ops_ctx);
             if (flen > 0)
@@ -286,18 +296,40 @@ udp_console_task(void)
     }
     receive_pos = len;
 
-    // Transmit pending responses once the batch deadline has passed
+    // Transmit the responses produced by this task drain.
     if (flush_due)
         udp_console_flush();
 }
 DECL_TASK(udp_console_task);
 
-// sched_shutdown() clears the timer list - re-arm the flush state so
-// the shutdown messages queued by the shutdown handlers still go out
+void
+command_udp_console_get_status(uint32_t *args)
+{
+    (void)args;
+    struct udpsess_stats session = {0};
+#if CONFIG_WANT_DATAGRAM_SESSION
+    udpsess_get_stats(&session);
+#endif
+    sendf("udp_console_status decoded=%u responses=%u response_drops=%u"
+          " flushes=%u no_peer_drops=%u send_failures=%u"
+          " session_tx_epoch=%u session_tx_seq=%u"
+          " session_rx_epoch=%u session_rx_top=%u"
+          " session_auth_failures=%u session_replays=%u"
+          " session_old_epoch=%u",
+          console_rx_decoded, console_responses, console_response_drops,
+          console_flushes, console_no_peer_drops, console_send_failures,
+          session.tx_epoch, session.tx_seq,
+          session.rx_epoch, session.rx_window_top,
+          session.auth_failures, session.replays_rejected,
+          session.old_epoch_rejected);
+}
+DECL_COMMAND_FLAGS(command_udp_console_get_status, HF_IN_SHUTDOWN,
+                   "udp_console_get_status");
+
+// Ensure shutdown messages queued by shutdown handlers still go out.
 void
 udp_console_shutdown(void)
 {
-    flush_timer_armed = 0;
     flush_due = 1;
     sched_wake_task(&udp_wake);
 }
@@ -338,6 +370,8 @@ udp_console_init(const struct udp_console_ops *ops, void *ctx
     // one the session simply never establishes and traffic stays static.
     if (psk && psk_len) {
         static const char board_id[] = CONFIG_DATAGRAM_SESSION_ID;
+        _Static_assert(sizeof(board_id) - 1 <= UDPDG_SESSION_ID_MAX,
+                       "CONFIG_DATAGRAM_SESSION_ID exceeds 24 bytes");
         uint8_t nonce[16];
         session_nonce(nonce);
         udpsess_init(psk, psk_len, (const uint8_t *)board_id,

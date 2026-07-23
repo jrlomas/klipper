@@ -100,6 +100,8 @@ udpdg_get_stats(struct udpdg_stats *st)
 #if CONFIG_WANT_DATAGRAM_SESSION
 #include "intentproto/session_sec.hpp"
 
+static_assert(UDPDG_SESSION_ID_MAX == intentproto::SEC_ID_MAX,
+              "C and C++ session identity limits must match");
 static intentproto::SecureSession SessRx;
 // Re-handshake support: a LIVE session is never reset by an
 // unauthenticated packet. A ClientHello arriving while SessRx is
@@ -309,5 +311,17 @@ udpsess_decode(uint8_t *data, uint32_t len, const uint8_t **frames)
 {
     intentproto::TrafficClass cls;
     return (int32_t)SessRx.datagram_decode(data, len, frames, &cls);
+}
+
+extern "C" void
+udpsess_get_stats(struct udpsess_stats *st)
+{
+    st->tx_epoch = SessRx.tx_epoch;
+    st->tx_seq = SessRx.tx_seq;
+    st->rx_epoch = SessRx.rx_epoch;
+    st->rx_window_top = SessRx.rx_window_top;
+    st->auth_failures = SessRx.auth_failures;
+    st->replays_rejected = SessRx.replays_rejected;
+    st->old_epoch_rejected = SessRx.old_epoch_rejected;
 }
 #endif // CONFIG_WANT_DATAGRAM_SESSION

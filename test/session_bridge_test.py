@@ -33,14 +33,19 @@ class _Responder(threading.Thread):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('127.0.0.1', 0))
         self.port = self.sock.getsockname()[1]
-        self._stop = False
+        self._stopping = False
 
     def run(self):
-        while not self._stop:
+        while not self._stopping:
             r, _, _ = select.select([self.sock], [], [], 0.2)
             if not r:
                 continue
-            data, addr = self.sock.recvfrom(2048)
+            try:
+                data, addr = self.sock.recvfrom(2048)
+            except OSError:
+                if self._stopping:
+                    break
+                raise
             if not self.sess.established:
                 out = self.sess.on_handshake(data)
                 if out:
@@ -53,8 +58,9 @@ class _Responder(threading.Thread):
             self.sock.sendto(self.sess.encode(payload, cls), addr)
 
     def stop(self):
-        self._stop = True
+        self._stopping = True
         self.sock.close()
+        self.join(timeout=1.0)
 
 
 class TestSessionBridge(unittest.TestCase):
@@ -127,6 +133,11 @@ class TestSessionBridge(unittest.TestCase):
             ipt.TransportBridge('datagram', '/tmp/helix_sess_noid',
                                 psk=PSK, session=True,
                                 udp_board=('127.0.0.1', 9))
+        with self.assertRaisesRegex(ipt.FrameError, '24-byte'):
+            ipt.TransportBridge(
+                'datagram', '/tmp/helix_sess_longid', psk=PSK,
+                session=True, board_id=b'x' * 25,
+                udp_board=('127.0.0.1', 9))
 
 
 if __name__ == '__main__':

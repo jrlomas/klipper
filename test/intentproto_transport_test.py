@@ -107,7 +107,7 @@ class TestBridge(unittest.TestCase):
         br.open()
         try:
             self.assertFalse(br.v2_active)
-            klippy = os.open(link, os.O_RDWR)
+            klippy = os.open(link, os.O_RDWR | os.O_NOCTTY)
             try:
                 frame = v1_frame(bytes(range(10)), 4)
                 os.write(klippy, frame)
@@ -140,7 +140,7 @@ class TestBridge(unittest.TestCase):
         br.open()
         br.enable_v2()  # bch starts in v1 pass-through until negotiated
         try:
-            klippy = os.open(link, os.O_RDWR)
+            klippy = os.open(link, os.O_RDWR | os.O_NOCTTY)
             try:
                 frames = [
                     v1_frame(b"", 0),

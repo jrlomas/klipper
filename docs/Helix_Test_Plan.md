@@ -1071,6 +1071,15 @@ Phases 3/7/8 over each real transport.
     delivery conservation, deterministic restart/bus-off/Tx-event/queue
     faults, and 200,000 native ASAN/UBSAN mutations pass. This does not check
     the physical PHY, MAC timestamps, link flap, or line-rate saturation.
+  - [x] **F767 physical console gate (2026-07-22):** NUCLEO-F767ZI HSE-bypass
+    clocking reports 216 MHz; its LAN8742A negotiates 100 Mbit/s full duplex
+    and acquires DHCP. A strict 183-request identify transfer completed in
+    50.225 ms with zero retries (0.249 ms median, 0.413 ms maximum). The real
+    Klipper bridge then ran 45,783 TX / 45,791 RX authenticated datagrams with
+    zero loss, reorder, authentication failure, MAC/DMA error, RX overrun,
+    TX busy, or TX underflow. Wrong-PSK, corrupt-tag, and replay traffic was
+    rejected without displacing the valid peer. This closes physical RMII
+    console bring-up, not the parent motion, PTP, FEC, or link-flap gate.
 - [ ] **9.5 — Datagram loss tolerance.** Inject packet loss on 9.3/9.4.
   Pass: FEC + retransmit hide it up to the documented loss rate; beyond
   that it degrades to a clean pause, never a crash.

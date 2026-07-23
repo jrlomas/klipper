@@ -7,6 +7,10 @@
 
 struct command_encoder;
 
+#define UDP_CONSOLE_SEND_OK 0
+#define UDP_CONSOLE_SEND_REJECTED -1
+#define UDP_CONSOLE_SEND_NO_PEER -2
+
 // Per-port socket operations.  All callbacks run in klipper task (or
 // timer) context on the mcu core; none may block.
 struct udp_console_ops {
@@ -16,7 +20,9 @@ struct udp_console_ops {
     // Transmit one datagram to the current peer (best effort).
     void (*send)(void *ctx, const uint8_t *data, uint32_t len);
     // Optional checked variant: return 0 only once the lower transport has
-    // accepted the datagram into its bounded transmit queue.
+    // accepted the datagram into its bounded transmit queue. Return
+    // UDP_CONSOLE_SEND_NO_PEER when no authenticated destination exists;
+    // that is an accountable idle-state drop, not a transport failure.
     int (*send_checked)(void *ctx, const uint8_t *data, uint32_t len);
     // Transmit to the source of the most recently received datagram
     // without changing the authenticated peer. Used only for a session

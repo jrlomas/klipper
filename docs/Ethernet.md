@@ -11,14 +11,13 @@ Two paths are provided:
   and STM32H723 parts, driving an external RMII PHY, with a software IP layer
   above it.
 
-!!! warning "Compile-checked, not hardware-validated here"
-    The W5500 and native paths **build and link with the real ARM toolchain**;
-    native RMII is covered on STM32F407, STM32F765, the F767 reference
-    configuration, and the H723 Ethernet-to-CAN-FD gateway; its framing and
-    stateful socket adapter pass host tests. Neither Ethernet transport has
-    been run against a
-    physical PHY in this project. Register, DMA, clock, and pin behavior
-    therefore remain a board-bring-up item, not validated firmware.
+!!! warning "Reference PHY qualified; other targets still need hardware"
+    The NUCLEO-F767ZI native-RMII console has now run on its physical
+    LAN8742A PHY, including authenticated Klipper identify, sustained command
+    traffic, DHCP, reset/reconnect, and negative security tests. The W5500,
+    F4/F765 RMII boards, H723 Ethernet gateway, Ethernet hardware timestamps,
+    link flap, and motion-under-network-load gates remain unqualified. A
+    successful F767 console run is not evidence for those separate targets.
 
 The adopted native-Ethernet reference-board plan is
 [FD-0001 doc 16 - STM32F767 Ethernet Reference Board Plan](founding/0001-motion-intentions/16-STM32F767_Ethernet.md).
@@ -267,6 +266,79 @@ earlier isolated transports compile as follows:
 | `stm32f765-rmii.config` | authenticated + pair FEC | 63,230 | 64 | 27,632 |
 
 These configurations are included automatically by `scripts/ci-build.sh`.
+
+### NUCLEO-F767ZI physical Ethernet qualification — 2026-07-22
+
+The reference target was a NUCLEO-F767ZI connected through its built-in
+ST-LINK and LAN8742A Ethernet port. ST-LINK reported target ID `0x451`,
+2 MiB flash, 512 KiB SRAM, firmware `V2J39S27`, and serial
+`066AFF565380535067111036`. The firmware used the board's 8 MHz ST-LINK MCO
+as an HSE bypass input and reported:
+
+```
+clock_status source=2 fault=0 hse_bypass=1 rate=216000000
+             hse_ready=1 pll_ready=1
+```
+
+The PHY was discovered at MDIO address zero with ID words `0x0007` and
+`0xc131`, negotiated 100 Mbit/s full duplex, and obtained `192.168.1.198`
+through DHCP. The workstation was `192.168.1.140` on the same switched LAN.
+The stable locally administered MAC derived from this MCU UID was
+`02:ae:bc:b9:b1:64`.
+
+The first hardware image exposed a Cortex-M7 ownership-ordering defect:
+the first TX descriptor stayed pending until another packet caused a second
+DMA kick. A one-shot ClientHello therefore produced no ServerHello for one
+second, while an identical second ClientHello released the first reply.
+The descriptor and buffer arena was already MPU-mapped non-cacheable; the
+missing operation was a completion barrier between publishing `OWN` and
+writing `DMATPDR`. Adding `DSB` at that handoff made the first ServerHello
+leave in approximately 0.53 ms. This is a MAC-DMA visibility rule, not LAN
+latency, packet loss, or a deferred-console timer effect.
+
+After the fix, a strict identify transfer made 183 sequential authenticated
+requests with no retry. It transferred 7,242 compressed bytes / 22,774
+decoded bytes in 50.225 ms. Request latency was 0.249 ms median, 0.351 ms
+p95, and 0.413 ms maximum. The normal Klipper `TransportBridge` and
+`klippy/console.py` path then loaded all 264 dictionary entries before its
+five-second deadline with zero retransmitted or invalid bytes.
+
+A 50,000-command scheduled `get_uptime` campaign ran for approximately
+56 seconds through the real Klipper serialqueue. The bridge observed 45,783
+transmit datagrams, 45,791 receive datagrams, and 1,528,510 wire bytes with
+zero datagram loss, reordering, authentication failure, replay rejection, or
+old-epoch rejection. Serialqueue reported one 26-byte retransmission and zero
+invalid bytes. Final firmware counters reported zero RX descriptor errors,
+TX descriptor errors, TX busy, TX underflow, DMA error, MDIO error, and RX
+overrun; the RX-ready high-water mark was one.
+
+The physical negative test also passed:
+
+* a wrong-PSK ClientHello produced no response and did not displace the peer;
+* a corrupted session tag produced no response and incremented the
+  authentication-failure counter once;
+* replay of an accepted datagram produced no response and incremented the
+  replay counter once;
+* the next valid command after each rejection completed normally.
+
+Cold target resets repeatedly reacquired the same DHCP lease and admitted a
+fresh authenticated session. Periodic telemetry generated before a peer is
+authenticated is now reported separately as `no_peer_drops`; it is not
+misclassified as a MAC transmit failure. Application response-buffer drops,
+lower-queue send failures, nano-UDP receive-slot drops, session epochs, PHY
+transitions, and MAC/DMA failures are independently observable.
+
+The closing focused image (`886443d3-dirty-20260722_233319-linuxathena`) was
+98,434 bytes of text, 64 bytes of data, and 37,216 bytes of BSS. The exact
+flashed `klipper.bin` SHA-256 was
+`39f5b5e2179bf06b29230b0bd49feaceca84f2bab0bae1d2972b456abdff74e6`.
+This records the bench artifact; it is not a release signature.
+
+This evidence qualifies the native F767 RMII console and its cache-safe
+descriptor handoff. It does **not** qualify IEEE 1588/PTP discipline: enhanced
+RX/TX descriptor timestamps and host `PHC0` timestamp binding remain Phase 4.
+It also does not satisfy the one-hour solver/execution-log/motion load, FEC
+pair, physical cable flap, or concurrent ADC-DMA gates.
 
 The compile-qualified `stm32h723-nucleo-ethernet-canfd-gateway.config` image
 uses the Nucleo LAN8742A RMII route, an authenticated HostSession, FDCAN at a

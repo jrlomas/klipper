@@ -268,6 +268,7 @@ static uint8_t have_peer;
 static uint8_t rx_payload[UDPDG_DATAGRAM_MAX];
 static uint32_t rx_len;
 static uint8_t rx_full;
+static uint32_t rx_udp_frames, rx_slot_drops;
 
 static void
 nano_apply_network(const struct helix_network_params *params)
@@ -393,8 +394,11 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     if (!nano_udp_parse(frame, len, our_ip, our_port, &payload, &plen,
                         src_mac, &src_ip, &src_port))
         return;
-    if (rx_full || plen > sizeof(rx_payload))
+    if (rx_full || plen > sizeof(rx_payload)) {
+        if (rx_full)
+            rx_slot_drops++;
         return; // console has not drained the slot yet - ARQ recovers
+    }
     // Commit the candidate peer together with the queued datagram. Parsing a
     // later packet must not overwrite the source that rx_accepted() will
     // authorize for this packet.
@@ -404,8 +408,18 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     memcpy(rx_payload, payload, plen);
     rx_len = plen;
     rx_full = 1;
+    rx_udp_frames++;
     if (rx_notify)
         rx_notify();
+}
+
+void
+nano_udp_get_io_stats(uint32_t *udp_rx, uint32_t *slot_drops)
+{
+    if (udp_rx)
+        *udp_rx = rx_udp_frames;
+    if (slot_drops)
+        *slot_drops = rx_slot_drops;
 }
 
 static int32_t
@@ -459,12 +473,12 @@ nano_send_checked(void *ctx, const uint8_t *data, uint32_t len)
 {
     (void)ctx;
     if (!have_peer || !mac_emit)
-        return -1;
+        return UDP_CONSOLE_SEND_NO_PEER;
     uint8_t frame[NANO_UDP_OVERHEAD + UDPDG_DATAGRAM_MAX];
     uint32_t flen = nano_udp_build_frame(frame, sizeof(frame), our_mac,
                                          peer_mac, our_ip, peer_ip,
                                          our_port, peer_port, data, len);
-    return flen ? mac_emit(frame, flen) : -1;
+    return flen ? mac_emit(frame, flen) : UDP_CONSOLE_SEND_REJECTED;
 }
 
 static void

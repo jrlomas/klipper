@@ -1,8 +1,9 @@
 # FD-0001: STM32F767 Ethernet Reference Board Plan
 
-Status: DMA/ADC, Ethernet IRQ, atomic network provisioning, bounded DHCP, and
-the four-timestamp wire/filter foundation are implemented and cross-built;
-NUCLEO-F767ZI PHY/PTP/network qualification is pending board availability.
+Status: native NUCLEO-F767ZI RMII, HSE-bypass clocking, cache-safe DMA,
+authenticated sessions, DHCP, reset/reconnect, and sustained Klipper command
+traffic are physically qualified. The ADC concurrency, one-hour motion/load,
+link-flap, FEC, and IEEE 1588 hardware-timestamp gates remain open.
 
 The unified DMA ownership, block-stream, ADC acquisition, and oversampling
 substrate is specified in
@@ -277,7 +278,7 @@ while motion remains interrupt-driven and independent.
 
 - [x] Add `MACH_STM32F767`, memory/clock constants, device selection, and
   NUCLEO-F767ZI config.
-- [ ] Add HSE source selection, bypass sequencing, and bounded startup waits.
+- [x] Add HSE source selection, bypass sequencing, and bounded startup waits.
 - [x] Build Linuxprocess, existing F7 targets, F767 serial bootstrap, and F767
   RMII configurations in CI without growing unrelated targets.
 - [ ] Record the exact board revision, MCU silicon revision, PHY ID/address,
@@ -310,6 +311,11 @@ build.
 - [x] Run workstation ARP/checksum, authenticated UDP/session, peer-rejection,
   malformed-frame, bounded-ring, and deterministic loss/duplicate/reorder/
   corruption tests.
+- [x] Bring up the physical LAN8742A at 100 Mbit/s full duplex, acquire DHCP,
+  complete a no-retry authenticated identify, and run 45,000+ bidirectional
+  Klipper datagrams with complete MAC/DMA/session counters.
+- [x] Reject wrong-PSK, corrupted-tag, and replay traffic on the physical PHY,
+  then prove that the next valid command still completes.
 - [ ] Repeat FEC-off/FEC-on, reconnect, ring exhaustion, and link flap against
   the physical PHY while solver/execution-log load is active.
 
@@ -342,6 +348,8 @@ is accepted merely because its IRQ arrived promptly.
   changes clear the old reply peer without changing downstream identity.
 - [x] Unit-test offers, ACK, NAK, malformed replies, renewal, rebinding,
   expiry, retry, fallback, and atomic configuration rollback.
+- [x] Cold-reset the physical F767 repeatedly, reacquire its DHCP lease, and
+  establish a fresh authenticated session without reflashing.
 - [ ] Test multiple physical boards, reservation changes, DHCP-server restart,
   duplicate offers, lease expiry during motion, and network partition.
 

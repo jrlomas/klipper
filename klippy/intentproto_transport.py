@@ -187,6 +187,7 @@ import threading
 
 DATAGRAM_MAX = 1472
 DATAGRAM_OVERHEAD = 3 + 8  # header + HMAC tag
+SESSION_ID_MAX = 24
 
 
 class TransportBridge(object):
@@ -216,6 +217,10 @@ class TransportBridge(object):
         self._session = None
         self.session_established = False
         self.peer_id = b""
+        self.host_bytes = 0
+        self.wire_bytes = 0
+        self.tx_datagrams = 0
+        self.rx_datagrams = 0
         if mode == 'bch':
             self._codec = BchConsoleCodec()
             # bch starts in v1 PASS-THROUGH: the MCU's console accepts both
@@ -232,6 +237,9 @@ class TransportBridge(object):
                 if not board_id:
                     raise FrameError("session mode requires an expected"
                                      " board_id")
+                if len(board_id) > SESSION_ID_MAX:
+                    raise FrameError("session board_id exceeds the 24-byte"
+                                     " protocol limit")
                 ip = _load_intentproto()
                 # The session carries per-peer identities both ways: the
                 # host advertises itself as "klippy-host"; board_id is the
@@ -256,6 +264,9 @@ class TransportBridge(object):
         st = {'mode': 'datagram', 'v2_active': self.v2_active,
               'session': self.use_session,
               'session_established': self.session_established,
+              'host_bytes': self.host_bytes, 'wire_bytes': self.wire_bytes,
+              'tx_datagrams': self.tx_datagrams,
+              'rx_datagrams': self.rx_datagrams,
               'rx_lost': c.rx_lost, 'rx_reordered': c.rx_reordered,
               'auth_failures': c.auth_failures}
         if self.session_established:
@@ -377,6 +388,7 @@ class TransportBridge(object):
         data = self._read(self.master_fd)
         if not data:
             return
+        self.host_bytes += len(data)
         if self.mode == 'bch':
             if not self.v2_active:
                 self._write_stream(data)  # v1 pass-through
@@ -393,11 +405,14 @@ class TransportBridge(object):
                     # the static HMAC; no erasure parity in session mode.
                     self._sock.sendto(self._session.encode(chunk),
                                       self.udp_board)
+                    self.tx_datagrams += 1
                     continue
                 self._sock.sendto(self._codec.encode(chunk), self.udp_board)
+                self.tx_datagrams += 1
                 parity = self._codec.parity_flush()
                 if parity is not None:
                     self._sock.sendto(parity, self.udp_board)
+                    self.tx_datagrams += 1
 
     def _wire_to_host(self):
         if self.mode == 'bch':
@@ -415,6 +430,8 @@ class TransportBridge(object):
                 data, addr = self._sock.recvfrom(DATAGRAM_MAX)
             except (BlockingIOError, OSError):
                 return
+            self.rx_datagrams += 1
+            self.wire_bytes += len(data)
             if self.udp_board is None:
                 self.udp_board = addr
             if self.session_established:

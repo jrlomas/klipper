@@ -842,6 +842,8 @@ udp_gateway_init(const struct udp_console_ops *ops, void *ctx,
 #if CONFIG_WANT_DATAGRAM_SESSION
     if (psk && psk_len) {
         static const char board_id[] = CONFIG_DATAGRAM_SESSION_ID;
+        _Static_assert(sizeof(board_id) - 1 <= UDPDG_SESSION_ID_MAX,
+                       "CONFIG_DATAGRAM_SESSION_ID exceeds 24 bytes");
         uint8_t nonce[16];
         uint_fast8_t i;
         for (i = 0; i < sizeof(nonce); i++) {
