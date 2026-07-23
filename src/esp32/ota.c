@@ -77,6 +77,12 @@ void
 command_flash_begin(uint32_t *args)
 {
     uint32_t size = args[0], crc = args[1];
+    // A host may reconnect after timing out while the partition erase was in
+    // progress.  Explicitly abort that abandoned handle before starting a new
+    // transfer; merely clearing our bookkeeping would leak the OTA operation
+    // and make the retry fail.
+    if (ota.active)
+        esp_ota_abort(ota.handle);
     ota_reset();
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part) {

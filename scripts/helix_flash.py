@@ -253,6 +253,9 @@ def main():
                                        " (signed-image bootloaders)")
     p.add_argument("--no-boot", action="store_true",
                    help="flash and verify but do not boot the image")
+    p.add_argument("--erase-timeout", type=float, default=60.0,
+                   help="seconds to wait for flash_begin partition erase"
+                        " (default: 60)")
     p.add_argument("-v", action="store_true", help="verbose")
     args = p.parse_args()
     if not args.device and not args.execcmd:
@@ -287,7 +290,8 @@ def main():
                 " (run with --enter to reboot the application into it)")
 
         proto.send('flash_begin', len(image), crc)
-        check_result(proto.wait_response('flash_result', 15.0), 0)
+        check_result(proto.wait_response(
+            'flash_result', args.erase_timeout), 0)
         print("flash_begin ok (erase done)")
 
         sent = 0

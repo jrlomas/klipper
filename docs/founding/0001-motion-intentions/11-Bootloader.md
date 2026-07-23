@@ -81,6 +81,17 @@ update writes the inactive bank and swaps atomically — zero downtime
 worth having, but the single-bank flow above is the baseline every
 target supports.
 
+For ESP32, "A/B partitions underneath" is a packaging invariant, not merely
+an optimization. The maintained IDF defaults select `TWO_OTA` (factory plus
+two 1 MiB OTA slots on the qualified 4 MiB boards). A single-app partition
+table leaves `esp_ota_get_next_update_partition()` without an inactive target:
+the command dictionary still advertises the in-band flash ABI, but
+`flash_begin` fails closed with `ERR_FLASH`. Existing single-app boards need
+one final ROM-serial migration of bootloader, partition table, blank OTA-data,
+and factory app; preserve NVS so network credentials and the PSK survive.
+Every application update after that migration uses the normal authenticated
+in-band A/B flow.
+
 ## Signed images
 
 Transport HMAC ([07-Link_Transport.md](07-Link_Transport.md)) proves a
