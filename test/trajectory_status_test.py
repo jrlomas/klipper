@@ -68,6 +68,28 @@ class FakeStepper:
         self.synced.append(position_su)
 
 
+class FakeHeldCommand:
+    def __init__(self, params):
+        self.params = params
+
+    def send(self, args):
+        return dict(self.params)
+
+
+class FakeHeldMCU:
+    def __init__(self):
+        self.events = []
+
+    def clock32_to_clock64(self, clock):
+        return clock + (1 << 32)
+
+    def get_printer(self):
+        return self
+
+    def send_event(self, name, stepper):
+        self.events.append((name, stepper))
+
+
 class FakeFFI:
     def segfit_set_anchor(self, *args):
         pass
@@ -143,6 +165,33 @@ def main():
     assert mcu_stepper.mcu_to_commanded_position_su(physical_su) \
         == 32 * 10_485_760
     print("PASS: kinematic updates preserve the trajectory wire position")
+
+    # A failed home must preserve the board's stopped accumulator, not the
+    # unexecuted endpoint of the host's full-travel plan.  Reusing that stale
+    # endpoint causes each retry to search a progressively shorter distance.
+    held_mpos = 70_439
+    held_su = held_mpos * 65536 + 123
+    held_mcu = FakeHeldMCU()
+    mcu_stepper._mcu = held_mcu
+    mcu_stepper._oid = 7
+    mcu_stepper._get_position_cmd = FakeHeldCommand({
+        'clock': 1234, 'mcu_pos': held_mpos,
+        'pos': held_su & 0xffffffff,
+    })
+    mcu_stepper.get_commanded_position = lambda: 115.
+    traj = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    traj.wire_acc = (held_su + 180 * 65536) << 32
+    traj.note_rebase_needed = lambda stopped=False: None
+    mcu_stepper._traj = traj
+    mcu_stepper.note_homing_end()
+    assert traj.wire_acc == held_su << 32
+    assert traj.execution_clock == (1 << 32) + 1234
+    assert abs(mcu_stepper._mcu_position_offset
+               - (held_su / 65536. * mcu_stepper._step_dist - 115.)) < 1e-9
+    assert held_mcu.events == [
+        ("stepper:sync_mcu_position", mcu_stepper)]
+    print("PASS: failed homing replaces planned endpoint with MCU-held state")
 
     toolhead = FakeToolhead()
     motion_queuing = FakeMotionQueuing()

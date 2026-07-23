@@ -498,12 +498,40 @@ the schematic names `I2SO0` through `I2SO15`.
 The first Helix implementation wrote a sparse output snapshot by stopping,
 resetting, draining, and restarting I2S0. That worked at low manual rates but
 made a 20 mm/s, 1,000-microstep/mm Z retract perform 40,000 complete peripheral
-resets per second, starving trajectory refill. The replacement follows
-FluidNC's proven architecture: I2S0 continuously emits one complete output
-word every 2 us, and a level-three FIFO interrupt fills eight future words at
-a time. The trajectory solver advances against each future sample clock, so
-WiFi and RTOS interrupt latency cannot move an edge already committed to the
-peripheral FIFO. SPI3 remains available to the TMC chain.
+resets per second, starving trajectory refill. The replacement uses the same
+hardware-serializer principle as FluidNC: I2S0 continuously emits one complete
+output word every 2 us, and a level-three FIFO interrupt fills eight future
+words at a time. The trajectory solver advances against each future sample
+clock, so WiFi and RTOS interrupt latency cannot move an edge already committed
+to the peripheral FIFO. SPI3 remains available to the TMC chain.
+
+FluidNC's implementation history matters to this design. Its older
+`I2SOut.cpp` used five circular DMA buffers of about 2 ms each. That insulated
+the serializer from software latency, but also placed roughly 10 ms of already
+committed motion between an endstop and the physical output. FluidNC replaced
+that engine with the current no-jitter FIFO implementation in commit
+`e6e00db1` (October 2024). The current ISR does not plan motion: a foreground
+segment pipeline has already reduced motion to `n_step`, `isrPeriod`, and
+Bresenham/AMASS state, so each FIFO callback performs only a cheap step tick.
+
+Helix initially copied the FIFO dimensions without accounting for this
+execution difference:
+
+| Property | Current FluidNC | Initial Helix adaptation | Corrected Helix |
+| --- | --- | --- | --- |
+| Refill work | precomputed Bresenham tick | live quintic crossing execution | live quintic crossing execution |
+| Refill threshold | 16 samples | 16 samples | 48 samples |
+| Time remaining at interrupt | 32 us | 32 us | 96 us |
+| Eight-sample refill lead | 32-48 us | 32-48 us | 96-112 us |
+| Measured worst refill on Rodent | not measured here | 56.5 us observed | 66.4 us observed, within budget |
+
+Thus the recurring slow, pulsed homing was a serializer underrun risk, not a
+TMC2160 chopper-mode effect. Helix now asks for service with 48 of 64 samples
+remaining and reloads eight, giving its solver a 23,040-cycle/96 us budget at
+240 MHz. `HELIX_OUTPUT_STATUS` exposes the threshold, reload, cycle budget, and
+deadline-miss count so a heavier configuration cannot silently inherit this
+qualification. The additional 64 us of worst-case committed output corresponds
+to only 1.28 um at the tested 20 mm/s homing speed.
 
 `HELIX_OUTPUT_STATUS MCU=<name>` reports the live output word, transfer count,
 wire bitrate, and average/worst CPU-cycle cost. On the Rodent V1.1 lab board,
@@ -514,21 +542,36 @@ position, and reported zero trajectory drops and zero TMC lost steps. The
 TMC2160 `MSCNT` also advanced by the exact expected modulo-1024 count, proving
 that the driver received the edge stream.
 
-The initially weak, pulsating motor was not an output-timing failure. Early
-Rodent schematics and example configurations incorrectly specified
+The initially weak motor had a separate current-scaling cause. Early Rodent
+schematics and example configurations incorrectly specified
 `r_sense_ohms: 0.022`; the correct Klipper setting is
 `sense_resistor: 0.075`. The obsolete value underdrives the motor by about
 3.4x: a requested 0.6 A produces only about 0.18 A. A temporary 1.5 A request
 with the bad value produced roughly 0.44 A and immediately restored torque.
-After correcting the value, the installed pancake Z motor moved and homed
-normally at a true 0.6 A using Klipper's original 32-microstep chopper state.
-That A/B result clears the I2S serializer, TMC daisy-chain selection, and
-physical driver path.
+Correcting the value restored torque, but did not by itself resolve the later
+progressive homing slowdown; that was the FIFO execution-budget defect above.
 
 `HELIX_OUTPUT_STATUS MCU=rodent STEP_BIT=2 DIR_BIT=1` resets and enables that
 instrumentation for Rodent's X socket. A later query without the bit arguments
 reports minimum/average/maximum rise intervals and high widths in 20 MHz MCU
-timer ticks, plus direction changes observed at rising STEP edges.
+timer ticks, plus direction changes observed at rising STEP edges, raw
+trajectory toggles, active serialized-stepper registry size, and deadline
+misses.
+
+On 2026-07-23, the corrected image completed three consecutive full `G28 Z`
+cycles. Each ended homed at the expected post-home position with no recovery
+hold. The three runs emitted 169,789, 176,004, and 90,998 STEP rises; raw
+toggles were exactly twice the rise count, every recorded high pulse was
+80 timer ticks (4 us), and there were zero deadline misses. The measured
+maximum refill costs were 12,598, 15,040, and 15,940 CPU cycles
+(52.5, 62.7, and 66.4 us), all below the 23,040-cycle budget.
+
+This is a one-active-trajectory-axis hardware qualification. Refill work grows
+with the number of simultaneously active I2S trajectory steppers, so a
+multi-axis Rodent configuration must repeat the cycle-budget and physical
+motion gate. A nonzero deadline-miss count is a qualification failure; it must
+not be hidden by making the FIFO lead arbitrarily deep because stop latency is
+also part of the contract.
 
 The serializer itself occupies about 1.5 us. Configure a 4 us step pulse on
 this backend so the timer dispatcher has margin between the rising snapshot

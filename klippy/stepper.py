@@ -242,13 +242,18 @@ class MCU_stepper:
         # cache may be stale even though the exact wire accumulator is not.
         offset_su = self._mcu_position_offset / self._step_dist * 65536.
         return int(round(mcu_pos_su - offset_su))
-    def _query_traj_readback(self):
-        # Read the trajectory stepper's live physical microstep counter.
-        # The paired position field is its modulo low-word phase.
+    def _query_traj_held(self):
+        # Read the trajectory stepper's authoritative held accumulator and
+        # physical microstep counter from one atomic firmware response.
         params = self._get_position_cmd.send([self._oid])
         mcu_pos = _signed32(params['mcu_pos'])
         clock = self._mcu.clock32_to_clock64(params['clock'])
+        pos_su = _unwrap_subunits(params['pos'], mcu_pos)
         self._last_traj_readback = (clock, mcu_pos)
+        return clock, pos_su, mcu_pos
+    def _query_traj_readback(self):
+        # Read the trajectory stepper's live physical microstep counter.
+        clock, _pos_su, mcu_pos = self._query_traj_held()
         return clock, mcu_pos
     def read_traj_held_subunits(self):
         # Sub-unit-exact readback of a trajectory stepper's held
@@ -260,11 +265,7 @@ class MCU_stepper:
         # debug output.
         if self._traj is None or self._mcu.is_fileoutput():
             return None
-        params = self._get_position_cmd.send([self._oid])
-        clock = self._mcu.clock32_to_clock64(params['clock'])
-        mcu_pos = _signed32(params['mcu_pos'])
-        pos_su = _unwrap_subunits(params['pos'], mcu_pos)
-        self._last_traj_readback = (clock, mcu_pos)
+        clock, pos_su, _mcu_pos = self._query_traj_held()
         return clock, pos_su
     def sync_to_held_position(self, pos_subunits):
         # Bring the host mcu-position offset into agreement with the
@@ -339,7 +340,17 @@ class MCU_stepper:
     def note_homing_end(self):
         if self._traj is not None:
             self._traj.note_rebase_needed(stopped=True)
-            self._query_mcu_position()
+            # A homing trigger (or failed full-travel search) can stop before
+            # the host's fitted endpoint.  Replace the host wire twin with
+            # the board's atomic held accumulator before HomingMove changes
+            # the kinematic coordinate frame.  Otherwise set_position()
+            # preserves the stale planned endpoint, and every failed retry
+            # shortens the next physical search distance.
+            clock, pos_su, _mcu_pos = self._query_traj_held()
+            self._traj.note_homing_held(clock, pos_su)
+            self._set_mcu_position_su(pos_su)
+            self._mcu.get_printer().send_event(
+                "stepper:sync_mcu_position", self)
             return
         ffi_main, ffi_lib = chelper.get_ffi()
         ret = ffi_lib.stepcompress_reset(self._stepqueue, 0)

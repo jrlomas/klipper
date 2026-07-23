@@ -1609,8 +1609,21 @@ traj_stepper_i2s_advance(uint32_t sample_clock)
         uint_fast8_t events = 0;
         while (!timer_is_before(sample_clock, s->time.waketime)
                && events < 16) {
+            // STEP is a sampled output on this backend.  Never consume both
+            // a STEP and its following UNSTEP while constructing one I2S
+            // word: doing so toggles i2s_shadow twice before the peripheral
+            // can serialize either edge, collapsing the physical pulse.
+            //
+            // Polls and segment-boundary work may still be drained in this
+            // sample.  Once an output edge is committed, leave every later
+            // event for the next sample so the 74AHCT595 observes at least
+            // one complete frame at the new level.
+            uint8_t output_edge = (s->wake_kind == WK_STEP
+                                   || s->wake_kind == WK_UNSTEP);
             events++;
             if (traj_stepper_run_event(s) == SF_DONE)
+                break;
+            if (output_edge)
                 break;
         }
         if (events == 16
@@ -1622,6 +1635,12 @@ traj_stepper_i2s_advance(uint32_t sample_clock)
             i2s_traj_overrun = 1;
         }
     }
+}
+
+uint8_t
+traj_stepper_i2s_registry_count(void)
+{
+    return i2s_traj_stepper_count;
 }
 #endif
 
@@ -1962,5 +1981,17 @@ traj_stepper_shutdown(void)
         trajq_halt(&s->tq, TQF_NEED_REBASE);
         irq_enable();
     }
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    // config_reset() discards every OID allocation, but this registry is
+    // static storage outside that allocator.  Clear it at shutdown so the
+    // following Klipper RESTART does not append the newly allocated stepper
+    // behind stale entries.  Advancing one logical stepper twice in the same
+    // serialized sample consumes STEP and UNSTEP together and collapses the
+    // physical pulse at the 74AHCT595 latch.
+    irq_disable();
+    i2s_traj_stepper_count = 0;
+    i2s_traj_overrun = 0;
+    irq_enable();
+#endif
 }
 DECL_SHUTDOWN(traj_stepper_shutdown);

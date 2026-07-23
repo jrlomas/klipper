@@ -48,8 +48,20 @@
 #define I2S_FRAME_US 2
 #define I2S_FRAME_TICKS (CONFIG_CLOCK_FREQ / (1000000 / I2S_FRAME_US))
 #define I2S_FIFO_LENGTH (I2S_TX_DATA_NUM + 1)
-#define I2S_FIFO_THRESHOLD (I2S_FIFO_LENGTH / 4)
+// FluidNC's 16-sample threshold assumes its refill callback only performs a
+// precomputed Bresenham tick.  HELIX may solve a quintic crossing while
+// preparing a refill; hardware measurements show that path can take more
+// than the 32us represented by 16 samples.  Ask for service with 48 samples
+// still resident.  Reloading eight leaves 56/64 entries occupied, giving the
+// solver 96us of underrun protection while retaining a bounded 96-112us
+// output lead for interrupt-driven stops.
+#define I2S_FIFO_THRESHOLD (I2S_FIFO_LENGTH * 3 / 4)
 #define I2S_FIFO_RELOAD 8
+#if I2S_FIFO_THRESHOLD + I2S_FIFO_RELOAD >= I2S_FIFO_LENGTH
+#error "I2S refill would overflow the hardware FIFO"
+#endif
+#define I2S_REFILL_BUDGET_CYCLES \
+    (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * I2S_FRAME_US * I2S_FIFO_THRESHOLD)
 
 static volatile uint32_t i2s_shadow = RODENT_I2S_SAFE_STATE;
 static uint32_t i2s_fill_clock;
@@ -57,6 +69,7 @@ static uint32_t i2s_samples;
 static uint32_t i2s_refills;
 static uint64_t i2s_total_cycles;
 static uint32_t i2s_max_cycles;
+static uint32_t i2s_deadline_misses;
 // Optional commissioning mirror.  This modifies the serialized FIFO word,
 // so a scope on an accessible LED pad observes the real post-latch waveform.
 // It is disabled during normal operation.
@@ -68,6 +81,7 @@ static uint8_t mirror_invert;
 // whose STEP output belongs to this serialized bus up to the latch time of the
 // sample that is about to be queued.
 void traj_stepper_i2s_advance(uint32_t sample_clock);
+uint8_t traj_stepper_i2s_registry_count(void);
 
 // Optional output-timeline monitor.  Unlike the old per-edge monitor, this
 // observes the exact sample clock committed to I2S, not ISR entry/exit time.
@@ -88,6 +102,7 @@ static uint32_t monitor_high_count;
 static uint32_t monitor_high_min;
 static uint32_t monitor_high_max;
 static uint64_t monitor_high_total;
+static uint32_t monitor_step_toggles;
 
 static inline uint32_t IRAM_ATTR
 read_ccount(void)
@@ -116,6 +131,7 @@ i2s_monitor_reset(void)
     monitor_high_min = UINT32_MAX;
     monitor_high_max = 0;
     monitor_high_total = 0;
+    monitor_step_toggles = 0;
 }
 
 static inline void IRAM_ATTR
@@ -190,6 +206,8 @@ i2s_fifo_isr(void *arg)
     i2s_total_cycles += elapsed;
     if (elapsed > i2s_max_cycles)
         i2s_max_cycles = elapsed;
+    if (elapsed > I2S_REFILL_BUDGET_CYCLES)
+        i2s_deadline_misses++;
 }
 
 static void
@@ -252,7 +270,7 @@ i2s_shift_init(void)
         shutdown("Unable to allocate I2S output interrupt");
 
     // Seed a full FIFO with the safe idle word.  Once running, the refill
-    // interrupt remains only 16-24 samples (32-48us) ahead of the pins.
+    // interrupt remains 48-56 samples (96-112us) ahead of the pins.
     uint_fast8_t count = I2S_FIFO_LENGTH;
     while (count--) {
         I2S0.fifo_wr = i2s_shadow;
@@ -286,6 +304,8 @@ i2s_shift_toggle(uint8_t bit)
 {
     if (bit >= ESP32_I2S_OUT_COUNT)
         shutdown("Invalid I2S output bit");
+    if (bit == monitor_step_bit)
+        monitor_step_toggles++;
     i2s_shadow ^= 1u << bit;
 }
 
@@ -303,6 +323,7 @@ command_i2s_shift_get_status(uint32_t *args)
     uint32_t average = refills ? i2s_total_cycles / refills : 0;
     uint32_t state = i2s_shadow;
     uint32_t max_cycles = i2s_max_cycles;
+    uint32_t deadline_misses = i2s_deadline_misses;
     uint32_t samples = i2s_samples;
     uint32_t step_bit = monitor_step_bit;
     uint32_t dir_bit = monitor_dir_bit;
@@ -319,16 +340,22 @@ command_i2s_shift_get_status(uint32_t *args)
         ? monitor_high_total / high_count : 0;
     uint32_t high_min = high_count ? monitor_high_min : 0;
     uint32_t high_max = high_count ? monitor_high_max : 0;
+    uint32_t step_toggles = monitor_step_toggles;
+    uint32_t registry_count = traj_stepper_i2s_registry_count();
     irq_restore(flag);
     sendf("i2s_shift_status state=%u writes=%u bitrate=%u"
           " avg_cycles=%u max_cycles=%u monitor_step=%u monitor_dir=%u"
           " step_rises=%u interval_count=%u interval_min=%u"
           " interval_avg=%u interval_max=%u high_count=%u high_min=%u"
-          " high_avg=%u high_max=%u dir_changes=%u dir_value=%u",
+          " high_avg=%u high_max=%u dir_changes=%u dir_value=%u"
+          " step_toggles=%u registry_count=%u fifo_threshold=%u"
+          " fifo_reload=%u refill_budget_cycles=%u deadline_misses=%u",
           state, samples, 8000000, average, max_cycles,
           step_bit, dir_bit, rises, interval_count, interval_min,
           interval_average, interval_max, high_count, high_min, high_average,
-          high_max, dir_changes, dir_value);
+          high_max, dir_changes, dir_value, step_toggles, registry_count,
+          I2S_FIFO_THRESHOLD, I2S_FIFO_RELOAD, I2S_REFILL_BUDGET_CYCLES,
+          deadline_misses);
 }
 DECL_COMMAND(command_i2s_shift_get_status, "i2s_shift_get_status");
 

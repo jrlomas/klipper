@@ -518,6 +518,16 @@ class TrajectoryStepper:
             self.rebase_min_clock = 0
             self.rebase_min_execution_clock = 0
 
+    def note_homing_held(self, clock, pos_su):
+        # trsync has stopped the executor, so its accumulator is now the
+        # authoritative physical position.  HomingMove will immediately call
+        # toolhead.set_position(); MCU_stepper.set_position() deliberately
+        # preserves wire_acc across that coordinate-frame change.  Make sure
+        # it preserves the held position, not the unexecuted endpoint of the
+        # host's homing plan.
+        self.wire_acc = int(pos_su) << 32
+        self.execution_clock = int(clock)
+
     def commanded_pos_su(self):
         # Current commanded joint position in sub-units, from the host
         # wire twin.  Trajectory steppers intentionally bypass itersolve's

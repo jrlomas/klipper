@@ -8,8 +8,13 @@ component image has also configured TMC2160s and driven/homed a real V0 Z axis
 through its I2S-expanded outputs. Its first print exposed an ESP-IDF
 disconnect/socket-lifecycle bug; both architectures now recreate their UDP
 socket only after a fresh IP event and expose component-mode link/reset/drop
-evidence. The complete post-fix print soak and listed modem/peripheral/timing
-follow-ups remain unvalidated.
+evidence. A subsequent FluidNC execution-path audit and physical measurement
+found that the live Helix quintic solver could exceed the copied 32 us I2S
+FIFO service window. The corrected 96 us window completed three consecutive
+full Z homes with exact 4 us pulses, a 66.4 us measured worst refill, and zero
+deadline misses. This qualifies one active serialized trajectory axis; the
+complete post-fix print soak, simultaneous-axis saturation, and listed
+modem/peripheral/timing follow-ups remain unvalidated.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has

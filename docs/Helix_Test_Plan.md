@@ -1065,6 +1065,19 @@ Phases 3/7/8 over each real transport.
     the authenticated UDP session, configured four TMC2160 drivers over SPI,
     drove the real I2S-expanded STEP/DIR/ENABLE chain, homed a V0 Z axis, and
     entered a physical print.
+  - [x] **Rodent I2S execution-budget regression (2026-07-23):** comparison
+    against FluidNC found that Helix had retained its 16-sample/32 us FIFO
+    threshold while doing live quintic crossing work instead of FluidNC's
+    precomputed Bresenham tick. The real Helix refill reached 66.4 us. Firmware
+    now requests service with 48 samples/96 us remaining, exposes cycle budget
+    and deadline-miss counters, preserves each STEP and UNSTEP in distinct
+    serialized samples, and clears the static stepper registry across config
+    restart. Three consecutive complete `G28 Z` cycles produced exact 4 us
+    pulses, raw-toggle counts exactly twice the physical-rise counts, maximum
+    refill costs of 52.5/62.7/66.4 us, and zero deadline misses or recovery
+    holds. This qualifies one active I2S trajectory axis; simultaneous-axis
+    saturation remains part of the print soak rather than being inferred from
+    this result.
   - [ ] **Post-recovery print soak:** that first print stopped when Rodent
     ceased answering. The wired host and nearby access point remained up.
     The capture did not distinguish a station disconnect from an MCU reset,

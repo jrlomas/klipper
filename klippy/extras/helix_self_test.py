@@ -216,7 +216,9 @@ class HelixSelfTest:
             ' avg_cycles=%u max_cycles=%u monitor_step=%u monitor_dir=%u'
             ' step_rises=%u interval_count=%u interval_min=%u'
             ' interval_avg=%u interval_max=%u high_count=%u high_min=%u'
-            ' high_avg=%u high_max=%u dir_changes=%u dir_value=%u')
+            ' high_avg=%u high_max=%u dir_changes=%u dir_value=%u'
+            ' step_toggles=%u registry_count=%u fifo_threshold=%u'
+            ' fifo_reload=%u refill_budget_cycles=%u deadline_misses=%u')
         status = query.send([])
         # The cycle counter runs at the ESP32 CPU clock, while the Klipper
         # scheduling clock advertised as CLOCK_FREQ is the 20MHz timer.
@@ -226,14 +228,18 @@ class HelixSelfTest:
             " monitor=I2SO%u/dir:I2SO%u rises=%u"
             " interval_ticks(min/avg/max)=%u/%u/%u"
             " high_ticks(min/avg/max)=%u/%u/%u"
-            " dir_changes=%u dir_value=%u"
+            " dir_changes=%u dir_value=%u raw_toggles=%u registry=%u"
+            " fifo=%u+%u budget_cycles=%u deadline_misses=%u"
             % (only, status['state'], status['writes'], status['bitrate'],
                status['avg_cycles'], status['max_cycles'],
                status['monitor_step'], status['monitor_dir'],
                status['step_rises'], status['interval_min'],
                status['interval_avg'], status['interval_max'],
                status['high_min'], status['high_avg'], status['high_max'],
-               status['dir_changes'], status['dir_value']))
+               status['dir_changes'], status['dir_value'],
+               status['step_toggles'], status['registry_count'],
+               status['fifo_threshold'], status['fifo_reload'],
+               status['refill_budget_cycles'], status['deadline_misses']))
 
     cmd_HELIX_OUTPUT_MIRROR_help = (
         "Mirror one serialized output onto another for physical probing")
