@@ -45,6 +45,9 @@ class HelixSelfTest:
         gcode.register_command(
             'HELIX_OUTPUT_MIRROR', self.cmd_HELIX_OUTPUT_MIRROR,
             desc=self.cmd_HELIX_OUTPUT_MIRROR_help)
+        gcode.register_command(
+            'HELIX_WIFI_STATUS', self.cmd_HELIX_WIFI_STATUS,
+            desc=self.cmd_HELIX_WIFI_STATUS_help)
         if self.on_connect:
             self.printer.register_event_handler('klippy:connect',
                                                  self._connect_run)
@@ -256,6 +259,58 @@ class HelixSelfTest:
             "HELIX output mirror: mcu=%s source=I2SO%d output=I2SO%d"
             " invert=%d enabled=%d"
             % (only, source_bit, output_bit, invert, enable))
+
+    cmd_HELIX_WIFI_STATUS_help = (
+        "Report an ESP32 board's WiFi and UDP socket diagnostics")
+    _ESP_RESET_REASONS = {
+        0: 'unknown', 1: 'power_on', 2: 'external', 3: 'software',
+        4: 'panic', 5: 'interrupt_watchdog', 6: 'task_watchdog',
+        7: 'watchdog', 8: 'deep_sleep', 9: 'brownout', 10: 'sdio',
+        11: 'usb', 12: 'jtag', 13: 'efuse', 14: 'power_glitch',
+        15: 'cpu_lockup',
+    }
+    def cmd_HELIX_WIFI_STATUS(self, gcmd):
+        only = gcmd.get('MCU')
+        matches = [mcu for _, mcu in self.printer.lookup_objects(module='mcu')
+                   if mcu.get_name() == only]
+        if not matches:
+            raise gcmd.error("Unknown MCU '%s'" % (only,))
+        mcu = matches[0]
+        if mcu.try_lookup_command('wifi_get_status') is None:
+            raise gcmd.error(
+                "MCU '%s' lacks WiFi diagnostics" % (only,))
+        wifi = mcu.lookup_query_command(
+            'wifi_get_status',
+            'wifi_status connected=%u got_ip=%u connect_attempts=%u'
+            ' disconnects=%u got_ips=%u last_reason=%u'
+            ' tx_power_qdbm=%i rssi=%i reset_reason=%u').send([])
+        port = None
+        if mcu.try_lookup_command('udp_port_get_status') is not None:
+            port = mcu.lookup_query_command(
+                'udp_port_get_status',
+                'udp_port_status network_up=%u socket_up=%u'
+                ' socket_opens=%u socket_failures=%u rx_packets=%u'
+                ' ring_drops=%u recv_errors=%u tx_packets=%u'
+                ' send_errors=%u').send([])
+        message = (
+            "HELIX WiFi status: mcu=%s connected=%u got_ip=%u"
+            " attempts=%u disconnects=%u got_ips=%u last_reason=%u"
+            " tx_power=%.2fdBm rssi=%ddBm reset_reason=%u(%s)"
+            % (only, wifi['connected'], wifi['got_ip'],
+               wifi['connect_attempts'], wifi['disconnects'],
+               wifi['got_ips'], wifi['last_reason'],
+               wifi['tx_power_qdbm'] / 4., wifi['rssi'],
+               wifi['reset_reason'], self._ESP_RESET_REASONS.get(
+                   wifi['reset_reason'], 'unrecognized')))
+        if port is not None:
+            message += (
+                " udp(socket=%u opens=%u open_failures=%u rx=%u"
+                " ring_drops=%u recv_errors=%u tx=%u send_errors=%u)"
+                % (port['socket_up'], port['socket_opens'],
+                   port['socket_failures'], port['rx_packets'],
+                   port['ring_drops'], port['recv_errors'],
+                   port['tx_packets'], port['send_errors']))
+        gcmd.respond_info(message)
 
     def get_status(self, eventtime):
         out = {}

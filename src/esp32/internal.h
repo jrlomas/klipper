@@ -68,9 +68,11 @@ void esp32_wifi_start(void);
 // udp_port.c (component arch)
 int esp32_udp_port_setup(uint16_t port, const uint8_t *psk
                          , uint32_t psk_len);
+void esp32_udp_port_network_changed(uint8_t up);
 
 // modem.c (modem arch: core-0 datagram shuttle)
 int esp32_modem_start(uint16_t port);
+void esp32_modem_network_changed(uint8_t up);
 
 // shmem_console.c (modem arch: core-1 console backing)
 void shmem_console_init(void);

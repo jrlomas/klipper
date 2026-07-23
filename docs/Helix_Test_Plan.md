@@ -1061,6 +1061,22 @@ Phases 3/7/8 over each real transport.
   XOR-erasure FEC recovers dropped frames on a lossy link.
   Pass: a print-length motion stream runs with no motion defect from wire
   jitter; `bch`/erasure counters show recovery, not failure.
+  - [x] **Rodent motion bring-up (2026-07-23):** a component image established
+    the authenticated UDP session, configured four TMC2160 drivers over SPI,
+    drove the real I2S-expanded STEP/DIR/ENABLE chain, homed a V0 Z axis, and
+    entered a physical print.
+  - [ ] **Post-recovery print soak:** that first print stopped when Rodent
+    ceased answering. The wired host and nearby access point remained up.
+    The capture did not distinguish a station disconnect from an MCU reset,
+    but audit found a definite recovery defect: after a disconnect the
+    firmware re-associated WiFi without recreating the UDP socket ESP-IDF had
+    invalidated. Both component and modem socket owners now close on
+    disconnect and reopen only after a fresh IP event; Rodent also disables
+    modem sleep, caps lab transmit power at 8.5 dBm, expands the receive ring,
+    and reports reset/disconnect/drop/socket counters through
+    `HELIX_WIFI_STATUS`. Cross-builds and the source-contract regression pass;
+    repeat a complete physical print and record those counters before checking
+    the parent gate.
 - [ ] **9.4 — Ethernet (RMII).** Same as 9.3 over Ethernet.
   Pass: clean; lower jitter than WiFi (record both).
   - [x] **Pre-silicon gateway gate (2026-07-21):** the identical typed gateway
@@ -1165,6 +1181,10 @@ peripheral timing, and cache-stall qualification remain in 11.6/11.7.
   Pass: ESP32 behaves as a normal networked MCU (regression safety net). A
   Lolin32 component image loaded all 112 commands, verified board identity,
   emitted continuous stats, and recovered a deliberately lost FEC packet.
+  The Rodent V1.1 component image subsequently configured real TMC2160s,
+  drove the I2S output chain, and moved/homed the V0 Z axis. Its first physical
+  print exposed a recoverable WiFi socket-lifecycle regression; that result is
+  tracked under 9.3 and does not close the print-length motion soak.
 - [x] **11.3 — APP-CPU bare bringup.** Flash the `modem` build; core 0 owns
   IDF/WiFi, core 1 runs bare `sched_main()`.
   Expect: core 1 comes up, runs the scheduler, and **never calls an

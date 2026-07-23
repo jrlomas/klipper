@@ -13,11 +13,13 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include <errno.h> // errno
 #include <string.h> // memcpy
 #include "freertos/FreeRTOS.h" // xTaskCreatePinnedToCore
 #include "freertos/task.h" // vTaskDelay
 #include "esp_log.h" // ESP_LOGE
 #include "lwip/sockets.h" // socket
+#include "command.h" // DECL_COMMAND_FLAGS
 #include "generic/udp_console.h" // udp_console_init
 #include "generic/udp_datagram.h" // UDPDG_DATAGRAM_MAX
 #include "internal.h" // esp32_udp_port_setup
@@ -25,11 +27,16 @@
 static const char *TAG = "klipper_udp";
 
 static int udp_sock = -1;
+static uint16_t udp_port;
+static volatile uint8_t network_up;
+static uint32_t socket_opens, socket_failures;
+static uint32_t rx_packets, rx_ring_drops, recv_errors;
+static uint32_t tx_packets, send_errors;
 
 // Receive ring: written by the rx task (core 0), drained by the
 // klipper task (core 1).  Slot data is fully written before the
 // producer index advances.
-#define RX_SLOTS 6
+#define RX_SLOTS 16
 static struct rx_slot {
     uint16_t len;
     struct sockaddr_in src;
@@ -42,24 +49,82 @@ static uint32_t rx_head, rx_tail;
 static struct sockaddr_in rx_candidate, tx_peer;
 static volatile uint8_t have_peer;
 
-// Blocking receive loop (core 0)
+static void
+udp_close_socket(void)
+{
+    int sock = __atomic_exchange_n(&udp_sock, -1, __ATOMIC_ACQ_REL);
+    if (sock >= 0)
+        close(sock);
+}
+
+static int
+udp_open_socket(void)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        __atomic_add_fetch(&socket_failures, 1, __ATOMIC_RELAXED);
+        return -1;
+    }
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(udp_port);
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        __atomic_add_fetch(&socket_failures, 1, __ATOMIC_RELAXED);
+        return -1;
+    }
+    // Periodically return to the owner task so a WiFi disconnect can close
+    // and recreate the socket.  ESP-IDF explicitly invalidates application
+    // sockets on WIFI_EVENT_STA_DISCONNECTED.
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    __atomic_store_n(&udp_sock, sock, __ATOMIC_RELEASE);
+    uint32_t opens =
+        __atomic_add_fetch(&socket_opens, 1, __ATOMIC_RELAXED);
+    ESP_LOGI(TAG, "datagram socket open on udp port %u (open #%u)",
+             (unsigned)udp_port, (unsigned)opens);
+    return 0;
+}
+
+// Receive loop (core 0). The task owns socket create/close, so WiFi event
+// callbacks only publish link state and never race a blocking recvfrom().
 static void
 udp_rx_task(void *arg)
 {
     for (;;) {
+        if (!__atomic_load_n(&network_up, __ATOMIC_ACQUIRE)) {
+            udp_close_socket();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
+        if (sock < 0) {
+            if (udp_open_socket() < 0)
+                vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         uint32_t head = rx_head; // producer-owned
         struct rx_slot *s = &rx_ring[head];
         socklen_t sl = sizeof(s->src);
-        int ret = recvfrom(udp_sock, s->data, sizeof(s->data), 0
+        int ret = recvfrom(sock, s->data, sizeof(s->data), 0
                            , (struct sockaddr *)&s->src, &sl);
         if (ret <= 0) {
-            vTaskDelay(1);
+            if (ret < 0 && errno != EAGAIN && errno != EWOULDBLOCK
+                && errno != ETIMEDOUT) {
+                __atomic_add_fetch(&recv_errors, 1, __ATOMIC_RELAXED);
+                udp_close_socket();
+            }
             continue;
         }
+        __atomic_add_fetch(&rx_packets, 1, __ATOMIC_RELAXED);
         uint32_t next = (head + 1) % RX_SLOTS;
-        if (next == __atomic_load_n(&rx_tail, __ATOMIC_ACQUIRE))
+        if (next == __atomic_load_n(&rx_tail, __ATOMIC_ACQUIRE)) {
             // Ring full - drop; the frame layer's ARQ recovers
+            __atomic_add_fetch(&rx_ring_drops, 1, __ATOMIC_RELAXED);
             continue;
+        }
         s->len = ret;
         // Publish the complete slot to core 1. The acquire in recv pairs
         // with this release so data and source precede the index update.
@@ -101,16 +166,26 @@ udp_port_send(void *ctx, const uint8_t *data, uint32_t len)
     (void)ctx;
     if (!have_peer)
         return;
-    sendto(udp_sock, data, len, 0, (const struct sockaddr *)&tx_peer
-           , sizeof(tx_peer));
+    int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
+    if (sock < 0
+        || sendto(sock, data, len, 0, (const struct sockaddr *)&tx_peer,
+                  sizeof(tx_peer)) < 0)
+        __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
+    else
+        __atomic_add_fetch(&tx_packets, 1, __ATOMIC_RELAXED);
 }
 
 static void
 udp_port_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
     (void)ctx;
-    sendto(udp_sock, data, len, 0,
-           (const struct sockaddr *)&rx_candidate, sizeof(rx_candidate));
+    int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
+    if (sock < 0
+        || sendto(sock, data, len, 0, (const struct sockaddr *)&rx_candidate,
+                  sizeof(rx_candidate)) < 0)
+        __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
+    else
+        __atomic_add_fetch(&tx_packets, 1, __ATOMIC_RELAXED);
 }
 
 static const struct udp_console_ops esp32_udp_ops = {
@@ -123,27 +198,43 @@ static const struct udp_console_ops esp32_udp_ops = {
 int
 esp32_udp_port_setup(uint16_t port, const uint8_t *psk, uint32_t psk_len)
 {
-    udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (udp_sock < 0) {
-        ESP_LOGE(TAG, "socket() failed");
-        return -1;
-    }
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(port);
-    if (bind(udp_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        ESP_LOGE(TAG, "bind(%d) failed", port);
-        return -1;
-    }
+    udp_port = port;
 #if CONFIG_KLIPPER_FEC_PAIR
     udp_console_set_fec_k(2);
 #endif
     udp_console_init(&esp32_udp_ops, NULL, psk, psk_len);
+    // Keep this immediately below lwIP's priority (18). Espressif warns
+    // that a network-using task must not outrank lwIP, while the previous
+    // priority 10 allowed avoidable socket queue buildup under motion load.
     xTaskCreatePinnedToCore(udp_rx_task, "klipper_udp_rx", 4096, NULL
-                            , 10, NULL, 0);
+                            , 17, NULL, 0);
     ESP_LOGI(TAG, "datagram console on udp port %d (auth=%s)", port
              , psk_len ? "on" : "TRUSTED NETWORK");
     return 0;
 }
+
+void
+esp32_udp_port_network_changed(uint8_t up)
+{
+    __atomic_store_n(&network_up, !!up, __ATOMIC_RELEASE);
+}
+
+void
+command_udp_port_get_status(uint32_t *args)
+{
+    (void)args;
+    sendf("udp_port_status network_up=%u socket_up=%u socket_opens=%u"
+          " socket_failures=%u rx_packets=%u ring_drops=%u"
+          " recv_errors=%u tx_packets=%u send_errors=%u",
+          (uint32_t)__atomic_load_n(&network_up, __ATOMIC_ACQUIRE),
+          (uint32_t)(__atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE) >= 0),
+          __atomic_load_n(&socket_opens, __ATOMIC_RELAXED),
+          __atomic_load_n(&socket_failures, __ATOMIC_RELAXED),
+          __atomic_load_n(&rx_packets, __ATOMIC_RELAXED),
+          __atomic_load_n(&rx_ring_drops, __ATOMIC_RELAXED),
+          __atomic_load_n(&recv_errors, __ATOMIC_RELAXED),
+          __atomic_load_n(&tx_packets, __ATOMIC_RELAXED),
+          __atomic_load_n(&send_errors, __ATOMIC_RELAXED));
+}
+DECL_COMMAND_FLAGS(command_udp_port_get_status, HF_IN_SHUTDOWN,
+                   "udp_port_get_status");

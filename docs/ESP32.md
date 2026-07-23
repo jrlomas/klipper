@@ -16,9 +16,12 @@ firmware" -> Architecture; FD-0001
 
 * **component** (stage 1, default): Helix compiled as an IDF
   component, running as a FreeRTOS task pinned to core 1; IDF is
-  present on both cores.  Its authenticated session console has run on
-  a classic dual-core Lolin32. The continuous ADC stream has also passed a
-  live WiFi soak; motion and the remaining peripherals are pending.
+  present on both cores. Its authenticated session console and continuous
+  ADC stream have run on a classic dual-core Lolin32. A Rodent V1.1 has
+  additionally driven its I2S-expanded STEP/DIR/ENABLE outputs and TMC2160
+  SPI interface on a real V0 Z axis. A print reached ordinary motion before
+  a WiFi command-link loss exposed the socket-lifecycle defect described
+  below; a complete post-fix print soak remains pending.
 * **modem** (stage 3, "IDF as modem"): core 1 runs **bare-metal
   Helix** — no RTOS, no IDF calls, register-level peripherals,
   IRAM-resident hot path — and core 0 is reduced to a network
@@ -101,6 +104,61 @@ escape hatch for production step generation, and the field-oriented
 control (FOC) backend
 (own timer, tolerant of µs-level ISR jitter) is a better first
 citizen of this chip.  This target is FOC-first.
+
+## WiFi command-link policy and diagnostics
+
+The command link is configured for latency and recoverability rather than
+maximum radio range:
+
+* Modem sleep is disabled with `esp_wifi_set_ps(WIFI_PS_NONE)` (the ESP-IDF
+  equivalent of Arduino's `WiFi.setSleep(false)`).
+* The Rodent profile caps transmit power at 8.5 dBm. The Kconfig value is in
+  quarter-dBm units, so `CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34`. This is
+  appropriate for the lab board next to its access point and reduces current
+  transients; other installations must qualify their own link budget.
+* The UDP receive task runs at FreeRTOS priority 17, immediately below lwIP's
+  priority 18, and uses a 15-record producer/consumer queue.
+* `WIFI_EVENT_STA_DISCONNECTED` is a socket boundary, not merely a radio
+  notification. The firmware marks the network down and closes the UDP
+  socket. Only `IP_EVENT_STA_GOT_IP` permits the owner task to create and bind
+  a fresh socket. Both the component and IDF-as-modem architectures implement
+  this lifecycle.
+
+That final rule closes a concrete recovery defect found while investigating
+the 2026-07-23 Rodent print attempt. The ESP32 replied normally and then
+stopped answering while the wired host and access point remained available.
+The capture cannot prove whether the station disconnected or the board reset.
+It does prove that the old firmware would call `esp_wifi_connect()` after a
+disconnect while retaining the socket ESP-IDF had invalidated, so a successful
+re-association could not restore Helix traffic. The revised firmware also
+counts WiFi disconnect reasons, socket opens, receive-ring drops, and socket
+errors so a future radio event, local queue overflow, and MCU reset are
+distinguishable rather than all appearing as `Lost communication`.
+
+With `[helix_self_test]` loaded, query a component-architecture ESP32 with:
+
+```
+HELIX_WIFI_STATUS MCU=rodent
+```
+
+The response includes association/IP state, RSSI, configured transmit power,
+disconnect count and last reason, ESP reset reason, socket reopen count,
+datagrams received/transmitted, receive-ring drops, and socket errors. After a
+future communication pause, re-establish the host session without first
+issuing an MCU reset and capture this status; otherwise a deliberate software
+reset can overwrite the reset cause that would distinguish a brownout.
+
+For a secondary network MCU that may recover, configure:
+
+```
+[mcu rodent]
+on_comm_timeout: pause
+```
+
+Without this option the historical Klipper default is a printer shutdown.
+The pause policy stops virtual-SD ingestion and enters Helix's coordinated
+hold/reconciliation path; it does not promise that a disconnected actuator
+can continue moving without communication.
 
 ## The modem architecture (IDF as modem)
 

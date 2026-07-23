@@ -2,9 +2,14 @@
 
 Status: Partial in HELIX 0.9; ESP-IDF v5.3.2 Xtensa builds pass for the
 component, component-RMT, and modem variants with watchdog/reset contracts.
-The component and bare-core modem UDP/session consoles have now run on a
-Lolin32 over a real LAN, including a fresh authenticated re-handshake; the
-listed motion, peripheral, and timing follow-ups remain unvalidated.
+The component and bare-core modem UDP/session consoles have run on a Lolin32
+over a real LAN, including a fresh authenticated re-handshake. A Rodent V1.1
+component image has also configured TMC2160s and driven/homed a real V0 Z axis
+through its I2S-expanded outputs. Its first print exposed an ESP-IDF
+disconnect/socket-lifecycle bug; both architectures now recreate their UDP
+socket only after a fresh IP event and expose component-mode link/reset/drop
+evidence. The complete post-fix print soak and listed modem/peripheral/timing
+follow-ups remain unvalidated.
 
 The ESP32 is this fork's network-native target
 ([07-Link_Transport.md](07-Link_Transport.md)). Mainline Klipper has

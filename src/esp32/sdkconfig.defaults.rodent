@@ -19,6 +19,9 @@ CONFIG_KLIPPER_I2S_WS_PIN=17
 CONFIG_KLIPPER_DATAGRAM_SESSION=y
 CONFIG_KLIPPER_DATAGRAM_SESSION_ID="rodent-v1.1-lab"
 CONFIG_KLIPPER_UDP_PORT=41414
+# Limit RF transmit peaks while the Rodent power path is qualified.  ESP-IDF
+# uses quarter-dBm units: 34 = 8.5 dBm.
+CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34
 
 # The first transport qualification should measure the native link before
 # choosing the 50%-overhead pair-FEC profile.

@@ -23,6 +23,7 @@
 //
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
+#include <errno.h> // errno
 #include <string.h> // memcpy
 #include "freertos/FreeRTOS.h" // xTaskCreatePinnedToCore
 #include "freertos/task.h"
@@ -36,6 +37,42 @@
 static const char *TAG = "klipper_modem";
 
 static int modem_sock = -1;
+static uint16_t modem_port;
+static volatile uint8_t modem_network_up;
+
+static void
+modem_close_socket(void)
+{
+    if (modem_sock >= 0) {
+        close(modem_sock);
+        modem_sock = -1;
+    }
+}
+
+static int
+modem_open_socket(void)
+{
+    modem_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (modem_sock < 0) {
+        ESP_LOGE(TAG, "socket() failed");
+        return -1;
+    }
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(modem_port);
+    if (bind(modem_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG, "bind(%u) failed", (unsigned)modem_port);
+        modem_close_socket();
+        return -1;
+    }
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 1000 };
+    setsockopt(modem_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    ESP_LOGI(TAG, "modem socket open on udp port %u",
+             (unsigned)modem_port);
+    return 0;
+}
 
 // The opaque address blob in each rx ring record is a sockaddr_in
 _Static_assert(sizeof(struct sockaddr_in) <= SHMEM_ADDR_MAX
@@ -67,6 +104,16 @@ modem_task(void *arg)
 {
     uint8_t buf[SHMEM_ADDR_MAX + UDPDG_DATAGRAM_MAX];
     for (;;) {
+        if (!__atomic_load_n(&modem_network_up, __ATOMIC_ACQUIRE)) {
+            modem_close_socket();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (modem_sock < 0) {
+            if (modem_open_socket() < 0)
+                vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         // Air -> ring (1ms poll granularity via SO_RCVTIMEO)
         struct sockaddr_in src;
         socklen_t sl = sizeof(src);
@@ -78,6 +125,10 @@ modem_task(void *arg)
             memcpy(addr, &src, sizeof(src));
             // Ring full -> drop; the frame layer's ARQ recovers
             shmem_ring_push(&esp32_shmem.rx, addr, sizeof(addr), buf, ret);
+        } else if (ret < 0 && errno != EAGAIN && errno != EWOULDBLOCK
+                   && errno != ETIMEDOUT) {
+            modem_close_socket();
+            continue;
         }
 
         // Ring -> air. Core 1 attaches the authenticated destination to
@@ -104,25 +155,15 @@ modem_task(void *arg)
 int
 esp32_modem_start(uint16_t port)
 {
-    modem_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (modem_sock < 0) {
-        ESP_LOGE(TAG, "socket() failed");
-        return -1;
-    }
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(port);
-    if (bind(modem_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        ESP_LOGE(TAG, "bind(%d) failed", port);
-        return -1;
-    }
-    // Bound the rx wait so the tx ring drains at >= 1kHz
-    struct timeval tv = { .tv_sec = 0, .tv_usec = 1000 };
-    setsockopt(modem_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    modem_port = port;
     xTaskCreatePinnedToCore(modem_task, "klipper_modem", 4096, NULL
-                            , 10, NULL, 0);
+                            , 17, NULL, 0);
     ESP_LOGI(TAG, "modem shuttling datagrams on udp port %d", port);
     return 0;
+}
+
+void
+esp32_modem_network_changed(uint8_t up)
+{
+    __atomic_store_n(&modem_network_up, !!up, __ATOMIC_RELEASE);
 }

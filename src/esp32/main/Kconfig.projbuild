@@ -103,6 +103,17 @@ config KLIPPER_WIFI_PASSWORD
     help
         WPA2 password (leave empty for an open network).
 
+config KLIPPER_WIFI_MAX_TX_POWER_QDBM
+    int "Maximum WiFi transmit power (quarter-dBm)"
+    range 8 84
+    default 80
+    help
+        Maximum station transmit power passed to
+        esp_wifi_set_max_tx_power(), in 0.25 dBm units.  For example, 34
+        selects 8.5 dBm and 80 selects 20 dBm.  Reducing this can avoid
+        supply-rail collapse on boards whose 3.3V regulator or bulk
+        capacitance cannot sustain the ESP32's RF transmit current peaks.
+
 config KLIPPER_UDP_PORT
     int "UDP console port"
     default 41414
