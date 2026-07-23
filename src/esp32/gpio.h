@@ -11,6 +11,7 @@ struct gpio_out {
     volatile uint32_t *w1ts, *w1tc, *out;
     uint32_t bit;
     uint8_t pin;
+    uint8_t is_i2s;
 };
 struct gpio_out gpio_out_setup(uint32_t pin, uint8_t val);
 void gpio_out_reset(struct gpio_out g, uint8_t val);

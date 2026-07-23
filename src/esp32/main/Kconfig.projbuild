@@ -56,6 +56,41 @@ config KLIPPER_RMT_STEP
         section and bring-up checklist in docs/ESP32.md.  Leave this
         off to use the classic timer-IRQ stepper backend.
 
+config KLIPPER_I2S_SHIFT
+    bool "I2S-labelled shift-register outputs (Rodent V1.x)"
+    depends on KLIPPER_ARCH_COMPONENT
+    default n
+    help
+        Expose Rodent's 16-bit I2S-labelled output chain as Klipper pins
+        I2SO0 through I2SO15.  BIGTREETECH Rodent V1.x routes the four
+        TMC2160 STEP/DIR/ENABLE groups through this chain instead of native
+        ESP32 GPIO.  The TMC register interface remains ordinary SPI3.
+
+        I2S0 continuously emits complete output-state samples at a fixed 2us
+        cadence.  A high-priority FIFO refill interrupt advances Helix
+        trajectories against the future sample clock, keeping STEP edges
+        independent of WiFi/FreeRTOS interrupt latency.  As on FluidNC,
+        enabling this backend reserves I2S0 and disables continuous ADC DMA.
+
+if KLIPPER_I2S_SHIFT
+
+config KLIPPER_I2S_BCK_PIN
+    int "I2S bit-clock GPIO"
+    range 0 33
+    default 22
+
+config KLIPPER_I2S_DATA_PIN
+    int "I2S data GPIO"
+    range 0 33
+    default 21
+
+config KLIPPER_I2S_WS_PIN
+    int "I2S word-select/latch GPIO"
+    range 0 33
+    default 17
+
+endif
+
 config KLIPPER_WIFI_SSID
     string "WiFi SSID"
     default ""

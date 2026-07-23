@@ -39,6 +39,12 @@ class HelixSelfTest:
         gcode.register_command(
             'HELIX_CAN_RX_STRESS', self.cmd_HELIX_CAN_RX_STRESS,
             desc=self.cmd_HELIX_CAN_RX_STRESS_help)
+        gcode.register_command(
+            'HELIX_OUTPUT_STATUS', self.cmd_HELIX_OUTPUT_STATUS,
+            desc=self.cmd_HELIX_OUTPUT_STATUS_help)
+        gcode.register_command(
+            'HELIX_OUTPUT_MIRROR', self.cmd_HELIX_OUTPUT_MIRROR,
+            desc=self.cmd_HELIX_OUTPUT_MIRROR_help)
         if self.on_connect:
             self.printer.register_event_handler('klippy:connect',
                                                  self._connect_run)
@@ -175,6 +181,81 @@ class HelixSelfTest:
             "HELIX CAN RX stress complete: mcu=%s iterations=%d"
             " hold_us=%d elapsed=%.3fs"
             % (only, iterations, hold_us, elapsed))
+
+    cmd_HELIX_OUTPUT_STATUS_help = (
+        "Report a board's sparse-output serializer timing diagnostics")
+    def cmd_HELIX_OUTPUT_STATUS(self, gcmd):
+        only = gcmd.get('MCU')
+        matches = [mcu for _, mcu in self.printer.lookup_objects(module='mcu')
+                   if mcu.get_name() == only]
+        if not matches:
+            raise gcmd.error("Unknown MCU '%s'" % (only,))
+        mcu = matches[0]
+        request = 'i2s_shift_get_status'
+        if mcu.try_lookup_command(request) is None:
+            raise gcmd.error(
+                "MCU '%s' lacks sparse-output timing diagnostics" % (only,))
+        monitor = mcu.try_lookup_command(
+            'i2s_shift_monitor step_bit=%c dir_bit=%c')
+        step_bit = gcmd.get_int('STEP_BIT', None, minval=0, maxval=15)
+        dir_bit = gcmd.get_int('DIR_BIT', None, minval=0, maxval=15)
+        if step_bit is not None or dir_bit is not None:
+            if step_bit is None or dir_bit is None:
+                raise gcmd.error(
+                    "STEP_BIT and DIR_BIT must be specified together")
+            if monitor is None:
+                raise gcmd.error(
+                    "MCU '%s' lacks sparse-output edge monitoring" % (only,))
+            monitor.send([step_bit, dir_bit])
+        query = mcu.lookup_query_command(
+            request,
+            'i2s_shift_status state=%u writes=%u bitrate=%u'
+            ' avg_cycles=%u max_cycles=%u monitor_step=%u monitor_dir=%u'
+            ' step_rises=%u interval_count=%u interval_min=%u'
+            ' interval_avg=%u interval_max=%u high_count=%u high_min=%u'
+            ' high_avg=%u high_max=%u dir_changes=%u dir_value=%u')
+        status = query.send([])
+        # The cycle counter runs at the ESP32 CPU clock, while the Klipper
+        # scheduling clock advertised as CLOCK_FREQ is the 20MHz timer.
+        gcmd.respond_info(
+            "HELIX output status: mcu=%s state=0x%04x writes=%u"
+            " bitrate=%u avg_cycles=%u max_cycles=%u"
+            " monitor=I2SO%u/dir:I2SO%u rises=%u"
+            " interval_ticks(min/avg/max)=%u/%u/%u"
+            " high_ticks(min/avg/max)=%u/%u/%u"
+            " dir_changes=%u dir_value=%u"
+            % (only, status['state'], status['writes'], status['bitrate'],
+               status['avg_cycles'], status['max_cycles'],
+               status['monitor_step'], status['monitor_dir'],
+               status['step_rises'], status['interval_min'],
+               status['interval_avg'], status['interval_max'],
+               status['high_min'], status['high_avg'], status['high_max'],
+               status['dir_changes'], status['dir_value']))
+
+    cmd_HELIX_OUTPUT_MIRROR_help = (
+        "Mirror one serialized output onto another for physical probing")
+    def cmd_HELIX_OUTPUT_MIRROR(self, gcmd):
+        only = gcmd.get('MCU')
+        matches = [mcu for _, mcu in self.printer.lookup_objects(module='mcu')
+                   if mcu.get_name() == only]
+        if not matches:
+            raise gcmd.error("Unknown MCU '%s'" % (only,))
+        mcu = matches[0]
+        mirror = mcu.try_lookup_command(
+            'i2s_shift_mirror source_bit=%c output_bit=%c'
+            ' invert=%c enable=%c')
+        if mirror is None:
+            raise gcmd.error(
+                "MCU '%s' lacks sparse-output mirroring" % (only,))
+        source_bit = gcmd.get_int('SOURCE_BIT', 0, minval=0, maxval=15)
+        output_bit = gcmd.get_int('OUTPUT_BIT', 0, minval=0, maxval=15)
+        invert = gcmd.get_int('INVERT', 0, minval=0, maxval=1)
+        enable = gcmd.get_int('ENABLE', 1, minval=0, maxval=1)
+        mirror.send([source_bit, output_bit, invert, enable])
+        gcmd.respond_info(
+            "HELIX output mirror: mcu=%s source=I2SO%d output=I2SO%d"
+            " invert=%d enabled=%d"
+            % (only, source_bit, output_bit, invert, enable))
 
     def get_status(self, eventtime):
         out = {}

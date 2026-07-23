@@ -25,6 +25,26 @@
 #include "internal.h" // architecture helpers
 #include "sched.h" // sched_shutdown
 
+#if !CONFIG_WANT_ADC_STREAM
+
+uint8_t
+esp32_adc_stream_is_claimed(void)
+{
+    return 0;
+}
+
+void
+esp32_adc_stream_poll(void)
+{
+}
+
+void
+esp32_adc_stream_init(void)
+{
+}
+
+#else
+
 #define ESP32_ADC_FRAME_BYTES 256
 #define ESP32_ADC_POOL_BYTES 8192
 #define ESP32_ADC_MIN_CONVERSIONS 20000u
@@ -428,3 +448,5 @@ esp32_adc_stream_init(void)
     xTaskCreatePinnedToCore(adc_stream_task, "klipper_adc_dma", 4096, NULL,
                             tskIDLE_PRIORITY + 5, NULL, 0);
 }
+
+#endif // CONFIG_WANT_ADC_STREAM

@@ -5,6 +5,14 @@
 // sdkconfig.h carries the menuconfig choices (architecture, and the
 // optional CONFIG_KLIPPER_RMT_STEP step backend selector below).
 #include "sdkconfig.h"
+
+// Define peripheral-backend selectors before the capability table below uses
+// them.
+#ifdef CONFIG_KLIPPER_I2S_SHIFT
+#define CONFIG_WANT_ESP32_I2S_SHIFT 1
+#else
+#define CONFIG_WANT_ESP32_I2S_SHIFT 0
+#endif
 //
 // The ESP32 port is built by ESP-IDF (idf.py) rather than klipper's
 // Kconfig/Makefile flow, so the usual generated out/autoconf.h does
@@ -27,7 +35,11 @@
 
 #define CONFIG_HAVE_GPIO 1
 #define CONFIG_HAVE_GPIO_ADC 1
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+#define CONFIG_HAVE_ADC_STREAM 0
+#else
 #define CONFIG_HAVE_ADC_STREAM 1
+#endif
 #define CONFIG_HAVE_GPIO_SPI 1
 #define CONFIG_HAVE_GPIO_I2C 1
 #define CONFIG_HAVE_GPIO_HARD_PWM 1
@@ -38,7 +50,11 @@
 #define CONFIG_HAVE_LIMITED_CODE_SIZE 0
 
 #define CONFIG_WANT_ADC 1
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+#define CONFIG_WANT_ADC_STREAM 0
+#else
 #define CONFIG_WANT_ADC_STREAM 1
+#endif
 #define CONFIG_ADC_PROFILE 0
 #define CONFIG_NEED_DMA_RESOURCE 1
 #define CONFIG_DMA_POOL_SIZE 2048
@@ -89,6 +105,10 @@
 #else
 #define CONFIG_WANT_ESP32_RMT_STEP 0
 #endif
+
+// Rodent V1.x uses I2S0 to serialize its STEP/DIR/ENABLE outputs.  I2S0 is
+// also the DMA engine behind ESP32 continuous ADC acquisition, so the two
+// capabilities are deliberately mutually exclusive at build time.
 
 #define CONFIG_INITIAL_PINS ""
 

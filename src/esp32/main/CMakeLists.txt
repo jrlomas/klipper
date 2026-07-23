@@ -82,6 +82,10 @@ set(KLIPPER_BOARD_SRCS
     ${KLIPPER_ROOT}/src/esp32/wifi.c
     # In-band update mapped onto ESP-IDF OTA (FD-0001 doc 11)
     ${KLIPPER_ROOT}/src/esp32/ota.c)
+if(CONFIG_KLIPPER_I2S_SHIFT)
+    list(APPEND KLIPPER_BOARD_SRCS
+        ${KLIPPER_ROOT}/src/esp32/i2s_shift.c)
+endif()
 if(CONFIG_KLIPPER_ARCH_MODEM)
     # "IDF as modem" (FD-0001 doc 12 stage 3): bare core 1 booted by
     # appcpu_boot.c, console over the shared-memory ring, IDF/lwIP

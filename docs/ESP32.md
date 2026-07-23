@@ -383,6 +383,7 @@ those configuration paths are register-level too (see above):
 | UART bit-bang | `tmcuart` | generic (gpio + timers) |
 | Neopixel | `neopixel` | generic bit-bang - timing is subject to the jitter caution above; verify on hardware |
 | RMT step module | `config_stepper`/`queue_step`/... (when `CONFIG_KLIPPER_RMT_STEP`) | register level, see below |
+| Rodent V1.x output chain | `I2SO0`..`I2SO15` (when `CONFIG_KLIPPER_I2S_SHIFT`) | continuous I2S0 FIFO output on the board's I2S-labelled pins; see below |
 
 Details and constraints:
 
@@ -425,6 +426,77 @@ Details and constraints:
   higher PWM frequency costs resolution (20kHz -> 12 bits, 1MHz -> 6
   bits).  Duty writes from timer dispatch are two register writes
   (duty + duty_start latch); `PWM_MAX` is 32768.
+
+### BIGTREETECH Rodent V1.x shift-register outputs
+
+Rodent V1.x routes all four TMC2160 STEP/DIR/ENABLE groups through two
+serially chained output registers. The electrical pins are DATA=GPIO21,
+BCK=GPIO22, and WS/latch=GPIO17; the TMC register bus remains ordinary
+SPI3 on GPIO19/23/18. A Rodent build enables `KLIPPER_I2S_SHIFT` and exposes
+the schematic names `I2SO0` through `I2SO15`.
+
+The first Helix implementation wrote a sparse output snapshot by stopping,
+resetting, draining, and restarting I2S0. That worked at low manual rates but
+made a 20 mm/s, 1,000-microstep/mm Z retract perform 40,000 complete peripheral
+resets per second, starving trajectory refill. The replacement follows
+FluidNC's proven architecture: I2S0 continuously emits one complete output
+word every 2 us, and a level-three FIFO interrupt fills eight future words at
+a time. The trajectory solver advances against each future sample clock, so
+WiFi and RTOS interrupt latency cannot move an edge already committed to the
+peripheral FIFO. SPI3 remains available to the TMC chain.
+
+`HELIX_OUTPUT_STATUS MCU=<name>` reports the live output word, transfer count,
+wire bitrate, and average/worst CPU-cycle cost. On the Rodent V1.1 lab board,
+the 20 MHz transfer measured 354 cycles average and 394 cycles worst at a
+240 MHz CPU. A 2 mm G1 at 2 mm/s produced exactly 4,002 runtime writes for
+2,000 microsteps (rise plus fall), ended at the matching host/firmware
+position, and reported zero trajectory drops and zero TMC lost steps. The
+TMC2160 `MSCNT` also advanced by the exact expected modulo-1024 count, proving
+that the driver received the edge stream.
+
+The initially weak, pulsating motor was not an output-timing failure. Early
+Rodent schematics and example configurations incorrectly specified
+`r_sense_ohms: 0.022`; the correct Klipper setting is
+`sense_resistor: 0.075`. The obsolete value underdrives the motor by about
+3.4x: a requested 0.6 A produces only about 0.18 A. A temporary 1.5 A request
+with the bad value produced roughly 0.44 A and immediately restored torque.
+After correcting the value, the installed pancake Z motor moved and homed
+normally at a true 0.6 A using Klipper's original 32-microstep chopper state.
+That A/B result clears the I2S serializer, TMC daisy-chain selection, and
+physical driver path.
+
+`HELIX_OUTPUT_STATUS MCU=rodent STEP_BIT=2 DIR_BIT=1` resets and enables that
+instrumentation for Rodent's X socket. A later query without the bit arguments
+reports minimum/average/maximum rise intervals and high widths in 20 MHz MCU
+timer ticks, plus direction changes observed at rising STEP edges.
+
+The serializer itself occupies about 1.5 us. Configure a 4 us step pulse on
+this backend so the timer dispatcher has margin between the rising snapshot
+and its falling-edge deadline:
+
+```
+[stepper_z]
+step_pin: rodent:I2SO2
+dir_pin: rodent:I2SO1
+enable_pin: !rodent:I2SO0
+step_pulse_duration: 0.000004
+
+[tmc5160 stepper_z]
+cs_pin: rodent:GPIO5
+spi_bus: spi3
+chain_length: 4
+chain_position: 1
+run_current: 0.6
+# Do not copy the obsolete 0.022 value from early Rodent material.
+sense_resistor: 0.075
+# Optional: keep GLOBALSCALER in the TMC2160 recommended analog range.
+globalscaler_min: 128
+```
+
+Runtime kinematics replacements must follow the same fitter binding as normal
+motion. Helix therefore rebinds its trajectory fitter when `FORCE_MOVE` or an
+input-shaper wrapper replaces a stepper's kinematics; otherwise the command
+would enable the driver but silently scan the previous trapq.
 
 ## RMT step generation (implemented - unvalidated on silicon)
 
@@ -582,6 +654,16 @@ Set the configured flash size to the physical board geometry before flashing
 (the verified Lolin32 uses 4MB).  Temporary test credentials must be supplied
 through an isolated SDKCONFIG file or `menuconfig`; an existing local
 `sdkconfig` takes precedence over `SDKCONFIG_DEFAULTS` values.
+
+The default partition table is deliberately `TWO_OTA`: factory plus two 1 MiB
+OTA slots on a 4 MiB part. Do not replace it with `SINGLE_APP_LARGE`. A
+single-app image still compiles the Helix flash commands, but
+`esp_ota_get_next_update_partition()` has no inactive target and
+`flash_begin` correctly fails. A board previously flashed with a single-app
+table needs one final ROM-serial migration that writes the bootloader,
+partition table, blank OTA-data page, and factory app. Its NVS partition can
+be preserved, after which normal application updates use the authenticated
+in-band A/B path.
 
 This builds the (default) component architecture; for the modem
 architecture see

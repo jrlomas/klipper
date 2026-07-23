@@ -25,7 +25,9 @@
 
 #include "soc/gpio_sig_map.h" // HSPICLK_OUT_IDX
 #include "soc/spi_struct.h" // SPI2, SPI3
+#include "hal/spi_ll.h" // spi_ll_master_init
 #include "board/gpio.h" // spi_setup
+#include "board/misc.h" // timer_read_time
 #include "command.h" // shutdown
 #include "compiler.h" // ARRAY_SIZE
 #include "internal.h" // KLIPPER_ARCH_MODEM, esp32_pad_config
@@ -127,7 +129,13 @@ spi_setup(uint32_t bus, uint8_t mode, uint32_t rate)
         bus_init[bus] = 1;
 #if !KLIPPER_ARCH_MODEM
         periph_module_enable(sb->module);
+        // A bootloader or previous application may leave the user-command
+        // state machine latched.  Enabling the clock alone preserves that
+        // state and the first spi->cmd.usr can then remain busy forever.
+        periph_module_reset(sb->module);
 #endif
+        spi_ll_master_init(sb->spi);
+        sb->spi->slave.slave_mode = 0;
         spi_pin_out(sb->sck_pin, sb->sck_sig);
         spi_pin_out(sb->mosi_pin, sb->mosi_sig);
         spi_pin_in(sb->miso_pin, sb->miso_sig);
@@ -208,8 +216,11 @@ spi_transfer(struct spi_config config, uint8_t receive_data
         spi->mosi_dlen.usr_mosi_dbitlen = chunk * 8 - 1;
         spi->miso_dlen.usr_miso_dbitlen = chunk * 8 - 1;
         spi->cmd.usr = 1;
-        while (spi->cmd.usr)
-            ;
+        uint32_t deadline = timer_read_time() + timer_from_us(1000);
+        while (spi->cmd.usr) {
+            if (!timer_is_before(timer_read_time(), deadline))
+                shutdown("SPI transfer timeout");
+        }
         if (receive_data) {
             for (uint8_t w = 0; w < words; w++) {
                 uint32_t v = spi->data_buf[w];

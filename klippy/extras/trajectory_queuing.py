@@ -321,6 +321,7 @@ class TrajectoryStepper:
         self.queue_cmd = self.hold_cmd = self.local_hold_cmd = None
         self.rebase_cmd = None
         self.local_rebase_cmd = None
+        self.status_cmd = None
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
@@ -336,6 +337,7 @@ class TrajectoryStepper:
         self.wire_acc = None
         self.activity_cursor = 0.
         self.su_per_mm = 1.
+        self.connected = False
         # Rolling record of intentions SENT: the host twin the resume
         # reconciler (FD-0001 doc 08) diffs against what the board
         # actually executed.  Each entry is
@@ -457,6 +459,30 @@ class TrajectoryStepper:
             "queue_traj_segment_quintic oid=%c flags=%c duration=%u"
             " velocity=%i accel=%i jerk=%i snap=%i crackle=%i",
             cq=cmd_queue)
+        if self.mcu.try_lookup_command("traj_query oid=%c",
+                                       cq=cmd_queue) is not None:
+            self.status_cmd = self.mcu.lookup_query_command(
+                "traj_query oid=%c",
+                "traj_status oid=%c flags=%c queued=%hu dropped=%hu"
+                " horizon_clock=%u pos=%i",
+                oid=self.oid, cq=cmd_queue)
+
+    def _setup_fitter_kinematics(self, sk):
+        freq = self.mcu.seconds_to_clock(1.)
+        self.ffi_lib.segfit_setup(self.segfit, sk, freq, self.su_per_mm,
+                                  self.tolerance_su, self.sample_time)
+        # A zero-acceleration cruise has an exact, division-light MCU step
+        # solver.  Let the motion fitter use its normal tolerance budget to
+        # discard sub-step ramp/chaining residue and select that realization.
+        self.ffi_lib.segfit_set_cruise_fastpath(self.segfit, 1)
+        self.ffi_lib.segfit_set_order(self.segfit, self.g1_segment_order)
+
+    def update_kinematics(self, sk):
+        # set_stepper_kinematics() is also used during construction, before
+        # build_config has established su_per_mm. Runtime replacements are
+        # safe because their callers flush the old path first.
+        if self.connected:
+            self._setup_fitter_kinematics(sk)
 
     def connect(self):
         if (self.mcu is not self._machine_mcu()
@@ -472,15 +498,9 @@ class TrajectoryStepper:
                 "Firmware for %s lacks quintic support required by"
                 " [trajectory_queuing] g1_segment_order: quintic"
                 % (self.name,))
-        sk = self.mcu_stepper.get_stepper_kinematics()
-        freq = self.mcu.seconds_to_clock(1.)
-        self.ffi_lib.segfit_setup(self.segfit, sk, freq, self.su_per_mm,
-                                  self.tolerance_su, self.sample_time)
-        # A zero-acceleration cruise has an exact, division-light MCU step
-        # solver.  Let the motion fitter use its normal tolerance budget to
-        # discard sub-step ramp/chaining residue and select that realization.
-        self.ffi_lib.segfit_set_cruise_fastpath(self.segfit, 1)
-        self.ffi_lib.segfit_set_order(self.segfit, self.g1_segment_order)
+        self._setup_fitter_kinematics(
+            self.mcu_stepper.get_stepper_kinematics())
+        self.connected = True
 
     def note_rebase_needed(self, stopped=False):
         if self.anchored and not stopped:
@@ -531,6 +551,11 @@ class TrajectoryStepper:
                                  else 'quadratic'),
             'homing_volatile': bool(self.homing_volatile),
         }
+
+    def firmware_status(self):
+        if self.status_cmd is None:
+            return None
+        return self.status_cmd.send([self.oid])
 
     def bezier_move(self, duration_s, ctrl_su):
         # Advanced/commissioning primitive: drive THIS joint alone along a
@@ -1294,16 +1319,25 @@ class TrajectoryQueuing:
         lines = []
         for ts in self.steppers:
             d = ts.describe()
+            fw = ts.firmware_status()
+            fw_text = ""
+            if fw is not None:
+                fw_text = (
+                    " fw_flags=0x%02x queued=%d dropped=%d"
+                    " horizon=%u fw_pos=%d"
+                    % (fw['flags'], fw['queued'], fw['dropped'],
+                       fw['horizon_clock'], fw['pos']))
             lines.append(
                 "%s: anchored=%d need_rebase=%d recovery_hold=%d"
                 " higher_order=%d"
-                " g1_order=%s pos=%d su (%.4f mm) su/mm=%.1f%s"
+                " g1_order=%s pos=%d su (%.4f mm) su/mm=%.1f%s%s"
                 % (d['name'], d['anchored'], d['need_rebase'],
                    d['recovery_hold'],
                    d['higher_order'], d['g1_segment_order'],
                    d['commanded_pos_su'],
                    d['commanded_pos_su'] / d['su_per_mm'], d['su_per_mm'],
-                   " [homing volatile]" if d['homing_volatile'] else ""))
+                   " [homing volatile]" if d['homing_volatile'] else "",
+                   fw_text))
         gcmd.respond_info("\n".join(lines))
 
     cmd_BEZIER_MOVE_help = ("Drive one trajectory joint along a cubic/quintic"

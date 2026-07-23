@@ -1858,7 +1858,9 @@ sub-unit resolution, and whether its firmware supports the higher-order
 (cubic/quintic) segment commands. It also reports the polynomial order used
 for normal G0/G1 moves. Those moves continue through Klippy's coordinated
 toolhead planner and therefore update the reported Cartesian position; only
-their per-joint execution is delegated to the MCU.
+their per-joint execution is delegated to the MCU. Where supported, the same
+report includes the live firmware queue flags, queued and dropped segment
+counts, execution horizon, and firmware position.
 
 #### BEZIER_MOVE
 `BEZIER_MOVE STEPPER=<name> DURATION=<seconds> P0=<mm> P1=<mm> P2=<mm>

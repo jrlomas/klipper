@@ -71,7 +71,15 @@ struct traj_stepper {
 };
 
 enum { TSF_INVERT_STEP = 1 << 0, TSF_DIR_HIGH = 1 << 1,
-       TSF_INVERT_DIR = 1 << 2 };
+       TSF_INVERT_DIR = 1 << 2, TSF_I2S = 1 << 3 };
+
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+void command_config_traj_stepper(uint32_t *args);
+#define MAX_I2S_TRAJ_STEPPERS 8
+static struct traj_stepper *i2s_traj_steppers[MAX_I2S_TRAJ_STEPPERS];
+static uint8_t i2s_traj_stepper_count;
+static volatile uint8_t i2s_traj_overrun;
+#endif
 
 static inline uint8_t
 traj_stepper_is_pure_cruise(struct trajq *tq)
@@ -1557,9 +1565,8 @@ traj_stepper_schedule(struct traj_stepper *s)
 }
 
 static uint_fast8_t
-traj_stepper_event(struct timer *t)
+traj_stepper_run_event(struct traj_stepper *s)
 {
-    struct traj_stepper *s = container_of(t, struct traj_stepper, time);
     if (s->wake_kind == WK_STEP) {
         gpio_out_toggle_noirq(s->step_pin);
         s->mpos += s->dir;
@@ -1580,6 +1587,44 @@ traj_stepper_event(struct timer *t)
     return ret;
 }
 
+static uint_fast8_t
+traj_stepper_event(struct timer *t)
+{
+    struct traj_stepper *s = container_of(t, struct traj_stepper, time);
+    return traj_stepper_run_event(s);
+}
+
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+// Advance serialized-output steppers against the clock of the future I2S
+// sample being queued.  The peripheral FIFO, not the FreeRTOS timer ISR, then
+// owns the physical edge timing.
+void
+traj_stepper_i2s_advance(uint32_t sample_clock)
+{
+    uint_fast8_t index;
+    for (index = 0; index < i2s_traj_stepper_count; index++) {
+        struct traj_stepper *s = i2s_traj_steppers[index];
+        if (!(s->tq.flags & TQF_ACTIVE))
+            continue;
+        uint_fast8_t events = 0;
+        while (!timer_is_before(sample_clock, s->time.waketime)
+               && events < 16) {
+            events++;
+            if (traj_stepper_run_event(s) == SF_DONE)
+                break;
+        }
+        if (events == 16
+            && !timer_is_before(sample_clock, s->time.waketime)) {
+            // Never call flash-resident command/string lookup code from the
+            // level-three I2S ISR.  Stop this stream now and let the regular
+            // firmware task report the invariant violation.
+            s->tq.flags &= ~TQF_ACTIVE;
+            i2s_traj_overrun = 1;
+        }
+    }
+}
+#endif
+
 // Backend ops
 
 static void
@@ -1595,6 +1640,10 @@ traj_stepper_start(struct trajq *tq)
     s->time.waketime = tq->seg_start_clock;
     if (timer_is_before(s->time.waketime, now))
         s->time.waketime = now;
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (s->flags & TSF_I2S)
+        return;
+#endif
     sched_add_timer(&s->time);
 }
 
@@ -1637,6 +1686,9 @@ static void
 traj_stepper_stop(struct trajq *tq)
 {
     struct traj_stepper *s = container_of(tq, struct traj_stepper, tq);
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (!(s->flags & TSF_I2S))
+#endif
     sched_del_timer(&s->time);
     if (s->wake_kind == WK_UNSTEP)
         // Mid step pulse: complete the edge
@@ -1674,6 +1726,14 @@ command_config_traj_stepper(uint32_t *args)
         s->flags |= TSF_INVERT_DIR;
     s->step_pin = gpio_out_setup(args[1], s->flags & TSF_INVERT_STEP);
     s->dir_pin = gpio_out_setup(args[2], !!(s->flags & TSF_INVERT_DIR));
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (s->step_pin.is_i2s) {
+        if (i2s_traj_stepper_count >= MAX_I2S_TRAJ_STEPPERS)
+            shutdown("Too many I2S trajectory steppers");
+        s->flags |= TSF_I2S;
+        i2s_traj_steppers[i2s_traj_stepper_count++] = s;
+    }
+#endif
     if (s->flags & TSF_INVERT_DIR)
         s->flags |= TSF_DIR_HIGH;
     s->step_pulse_ticks = args[5];
@@ -1870,6 +1930,10 @@ traj_local_hold_all(void)
 void
 traj_stepper_task(void)
 {
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (i2s_traj_overrun)
+        shutdown("I2S trajectory sample overrun");
+#endif
     if (!trajq_check_event_wake())
         return;
     uint8_t oid;

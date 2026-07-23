@@ -27,12 +27,18 @@
 [mapping:klipper]
 archive: libmain.a
 entries:
+    # Both architectures execute the trajectory scheduler from a hardware
+    # timer context.  Keeping these objects in flash made a WiFi/cache stall
+    # indistinguishable from compute overload at high edge rates.
+    sched (noflash)
+    timer_irq (noflash)
+    trajq (noflash)
+    traj_stepper (noflash)
+    gpio (noflash)
+    if KLIPPER_ARCH_COMPONENT = y:
+        timer (noflash)
+        irq (noflash)
     if KLIPPER_ARCH_MODEM = y:
-        sched (noflash)             # sched_timer_dispatch + task loop
-        timer_irq (noflash)         # timer_dispatch_many
         stepper (noflash)           # step event handlers
-        trajq (noflash)             # trajectory-queue execute path
-        traj_stepper (noflash)      # trajectory step emission
-        gpio (noflash)              # out_w1ts/w1tc hot writes
         appcpu_boot (noflash)       # irq_poll/irq_wait/timer_read_time
         shmem_console (noflash)     # ring poll on the dispatch path

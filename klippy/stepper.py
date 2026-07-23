@@ -327,6 +327,12 @@ class MCU_stepper:
         ffi_main, ffi_lib = chelper.get_ffi()
         if self._traj is None:
             ffi_lib.syncemitter_set_stepper_kinematics(self._syncemitter, sk)
+        else:
+            # The trajectory fitter owns the kinematics pointer instead of
+            # syncemitter. FORCE_MOVE and input-shaper wrappers replace that
+            # pointer at runtime; keep the fitter bound to the same object or
+            # it silently scans the previous trapq and emits no motion.
+            self._traj.update_kinematics(sk)
         self.set_trapq(self._trapq)
         self._set_mcu_position(mcu_pos)
         return old_sk

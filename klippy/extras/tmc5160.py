@@ -274,14 +274,21 @@ class TMC5160CurrentHelper:
                                        above=0., maxval=MAX_CURRENT)
         self.req_hold_current = hold_current
         self.sense_resistor = config.getfloat('sense_resistor', 0.075, above=0.)
+        # GLOBALSCALER values from 1 through 31 are prohibited.  Values from
+        # 32 through 255 are valid, but the TMC2160/5160 data sheet recommends
+        # values above 128 for best current regulation.  Keep the historical
+        # Klipper default for compatibility while allowing high-current
+        # external bridges to select the data-sheet-recommended range.
+        self.globalscaler_min = config.getint(
+            'globalscaler_min', 32, minval=32, maxval=255)
         gscaler, irun, ihold = self._calc_current(run_current, hold_current)
         self.fields.set_field("globalscaler", gscaler)
         self.fields.set_field("ihold", ihold)
         self.fields.set_field("irun", irun)
-    def _calc_globalscaler(self, current):
-        globalscaler = int((current * 256. * math.sqrt(2.)
-                            * self.sense_resistor / VREF) + .5)
-        globalscaler = max(32, globalscaler)
+    def _calc_globalscaler(self, current, current_bits=31):
+        globalscaler = int(
+            (current * 256. * 32. * math.sqrt(2.)
+             * self.sense_resistor / ((current_bits + 1) * VREF)))
         if globalscaler >= 256:
             globalscaler = 0
         return globalscaler
@@ -293,8 +300,36 @@ class TMC5160CurrentHelper:
                  - 1. + .5)
         return max(0, min(31, cs))
     def _calc_current(self, run_current, hold_current):
-        gscaler = self._calc_globalscaler(run_current)
-        irun = self._calc_current_bits(run_current, gscaler)
+        if self.globalscaler_min == 32:
+            # Preserve Klipper's historical register selection exactly.
+            gscaler = int((run_current * 256. * math.sqrt(2.)
+                           * self.sense_resistor / VREF) + .5)
+            gscaler = max(32, gscaler)
+            if gscaler >= 256:
+                gscaler = 0
+            irun = self._calc_current_bits(run_current, gscaler)
+            ihold = self._calc_current_bits(
+                min(hold_current, run_current), gscaler)
+            return gscaler, irun, ihold
+        # Prefer the greatest IRUN that permits GLOBALSCALER to remain in the
+        # configured analog-regulation range.  This is the selection strategy
+        # used by TMCStepper/FluidNC.  It is useful on external-power-stage
+        # drivers such as the TMC2160, where a low GLOBALSCALER can otherwise
+        # reduce current-regulation quality.
+        irun = 31
+        gscaler = self._calc_globalscaler(run_current, irun)
+        if not gscaler:
+            # Requested current needs the full-scale encoding (zero means 256).
+            irun = self._calc_current_bits(run_current, gscaler)
+        else:
+            while gscaler < self.globalscaler_min and irun:
+                irun -= 1
+                gscaler = self._calc_globalscaler(run_current, irun)
+            if gscaler < self.globalscaler_min:
+                # The requested current is below the minimum representable
+                # with the selected scaler floor.
+                gscaler = self.globalscaler_min
+                irun = 0
         ihold = self._calc_current_bits(min(hold_current, run_current), gscaler)
         return gscaler, irun, ihold
     def _calc_current_from_field(self, field_name):

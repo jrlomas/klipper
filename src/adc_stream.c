@@ -5,6 +5,7 @@
 // This file may be distributed under the terms of the GNU GPLv3 license.
 
 #include "adc_stream.h"
+#include "autoconf.h" // CONFIG_WANT_ADC_STREAM
 #include "basecmd.h" // oid_alloc
 #include "board/adc_stream.h" // board_adc_stream_*
 #include "board/irq.h" // irq_save
@@ -20,6 +21,21 @@
 #include "sched.h" // DECL_TASK
 #include "traj_local.h" // traj_local_hold_all
 #include "trigger_analog.h" // trigger_analog_update
+
+#if !CONFIG_WANT_ADC_STREAM
+
+// Some targets reserve the physical DMA engine for another build-time
+// peripheral (classic ESP32 I2S shift output, for example).  Heater control
+// still links against the local-consumer API, but no ADC-stream command or
+// capability should be advertised by that image.
+int
+adc_stream_bind_local(uint8_t stream_oid, uint8_t subscription,
+                      adc_stream_local_callback callback, void *context)
+{
+    return -1;
+}
+
+#else
 
 enum {
     ADC_STREAM_STOPPED = 0,
@@ -859,3 +875,5 @@ DECL_CONSTANT("ADC_STREAM_CAPS",
               | ADC_STREAM_CAP_PROMPT_REPORT | ADC_STREAM_CAP_SCHEDULED_REPORT
               | ADC_STREAM_CAP_LOCAL_SAFETY
               | ADC_STREAM_CAP_FAULT_CAPTURE | ADC_STREAM_TARGET_CAPS);
+
+#endif // CONFIG_WANT_ADC_STREAM

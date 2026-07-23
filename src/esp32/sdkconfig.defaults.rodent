@@ -1,0 +1,25 @@
+# BIGTREETECH Rodent V1.1 (ESP32-WROOM-32URA-N4, 4 MiB flash)
+#
+# Supply credentials and the deployment PSK through an additional, untracked
+# SDKCONFIG_DEFAULTS file.  This profile intentionally starts with the
+# component architecture and its I2S-labelled shift-register pin backend:
+# Rodent STEP/DIR/EN are serialized output bits, not direct GPIOs, and must
+# not be assigned to the GPIO-only RMT backend.  I2S0 continuously clocks the
+# output-state FIFO; SPI3 remains the TMC register bus.
+
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+
+CONFIG_KLIPPER_ARCH_COMPONENT=y
+CONFIG_KLIPPER_I2S_SHIFT=y
+CONFIG_KLIPPER_I2S_BCK_PIN=22
+CONFIG_KLIPPER_I2S_DATA_PIN=21
+CONFIG_KLIPPER_I2S_WS_PIN=17
+CONFIG_KLIPPER_DATAGRAM_SESSION=y
+CONFIG_KLIPPER_DATAGRAM_SESSION_ID="rodent-v1.1-lab"
+CONFIG_KLIPPER_UDP_PORT=41414
+
+# The first transport qualification should measure the native link before
+# choosing the 50%-overhead pair-FEC profile.
+CONFIG_KLIPPER_FEC_PAIR=n

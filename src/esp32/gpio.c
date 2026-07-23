@@ -27,16 +27,22 @@
 #include "soc/io_mux_reg.h" // IO_MUX_GPIO0_REG, FUN_IE, FUN_PU, FUN_PD
 #include "soc/rtc_io_reg.h" // RTC_IO_TOUCH_PAD0_REG, *_RUE_M, *_RDE_M
 #include "soc/soc.h" // REG_SET_FIELD
+#include "autoconf.h" // CONFIG_WANT_ESP32_I2S_SHIFT
 #include "board/gpio.h" // gpio_out_setup
 #include "board/irq.h" // irq_save
 #include "command.h" // shutdown
 #include "internal.h" // ESP32_GPIO_COUNT, KLIPPER_ARCH_MODEM
+#include "i2s_shift.h" // ESP32_I2S_OUT_BASE
 #include "sched.h" // sched_shutdown
 #if !KLIPPER_ARCH_MODEM
 #include "driver/gpio.h" // gpio_config
 #endif
 
 DECL_ENUMERATION_RANGE("pin", "GPIO0", 0, ESP32_GPIO_COUNT);
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+DECL_ENUMERATION_RANGE("pin", "I2SO0", ESP32_I2S_OUT_BASE,
+                       ESP32_I2S_OUT_COUNT);
+#endif
 
 // GPIO34..39 are input only on the ESP32
 #define GPIO_FIRST_INPUT_ONLY 34
@@ -187,9 +193,20 @@ esp32_matrix_in(uint32_t pin, uint32_t sig_idx)
 struct gpio_out
 gpio_out_setup(uint32_t pin, uint8_t val)
 {
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (pin >= ESP32_I2S_OUT_BASE
+        && pin < ESP32_I2S_OUT_BASE + ESP32_I2S_OUT_COUNT) {
+        struct gpio_out g = {
+            .pin = pin - ESP32_I2S_OUT_BASE,
+            .is_i2s = 1,
+        };
+        gpio_out_reset(g, val);
+        return g;
+    }
+#endif
     if (pin >= GPIO_FIRST_INPUT_ONLY)
         goto fail;
-    struct gpio_out g;
+    struct gpio_out g = { };
     g.pin = pin;
     if (pin < 32) {
         g.bit = 1u << pin;
@@ -211,12 +228,24 @@ fail:
 void
 gpio_out_reset(struct gpio_out g, uint8_t val)
 {
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (g.is_i2s) {
+        i2s_shift_write(g.pin, val);
+        return;
+    }
+#endif
+#if KLIPPER_ARCH_MODEM
     irqstatus_t flag = irq_save();
     gpio_out_write(g, val);
-#if KLIPPER_ARCH_MODEM
     esp32_pad_config(g.pin, 0, 1, 0, 0);
     irq_restore(flag);
 #else
+    // gpio_config() enters an ESP-IDF/FreeRTOS critical section.  Calling it
+    // inside Klipper's irq_save() deadlocks the component architecture on
+    // the first native output configuration (observed on Rodent GPIO5).
+    // Set the output latch before enabling the pad, then let the IDF own its
+    // own locking boundary.
+    gpio_out_write(g, val);
     gpio_config_t config = {
         .pin_bit_mask = 1ULL << g.pin,
         .mode = GPIO_MODE_OUTPUT,
@@ -225,7 +254,6 @@ gpio_out_reset(struct gpio_out g, uint8_t val)
         .intr_type = GPIO_INTR_DISABLE,
     };
     int ret = gpio_config(&config);
-    irq_restore(flag);
     if (ret)
         shutdown("gpio_config failed");
 #endif
@@ -234,6 +262,12 @@ gpio_out_reset(struct gpio_out g, uint8_t val)
 void
 gpio_out_write(struct gpio_out g, uint8_t val)
 {
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (g.is_i2s) {
+        i2s_shift_write(g.pin, val);
+        return;
+    }
+#endif
     if (val)
         *g.w1ts = g.bit;
     else
@@ -243,6 +277,12 @@ gpio_out_write(struct gpio_out g, uint8_t val)
 void
 gpio_out_toggle_noirq(struct gpio_out g)
 {
+#if CONFIG_WANT_ESP32_I2S_SHIFT
+    if (g.is_i2s) {
+        i2s_shift_toggle(g.pin);
+        return;
+    }
+#endif
     if (*g.out & g.bit)
         *g.w1tc = g.bit;
     else
