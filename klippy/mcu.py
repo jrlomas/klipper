@@ -249,6 +249,9 @@ class MCU_trsync:
             tc.complete(False)
     def _handle_trsync_state(self, params):
         if not params['can_trigger']:
+            logging.info("trsync terminal mcu=%s oid=%d reason=%d clock=%d",
+                         self._mcu.get_name(), self._oid,
+                         params['trigger_reason'], params['clock'])
             tc = self._trigger_completion
             if tc is not None:
                 self._trigger_completion = None
@@ -336,6 +339,20 @@ class TriggerDispatch:
         expire_timeout = TRSYNC_TIMEOUT
         if len(self._trsyncs) == 1:
             expire_timeout = TRSYNC_SINGLE_MCU_TIMEOUT
+        else:
+            # USB and CAN retain Klipper's strict 25ms multi-MCU watchdog.
+            # A qualified higher-jitter link may explicitly request a larger
+            # bounded window. All participants use the same value because
+            # trdispatch advances their watchdogs as one synchronized group.
+            expire_timeout = max(
+                [TRSYNC_TIMEOUT]
+                + [ts.get_mcu().get_multi_mcu_homing_timeout()
+                   for ts in self._trsyncs])
+            if expire_timeout != TRSYNC_TIMEOUT:
+                logging.info(
+                    "trsync multi-mcu timeout %.1fms for %s",
+                    expire_timeout * 1000.,
+                    [ts.get_mcu().get_name() for ts in self._trsyncs])
         for i, trsync in enumerate(self._trsyncs):
             report_offset = float(i) / len(self._trsyncs)
             trsync.start(print_time, report_offset,
@@ -2062,6 +2079,12 @@ class MCU:
         if self._hw_endstop_trigger and self._hw_endstop_observer:
             raise config.error("hardware_endstop_observer requires"
                                " hardware_endstop_trigger: False")
+        # Explicit opt-in for qualified links whose bounded jitter exceeds
+        # the classic 25ms multi-MCU trsync watchdog (notably WiFi). This
+        # controls liveness failure only; it does not delay a normal stop.
+        self._multi_mcu_homing_timeout = config.getfloat(
+            'multi_mcu_homing_timeout', TRSYNC_TIMEOUT,
+            minval=TRSYNC_TIMEOUT, maxval=TRSYNC_SINGLE_MCU_TIMEOUT)
         # Capability-gated migration of legacy MCU_adc clients onto the
         # merged DMA engine.  Auto falls back atomically; force is useful for
         # qualification because it makes any incompatibility explicit.
@@ -2101,6 +2124,8 @@ class MCU:
         return self._hw_endstop_trigger
     def want_hw_endstop_observer(self):
         return self._hw_endstop_observer
+    def get_multi_mcu_homing_timeout(self):
+        return self._multi_mcu_homing_timeout
     # MCU Configuration wrappers
     def setup_pin(self, pin_type, pin_params):
         return self._config_helper.setup_pin(pin_type, pin_params)

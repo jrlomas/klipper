@@ -273,3 +273,14 @@ diagnostic only: the failed predecessor used a 2 ppm gate, which rejected
 three approximately -2.25 us observations even while firmware error remained
 7 ticks (0.11 us). The completed print validates the phase-budget policy for
 this workload; it does not turn ISR-entry SOF into a hardware timestamp.
+
+The authenticated WiFi relay uses the same established-map rule. A Rodent
+V1.1 Z-axis trial admitted a move while converged, then discovered a new
+minimum-RTT ClockSync anchor before the background trajectory flush. The
+software-relay path cleared `host_model_stable` on that single observation
+and converted an otherwise valid move into a global `Exception in
+flush_handler` shutdown. The corrected relay compares the robust endpoint
+against its qualified oscillator prediction, substitutes bounded holdover for
+one or two out-of-budget observations, and revokes Class-0 after three
+consecutive disagreements. Initial acquisition still requires eight steady
+beacons, and firmware phase/freshness gates remain independent and mandatory.

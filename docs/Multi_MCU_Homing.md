@@ -42,6 +42,16 @@ micro-controllers. Typically the round-trip time must be consistently
 less than 10ms. High latency (even for short periods) is likely to
 result in homing failures.
 
+Helix retains the 25ms watchdog by default. A network MCU whose latency
+distribution has been measured and bounded may set
+`multi_mcu_homing_timeout` in that MCU's configuration section. The largest
+configured value among the endstop and motion MCUs is applied to that homing
+group. The event is still propagated as soon as it arrives; this option does
+not intentionally delay a successful stop. It only allows trsync to survive
+a longer liveness gap. The configured timeout must therefore be treated as a
+mechanical overshoot bound during a complete link outage:
+`homing_speed * multi_mcu_homing_timeout`.
+
 Should high latency result in a failure (or if some other
 communication issue is detected) then Helix will raise a
 "Communication timeout during homing" error. (This overshoot-and-timeout

@@ -38,6 +38,44 @@ class FakeClockSync:
         return int(systime * 1_000_000.)
 
 
+def test_per_mcu_convergence_window_preserves_strict_default():
+    class FakeReactor:
+        def register_timer(self, callback):
+            return callback
+    class FakeGCode:
+        def register_command(self, *args, **kwargs):
+            pass
+    class FakePrinter:
+        def get_reactor(self):
+            return FakeReactor()
+        def register_event_handler(self, *args):
+            pass
+        def lookup_object(self, name):
+            assert name == 'gcode'
+            return FakeGCode()
+    class FakeConfig:
+        values = {
+            'converge_window': .000010,
+            'converge_window_rodent': .000100,
+            'host_rate_tolerance_ppm_rodent': 50.,
+        }
+        def get_printer(self):
+            return FakePrinter()
+        def getfloat(self, option, default=None, **kwargs):
+            return self.values.get(option, default)
+        def getboolean(self, option, default=None):
+            return default
+        def get_prefix_options(self, prefix):
+            return [name for name in self.values if name.startswith(prefix)]
+        def error(self, message):
+            return RuntimeError(message)
+
+    owner = timesync.MachineTimeSync(FakeConfig())
+    assert owner._get_converge_window('rodent') == .000100
+    assert owner._get_converge_window('canbridge') == .000010
+    assert owner.host_rate_tolerances == {'rodent': 50.}
+
+
 def test_real_mcu_exposes_clocksync():
     clocksync = object()
     mcu = klippy_mcu.MCU.__new__(klippy_mcu.MCU)
@@ -300,6 +338,30 @@ def test_startup_rate_uses_connected_clock_regressions():
     assert abs(link.nominal_rate - 64_000_640. / 12_000_300.) < 1.e-12
 
 
+def test_noisy_startup_rate_is_reseeded_from_stable_relay_fit():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 1_000_000.)
+    primary_sync.min_half_rtt = .000050
+    local_sync = FakeClockSync()
+    local_sync.clock_est = (0., 0., 1_000_300.)
+    local_sync.min_half_rtt = .001
+    mcu = FakeMCU(clocksync=local_sync)
+    link = timesync.SecondaryLink(mcu, 1_000_000., primary_sync)
+    link.setup(5., .000100)
+    initial_rate = link.nominal_rate
+    # The long-lived ClockSync regression settles after the noisy connect
+    # burst; systime_to_local_clock already represents the true 1MHz clock.
+    local_sync.clock_est = (0., 0., 1_000_000.)
+    for index in range(24):
+        link.relay(index, index * 1_000_000, float(index))
+    assert link.host_model_stable
+    assert link.rate_reseed_count == 1
+    assert link.nominal_rate == 1.
+    assert initial_rate > link.nominal_rate
+    assert mcu.commands['timesync_setup'].sent[-1] == [
+        5_000_000, 100, 1 << timesync.RATE_SHIFT]
+
+
 def test_interval_diagnostics_report_observed_two_link_bound():
     primary_sync = FakeClockSync()
     primary_sync.clock_est = (0., 0., 1_000_000.)
@@ -341,7 +403,7 @@ def test_relay_fit_waits_for_steady_span():
     assert mcu.commands['sync_beacon_relay'].sent[-1][2] == 201_000
 
 
-def test_live_host_model_must_stabilize_before_convergence():
+def test_live_host_model_holds_through_isolated_regression_update():
     primary_sync = FakeClockSync()
     primary_sync.clock_est = (0., 0., 1_000_000.)
     primary_sync.min_half_rtt = .000050
@@ -359,10 +421,38 @@ def test_live_host_model_must_stabilize_before_convergence():
         link.relay(index, index * 1_000_000, float(index))
     assert link.host_model_stable
     assert link.is_converged(19.)
+    # Discovering a slightly better minimum RTT updates ClockSync's
+    # regression.  With no phase/rate disagreement it must not revoke an
+    # already-qualified map in the middle of a trajectory flush.
     primary_sync.min_half_rtt = .000040
     link.relay(19, 19_000_000, 19.)
-    assert not link.host_model_stable
-    assert not link.is_converged(19.)
+    assert link.host_model_stable
+    assert link.is_converged(19.)
+    assert link.host_bad_count == 0
+
+
+def test_live_host_model_requires_sustained_divergence_to_revoke():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 1_000_000.)
+    primary_sync.min_half_rtt = .000050
+    local_sync = FakeClockSync()
+    local_sync.clock_est = (0., 0., 1_000_000.)
+    local_sync.min_half_rtt = .001
+    mcu = FakeMCU(clocksync=local_sync)
+    link = timesync.SecondaryLink(mcu, 1_000_000., primary_sync)
+    link.setup(5., .000100)
+    for index in range(19):
+        link.relay(index, index * 1_000_000, float(index))
+    assert link.host_model_stable
+    local_sync.clock_est = (0., 0., 1_001_000.)
+    filtered_before = link.host_filtered_count
+    for miss in range(1, timesync.HOST_DIVERGE_COUNT + 1):
+        index += 1
+        link.relay(index, index * 1_000_000, float(index))
+        assert link.host_model_stable == (
+            miss < timesync.HOST_DIVERGE_COUNT)
+    assert link.host_filtered_count == (
+        filtered_before + timesync.HOST_DIVERGE_COUNT - 1)
 
 
 class NoisyClockSync:
@@ -1778,6 +1868,8 @@ def test_sustained_sof_rate_discontinuity_restarts_stability_gate():
 
 
 def main():
+    test_per_mcu_convergence_window_preserves_strict_default()
+    print("PASS: per-MCU convergence windows preserve the strict default")
     test_real_mcu_exposes_clocksync()
     print("PASS: the real MCU API exposes its per-link clock regression")
     test_rp2040_reset_reason_formatting()
@@ -1807,12 +1899,16 @@ def main():
     print("PASS: Q8.24 represents a 64MHz/12MHz MCU ratio below 0.02ppm")
     test_startup_rate_uses_connected_clock_regressions()
     print("PASS: startup rate uses connected per-link clock regressions")
+    test_noisy_startup_rate_is_reseeded_from_stable_relay_fit()
+    print("PASS: noisy network startup rates re-prime from the stable fit")
     test_interval_diagnostics_report_observed_two_link_bound()
     print("PASS: interval diagnostics expose the observed two-link bound")
     test_relay_fit_waits_for_steady_span()
     print("PASS: relay fit rejects the short priming-burst span")
-    test_live_host_model_must_stabilize_before_convergence()
-    print("PASS: live host clock models must stabilize before Class-0")
+    test_live_host_model_holds_through_isolated_regression_update()
+    print("PASS: live host clock models hold through isolated updates")
+    test_live_host_model_requires_sustained_divergence_to_revoke()
+    print("PASS: sustained host-model divergence revokes Class-0")
     test_relay_regression_rejects_endpoint_jitter()
     print("PASS: relay regression suppresses noisy endpoint estimates")
     test_relay_regression_rejects_mid_window_clock_update()

@@ -41,6 +41,7 @@ RELAY_FIT_SAMPLES = 16      # smooth cross-link regression endpoint jitter
 RELAY_FIT_MIN_SPAN = 4.0    # reject high-variance short-burst rate fits
 HOST_STABLE_COUNT = 8       # consecutive steady host-model beacons
 HOST_RATE_TOLERANCE_PPM = 2.0
+HOST_RESEED_RATE_ERROR_PPM = 10.0
 HOST_DIVERGE_COUNT = 3      # sustained out-of-budget SOF phase misses
 SOF_UNCLASSIFIED_DISABLE_COUNT = 8
 SOF_CAPTURE_DELAY = 0.010
@@ -132,9 +133,16 @@ class SecondaryLink:
         # have stopped moving before host-side Class-0 preflight succeeds.
         self.host_model_stable = primary_clocksync is None
         self.host_stable_count = 0
+        self.host_bad_count = 0
+        self.host_filtered_count = 0
+        self.host_phase_error_ticks = None
+        self.host_qualified_rate = None
         self.last_host_rtt = None
         self.host_rate = None
         self.host_rate_error_ppm = None
+        self.host_rate_tolerance_ppm = HOST_RATE_TOLERANCE_PPM
+        self.rate_reseed_count = 0
+        self.rate_reseeded = False
         self.interval_supported = False
         self.interval_samples = 0
         self.interval_reference = None
@@ -183,9 +191,14 @@ class SecondaryLink:
         self.relay_samples = []
         self.host_model_stable = self.primary_clocksync is None
         self.host_stable_count = 0
+        self.host_bad_count = 0
+        self.host_filtered_count = 0
+        self.host_phase_error_ticks = None
+        self.host_qualified_rate = None
         self.last_host_rtt = None
         self.host_rate = None
         self.host_rate_error_ppm = None
+        self.rate_reseeded = False
         self.interval_samples = 0
         self.interval_reference = None
         self.interval_diagnostics = None
@@ -215,6 +228,16 @@ class SecondaryLink:
         self.setup_cmd.send([int(freewheel_time * self.mcu_freq) & 0xffffffff,
                              int(converge_window * self.mcu_freq),
                              self.nominal_rate_raw])
+        self.last_state = {
+            'flags': TS_ENABLED, 'prime_count': 0, 'rate': 0, 'last_err': 0,
+            'machine_ref': 0, 'local_ref': 0,
+        }
+    def _reseed_rate(self, rate):
+        self.nominal_rate = rate
+        self.nominal_rate_raw = round(rate * (1 << RATE_SHIFT))
+        self.rate_reseeded = True
+        self.rate_reseed_count += 1
+        self.setup(self.freewheel_time, self.converge_window)
     def note_interval(self, seq, machine_clock, primary_sent,
                       primary_received, local_clock, secondary_sent,
                       secondary_received):
@@ -273,8 +296,10 @@ class SecondaryLink:
                 else midpoint_change * 1.e6),
         }
     def relay(self, seq, machine_clock, systime):
+        was_host_model_stable = self.host_model_stable
         raw_local_est = int(_get_clocksync(self.mcu).systime_to_local_clock(
             systime))
+        machine_delta = None
         if self.last_machine_clock is not None:
             machine_delta = machine_clock - self.last_machine_clock
             local_delta = raw_local_est - self.last_raw_local_est
@@ -306,8 +331,49 @@ class SecondaryLink:
                 self.host_rate_error_ppm = (
                     self.relay_rate / self.host_rate - 1.) * 1.e6
                 rate_steady = (abs(self.host_rate_error_ppm)
-                               <= HOST_RATE_TOLERANCE_PPM)
-            if rtt_changed or not rate_steady:
+                               <= self.host_rate_tolerance_ppm)
+            predicted_local = None
+            if (was_host_model_stable and machine_delta is not None
+                    and machine_delta > 0 and self.last_local_est is not None):
+                hold_rate = (self.host_qualified_rate
+                             or self.nominal_rate)
+                predicted_local = int(round(
+                    self.last_local_est + hold_rate * machine_delta))
+                self.host_phase_error_ticks = local_est - predicted_local
+            phase_steady = (
+                predicted_local is None
+                or abs(self.host_phase_error_ticks)
+                <= self.converge_window * self.mcu_freq)
+            if was_host_model_stable:
+                # Once a software-relayed map is qualified, do not revoke it
+                # synchronously on one ClockSync endpoint/rate observation.
+                # A newly discovered minimum RTT is normally an improvement,
+                # but its regression update can coincide with an active
+                # trajectory flush.  Hold the last qualified oscillator map
+                # for isolated outliers, as the exact-SOF path already does.
+                # The MCU's independent phase gate remains authoritative, and
+                # sustained disagreement still fails closed.
+                if rate_steady and phase_steady:
+                    self.host_bad_count = 0
+                    self.host_stable_count = HOST_STABLE_COUNT
+                    self.host_model_stable = True
+                    self.host_qualified_rate = (
+                        self.relay_rate or self.host_rate)
+                else:
+                    self.host_bad_count += 1
+                    if self.host_bad_count < HOST_DIVERGE_COUNT:
+                        if predicted_local is not None:
+                            local_est = predicted_local
+                            self.host_filtered_count += 1
+                        self.host_stable_count = HOST_STABLE_COUNT
+                        self.host_model_stable = True
+                    else:
+                        self.host_bad_count = 0
+                        self.host_stable_count = 0
+                        self.host_model_stable = False
+                        self.host_qualified_rate = None
+            elif rtt_changed or not rate_steady:
+                self.host_bad_count = 0
                 self.host_stable_count = 0
                 self.host_model_stable = False
             else:
@@ -315,6 +381,28 @@ class SecondaryLink:
                     HOST_STABLE_COUNT, self.host_stable_count + 1)
                 self.host_model_stable = (
                     self.host_stable_count >= HOST_STABLE_COUNT)
+                if self.host_model_stable:
+                    self.host_qualified_rate = (
+                        self.relay_rate or self.host_rate)
+        if (not was_host_model_stable and self.host_model_stable
+                and not self.rate_reseeded and self.relay_rate is not None):
+            # ClockSync's mature long-window frequency regression is the
+            # source of the updated oscillator ratio. The endpoint relay fit
+            # independently qualifies it within the transport-specific
+            # tolerance above.
+            seed_rate = self.host_rate or self.relay_rate
+            seed_error_ppm = (
+                seed_rate / self.nominal_rate - 1.) * 1.e6
+            if abs(seed_error_ppm) > HOST_RESEED_RATE_ERROR_PPM:
+                # The host stability gate has prevented Class-0 traffic up to
+                # this transition. It is therefore safe to restart priming
+                # with the robust multi-second oscillator estimate instead
+                # of making the deliberately slow firmware PI loop unwind a
+                # noisy connect-time estimate over minutes.
+                logging.info(
+                    "timesync: re-priming mcu '%s' from stable host rate"
+                    " (startup error=%+.2fppm)", self.name, seed_error_ppm)
+                self._reseed_rate(seed_rate)
         self.last_machine_clock = machine_clock
         self.last_local_est = local_est
         self.last_raw_local_est = raw_local_est
@@ -427,6 +515,33 @@ class MachineTimeSync:
             'freewheel_time', FREEWHEEL_TIME, above=0.)
         self.converge_window = config.getfloat(
             'converge_window', CONVERGE_WINDOW, above=0.)
+        # A single printer may mix transports with materially different
+        # timestamp uncertainty (for example USB SOF, CAN hardware
+        # timestamps, and authenticated Wi-Fi datagrams).  Keep the global
+        # Class-0 default strict, but permit an explicitly named secondary to
+        # use a transport-qualified residual window.  The firmware PI loop
+        # still targets zero; this changes only its convergence admission
+        # threshold.
+        self.converge_windows = {}
+        prefix = 'converge_window_'
+        for option in config.get_prefix_options(prefix):
+            mcu_name = option[len(prefix):]
+            if not mcu_name:
+                raise config.error(
+                    "timesync per-MCU convergence window is missing an MCU"
+                    " name")
+            self.converge_windows[mcu_name] = config.getfloat(
+                option, above=0.)
+        self.host_rate_tolerances = {}
+        prefix = 'host_rate_tolerance_ppm_'
+        for option in config.get_prefix_options(prefix):
+            mcu_name = option[len(prefix):]
+            if not mcu_name:
+                raise config.error(
+                    "timesync per-MCU host-rate tolerance is missing an MCU"
+                    " name")
+            self.host_rate_tolerances[mcu_name] = config.getfloat(
+                option, above=0.)
         self.usb_sof = config.getboolean('usb_sof', False)
         self.primary = None
         self.read_cmd = None
@@ -454,6 +569,8 @@ class MachineTimeSync:
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('TIMESYNC_STATUS', self.cmd_TIMESYNC_STATUS,
                                desc=self.cmd_TIMESYNC_STATUS_help)
+    def _get_converge_window(self, mcu_name):
+        return self.converge_windows.get(mcu_name, self.converge_window)
     def _handle_ready(self):
         primary = self.printer.lookup_object('mcu')
         if primary.is_fileoutput():
@@ -494,8 +611,19 @@ class MachineTimeSync:
             return
         primary.register_serial_response(self._handle_sync_beacon,
                                          'sync_beacon seq=%c clock=%u')
+        active_names = {link.name for link in self.secondaries}
+        override_names = (
+            set(self.converge_windows) | set(self.host_rate_tolerances))
+        for mcu_name in sorted(override_names - active_names):
+            logging.warning(
+                "timesync: per-MCU override for '%s' does not match a"
+                " disciplined secondary MCU", mcu_name)
         for link in self.secondaries:
-            link.setup(self.freewheel_time, self.converge_window)
+            link.host_rate_tolerance_ppm = self.host_rate_tolerances.get(
+                link.name, HOST_RATE_TOLERANCE_PPM)
+            link.setup(
+                self.freewheel_time,
+                self._get_converge_window(link.name))
         self._setup_sof()
         # Priming burst, then drop to the 1 Hz cadence (doc 01 startup)
         self.prime_remaining = PRIME_COUNT
@@ -879,8 +1007,15 @@ class MachineTimeSync:
                 'relay_rate': link.relay_rate,
                 'host_model_stable': link.host_model_stable,
                 'host_stable_count': link.host_stable_count,
+                'host_bad_count': link.host_bad_count,
+                'host_filtered_count': link.host_filtered_count,
+                'host_phase_error_us': (
+                    None if link.host_phase_error_ticks is None else
+                    link.host_phase_error_ticks / link.mcu_freq * 1.e6),
                 'host_rate': link.host_rate,
                 'host_rate_error_ppm': link.host_rate_error_ppm,
+                'host_rate_tolerance_ppm': link.host_rate_tolerance_ppm,
+                'rate_reseed_count': link.rate_reseed_count,
                 'sof_rate_bad_count': link.sof_bad_count,
                 'sof_filtered_count': link.sof_filtered_count,
                 'sof_holdover_count': link.sof_holdover_count,

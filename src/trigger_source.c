@@ -121,6 +121,16 @@ command_trigger_source_arm(uint32_t *args)
     tsrc->flags |= TSRC_ARMED;
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 1);
+    // Edge peripherals do not report a level that was already active before
+    // they were armed.  Check the GPIO after unmasking while interrupts are
+    // still disabled: an active level is a valid immediate trigger, and an
+    // edge racing this read remains latched for delivery on irq_enable().
+    // This is essential for the second homing pass when mechanical travel or
+    // backlash leaves the switch asserted after the retract.  It also closes
+    // the query-to-arm race without reverting normal detection to polling.
+    if (tsrc->kind == TS_KIND_GPIO
+        && gpio_in_read(tsrc->pin_in) == tsrc->edge)
+        trigger_source_notify(tsrc, timer_read_time());
     irq_enable();
 }
 DECL_COMMAND(command_trigger_source_arm,

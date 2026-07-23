@@ -222,6 +222,15 @@ on a given MCU. Pair it temporarily with
 `hardware_endstop_observer: True` to timestamp polling edges for direct
 qualification; the observer is not a production operating mode.
 
+Arming is level-safe as well as edge-driven. The firmware unmasks the edge
+peripheral and then, with interrupts still disabled, reads the current GPIO
+level. If the requested level was already active before arming, it performs
+the same bounded qualification and fires trsync immediately. If an edge races
+the read, the peripheral latch delivers it after interrupts are restored.
+This closes the query-to-arm race and ensures a second homing pass whose
+retract did not release the switch reports the real condition instead of
+moving to its limit while waiting for an impossible new edge.
+
 ### RP2040 live result
 
 The RP2040 port owns and arms IO_BANK0 edge latches per configured GPIO,

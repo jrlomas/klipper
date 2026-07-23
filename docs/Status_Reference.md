@@ -649,14 +649,23 @@ The following information is available in the
   `ClockSync` frequency, minimum half-RTT anchor, prediction variance, and
   sample time used to bridge the two independent links.
 - `mcus.<mcu_name>.host_model_stable`, `host_stable_count`, `host_rate`, and
-  `host_rate_error_ppm`: The host-side machine-time preflight state. A minimum-RTT
-  anchor change or disagreement between the direct clock-frequency ratio and
-  robust relay fit clears this gate immediately; eight consecutive steady
-  beacons are required to reacquire it. It rejects moving host models but
-  cannot prove that two independent link midpoints are unbiased. In USB-SOF
-  mode, the rate and error are instead derived from consistency between
-  consecutive exact same-frame clock pairs; a startup software clock estimate
-  cannot veto the hardware-derived rate.
+  `host_rate_error_ppm`: The host-side machine-time preflight state. Eight
+  consecutive steady beacons are required for initial acquisition. Once
+  qualified, an isolated minimum-RTT regression update or endpoint/rate
+  outlier cannot synchronously revoke the map during an already-admitted
+  trajectory flush; the relay holds the last qualified oscillator prediction.
+  Three consecutive disagreements revoke the host gate, while the firmware's
+  independent phase and freshness gates remain authoritative on every
+  Class-0 record. This rejects sustained moving models but cannot prove that
+  two independent link midpoints are unbiased. In USB-SOF mode, the rate and
+  error are instead derived from consistency between consecutive exact
+  same-frame clock pairs; a startup software clock estimate cannot veto the
+  hardware-derived rate.
+- `mcus.<mcu_name>.host_bad_count`, `host_filtered_count`, and
+  `host_phase_error_us`: Consecutive rejected software-relay observations,
+  total observations replaced by qualified-map holdover, and the latest raw
+  robust-endpoint phase residual. These are the non-SOF counterparts to the
+  exact-frame rejection diagnostics below.
 - `mcus.<mcu_name>.usb_sof`: True when this secondary supports matched USB
   Start-of-Frame timestamps and exact-frame probing was attempted.
 - `mcus.<mcu_name>.usb_sof_active` and `sof_pair_unavailable`: Whether

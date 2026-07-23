@@ -101,6 +101,15 @@ serial:
 #   The observer adds a small interrupt/logging cost and should remain False
 #   in production. Enabling it while hardware_endstop_trigger is True is a
 #   configuration error. The default is False.
+#multi_mcu_homing_timeout: 0.025
+#   Maximum interval (in seconds) without a successful trsync liveness
+#   exchange during homing or probing whose endstop and stepper are on
+#   different MCUs. The default is 0.025 seconds and should remain in place
+#   for USB and CAN. A qualified higher-jitter network MCU may opt into a
+#   larger bounded value (up to 0.250 seconds). This does not delay a normal
+#   endstop stop, but a complete communication outage may permit motion for
+#   up to this interval. Account for homing speed multiplied by this value
+#   as possible overshoot.
 ```
 
 ### [mcu my_extra_mcu]
@@ -210,6 +219,30 @@ exposed printer object.
 #   Secondary discipline-residual window (in seconds). A secondary reports
 #   internally "converged" once its PI filter is within this window; the
 #   filter continues to target zero error. The default is 0.000010 (10us).
+#converge_window_<mcu_name>:
+#   Optional per-secondary override. For example,
+#   `converge_window_rodent: 0.000100` applies a 100us residual admission
+#   window only to `[mcu rodent]`; other secondary MCUs retain the global
+#   `converge_window`. This is intended for a transport-qualified deployment
+#   that mixes USB/CAN and higher-jitter network links. A wider value changes
+#   only the convergence gate—the PI loop continues to target zero error.
+#   Qualification must translate the bound into the machine's worst-case
+#   spatial error. The Rodent V1.1 WiFi Z trial used 0.000250 after observing
+#   a smooth +164us to -193us post-restart acquisition excursion; at its
+#   20mm/s homing speed that bound is 0.005mm. It is not an appropriate
+#   substitute for hardware timestamps on a high-speed XY coordination group.
+#host_rate_tolerance_ppm_<mcu_name>:
+#   Optional per-secondary agreement tolerance between Klipper's long-window
+#   clock regression and the independent relay endpoint fit. The default is
+#   2ppm. A measured higher-jitter transport may use a qualified override,
+#   for example `host_rate_tolerance_ppm_rodent: 50`. Other MCUs retain the
+#   strict global default. This does not change the firmware PI target or the
+#   residual `converge_window`. The Rodent V1.1 WiFi Z qualification later
+#   observed the endpoint-fit error cross a 50ppm gate repeatedly under motion
+#   traffic (approximately +/-110ppm in that run), despite an in-window phase
+#   residual. Its Z-only lab profile therefore uses 150ppm. At the 5s
+#   freewheel limit and 20mm/s homing velocity, the conservative rate-error
+#   translation is 0.015mm; this is not suitable for coordinated XY motion.
 #   This value does not bound absolute physical phase across independent
 #   links: transport delay asymmetry is outside the MCU residual. A hard
 #   physical timing-assurance claim additionally requires a transport whose
@@ -4948,6 +4981,13 @@ run_current:
 #sense_resistor: 0.075
 #   The resistance (in ohms) of the motor sense resistor. The default
 #   is 0.075 ohms.
+#globalscaler_min: 32
+#   The minimum valid GLOBALSCALER value the current calculator should
+#   select. Values from 32 through 255 are accepted. The default of 32
+#   preserves Klipper's historical register selection. External-power-stage
+#   drivers such as the TMC2160 may use 128 to keep the analog current
+#   regulator in the data-sheet-recommended range. This does not compensate
+#   for an incorrect sense_resistor value.
 #stealthchop_threshold: 0
 #   The velocity (in mm/s) to set the "stealthChop" threshold to. When
 #   set, "stealthChop" mode will be enabled if the stepper motor
