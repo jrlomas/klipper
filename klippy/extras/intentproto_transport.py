@@ -41,6 +41,7 @@ UDP_CONSOLE_STATUS = (
     ' session_rx_epoch=%u session_rx_top=%u'
     ' session_auth_failures=%u session_replays=%u'
     ' session_old_epoch=%u')
+DATAGRAM_MULTI_MCU_HOMING_TIMEOUT = .250
 ETH_MAC_STATUS_F7 = (
     'eth_mac_status ready=%c init_error=%c link=%c speed100=%c'
     ' full_duplex=%c phy_addr=%c phy_id1=%hu phy_id2=%hu'
@@ -67,6 +68,11 @@ class IntentprotoTransport:
         self.send_ahead = config.getfloat(
             'send_ahead', 1.0 if self.mode == 'datagram' else .100,
             minval=.100, maxval=30.0)
+        self.multi_mcu_homing_timeout = config.getfloat(
+            'multi_mcu_homing_timeout',
+            DATAGRAM_MULTI_MCU_HOMING_TIMEOUT
+            if self.mode == 'datagram' else .025,
+            minval=.025, maxval=.250)
         default_pty = '/tmp/intentproto-%s' % (self.name,)
         self.pty_link = config.get('pty', default_pty)
         # Authentication: a PSK file, or the explicit trust-network confession.
@@ -175,6 +181,10 @@ class IntentprotoTransport:
 
     def _configure_datagram_serial(self, mcu):
         mcu.set_serial_send_ahead(self.send_ahead)
+        mcu.set_transport_homing_timeout(self.multi_mcu_homing_timeout)
+        logging.info(
+            "intentproto_transport %s: multi-MCU homing liveness floor"
+            " %.1fms", self.name, self.multi_mcu_homing_timeout * 1000.)
 
     def _lookup_datagram_diagnostics(self, mcu):
         if mcu.try_lookup_command('udp_console_get_status') is not None:

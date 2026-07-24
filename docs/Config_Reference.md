@@ -395,6 +395,15 @@ One section per bridged micro-controller.
 #   to 0.100 second. The accepted range is 0.100 to 30.0 seconds. This is a
 #   transport staging horizon, not an execution grant: firmware may execute
 #   only through the separately committed all-MCU grant.
+#multi_mcu_homing_timeout: 0.250
+#   Datagram mode: carrier liveness floor for homing or probing whose
+#   endstop and stepper are on different MCUs. Datagram ARQ may legitimately
+#   back off to 0.200 seconds after consecutive losses, so the default is
+#   0.250 seconds. The larger of this value and the matching [mcu] value is
+#   applied to the complete trsync group. This does not delay a successful
+#   endstop stop, but a total link outage may permit motion for this long;
+#   account for homing_speed multiplied by this value as possible overshoot.
+#   The accepted range is 0.025 to 0.250 seconds. BCH mode defaults to 0.025.
 #device: /dev/ttyAMA0
 #   Bch mode: the serial device to the board. Required in bch mode.
 #baud: 250000

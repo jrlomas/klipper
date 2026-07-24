@@ -87,9 +87,18 @@ def main():
 
     # Same-MCU homing retains its established 250ms timeout.
     assert run_start([network]) == [mcu_mod.TRSYNC_SINGLE_MCU_TIMEOUT]
+
+    # The matched carrier contributes a liveness floor.  A datagram carrier
+    # must not inherit an MCU-section value shorter than its ARQ backoff.
+    carrier_mcu = object.__new__(mcu_mod.MCU)
+    carrier_mcu._multi_mcu_homing_timeout = network
+    carrier_mcu._transport_homing_timeout = default
+    carrier_mcu.set_transport_homing_timeout(0.250)
+    assert carrier_mcu.get_multi_mcu_homing_timeout() == 0.250
     print("PASS: multi-MCU trsync timeout remains strict by default")
     print("PASS: explicit network timeout applies to the whole trsync group")
     print("PASS: single-MCU homing timeout is unchanged")
+    print("PASS: carrier liveness floor dominates a shorter MCU value")
 
 
 if __name__ == "__main__":

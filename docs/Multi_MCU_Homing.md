@@ -52,6 +52,15 @@ a longer liveness gap. The configured timeout must therefore be treated as a
 mechanical overshoot bound during a complete link outage:
 `homing_speed * multi_mcu_homing_timeout`.
 
+An `[intentproto_transport]` also publishes the minimum liveness window its
+carrier requires. Datagram mode defaults this floor to 250ms because its
+end-to-end serial ARQ can legitimately reach a 200ms retry backoff after
+consecutive packet losses. The effective group timeout is the largest MCU or
+carrier value; a shorter value in `[mcu]` cannot silently undercut the
+carrier. Set `multi_mcu_homing_timeout` in the transport section only after
+qualifying both the link latency distribution and the resulting mechanical
+overshoot bound.
+
 Should high latency result in a failure (or if some other
 communication issue is detected) then Helix will raise a
 "Communication timeout during homing" error. (This overshoot-and-timeout

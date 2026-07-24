@@ -2085,6 +2085,13 @@ class MCU:
         self._multi_mcu_homing_timeout = config.getfloat(
             'multi_mcu_homing_timeout', TRSYNC_TIMEOUT,
             minval=TRSYNC_TIMEOUT, maxval=TRSYNC_SINGLE_MCU_TIMEOUT)
+        # A carrier may require a larger liveness window than the MCU
+        # section requested.  In particular, datagram serialqueue ARQ can
+        # legitimately enter a 200ms retransmit backoff after consecutive
+        # packet losses.  Let the carrier publish that lower bound after it
+        # is matched to this MCU; never let it weaken a stricter (larger)
+        # operator-selected mechanical bound.
+        self._transport_homing_timeout = TRSYNC_TIMEOUT
         # Capability-gated migration of legacy MCU_adc clients onto the
         # merged DMA engine.  Auto falls back atomically; force is useful for
         # qualification because it makes any incompatibility explicit.
@@ -2125,7 +2132,13 @@ class MCU:
     def want_hw_endstop_observer(self):
         return self._hw_endstop_observer
     def get_multi_mcu_homing_timeout(self):
-        return self._multi_mcu_homing_timeout
+        return max(self._multi_mcu_homing_timeout,
+                   self._transport_homing_timeout)
+    def set_transport_homing_timeout(self, timeout):
+        timeout = float(timeout)
+        if not TRSYNC_TIMEOUT <= timeout <= TRSYNC_SINGLE_MCU_TIMEOUT:
+            raise ValueError("transport homing timeout outside safe bounds")
+        self._transport_homing_timeout = timeout
     def set_serial_send_ahead(self, seconds):
         self._serial.set_send_ahead(seconds)
     # MCU Configuration wrappers

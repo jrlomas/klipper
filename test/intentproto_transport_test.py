@@ -181,9 +181,13 @@ class _DiagnosticMCU:
         self.eth_schema = eth_schema
         self.lookups = []
         self.send_ahead = None
+        self.homing_timeout = None
 
     def set_serial_send_ahead(self, seconds):
         self.send_ahead = seconds
+
+    def set_transport_homing_timeout(self, seconds):
+        self.homing_timeout = seconds
 
     def try_lookup_command(self, command):
         return object()
@@ -240,9 +244,11 @@ class TestDatagramDiagnostics(unittest.TestCase):
     def test_datagram_link_physically_stages_ahead_of_arq(self):
         transport = self._transport(transport_glue.ETH_MAC_STATUS_F7)
         transport.send_ahead = 1.0
+        transport.multi_mcu_homing_timeout = 0.250
         mcu = _DiagnosticMCU(transport_glue.ETH_MAC_STATUS_F7)
         transport._configure_datagram_serial(mcu)
         self.assertEqual(mcu.send_ahead, 1.0)
+        self.assertEqual(mcu.homing_timeout, 0.250)
 
 
 if __name__ == '__main__':
