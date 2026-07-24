@@ -1443,6 +1443,16 @@ class TrajectoryQueuing:
             return True
         return self.timesync.is_mcu_synced(mcu.get_name())
 
+    def get_unsynced_mcus(self):
+        # Recovery must not restart G-Code ingestion in the short interval
+        # after transport reconnects but before the secondary machine-time
+        # model is trustworthy again.  Return each participating trajectory
+        # MCU once; the primary defines machine time and needs no discipline.
+        machine_mcu = self.get_machine_mcu()
+        return sorted(set(
+            ts.mcu.get_name() for ts in self.steppers
+            if ts.mcu is not machine_mcu and not self.is_mcu_synced(ts.mcu)))
+
     def _handle_check_move(self, move):
         # Fail before toolhead.move() commits this move to lookahead.  The
         # firmware Class-0 ingest gate remains authoritative, but reaching it

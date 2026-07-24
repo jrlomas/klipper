@@ -37,12 +37,20 @@ from extras.failure_recovery import (  # noqa: E402
 class FakeReactor:
     def __init__(self):
         self.callbacks = []
+        self.now = 0.
+        self.pause_hook = None
 
     def monotonic(self):
-        return 0.
+        return self.now
 
     def register_callback(self, callback):
         self.callbacks.append(callback)
+
+    def pause(self, waketime):
+        self.now = waketime
+        if self.pause_hook is not None:
+            self.pause_hook(self.now)
+        return self.now
 
 
 class FakeGcode:
@@ -120,6 +128,7 @@ class FakeTrajQueuing:
     def __init__(self, steppers):
         self._steppers = steppers
         self.completed_recovery = False
+        self.unsynced_mcus = []
 
     def get_trajectory_steppers(self):
         return list(self._steppers)
@@ -129,6 +138,9 @@ class FakeTrajQueuing:
 
     def complete_recovery_hold(self):
         self.completed_recovery = True
+
+    def get_unsynced_mcus(self):
+        return list(self.unsynced_mcus)
 
     def get_status(self, eventtime=None):
         return {'recovery_active': not self.completed_recovery,
@@ -514,6 +526,51 @@ def test_normal_resume():
     print("PASS: normal reconnect-resume rebases both joints and resumes")
 
 
+def test_resume_waits_for_machine_time_convergence():
+    printer = FakePrinter()
+    printer.objects['pause_resume'] = FakePauseResume(paused=True)
+    mcu = FakeMcu('rodent')
+    z = FakeTrajStepper('stepper_z', 1, mcu, held=(1000, 320000),
+                        last_intention=(500, 1000, 320000))
+    tq = printer.objects['trajectory_queuing'] = FakeTrajQueuing([z])
+    tq.unsynced_mcus = ['rodent']
+    printer.reactor.pause_hook = (
+        lambda now: setattr(tq, 'unsynced_mcus', []) if now >= .3 else None)
+    f = make_fr(printer)
+    f.execlogs = [FakeExecLog(mcu, [])]
+    f._resume_motion(gcmd=None)
+    assert printer.reactor.now >= .3
+    assert z.reconciled_with == (1000, 320000, 42.25)
+    assert tq.completed_recovery
+    assert printer.gcode.scripts == ["RESUME"], printer.gcode.scripts
+    print("PASS: recovery waits for machine time before restarting ingestion")
+
+
+def test_unconverged_resume_stays_paused_without_side_effects():
+    printer = FakePrinter()
+    printer.objects['pause_resume'] = FakePauseResume(paused=True)
+    mcu = FakeMcu('rodent')
+    z = FakeTrajStepper('stepper_z', 1, mcu, held=(1000, 320000),
+                        last_intention=(500, 1000, 320000))
+    tq = printer.objects['trajectory_queuing'] = FakeTrajQueuing([z])
+    tq.unsynced_mcus = ['rodent']
+    f = make_fr(printer)
+    f.resume_sync_timeout = .25
+    execlog = FakeExecLog(mcu, [])
+    drain_calls = []
+    execlog.drain = lambda: drain_calls.append(True) or []
+    f.execlogs = [execlog]
+    f._resume_motion(gcmd=None)
+    assert printer.reactor.now == .25
+    assert drain_calls == []
+    assert z.reconciled_with is None
+    assert not tq.completed_recovery
+    assert printer.gcode.scripts == []
+    assert f.last_recovery['blocked']
+    assert f.last_recovery['deferred'] == 'machine_time'
+    print("PASS: convergence timeout leaves virtual SD paused and recoverable")
+
+
 def test_underrun_truncated():
     printer = FakePrinter()
     printer.objects['pause_resume'] = FakePauseResume(paused=True)
@@ -611,6 +668,8 @@ def main():
     test_execlog_normalizes_negative_position()
     test_shutdown_drain_is_deferred_outside_no_pause_handler()
     test_normal_resume()
+    test_resume_waits_for_machine_time_convergence()
+    test_unconverged_resume_stays_paused_without_side_effects()
     test_underrun_truncated()
     test_held_joints_restore_cartesian_toolhead_position()
     test_board_reset()

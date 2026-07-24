@@ -897,6 +897,19 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   feature remain. The current virtual-SD resume restarts at
   the next unconsumed G-Code command; replay/replanning of the interrupted
   move suffix is not yet implemented, so this is not yet print-transparent.
+  A 2026-07-23 Rodent Wi-Fi recovery exposed a separate host sequencing
+  defect: `RESUME_MOTION` restarted virtual-SD ingestion immediately after
+  transport recovery, before Rodent's freshly reset machine-time fit had
+  reconverged. The ordinary pre-lookahead Class-0 gate correctly refused the
+  first move, but that temporary exception reached `on_error_gcode:
+  CANCEL_PRINT` and irreversibly cancelled the print. Recovery now keeps
+  ingestion paused and services the reactor for up to
+  `resume_sync_timeout` while every participating secondary reconverges.
+  Timeout leaves the print paused and retryable without draining execution
+  logs, rebasing coordinates, releasing heater holds, or entering virtual
+  SD. Host regressions prove both convergence-then-resume and
+  timeout-with-no-side-effects; the ordinary unsynchronized-move gate remains
+  fail-closed. A physical reconnect/resume repetition remains part of 8.7.
   - [ ] **Print-transparent follow-up:** exercise reconnect/reconcile under a
     print, cover a volatile axis on hardware, independently measure position,
     and replan the interrupted command suffix.

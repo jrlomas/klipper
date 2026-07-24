@@ -547,6 +547,12 @@ joint's homing was genuinely lost (`motion_homing_volatile`), the resume
 is blocked and the affected axis is reported for re-homing rather than
 having a position faked. Normally invoked automatically at the end of the
 recovery flow; available manually for testing and recovery workflows.
+After a transport reconnect, `RESUME_MOTION` keeps print ingestion paused
+while participating secondary MCUs reconverge to machine time. If the
+configured `resume_sync_timeout` expires, it reports `resume DEFERRED` and
+leaves the print recoverable; retry after `TIMESYNC_STATUS` reports
+convergence. A temporary synchronization refusal is never passed to virtual
+SD's fatal `on_error_gcode` path.
 While a trajectory recovery hold is active, the ordinary `RESUME` command
 (including a Mainsail resume action) is automatically routed through this
 same reconciliation path. Outside recovery, `RESUME` retains its standard

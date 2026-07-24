@@ -191,6 +191,13 @@ the associated G-Code commands.
 #   seam (FD-0001 doc 05) instead of the direct reactor path. This is
 #   an advanced/experimental option; on any bridge error it falls back
 #   to the direct drain. The default is False.
+#resume_sync_timeout: 30.0
+#   Maximum time RESUME_MOTION waits for every participating secondary
+#   micro-controller's machine-time discipline to reconverge after a link
+#   recovery. During this wait print ingestion remains paused and the reactor
+#   continues servicing links. If the timeout expires, recovery remains
+#   paused and may be retried; virtual SD is not resumed or cancelled. The
+#   default is 30 seconds.
 ```
 
 ### [timesync]

@@ -47,6 +47,8 @@ EXECLOG_DEFAULT_SIZE = 256
 EXECLOG_DRAIN_CHUNK = 4
 PING_INTERVAL = 1.0
 HOLD_SAMPLE_TIME = 0.25
+RESUME_SYNC_TIMEOUT = 30.0
+RESUME_SYNC_POLL = 0.100
 
 HH_DISABLED = 0
 HH_ARMED = 1
@@ -331,6 +333,8 @@ class FailureRecovery:
             'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
         self.execlog_stream_max = config.getint(
             'execlog_stream_max', 8, minval=0, maxval=64)
+        self.resume_sync_timeout = config.getfloat(
+            'resume_sync_timeout', RESUME_SYNC_TIMEOUT, above=0.)
         self.holds = {}
         # Opt-in: route the execlog drain through the asyncio<->reactor
         # bridge seam (FD-0001 doc 05) instead of the direct reactor
@@ -650,6 +654,46 @@ class FailureRecovery:
                 'intended_pos': intended_pos, 'held_pos': held_su,
                 'gap': gap}
 
+    def _wait_for_machine_time(self, tq, info):
+        # RECONNECT_MCU deliberately resets the secondary's host relay fit.
+        # It can therefore restore transport before machine time has gathered
+        # enough fresh evidence to admit Class-0 motion.  Restarting virtual
+        # SD in that interval lets the ordinary pre-lookahead safety gate
+        # raise into on_error_gcode (commonly CANCEL_PRINT), turning a
+        # temporary recovery condition into an irreversible print cancel.
+        #
+        # Keep ingestion paused and yield to the reactor until all trajectory
+        # participants converge.  No log drain, coordinate rebase, heater
+        # hand-back, or virtual-SD resume occurs before this gate succeeds.
+        get_unsynced = getattr(tq, 'get_unsynced_mcus', None)
+        if get_unsynced is None:
+            return True
+        unsynced = get_unsynced()
+        if not unsynced:
+            return True
+        paused = sorted(set(unsynced) & self.link_paused_mcus)
+        if paused:
+            info("resume DEFERRED: MCU link(s) %s are still paused; run"
+                 " RECONNECT_MCU for each board, then RESUME_MOTION"
+                 % (", ".join(paused),))
+            return False
+        reactor = self.printer.get_reactor()
+        deadline = reactor.monotonic() + self.resume_sync_timeout
+        info("waiting up to %.1f s for machine-time convergence on %s"
+             % (self.resume_sync_timeout, ", ".join(unsynced)))
+        while unsynced:
+            now = reactor.monotonic()
+            if now >= deadline:
+                info("resume DEFERRED: machine time did not converge on %s;"
+                     " print ingestion remains paused (check TIMESYNC_STATUS"
+                     " and retry RESUME_MOTION)"
+                     % (", ".join(unsynced),))
+                return False
+            reactor.pause(min(deadline, now + RESUME_SYNC_POLL))
+            unsynced = get_unsynced()
+        info("machine time converged; continuing motion reconciliation")
+        return True
+
     def _resume_motion(self, gcmd=None):
         def info(msg):
             logging.info("failure_recovery: %s", msg)
@@ -657,6 +701,12 @@ class FailureRecovery:
                 gcmd.respond_info(msg)
         tq = self.printer.lookup_object('trajectory_queuing', None)
         steppers = tq.get_trajectory_steppers() if tq is not None else []
+        if tq is not None and not self._wait_for_machine_time(tq, info):
+            self.last_recovery = {
+                'reconciled': [], 'reset': [], 'blocked': True,
+                'deferred': 'machine_time',
+            }
+            return
         # (a) Drain each board's execution log once (reliable Class-1
         # pull); recovery never depends on droppable live records.
         drained = {}
