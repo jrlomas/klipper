@@ -185,7 +185,8 @@ the associated G-Code commands.
 #   Comma separated list of micro-controller names (as used in the
 #   [mcu] / [mcu my_name] sections) on which to configure an execution
 #   log. Boards that do not provide the execlog firmware support are
-#   skipped with a log message. The default is "mcu".
+#   skipped with a log message. Every MCU that owns a trajectory stepper is
+#   included automatically even when omitted here. The default is "mcu".
 #asyncio_drain: False
 #   If true, route the execution-log drain through the [asyncio_bridge]
 #   seam (FD-0001 doc 05) instead of the direct reactor path. This is
@@ -379,6 +380,15 @@ One section per bridged micro-controller.
 #   datagram mode.
 #listen_port: 41414
 #   Datagram mode: local UDP port to listen on. The default is 41414.
+#send_ahead: 1.0
+#   How far ahead reqclock-tagged commands become eligible for physical
+#   transmission on this link. Stock serialqueue releases them only 0.100
+#   seconds before their deadline, which is shorter than a legitimate
+#   datagram retransmission backoff and does not physically stage a larger
+#   Klippy lookahead. Datagram mode defaults to 1.0 second; BCH mode defaults
+#   to 0.100 second. The accepted range is 0.100 to 30.0 seconds. This is a
+#   transport staging horizon, not an execution grant: firmware may execute
+#   only through the separately committed all-MCU grant.
 #device: /dev/ttyAMA0
 #   Bch mode: the serial device to the board. Required in bch mode.
 #baud: 250000

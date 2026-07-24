@@ -404,8 +404,10 @@ class FailureRecovery:
         # affect the emitted PWM/digital-output configuration command.
         for hold in self.holds.values():
             hold.prepare_mcu_config()
-        # Configure execution logs on the mcus that support them
-        for name in self.execlog_mcu_names:
+        # Include every trajectory participant automatically.  A newly added
+        # motion MCU must not disappear from the flight recorder merely
+        # because an older config list was not extended at the same time.
+        for name in self._get_execlog_mcu_names():
             objname = 'mcu' if name == 'mcu' else 'mcu ' + name
             mcu = self.printer.lookup_object(objname, None)
             if mcu is None:
@@ -416,6 +418,21 @@ class FailureRecovery:
                              name)
                 continue
             self.execlogs.append(McuExecLog(self, mcu, self.execlog_size))
+
+    def _get_execlog_mcu_names(self):
+        names = list(self.execlog_mcu_names)
+        tq = self.printer.lookup_object('trajectory_queuing', None)
+        if tq is not None:
+            names.extend(ts.mcu.get_name()
+                         for ts in tq.get_trajectory_steppers())
+        unique = []
+        seen = set()
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            unique.append(name)
+        return unique
 
     def _handle_connect(self):
         for el in self.execlogs:
@@ -707,6 +724,14 @@ class FailureRecovery:
                 'deferred': 'machine_time',
             }
             return
+        if (tq is not None
+                and not tq.acquire_recovery_grant(
+                    self.resume_sync_timeout, info)):
+            self.last_recovery = {
+                'reconciled': [], 'reset': [], 'blocked': True,
+                'deferred': 'execution_grant',
+            }
+            return
         # (a) Drain each board's execution log once (reliable Class-1
         # pull); recovery never depends on droppable live records.
         drained = {}
@@ -829,6 +854,8 @@ class FailureRecovery:
                  " suffix is not reconstructed; a geometry discontinuity"
                  " or blemish is possible (FD-0001 doc 08)")
         if blocking:
+            if tq is not None:
+                tq.cancel_recovery_grant()
             info("resume BLOCKED: joint(s) need re-qualification or operator"
                  " judgment; the print was NOT resumed")
             return
@@ -982,8 +1009,8 @@ class FailureRecovery:
         for el, records in self._drain_all():
             total += len(records)
             for r in records:
-                logging.info("execlog: seq=%d type=%d src=%d clock=%d"
-                             " pos=%d aux=%d", *r)
+                logging.info("execlog[%s]: seq=%d type=%d src=%d clock=%d"
+                             " pos=%d aux=%d", el.mcu.get_name(), *r)
         gcmd.respond_info("Drained %d execution log records (see log)"
                           % (total,))
 

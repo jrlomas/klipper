@@ -129,6 +129,9 @@ class FakeTrajQueuing:
         self._steppers = steppers
         self.completed_recovery = False
         self.unsynced_mcus = []
+        self.recovery_grant_result = True
+        self.recovery_grant_calls = []
+        self.recovery_grant_cancelled = False
 
     def get_trajectory_steppers(self):
         return list(self._steppers)
@@ -138,6 +141,13 @@ class FakeTrajQueuing:
 
     def complete_recovery_hold(self):
         self.completed_recovery = True
+
+    def acquire_recovery_grant(self, timeout, info):
+        self.recovery_grant_calls.append(timeout)
+        return self.recovery_grant_result
+
+    def cancel_recovery_grant(self):
+        self.recovery_grant_cancelled = True
 
     def get_unsynced_mcus(self):
         return list(self.unsynced_mcus)
@@ -500,6 +510,20 @@ def test_shutdown_drain_is_deferred_outside_no_pause_handler():
     print("PASS: shutdown schedules flight-log drain after no-pause scope")
 
 
+def test_flight_recorder_auto_includes_trajectory_mcus():
+    printer = FakePrinter()
+    f = make_fr(printer)
+    f.execlog_mcu_names = ('mcu', 'ebb36')
+    rodent = FakeMcu('rodent')
+    duplicate = FakeMcu('ebb36')
+    printer.objects['trajectory_queuing'] = FakeTrajQueuing([
+        FakeTrajStepper('stepper_z', 1, rodent),
+        FakeTrajStepper('extruder', 2, duplicate),
+    ])
+    assert f._get_execlog_mcu_names() == ['mcu', 'ebb36', 'rodent']
+    print("PASS: flight recorder includes every trajectory MCU once")
+
+
 # ---- Scenarios -------------------------------------------------------
 
 def test_normal_resume():
@@ -569,6 +593,30 @@ def test_unconverged_resume_stays_paused_without_side_effects():
     assert f.last_recovery['blocked']
     assert f.last_recovery['deferred'] == 'machine_time'
     print("PASS: convergence timeout leaves virtual SD paused and recoverable")
+
+
+def test_resume_without_all_mcu_grant_stays_paused_without_rebase():
+    printer = FakePrinter()
+    printer.objects['pause_resume'] = FakePauseResume(paused=True)
+    mcu = FakeMcu('rodent')
+    z = FakeTrajStepper('stepper_z', 1, mcu, held=(1000, 320000),
+                        last_intention=(500, 1000, 320000))
+    tq = printer.objects['trajectory_queuing'] = FakeTrajQueuing([z])
+    tq.recovery_grant_result = False
+    f = make_fr(printer)
+    execlog = FakeExecLog(mcu, [])
+    drain_calls = []
+    execlog.drain = lambda: drain_calls.append(True) or []
+    f.execlogs = [execlog]
+    f._resume_motion(gcmd=None)
+    assert tq.recovery_grant_calls == [f.resume_sync_timeout]
+    assert drain_calls == []
+    assert z.reconciled_with is None
+    assert not tq.completed_recovery
+    assert printer.gcode.scripts == []
+    assert f.last_recovery['blocked']
+    assert f.last_recovery['deferred'] == 'execution_grant'
+    print("PASS: missing all-MCU recovery grant leaves motion held")
 
 
 def test_underrun_truncated():
@@ -667,9 +715,11 @@ def main():
     test_execlog_drain_uses_response_barrier_and_deduplicates()
     test_execlog_normalizes_negative_position()
     test_shutdown_drain_is_deferred_outside_no_pause_handler()
+    test_flight_recorder_auto_includes_trajectory_mcus()
     test_normal_resume()
     test_resume_waits_for_machine_time_convergence()
     test_unconverged_resume_stays_paused_without_side_effects()
+    test_resume_without_all_mcu_grant_stays_paused_without_rebase()
     test_underrun_truncated()
     test_held_joints_restore_cartesian_toolhead_position()
     test_board_reset()

@@ -263,9 +263,10 @@ Recovery then follows [08-Failure_Recovery.md](08-Failure_Recovery.md):
 2. invalidate the abandoned staged suffix on every node;
 3. reconcile the actual joint-space stop;
 4. decide whether homing remains qualified;
-5. create a fresh group epoch;
-6. issue one common future recovery rebase; and
-7. stage and commit a newly compiled suffix.
+5. configure a fresh group epoch and obtain an all-participant grant;
+6. issue one common future recovery rebase while normal ingress remains
+   closed; and
+7. reopen normal ingress, then stage and commit a newly compiled suffix.
 
 The secure-session epoch and the execution-group epoch are distinct. A carrier
 may reconnect without authorizing motion, and a motion epoch may survive a
@@ -343,6 +344,34 @@ Two commissioning defects were corrected before those passes:
    64 MHz timer. Idle reproposals now use the normal renewal cadence. A
    160-renewal workstation regression proves the proposal remains at the
    configured horizon instead of running away.
+
+The next physical Rodent print exposed a third, different boundary. Klippy
+reported approximately 2.1 seconds of planned toolhead work, but
+`serialqueue.c` made reqclock-tagged frames eligible for transmission only
+100 ms before their deadlines. The first Rodent trajectory underrun followed
+a reliable-carrier RTO increase to 200 ms: the next Z segment was present in
+the host intention twin but had not been physically sent to the MCU. The
+executor began its configured emergency ramp at the segment boundary and
+reported the underrun 7,495 Rodent ticks later (374.75 us). This was not an
+I2S execution failure: the board reported zero I2S deadline misses, a maximum
+refill cost of 16,287 cycles against a 23,040-cycle budget, no WiFi
+disconnect or brownout, no modem power saving, and no UDP ring drops.
+
+Datagram transports now set a per-link serialqueue `send_ahead` horizon
+(default 1.0 s, configurable to 30 s). This turns planned network lookahead
+into physically transmissible work early enough to survive the observed ARQ
+backoff. It does not widen the executable safety boundary; the short
+all-participant execution grant remains authoritative.
+
+That stop also proved the recovery epoch rule. Firmware correctly refuses to
+extend an expired epoch, while the original host grant timer correctly
+refused to renew anything during a recovery hold. The two safe local rules
+therefore deadlocked `RESUME_MOTION` at the ordinary pre-lookahead check:
+`HELIX execution group has no all-MCU grant`. Recovery now configures a fresh
+random epoch on every idle member, waits for every configuration
+acknowledgement, commits one all-MCU grant, and only then emits coordinated
+recovery rebases. Ordinary G-Code ingress remains closed during the entire
+transaction, and a timeout leaves the print paused and retryable.
 
 ## Qualification gates
 

@@ -1412,6 +1412,9 @@ class TrajectoryQueuing:
         self.group_committed_until = None
         self.group_renewal_fault = None
         self.group_grant_ready = not self.execution_grants
+        self.group_config_pending = None
+        self.group_config_error = None
+        self.recovery_grant_active = False
         self.group_timer = None
         # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
         # but trajectory steppers receive per-joint quintic intentions and
@@ -1447,6 +1450,10 @@ class TrajectoryQueuing:
                 'execution_grants': self.execution_grants,
                 'execution_grant_ready': self.group_grant_ready,
                 'execution_grant_fault': self.group_renewal_fault,
+                'execution_recovery_grant': self.recovery_grant_active,
+                'execution_config_pending':
+                    self.group_config_pending is not None,
+                'execution_config_error': self.group_config_error,
                 'execution_group_id': self.execution_group_id,
                 'execution_epoch': "%08x%08x" % (
                     self.execution_epoch_hi, self.execution_epoch_lo),
@@ -1584,6 +1591,9 @@ class TrajectoryQueuing:
     def complete_recovery_hold(self):
         for ts in self.steppers:
             ts.recovery_hold = False
+        self.recovery_grant_active = False
+        self.group_config_pending = None
+        self.group_config_error = None
         self.recovery_active = False
         self.recovery_trigger = None
 
@@ -1613,6 +1623,10 @@ class TrajectoryQueuing:
         # extra axis moves.  A secondary kinematic joint is conservatively
         # treated as part of every Cartesian move because CoreXY/delta-style
         # coupling is not expressible as one axis_d index here.
+        if getattr(self, 'recovery_active', False):
+            raise self.printer.command_error(
+                "HELIX trajectory recovery hold is active;"
+                " use RESUME_MOTION to reconcile the all-MCU group")
         if (getattr(self, 'execution_grants', False)
                 and not self._execution_grant_valid(
                     self.printer.get_reactor().monotonic())):
@@ -1701,11 +1715,94 @@ class TrajectoryQueuing:
             mq.register_flush_callback(self._flush)
 
     def _group_healthy(self):
-        if self.recovery_active or self.group_renewal_fault is not None:
+        if self.group_renewal_fault is not None:
+            return False
+        if self.recovery_active and not self.recovery_grant_active:
+            return False
+        if self.group_config_pending is not None:
             return False
         for member in self.group_members.values():
             if member.is_paused() or not self.is_mcu_synced(member.mcu):
                 return False
+        return True
+
+    def _begin_recovery_grant(self):
+        # An expired firmware lease is deliberately closed forever.  Recovery
+        # therefore starts a fresh epoch on every idle member instead of
+        # attempting to extend the old, partially expired one.
+        epoch = secrets.randbits(64)
+        self.execution_epoch_hi = epoch >> 32
+        self.execution_epoch_lo = epoch & 0xffffffff
+        self.group_sequence = 0
+        self.group_pending = None
+        self.group_next_proposal = 0.
+        self.group_proposal_time = None
+        self.group_committed_sequence = 0
+        self.group_committed_until = None
+        self.group_renewal_fault = None
+        self.group_grant_ready = False
+        self.group_config_error = None
+        self.recovery_grant_active = False
+        self.group_config_pending = {'acked': set()}
+        for member in self.group_members.values():
+            member.configure(
+                self.execution_group_id, self.execution_epoch_hi,
+                self.execution_epoch_lo)
+
+    def cancel_recovery_grant(self):
+        # No normal motion is admitted while recovery_active remains set.
+        # Stop proposing new leases as well; any already installed lease
+        # expires harmlessly while the machine is idle.
+        self.recovery_grant_active = False
+        self.group_config_pending = None
+        self.group_pending = None
+        self.group_grant_ready = False
+
+    def acquire_recovery_grant(self, timeout, info):
+        if not self.execution_grants:
+            return True
+        if not self.recovery_active:
+            return self._execution_grant_valid(
+                self.printer.get_reactor().monotonic())
+        if not self.group_members:
+            info("resume DEFERRED: execution grants are enabled but the"
+                 " all-MCU group has no members")
+            return False
+        self._begin_recovery_grant()
+        reactor = self.printer.get_reactor()
+        deadline = reactor.monotonic() + timeout
+        info("establishing a fresh all-MCU execution epoch before rebase")
+        while not self.group_grant_ready:
+            if self.group_config_error is not None:
+                error = self.group_config_error
+                info("resume DEFERRED: %s rejected the recovery epoch"
+                     " (reason=%u); motion remains held"
+                     % (error['member'], error['reason']))
+                self.cancel_recovery_grant()
+                return False
+            now = reactor.monotonic()
+            if now >= deadline:
+                pending = self.group_config_pending
+                if pending is not None:
+                    missing = sorted(
+                        set(self.group_members) - pending['acked'])
+                    detail = "epoch acknowledgement from %s" % (
+                        ", ".join(missing),)
+                elif self.group_pending is not None:
+                    missing = sorted(
+                        set(self.group_members)
+                        - self.group_pending['acked'])
+                    detail = "grant acknowledgement from %s" % (
+                        ", ".join(missing),)
+                else:
+                    detail = "a coordinated grant proposal"
+                info("resume DEFERRED: timed out waiting for %s;"
+                     " motion remains held" % (detail,))
+                self.cancel_recovery_grant()
+                return False
+            reactor.pause(min(deadline, now + .050))
+        info("fresh all-MCU execution grant committed at sequence %u"
+             % (self.group_committed_sequence,))
         return True
 
     def _group_motion_active(self, eventtime):
@@ -1840,9 +1937,6 @@ class TrajectoryQueuing:
         return eventtime + min(.100, self.execution_grant_interval)
 
     def _handle_group_state(self, member, state):
-        pending = self.group_pending
-        if pending is None:
-            return
         if (int(state.get('group_id', 0)) != self.execution_group_id
                 or int(state.get('epoch_hi', 0))
                 != self.execution_epoch_hi
@@ -1850,6 +1944,29 @@ class TrajectoryQueuing:
                 != self.execution_epoch_lo):
             return
         reject_reason = int(state.get('reject_reason', -1))
+        config_pending = self.group_config_pending
+        if config_pending is not None:
+            if reject_reason != TGR_OK:
+                self.group_config_error = {
+                    'member': member.name, 'reason': reject_reason}
+                return
+            if (int(state.get('sequence', -1)) != 0
+                    or not (int(state.get('flags', 0)) & TGF_CONFIGURED)
+                    or int(state.get('flags', 0))
+                    & (TGF_ARMED | TGF_EXPIRED)):
+                return
+            config_pending['acked'].add(member.name)
+            if len(config_pending['acked']) != len(self.group_members):
+                return
+            self.group_config_pending = None
+            self.recovery_grant_active = True
+            reactor = self.printer.get_reactor()
+            if self.group_timer is not None:
+                reactor.update_timer(self.group_timer, reactor.NOW)
+            return
+        pending = self.group_pending
+        if pending is None:
+            return
         if reject_reason != TGR_OK:
             # A proposal may be accepted by one MCU while another MCU's
             # Class-0 gate is momentarily closed.  Retrying that same
@@ -1917,6 +2034,11 @@ class TrajectoryQueuing:
         first = not self.recovery_active
         if first:
             self.recovery_active = True
+            self.recovery_grant_active = False
+            self.group_config_pending = None
+            self.group_config_error = None
+            self.group_grant_ready = False
+            self.group_pending = None
             self.recovery_trigger = {
                 'mcu': ts.mcu.get_name(), 'joint': ts.name,
                 'clock': int(params['clock']), 'pos': int(params['pos'])}

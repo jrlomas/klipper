@@ -15,12 +15,24 @@ import trajectory_queuing
 
 class FakeReactor:
     NEVER = 1.e30
+    NOW = 0.
 
     def __init__(self):
         self.now = 0.
+        self.pause_hook = None
+        self.timer_updates = []
 
     def monotonic(self):
         return self.now
+
+    def pause(self, waketime):
+        self.now = waketime
+        if self.pause_hook is not None:
+            self.pause_hook(waketime)
+        return waketime
+
+    def update_timer(self, timer, waketime):
+        self.timer_updates.append((timer, waketime))
 
 
 class FakePrinter:
@@ -35,6 +47,9 @@ class FakePrinter:
         if name == 'toolhead':
             return self.toolhead
         return default
+
+    def command_error(self, message):
+        return RuntimeError(message)
 
 
 class FakeToolhead:
@@ -70,6 +85,7 @@ class FakeMember:
         self.mcu = mcu
         self.name = mcu.get_name()
         self.sent = []
+        self.configured = []
         self.state = None
 
     def is_paused(self):
@@ -77,6 +93,9 @@ class FakeMember:
 
     def grant(self, *args):
         self.sent.append(args)
+
+    def configure(self, *args):
+        self.configured.append(args)
 
 
 class FakeCommand:
@@ -121,6 +140,10 @@ def make_owner():
     owner.group_committed_until = None
     owner.group_renewal_fault = None
     owner.group_grant_ready = False
+    owner.group_config_pending = None
+    owner.group_config_error = None
+    owner.recovery_grant_active = False
+    owner.group_timer = object()
     owner.recovery_active = False
     owner.steppers = []
     primary = FakeMCU('mcu', 12_000_000., 20.)
@@ -145,6 +168,18 @@ def ack_for(owner, member):
         'machine_clock': pending['machine_clock'],
         'flags': trajectory_queuing.TGF_CONFIGURED
                  | trajectory_queuing.TGF_ARMED,
+        'reject_reason': trajectory_queuing.TGR_OK,
+    })
+
+
+def config_ack_for(owner, member):
+    owner._handle_group_state(member, {
+        'group_id': owner.execution_group_id,
+        'epoch_hi': owner.execution_epoch_hi,
+        'epoch_lo': owner.execution_epoch_lo,
+        'sequence': 0,
+        'machine_clock': 0,
+        'flags': trajectory_queuing.TGF_CONFIGURED,
         'reject_reason': trajectory_queuing.TGR_OK,
     })
 
@@ -357,6 +392,72 @@ def test_proposal_advances_past_each_member_clock():
     assert owner.group_pending['grant_time'] > old_grant_time
 
 
+def test_recovery_uses_fresh_epoch_and_all_mcu_grant():
+    owner = make_owner()
+    owner.recovery_active = True
+    old_epoch = (owner.execution_epoch_hi, owner.execution_epoch_lo)
+
+    def progress(_waketime):
+        if owner.group_config_pending is not None:
+            for member in owner.group_members.values():
+                config_ack_for(owner, member)
+            return
+        if owner.recovery_grant_active and owner.group_pending is None:
+            owner._grant_timer(owner.printer.reactor.monotonic())
+            for member in owner.group_members.values():
+                ack_for(owner, member)
+
+    owner.printer.reactor.pause_hook = progress
+    messages = []
+    assert owner.acquire_recovery_grant(1., messages.append)
+    assert (owner.execution_epoch_hi, owner.execution_epoch_lo) != old_epoch
+    assert all(member.configured
+               for member in owner.group_members.values())
+    assert owner.recovery_active
+    assert owner.recovery_grant_active
+    assert owner.group_grant_ready
+    assert owner.group_committed_sequence == 1
+    try:
+        owner._handle_check_move(object())
+    except RuntimeError as e:
+        assert "recovery hold is active" in str(e)
+    else:
+        raise AssertionError("normal motion admitted during recovery rebase")
+
+
+def test_recovery_config_requires_every_member():
+    owner = make_owner()
+    owner.recovery_active = True
+    owner._begin_recovery_grant()
+    first, second = owner.group_members.values()
+    config_ack_for(owner, first)
+    assert owner.group_config_pending is not None
+    assert not owner.recovery_grant_active
+    config_ack_for(owner, second)
+    assert owner.group_config_pending is None
+    assert owner.recovery_grant_active
+    assert owner.printer.reactor.timer_updates
+
+
+def test_recovery_config_timeout_leaves_group_closed():
+    owner = make_owner()
+    owner.recovery_active = True
+    first = list(owner.group_members.values())[0]
+
+    def progress(_waketime):
+        if owner.group_config_pending is not None:
+            config_ack_for(owner, first)
+
+    owner.printer.reactor.pause_hook = progress
+    messages = []
+    assert not owner.acquire_recovery_grant(.1, messages.append)
+    assert not owner.group_grant_ready
+    assert not owner.recovery_grant_active
+    assert owner.group_pending is None
+    assert any("epoch acknowledgement from rodent" in msg
+               for msg in messages)
+
+
 def test_member_registers_complete_response_format():
     mcu = FakeConnectMCU()
     member = trajectory_queuing.TrajectoryGroupMember(object(), mcu)
@@ -394,6 +495,9 @@ def main():
         test_reproposal_horizon_never_moves_backwards,
         test_idle_reproposal_horizon_does_not_run_ahead_of_time,
         test_proposal_advances_past_each_member_clock,
+        test_recovery_uses_fresh_epoch_and_all_mcu_grant,
+        test_recovery_config_requires_every_member,
+        test_recovery_config_timeout_leaves_group_closed,
         test_member_registers_complete_response_format,
         test_firmware_has_closed_epoch_and_controlled_expiry,
     ]

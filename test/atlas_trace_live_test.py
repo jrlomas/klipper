@@ -275,6 +275,23 @@ def test_execution_and_wire_intention_share_machine_time():
               " machine-time axis")
 
 
+def test_secondary_intention_uses_primary_machine_clock():
+    with tempfile.TemporaryDirectory() as tmp:
+        output = os.path.join(tmp, "trace.jsonl")
+        manager, printer, mcus = _setup(output)
+        # A secondary conversion would put this record at 900 seconds.  Wire
+        # intentions carry primary-machine clocks, so it belongs at 12.
+        mcus["ebb36"].clock_to_print_time = lambda clock: 900.
+        manager.record_intention(mcus["ebb36"], "extruder", 8, {
+            "event": "segment", "start_clock": 2_000_000,
+            "end_clock": 2_050_000, "duration": 50_000,
+        })
+        record = json.loads(pathlib.Path(output).read_text())
+        assert record["machine_time"] == 12.
+        assert record["source"] == "host/ebb36/extruder"
+        print("PASS: secondary wire intention uses primary machine clock")
+
+
 def test_gateway_status_and_incident_are_distinct():
     with tempfile.TemporaryDirectory() as tmp:
         output = os.path.join(tmp, "trace.jsonl")
@@ -321,6 +338,7 @@ def main():
     test_trace_data_renders_and_writes_common_time()
     test_sequence_gaps_and_firmware_drops_are_visible()
     test_execution_and_wire_intention_share_machine_time()
+    test_secondary_intention_uses_primary_machine_clock()
     test_gateway_status_and_incident_are_distinct()
     test_jsonl_writer_rotates_with_bounded_retention()
     print("ALL PASS")

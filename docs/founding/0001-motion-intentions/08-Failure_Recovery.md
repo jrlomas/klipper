@@ -294,6 +294,14 @@ executor therefore retains the reconciled accumulator but returns to
 `need_rebase`; the first later motion receives a new future anchor instead of
 appending a hold or segment to the recovery clock.
 
+An execution-grant expiry permanently closes that group epoch in firmware.
+`RESUME_MOTION` must therefore configure a fresh random epoch on every
+trajectory MCU and receive one unanimous grant before issuing the shared
+rebase. It does this while `recovery_active` continues to reject ordinary
+G-Code ingress. A missing configuration or grant acknowledgement leaves the
+print paused and retryable; it never bypasses the Class-0 gate and never
+temporarily reopens only a subset of the machine.
+
 The cold V0 hardware test on 2026-07-15 stopped Klippy for 1.5 seconds during
 a Z trajectory. Pico ramped and held without shutdown; Pico and EBB36 then
 accepted a shared future recovery boundary. The host restored X/Y exactly and

@@ -433,6 +433,9 @@ class AtlasTrace:
     def record_intention(self, mcu_obj, actuator, oid, fields):
         """Persist the exact host wire coefficients for pulse replay."""
         start_clock = int(fields['start_clock'])
+        # Trajectory start clocks are always in the primary machine clock
+        # domain, including segments destined for a secondary MCU.
+        machine_mcu = self.printer.lookup_object('mcu')
         event = fields['event']
         payload = dict(fields)
         payload.update({
@@ -442,7 +445,7 @@ class AtlasTrace:
         })
         self.writer.write({
             'kind': 'intention',
-            'machine_time': mcu_obj.clock_to_print_time(start_clock),
+            'machine_time': machine_mcu.clock_to_print_time(start_clock),
             'source': 'host/%s/%s' % (mcu_obj.get_name(), actuator),
             'severity': 'info',
             'summary': '%s %s oid=%d clock=%d' % (

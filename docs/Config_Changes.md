@@ -53,6 +53,14 @@ missed. New `[usb_sof_sync]` and `USB_SOF_TEST` commissioning support matches
 frame numbers across MCUs and calibrates their phase against a direct sync
 line.
 
+20260724: `[intentproto_transport NAME]` gained `send_ahead`. Datagram links
+now default to making timed commands physically transmissible one second
+before their MCU deadline instead of inheriting serialqueue's 100 ms serial
+window. This keeps network retransmission latency from consuming an
+apparently deep planner buffer. `[failure_recovery]` now automatically
+includes every trajectory MCU in its execution logs, and `RESUME_MOTION`
+establishes a fresh all-MCU execution epoch and grant before recovery rebases.
+
 20260713: New optional config section `[helix_self_test]` and G-Code
 command `HELIX_SELF_TEST`: run the boards' built-in verification gates
 live through the protocol (firmware option `WANT_SELF_TEST`, on by

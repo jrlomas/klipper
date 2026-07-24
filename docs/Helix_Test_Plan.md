@@ -910,6 +910,17 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   SD. Host regressions prove both convergence-then-resume and
   timeout-with-no-side-effects; the ordinary unsynchronized-move gate remains
   fail-closed. A physical reconnect/resume repetition remains part of 8.7.
+  A subsequent 2026-07-24 Rodent queue exhaustion exposed the next recovery
+  gate: firmware had correctly closed the expired execution epoch while the
+  host correctly withheld ordinary renewal during recovery. `RESUME_MOTION`
+  therefore reached `HELIX execution group has no all-MCU grant`. The resume
+  transaction now configures a fresh epoch on every trajectory MCU, waits for
+  every configuration acknowledgement and one unanimous grant, and only then
+  sends coordinated rebases. Normal G-Code stays blocked throughout; timeout
+  leaves the print paused without draining logs or changing joint state.
+  Workstation regressions cover unanimous success, a missing configuration
+  acknowledgement, and a missing recovery grant. Physical recovery/retry
+  remains required.
   - [ ] **Print-transparent follow-up:** exercise reconnect/reconcile under a
     print, cover a volatile axis on hardware, independently measure position,
     and replan the interrupted command suffix.
