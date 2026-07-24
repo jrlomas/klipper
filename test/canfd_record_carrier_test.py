@@ -46,6 +46,22 @@ def decode(frame):
     return records
 
 
+def admitted_records(lengths, byte_window, block_window):
+    """Model serialqueue admission before each complete protocol record."""
+    admitted = []
+    outstanding_bytes = 0
+    for length in lengths:
+        if len(admitted) >= block_window:
+            break
+        # serialqueue reserves the maximum possible next record before
+        # admitting it, independently of its eventual encoded length.
+        if admitted and outstanding_bytes + 64 > byte_window:
+            break
+        admitted.append(bytes([length]) + bytes(length - 1))
+        outstanding_bytes += length
+    return admitted
+
+
 def main():
     # Every legal protocol size, including the full 64-byte maximum, can occupy
     # one frame and round-trips without exposing DLC padding.
@@ -83,18 +99,55 @@ def main():
     else:
         raise AssertionError("truncated CAN-FD record was accepted")
 
+    # RECEIVE_WINDOW is a byte credit, not a physical-frame credit. With only
+    # that legacy gate, short records emitted in separate scheduler passes can
+    # occupy more carriers than the STM32 FDCAN FIFO has entries.
+    short_lengths = [10] * 12
+    legacy = admitted_records(short_lengths, 192, 12)
+    assert len(legacy) == 12
+    separately_emitted = [encode([record])[0] for record in legacy]
+    assert len(separately_emitted) == 12
+
+    # The negotiated FIFO-depth gate bounds complete records because each
+    # record is atomic and may occupy at most one carrier. Packing can reduce
+    # the physical count, but scheduler separation can never increase it past
+    # the three-entry hardware limit. One FIFO entry is reserved because a
+    # retransmission prepends MESSAGE_SYNC, which may need its own carrier when
+    # followed by a maximum-sized record.
+    fifo_depth = 3
+    record_credit = fifo_depth - 1
+    admitted = admitted_records(short_lengths, 192, record_credit)
+    assert len(admitted) == record_credit
+    separately_emitted = [encode([record])[0] for record in admitted]
+    assert len(separately_emitted) == record_credit
+    assert len(encode(admitted)) <= fifo_depth
+    max_records = [bytes([64]) + bytes(63)] * record_credit
+    retransmit = [bytes([0x7e])] + max_records
+    assert len(encode(retransmit)) <= fifo_depth
+
     host = (ROOT / 'klippy/chelper/serialqueue.c').read_text()
+    serialhdl = (ROOT / 'klippy/serialhdl.py').read_text()
+    fdcan = (ROOT / 'src/stm32/fdcan.c').read_text()
     node = (ROOT / 'src/generic/canserial.c').read_text()
     assert 'can_frame_logical_len(cf.data, len)' in host
     assert 'memcpy(sq->input_buf, cf.data, logical_len)' in host
     assert 'frame_len + record_len > MESSAGE_MAX' in host
     assert '__atomic_exchange_n(&sq->can_carrier_boundary' in host
     assert '__atomic_store_n(&sq->can_carrier_boundary' in host
+    assert 'sq->send_seq - sq->receive_seq >= pending_block_limit' in host
+    assert 'sq->can_receive_frame_window - 1 < pending_block_limit' in host
+    assert 'pending_block_limit = sq->can_receive_frame_window - 1' in host
+    assert 'enable_fd && receive_frame_window < 2' in host
+    assert 'serialqueue_set_receive_frame_window' in serialhdl
+    assert "'CANBUS_RX_FRAME_WINDOW', 0" in serialhdl
+    assert 'does not advertise a CAN FD receive' in serialhdl
+    assert ('DECL_CONSTANT(\"CANBUS_RX_FRAME_WINDOW\",'
+            ' FDCAN_RX_FIFO_SIZE)' in fdcan)
     assert 'canserial_carrier_wire_len(now)' in node
     assert 'first == MESSAGE_SYNC ? 1 : first' in node
     assert 'now + record_len > MESSAGE_MAX' in node
     assert 'memcpy(&CanData.receive_buf[rpos], msg->data, record_len)' in node
-    print('PASS: CAN-FD packs complete sequenced protocol records atomically')
+    print('PASS: CAN-FD record packing and FIFO-depth credits are bounded')
 
 
 if __name__ == '__main__':

@@ -1064,8 +1064,9 @@ Phases 3/7/8 over each real transport.
       drops, missed frames, or bus-state transitions.
     - [x] Partition the node receive window from asynchronous control traffic.
       A later long print accumulated seven EBB36 FIFO losses even though bridge
-      conservation remained exact. The three-frame reliable receive credit and
-      time/admin frames had shared the G0B1's three-entry FIFO0. Firmware now
+      conservation remained exact. The then-assumed three-frame reliable
+      receive credit and time/admin frames had shared the G0B1's three-entry
+      FIFO0. Firmware now
       routes reliable commands to FIFO0 and timing/control to FIFO1, drains and
       acknowledges both, and reports per-FIFO counters. On 2026-07-21, 200 live
       trajectory suites and 500 controlled 2 ms IRQ-mask/full-credit bursts
@@ -1075,6 +1076,22 @@ Phases 3/7/8 over each real transport.
       ticks (2.377 ms including wire time). The field diagnostic is capped at
       the proven-safe 2 ms because 5 ms intentionally crosses the scheduler's
       late-timer guard.
+    - [x] Separate the byte-oriented parser window from physical CAN-FD
+      carrier capacity. A 2026-07-24 cube produced one recovered FIFO0 loss at
+      88.5% of the file: bridge conservation remained exact, FIFO1 retained
+      zero loss, and Klippy retransmitted 154 bytes. Code review established
+      that 192 outstanding bytes plus the 12-block sequence gate could admit
+      more than three short carriers into a three-entry FIFO. FDCAN now
+      advertises `CANBUS_RX_FRAME_WINDOW=3`; the host grants two
+      unacknowledged complete-record credits in FD mode and reserves the third
+      carrier for a worst-case sync-prefixed retransmission.
+      The regression reproduces twelve independently emitted short carriers
+      under the former gates and proves the new bound emits at most two
+      ordinary carriers or three during recovery.
+    - [ ] Repeat the same sliced-print workload with the carrier-credit image.
+      Require zero FIFO0/FIFO1 overrun deltas, zero retransmission delta, exact
+      bridge conservation, and normal completion before closing the physical
+      carrier-credit regression.
   - [ ] **9.2d — Faster transceivers:** after hardware replacement, qualify
     2/5/8 Mbit BRS profiles independently; do not infer them from the 1 Mbit
     result.

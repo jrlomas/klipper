@@ -680,19 +680,18 @@ frames accepted by the bridge were forwarded, its queue had zero drops and
 zero unaccounted handoff, and SocketCAN reported no loss. The remaining defect
 was a capacity mismatch inside the node, not a slow Linux bridge.
 
-The reliable byte stream advertises a 192-byte receive window, which permits
-three 64-byte command frames to be outstanding. STM32G0/G4 FDCAN provides
-three entries in each receive FIFO. Helix had routed the three-credit command
-stream, two-step time sync/follow-up, administration, and node-control frames
-through FIFO0. A motion critical section may legally defer the FDCAN IRQ; a
-full three-frame data window therefore left no slot for independent control
-traffic. Draining pending entries after the IRQ ran could not recover a frame
-already overwritten by hardware.
+The reliable byte stream advertises a 192-byte receive window. At this stage
+the design treated that as three 64-byte command-frame credits. STM32G0/G4
+FDCAN provides three entries in each receive FIFO. Helix had routed the
+reliable command stream, two-step time sync/follow-up, administration, and
+node-control frames through FIFO0. A motion critical section may legally defer
+the FDCAN IRQ; a full data window therefore left no slot for independent
+control traffic. Draining pending entries after the IRQ ran could not recover
+a frame already overwritten by hardware.
 
 The filter layout now treats the two receive FIFOs as separate traffic planes:
 
-- FIFO0 contains only the assigned node's reliable host-to-MCU command stream;
-  its three hardware entries exactly match the protocol's three-frame credit.
+- FIFO0 contains only the assigned node's reliable host-to-MCU command stream.
 - FIFO1 contains administration, time sync, time follow-up, and assigned
   ID+1 conflict/control traffic.
 - A single bounded ISR drains and acknowledges both FIFOs. It acknowledges
@@ -714,6 +713,39 @@ boundary-only 5 ms experiment also retained zero receive loss but correctly
 tripped Klipper's unrelated late-timer guard; the shipped diagnostic is
 therefore immutably capped at the proven-safe 2 ms. All 200 preceding live
 trajectory-kernel suites also passed with zero receive errors.
+
+### Byte-window/carrier-window correction (2026-07-24)
+
+A later successful 1,792-second cube exposed one FIFO0 loss at byte 2,038,171
+of 2,301,802 (88.5%), during the file's densest solid-infill/layer-change
+burst. Klippy retransmitted one 154-byte pending group and recovered without a
+motion stall. FIFO1 did not overrun, the bridge accepted/forwarded conservation
+remained exact with zero queue loss, and the node remained error-active.
+
+That event disproved the remaining assumption above: a 192-byte parser window
+is not inherently a three-carrier window. CAN FD carriers have variable DLC,
+and complete protocol records sent by separate host scheduler passes cannot be
+packed retroactively. The legacy byte gate and 12-block sequence gate could
+therefore admit more than three short physical carriers while still remaining
+below 192 outstanding bytes. The three-near-maximum-record stress exercised
+the large-record boundary but not this short-record worst case.
+
+STM32 FDCAN firmware now advertises `CANBUS_RX_FRAME_WINDOW`, independently of
+`RECEIVE_WINDOW`. While an FD profile is active, the host conservatively caps
+unacknowledged complete protocol records at one less than that hardware FIFO
+depth. A record never spans carriers, so the current two-record credit can
+occupy at most two initial carriers. The third entry is reserved for the
+leading `MESSAGE_SYNC` recovery record, which may require its own carrier
+before a maximum-sized retransmitted record. Same-call packing may reduce
+those counts but is never relied upon for safety. Classical CAN behavior and
+the 192-byte MCU software-buffer credit are unchanged.
+
+The host regression now reproduces the former mismatch with twelve short
+records that fit the legacy byte/sequence gates when emitted independently,
+then proves that the negotiated two-record credit limits first transmission to
+two carriers and worst-case sync-prefixed retransmission to three. A repeat
+physical print must retain zero FIFO0-overrun and retransmit deltas before
+this correction is considered hardware-closed.
 
 On 2026-07-20 a later print exposed an incorrect policy boundary in the first
 implementation: eight recoverable physical FDCAN errors inside 10 ms caused

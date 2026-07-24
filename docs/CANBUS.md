@@ -211,9 +211,9 @@ transitions, or bus-offs. This closes the receive-drain print regression at
 the 1 Mbit `FD_1M_NOBRS` profile.
 
 A subsequent long-run audit found a second, rarer node-side boundary: the
-three-frame reliable receive window and independent time/admin frames all used
-the same three-entry FDCAN FIFO. The ISR could drain correctly and still arrive
-too late to recover an overwritten fourth frame. Helix now maps reliable data
+then-assumed three-frame reliable receive window and independent time/admin
+frames all used the same three-entry FDCAN FIFO. The ISR could drain correctly
+and still arrive too late to recover an overwritten fourth frame. Helix maps reliable data
 to FIFO0 and timing/control to FIFO1, acknowledges copied entries before
 protocol dispatch, and exposes per-FIFO loss/high-water plus a conservative
 start-of-frame-to-service maximum. A no-motion/no-heater 500-iteration hardware
@@ -222,6 +222,24 @@ and FIFO1 high-water both reached two with zero loss, retransmission, invalid
 bytes, or SocketCAN drops. The conservative service maximum was 152,153 ticks
 (2.377 ms, including frame wire time). The diagnostic command
 `HELIX_CAN_RX_STRESS` is firmware-capped at the proven-safe 2 ms.
+
+A 2026-07-24 print found that the phrase "three-frame receive window" was too
+strong: the 192-byte software-parser window permits three maximum-size
+carriers, but it can permit more than three short protocol records emitted in
+separate physical carriers. One such dense solid-infill burst filled EBB36
+FIFO0 and caused a recovered 154-byte retransmission while bridge delivery
+remained lossless. FDCAN nodes now advertise their reliable RX FIFO depth as
+`CANBUS_RX_FRAME_WINDOW`. In FD mode the host applies that as a conservative
+unacknowledged complete-record limit in addition to the byte window. Because
+records are carrier-atomic, a three-entry FIFO grants two ordinary record
+credits and reserves one recovery carrier for the leading `MESSAGE_SYNC` that
+may precede maximum-sized retransmissions. The burst therefore cannot exceed
+hardware capacity even when no cross-call packing occurs. Classical CAN is
+unchanged, and FD activation fails closed when a node does not advertise at
+least two physical receive-frame entries. Klippy's link statistics expose the
+negotiated `receive_frame_window` and current `pending_blocks` for audit. The
+short-record regression is software-complete; repeat-print hardware closure
+remains required.
 
 After the first coherent resume, continued receive loss caused a second
 extruder underrun and then a delayed software-PWM update triggered `Timer too

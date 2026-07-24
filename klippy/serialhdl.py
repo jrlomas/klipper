@@ -124,10 +124,20 @@ class SerialReader:
         if receive_window is not None:
             self.ffi_lib.serialqueue_set_receive_window(
                 self.serialqueue, receive_window)
+        if serial_fd_type == b'c':
+            receive_frame_window = msgparser.get_constant_int(
+                'CANBUS_RX_FRAME_WINDOW', 0)
+            self.ffi_lib.serialqueue_set_receive_frame_window(
+                self.serialqueue, receive_frame_window)
         return True
     def set_send_ahead(self, seconds):
         self.ffi_lib.serialqueue_set_send_ahead(
             self.serialqueue, float(seconds))
+    def _require_canfd_frame_window(self, mtu):
+        if (mtu > 8 and self.msgparser.get_constant_int(
+                'CANBUS_RX_FRAME_WINDOW', 0) < 2):
+            self._error(
+                "MCU does not advertise a CAN FD receive frame window")
     def connect_canbus(self, canbus_uuid, canbus_nodeid, canbus_iface="can0",
                        canfd_mtu=8, canfd_brs=False,
                        canfd_data_bitrate=1000000):
@@ -211,6 +221,7 @@ class SerialReader:
                         if not self.msgparser.get_constant_int(
                                 'CANBUS_FD', 0):
                             self._error("MCU does not support CAN FD")
+                        self._require_canfd_frame_window(canfd_mtu)
                         ret = self.ffi_lib.serialqueue_set_canfd_mode(
                             self.serialqueue, canfd_mtu, int(canfd_brs),
                             canfd_data_bitrate)
@@ -243,6 +254,7 @@ class SerialReader:
                          self.warn_prefix)
             self.disconnect()
     def prepare_canfd(self, mtu, brs, data_bitrate, epoch):
+        self._require_canfd_frame_window(mtu)
         params = self.send_with_response(
             "prepare_canbus_transport mtu=%d brs=%d data_bitrate=%d epoch=%d"
             % (mtu, int(brs), data_bitrate, epoch), 'canbus_transport')
@@ -263,6 +275,7 @@ class SerialReader:
             self._error("MCU failed CAN FD profile commit")
         return params
     def enable_canfd(self, mtu, brs, data_bitrate, epoch):
+        self._require_canfd_frame_window(mtu)
         ret = self.ffi_lib.serialqueue_set_canfd_mode(
             self.serialqueue, mtu, int(brs), data_bitrate)
         if ret:

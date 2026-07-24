@@ -47,6 +47,8 @@ void serialqueue_set_wire_frequency(struct serialqueue *sq, double frequency);
 int serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size,
                                int bitrate_switch, double data_frequency);
 void serialqueue_set_receive_window(struct serialqueue *sq, int receive_window);
+void serialqueue_set_receive_frame_window(struct serialqueue *sq,
+                                          int receive_frame_window);
 void serialqueue_set_send_ahead(struct serialqueue *sq, double send_ahead);
 void serialqueue_set_clock_est(struct serialqueue *sq, double est_freq
                                , double conv_time, uint64_t conv_clock

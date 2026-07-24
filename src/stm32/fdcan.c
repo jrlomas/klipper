@@ -97,6 +97,8 @@ struct fdcan_fifo {
     uint32_t data[64 / 4];
 };
 
+#define FDCAN_RX_FIFO_SIZE 3
+
 #define FDCAN_XTD (1<<30)
 #define FDCAN_RTR (1<<29)
 #define FDCAN_ESI (1U<<31)
@@ -107,8 +109,8 @@ struct fdcan_fifo {
 struct fdcan_msg_ram {
     uint32_t FLS[28]; // Filter list standard
     uint32_t FLE[16]; // Filter list extended
-    struct fdcan_fifo RXF0[3];
-    struct fdcan_fifo RXF1[3];
+    struct fdcan_fifo RXF0[FDCAN_RX_FIFO_SIZE];
+    struct fdcan_fifo RXF1[FDCAN_RX_FIFO_SIZE];
     uint32_t TEF[6]; // Tx event FIFO
     struct fdcan_fifo TXFIFO[3];
 };
@@ -835,6 +837,10 @@ can_init(void)
 DECL_INIT(can_init);
 
 DECL_CONSTANT("CANBUS_FD", CONFIG_CANBUS_FD);
+// FIFO0 contains the reliable host-to-node stream. The host derives an
+// independent complete-record credit from this physical depth while reserving
+// one recovery carrier; RECEIVE_WINDOW remains the software parser capacity.
+DECL_CONSTANT("CANBUS_RX_FRAME_WINDOW", FDCAN_RX_FIFO_SIZE);
 #if CONFIG_CANBUS_FD
 DECL_CONSTANT("CANBUS_DATA_FREQUENCY", CONFIG_CANBUS_DATA_FREQUENCY);
 DECL_CONSTANT("CANBUS_TRANSCEIVER_MAX_DATA_RATE",

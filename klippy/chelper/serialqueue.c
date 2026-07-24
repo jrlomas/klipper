@@ -74,6 +74,7 @@ struct serialqueue {
     pthread_mutex_t lock; // protects variables below
     // Baud / clock tracking
     int receive_window;
+    uint8_t can_receive_frame_window;
     double bittime_adjust, idle_time, send_ahead;
     double can_data_bittime;
     uint8_t can_payload_size, can_bitrate_switch;
@@ -830,7 +831,18 @@ check_send_command(struct serialqueue *sq, int pending, double eventtime)
     uint64_t min_stalled_clock = check_upcoming_queues(sq, ack_clock);
 
     // Check if valid to send messages
-    if (sq->send_seq - sq->receive_seq >= MAX_PENDING_BLOCKS
+    uint32_t pending_block_limit = MAX_PENDING_BLOCKS;
+    if (sq->serial_fd_type == SQT_CAN && sq->can_payload_size > 8
+        && sq->can_receive_frame_window > 1
+        && sq->can_receive_frame_window - 1 < pending_block_limit)
+        // Each complete protocol block may occupy its own physical carrier
+        // when separate scheduler passes prevent packing.  Bounding blocks by
+        // FIFO entries therefore bounds the worst-case carrier burst. Reserve
+        // one entry because a retransmit prepends MESSAGE_SYNC, which may need
+        // its own carrier before a maximum-sized record. The byte receive
+        // window remains an independent software-buffer limit.
+        pending_block_limit = sq->can_receive_frame_window - 1;
+    if (sq->send_seq - sq->receive_seq >= pending_block_limit
         && sq->receive_seq != (uint64_t)-1)
         // Need an ack before more messages can be sent
         return eventtime + 0.250;
@@ -1331,6 +1343,11 @@ serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size,
         return -1;
     }
     int enable_fd = payload_size > 8;
+    pthread_mutex_lock(&sq->lock);
+    int receive_frame_window = sq->can_receive_frame_window;
+    pthread_mutex_unlock(&sq->lock);
+    if (enable_fd && receive_frame_window < 2)
+        return -1;
     if (setsockopt(sq->serial_fd, SOL_CAN_RAW, CAN_RAW_FD_FRAMES,
                    &enable_fd, sizeof(enable_fd)) < 0)
         return -1;
@@ -1349,6 +1366,19 @@ serialqueue_set_receive_window(struct serialqueue *sq, int receive_window)
 {
     pthread_mutex_lock(&sq->lock);
     sq->receive_window = receive_window;
+    pthread_mutex_unlock(&sq->lock);
+}
+
+void __visible
+serialqueue_set_receive_frame_window(struct serialqueue *sq,
+                                     int receive_frame_window)
+{
+    if (receive_frame_window < 0)
+        receive_frame_window = 0;
+    if (receive_frame_window > MAX_PENDING_BLOCKS)
+        receive_frame_window = MAX_PENDING_BLOCKS;
+    pthread_mutex_lock(&sq->lock);
+    sq->can_receive_frame_window = receive_frame_window;
     pthread_mutex_unlock(&sq->lock);
 }
 
@@ -1397,17 +1427,22 @@ serialqueue_get_stats(struct serialqueue *sq, char *buf, int len)
     pthread_mutex_unlock(&sq->transmit_requests.lock);
     pthread_mutex_unlock(&sq->lock);
 
+    uint32_t pending_blocks = stats.receive_seq == (uint64_t)-1 ? 0
+        : (uint32_t)(stats.send_seq - stats.receive_seq);
     snprintf(buf, len, "bytes_write=%u bytes_read=%u"
              " bytes_retransmit=%u bytes_invalid=%u"
              " send_seq=%u receive_seq=%u retransmit_seq=%u"
              " srtt=%.3f rttvar=%.3f rto=%.3f"
              " ready_bytes=%u upcoming_bytes=%u"
+             " receive_frame_window=%u pending_blocks=%u"
              , stats.bytes_write, stats.bytes_read
              , stats.bytes_retransmit, stats.bytes_invalid
              , (int)stats.send_seq, (int)stats.receive_seq
              , (int)stats.retransmit_seq
              , stats.srtt, stats.rttvar, stats.rto
-             , stats.ready_bytes, stats.transmit_requests.upcoming_bytes);
+             , stats.ready_bytes, stats.transmit_requests.upcoming_bytes
+             , stats.can_receive_frame_window
+             , pending_blocks);
 }
 
 // Extract old messages stored in the debug queues
