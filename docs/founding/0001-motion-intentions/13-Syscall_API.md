@@ -1,6 +1,9 @@
 # FD-0001: The Unified Board Syscall API
 
-Status: Implemented in HELIX 0.9 (board syscall ABI v1.0)
+Status: Implemented in HELIX 0.9 (board syscall ABI v1.0). It is the
+low-level substrate for the planned
+[target-native module architecture](24-Target_Native_Machine_Modules.md), not
+the capability boundary exposed directly to ordinary machine applications.
 
 ## Why this exists
 
@@ -62,25 +65,29 @@ and a build without it is byte-for-byte unaffected.
 
 ## What it buys
 
-* **Write once, run on any family.** A module targets the table, not a
-  chip. The STM32/ESP32 split — the thing this fork spends the most
-  effort keeping unified ([doc 12](12-ESP32_Architecture.md)) — stops
-  being visible to module authors at all.
+* **Write once, compile for each qualified family.** Portable module source
+  targets this semantic floor, not one chip's registers. The STM32/ESP32 split
+  — the thing this fork spends the most effort keeping unified
+  ([doc 12](12-ESP32_Architecture.md)) — stops being visible to authors even
+  though the deployed native binaries remain target-specific.
 * **A negotiation surface.** The host can now ask a board what it
   supports and light up features accordingly, instead of inferring from
   the board name.
 * **The substrate for pushed modules.** A relocatable module loaded at
   runtime needs exactly one thing from the firmware it lands in: a
   stable, versioned way to call hardware. This is that way. The loader,
-  relocation format, and sandboxing are future work — but they now have
-  a floor to stand on.
+  native container, capability-scoped application API, and isolation are
+  specified in
+  [24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).
+  Those application APIs sit above this table; an ordinary job module does
+  not receive raw GPIO setup or interrupt-control authority.
 
 ## The idea this came from
 
-This is the surviving half of a larger proposal: a "firmware VM" that
-would let modules be authored on the desktop and pushed to a board
-without a rebuild. The proposal had two parts, and they had very
-different value.
+This began as the surviving half of a larger "firmware VM" proposal that
+would let modules be authored on the desktop and pushed to a board without a
+whole-firmware rebuild. The unified call surface landed first because it had
+independent value and forced the cross-family boundary to become explicit.
 
 The **unified call surface** — this document — is unambiguously worth
 building. It costs one small table, breaks nothing, and pays for itself
@@ -88,14 +95,19 @@ the moment any code wants to be family-agnostic or ask a board what it
 can do.
 
 The **bytecode virtual machine** — a language-agnostic interpreter the
-firmware would *run on* — was considered and **deliberately dropped**.
-On a real-time motion controller the hot path (step generation, the
-timer ISR, the trajectory executor) cannot afford an interpreter between
-it and the hardware; anything pushed at runtime must be confined to the
-cold path, where the cost of a VM buys little over simply calling
-syscalls directly. If a runtime-loaded extension mechanism is ever
-built, the right shape is a sandboxed, cold-path-only module format
-(a Wasm/eBPF-style verified blob) that calls *this* table — not a VM the
-whole firmware executes inside. That remains an open, post-hardware
-question. What is settled is that the valuable, low-risk foundation
-lands now and the speculative interpreter does not.
+firmware would *run on* — remains deliberately rejected. On a real-time
+motion controller the hot path cannot afford a universal interpreter between
+an algorithm and its deadline.
+
+The selected evolution is instead **target-native loading**. Restricted,
+typed source is compiled on the workstation for the actual target; the
+printer stores, verifies, relocates, and executes those native instructions
+without reflashing the kernel. A semantic machine API constrains ordinary
+applications, while separately qualified hard-real-time control domains
+support bounded algorithms such as BLDC/FOC. The raw board syscall table
+remains a privileged kernel/system-extension substrate and is not itself the
+sandbox.
+
+That complete decision, including the `.hmod` format, loader, target classes,
+MPU limitations, lifecycle, and physical gates, is recorded in
+[24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).

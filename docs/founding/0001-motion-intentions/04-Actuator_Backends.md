@@ -2,7 +2,9 @@
 
 Status: Stepper and sampled PWM/DAC backends are implemented and
 workstation-tested in HELIX 0.9; FOC is an extension contract and hardware
-bring-up remains pending.
+bring-up remains pending. The portable controller that may drive the FOC
+backend is specified by the
+[target-native module architecture](24-Target_Native_Machine_Modules.md).
 
 The intention protocol ([02-Intention_Protocol.md](02-Intention_Protocol.md))
 deliberately says nothing about motors. This document defines the
@@ -89,16 +91,22 @@ opted-in steppers.
 The motivating case: a brushless extruder (or any servo joint) driven
 by an on-board or on-toolhead FOC loop.
 
-**Contract, not controller.** This document specifies only how the drive
-consumes segments; the current/velocity/position loop internals are
-the drive's business (compare ODrive/SimpleFOC input interfaces, or a
-CiA 402 drive in interpolated position mode).
+**Backend contract, not one fixed controller.** This document specifies how
+the drive consumes segments. The
+[target-native module architecture](24-Target_Native_Machine_Modules.md)
+defines how one typed BLDC/FOC algorithm source can be compiled into
+target-native modules and deployed without reflashing. The target binding
+still owns synchronized ADC/PWM/DMA, gate-driver safety, and the physical
+motor interface; the portable control module owns transforms, estimators, and
+control policy.
 
-* **Control loop timing:** the FOC loop runs at 10–20 kHz on its *own
-  hardware timer/PWM peripheral* — it must never enter the shared
-  `sched.c` timer list. Only segment-boundary bookkeeping (load next
-  segment, ~every 100 ms) touches the scheduler. This isolates the
-  hard timer list from high-rate control work by construction.
+* **Control loop timing:** the FOC loop runs at its qualified rate on its own
+  synchronized ADC/PWM control domain—it must never enter the ordinary
+  `sched.c` timer list once per sample. A kernel ISR trampoline or admitted
+  highest-priority control task invokes the bounded native callback; only
+  segment-boundary bookkeeping touches the general scheduler. Rate, deadline,
+  aggregate cycle budget, and invocation mode are target capabilities rather
+  than a universal 10–20 kHz assumption.
 * **Setpoint sampling:** each control period at segment-relative time
   Δt, the backend computes
   position setpoint q(Δt) = q₀ + v·Δt + ½a·Δt² and velocity

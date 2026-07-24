@@ -14,7 +14,9 @@ This document extends the [host architecture](05-Host_Architecture.md),
 [unified gateway](19-Unified_CAN_Gateway.md), and
 [machine-time fabric](20-Unified_Machine_Time.md). Portable, event-driven
 behavior inside a capsule is defined by
-[machine programs and dynamic scores](23-Portable_Machine_Programs.md).
+[machine programs and dynamic scores](23-Portable_Machine_Programs.md);
+their target-native deployment and hard-real-time extension model is defined
+by [native machine modules](24-Target_Native_Machine_Modules.md).
 
 ## Thesis
 
@@ -64,6 +66,9 @@ dependency graph.
 8. **Normal host loss means continue.** A safety fault, essential-node loss,
    storage starvation, time-quality loss, operator stop, or job-policy event
    may still cause a coordinated pause or controlled stop.
+9. **Machine behavior is not welded into the firmware.** Portable behavior is
+   compiled for the qualified target, stored with content identity, loaded as
+   native code, and activated atomically through the stable HELIX kernel ABI.
 
 ## Goals
 
@@ -87,9 +92,11 @@ The autonomous execution architecture must:
 9. retain bounded memory, storage bandwidth, flash wear, and bus utilization;
 10. reuse HELIX trajectory, heater, trigger, recovery, gateway, and Atlas
     primitives rather than introduce a second execution engine;
-11. remain useful for one desktop printer as well as a large farm; and
+11. remain useful for one desktop printer as well as a large farm;
 12. preserve a compatibility mode in which Klippy continues live streaming
-    while autonomous execution is commissioned.
+    while autonomous execution is commissioned; and
+13. deploy compiled machine behavior as target-native modules without
+    reflashing the stable HELIX kernel.
 
 ## Non-goals
 
@@ -125,6 +132,7 @@ The first autonomous release does not:
         | authenticated host endpoint          |
         | content-addressed local job store     |
         | capsule verifier + execution journal |
+        | native module loader + application ABI|
         | autonomous job coordinator           |
         | machine-time authority                |
         | safety and node-health coordinator    |
@@ -150,8 +158,9 @@ infrastructure.
 
 The reference production mainboard should provide:
 
-* an MCU with sufficient SRAM, DMA, cache/MPU support, and independent
-  peripheral clocks—an STM32H7-class device is the current reference;
+* an MCU with sufficient SRAM, executable-memory placement, DMA, cache/MPU
+  support, and independent peripheral clocks—an STM32H7-class device is the
+  current reference;
 * native 10/100 Ethernet or better with hardware RX/TX timestamps;
 * native FDCAN and a transceiver electrically qualified through the intended
   BRS rate;
@@ -197,6 +206,9 @@ calibration_generation
 kinematics and transform generation
 required node identities and roles
 required firmware/protocol capabilities
+required native target classes and module ABI
+module table, content roots, node assignments, and publishers
+module state/checkpoint schema hashes and execution budgets
 machine-time profile and authority identity
 track table and chunk hashes
 job preconditions
@@ -222,8 +234,9 @@ The capsule contains separate, timestamped tracks for:
 * synchronization barriers and coordinated checkpoints;
 * expected execution-log checkpoints;
 * local prompt commands and bounded state transitions;
-* portable machine-program statecharts for tool changes, runout, calibration,
-  and other variable-duration distributed workflows; and
+* target-native machine-program modules plus their inspectable statechart
+  metadata for tool changes, runout, calibration, and other variable-duration
+  distributed workflows; and
 * terminal safe-state actions.
 
 Tracks use the same exact quantized coefficients sent over the current HELIX
@@ -288,10 +301,12 @@ next trajectory chapter to current machine time.
 
 The source language remains ordinary Python through `@machine_program`.
 Unmodified Klipper executes the same source through a compatibility adapter;
-HELIX compiles it into a bounded score IR. The H7 does not run Klippy, Jinja,
-or arbitrary Python. The complete contract, restrictions, operation ABI, and
-qualification gates are in
-[23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md).
+HELIX validates it through a bounded statechart IR and compiles it into
+target-native modules. The H7 does not run Klippy, Jinja, arbitrary Python, or
+a universal score bytecode VM. The complete source/operation contract is in
+[23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md); container,
+loader, isolation, target, and hard-real-time contracts are in
+[24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).
 
 Version 1 may prohibit live speed-factor changes. A later version may provide
 bounded local time scaling only after proving that motion, extrusion,
@@ -323,13 +338,16 @@ Incomplete content is never visible as an executable job.
 
 The mainboard validates the complete manifest, content root, chunk hashes,
 signature policy, size limits, compiler/format version, configuration hash,
-ABI, node identities, safety envelope, and required capabilities.
+ABI, native module target classes/imports/budgets, node identities, safety
+envelope, and required capabilities.
 
 ### Qualify
 
 The mainboard discovers every required node, verifies firmware and role,
 establishes the machine-time paths, checks storage read performance, validates
-heater/sensor readiness, and confirms that no conflicting owner or job exists.
+heater/sensor readiness, loads every required native module into executable
+memory, performs its inert initialization gate, and confirms that no
+conflicting owner or job exists.
 
 ### Arm
 
@@ -340,6 +358,7 @@ Arming is a local persisted authorization transaction. It records:
 * participating-node session epochs;
 * job-time epoch;
 * safety envelope and terminal policy;
+* exact module roots and activation generations;
 * initial checkpoint;
 * operator/host authorization provenance; and
 * a monotonically increasing execution generation.
@@ -352,7 +371,9 @@ invalidating it.
 The mainboard reads ahead from local storage, validates each chunk again at
 the trust boundary, fills bounded per-track staging queues, and dispatches
 work according to downstream horizons. Filesystem and compression work occur
-in task context. No ISR parses a filesystem or waits for storage.
+in task context. No ISR parses a filesystem or waits for storage. Native code
+is already resident before activation; SD is not an executable demand-paging
+source.
 
 ### Complete
 
@@ -654,8 +675,10 @@ The host implementation owns:
 
 * G-code and macro resolution;
 * kinematics, lookahead, trajectory fitting, shaping, and extrusion coupling;
+* portable-source validation and target-native module compilation;
 * capsule construction, chunking, hashing, signing, and size estimation;
-* offline equivalence checking against live HELIX streaming;
+* offline semantic and trajectory equivalence checking against live HELIX
+  streaming;
 * upload/fetch orchestration and replicated-store publication;
 * previews and human-readable provenance; and
 * fleet scheduling and result collection.
@@ -670,12 +693,14 @@ The mainboard owns:
 
 * local storage and immutable object index;
 * manifest/chunk validation;
+* native module verification, loading, isolation, activation, and rollback;
 * transactional lifecycle and execution journal;
 * node discovery and qualification;
 * job epoch and machine-time publication;
 * bounded read-ahead and per-track dispatch;
 * delivery/checkpoint conservation;
 * local pause/cancel/end state machines;
+* semantic machine-operation and admitted hard-real-time control-domain APIs;
 * host observer/mutation leases; and
 * terminal result durability.
 
@@ -688,6 +713,8 @@ Downstream boards retain:
 * actuator execution;
 * local heater and safety control;
 * hardware triggers;
+* verified native modules only on nodes whose target, memory, isolation, and
+  execution budgets explicitly qualify them;
 * execution logs and checkpoints; and
 * controlled hold behavior.
 
@@ -751,8 +778,8 @@ reads and healthy dispatch remain aggregated telemetry.
 - [ ] Define the manifest, track, chunk, checkpoint, and terminal-result
   schemas with explicit versions and bounds.
 - [ ] Define the portable machine-program annotation, semantic operation ABI,
-  dynamic-score statechart schema, capability manifest, and Klipper
-  compatibility executor.
+  typed/statechart compiler IR, target-native module container, capability
+  manifest, and Klipper compatibility executor.
 - [ ] Generate capsules by intercepting the current post-lookahead,
   post-quantization HELIX command path.
 - [ ] Add content hashes, optional signatures, configuration/calibration
@@ -763,6 +790,8 @@ reads and healthy dispatch remain aggregated telemetry.
   forward-recovery paths instead of flattening them into one timeline.
 - [ ] Build an offline validator and human-readable inspector.
 - [ ] Prove live-stream and capsule byte equivalence for the golden corpus.
+- [ ] Prove simulator, live Klipper, and target-native workflow semantic
+  equivalence for the machine-program corpus.
 
 ### Phase 2 — storage substrate
 
@@ -790,6 +819,8 @@ reads and healthy dispatch remain aggregated telemetry.
 
 - [ ] Execute a stored capsule on local mainboard axes without Klippy
   providing motion after `START`.
+- [ ] Load and execute its pinned native workflow modules without a firmware
+  rebuild, reset, interpreter, or SD access from the real-time code path.
 - [ ] Keep heater, fan, pause, cancel, and terminal policies local.
 - [ ] Disconnect the host after arming and complete physical prints.
 - [ ] Inject SD stalls, corruption, removal, and capacity exhaustion.
@@ -810,6 +841,8 @@ reads and healthy dispatch remain aggregated telemetry.
 - [ ] Qualify local axes plus a CAN toolhead in one autonomous print.
 - [ ] Execute one distributed portable workflow spanning mainboard motion and
   at least two downstream semantic device roles.
+- [ ] Stage and atomically activate the exact native application generation on
+  every participating node that supports runtime modules.
 - [ ] Disconnect external Ethernet while the internal fabric continues.
 
 ### Phase 6 — host independence and reconnection
@@ -893,9 +926,15 @@ The architecture is complete only when:
    transaction;
 10. corrupt, stale-generation, wrong-node, or wrong-ABI content is rejected
     before actuation;
-11. the final safe state and terminal result survive until a host returns; and
+11. the final safe state and terminal result survive until a host returns;
 12. a long autonomous Ethernet-mainboard/CAN-toolhead print passes physical,
-    timing, thermal, storage, and fault-injection qualification.
+    timing, thermal, storage, and fault-injection qualification;
+13. every capsule-pinned native module is target-, ABI-, capability-,
+    generation-, and publisher-qualified before arming;
+14. changing a machine application requires an atomic module deployment, not
+    a firmware flash; and
+15. no native instruction fetch or workflow continuation depends on SD
+    latency after its active module is admitted.
 
 ## Product consequence
 
@@ -914,6 +953,13 @@ then keep printing when the laptop sleeps or leaves the network. The protocol
 and firmware remain GPL infrastructure; fleet orchestration, repository,
 dashboard, support, and management can form the product layer without making
 safe execution dependent on that product's continuous availability.
+
+Target-native modules add a second product boundary. The stable GPL kernel
+supplies safe machine capabilities; printer behavior is compiled, signed,
+deployed, inspected, rolled back, and fleet-managed as an application.
+Machine applications can evolve at software-development speed while executing
+locally at native MCU speed, without turning each behavior change into a
+firmware service event.
 
 The defining principle is:
 

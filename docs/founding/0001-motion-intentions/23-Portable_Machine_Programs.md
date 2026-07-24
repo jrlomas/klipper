@@ -1,17 +1,20 @@
 # FD-0001: Portable Machine Programs and Dynamic Scores
 
 Status: architecture and implementation proposal. The deterministic HELIX
-trajectory path exists, but the portable workflow API, compiler, score IR, and
-mainboard score VM described here do not. No autonomous macro or Klippy-Python
-compatibility claim is complete until the equivalence and physical gates in
-this document pass.
+trajectory path exists, but the portable workflow API, compiler, target-native
+module loader, and autonomous workflow runtime described here do not. No
+autonomous macro or Klippy-Python compatibility claim is complete until the
+equivalence and physical gates in this document pass.
 
 This document extends the
 [host architecture](05-Host_Architecture.md),
 [failure recovery](08-Failure_Recovery.md),
 [protocol library](10-Protocol_Library.md),
 [autonomous job execution](21-Autonomous_Job_Execution.md), and
-[coordinated execution horizon](22-Coordinated_Execution_Horizon.md).
+[coordinated execution horizon](22-Coordinated_Execution_Horizon.md). The
+target-native deployment, isolation, and hard-real-time control architecture
+is specified separately in
+[target-native machine modules](24-Target_Native_Machine_Modules.md).
 
 ## Problem
 
@@ -43,7 +46,7 @@ Klippy or as part of an autonomous job capsule.
 One ordinary-Python workflow source targets two execution backends:
 
 1. a Klipper compatibility executor; and
-2. a HELIX dynamic-score compiler.
+2. a HELIX target-native module compiler.
 
 The same workflow must not be rewritten separately for each backend.
 
@@ -56,15 +59,22 @@ typed configuration + domain state + event
           semantic operation stream
              /              \
             v                v
-   Klipper executor     HELIX compiler
-     live reactor       capsule score IR
-                              |
-                              v
-                       mainboard score VM
+   Klipper executor       HELIX compiler
+     live reactor       typed/statechart IR
+                               |
+                               v
+                         target-native .hmod
+                               |
+                               v
+                      mainboard native loader
 ```
 
 The Python is an authoring language. The H7 does not run Klippy or arbitrary
-Python. It executes a compact, versioned, bounded score representation.
+Python, nor does it interpret a portable instruction set. The compiler uses a
+bounded statechart as validation and trace metadata, lowers the executable
+workflow to target-native instructions, and packages those instructions with
+the capsule. Timed trajectory chapters remain immutable data consumed through
+the machine-operation ABI.
 
 ## Terminology
 
@@ -76,9 +86,21 @@ Python. It executes a compact, versioned, bounded score representation.
 : A typed semantic effect such as `track.run`, `sensor.wait`,
   `device.command`, or `checkpoint.commit`.
 
+**Machine-program IR**
+: The compiler's typed state/transition graph containing operations, guards,
+  bounded retries, deadlines, resource ownership, and local trajectory
+  references. It is used for validation, visualization, context layout, and
+  trace mapping; the MCU does not interpret it.
+
+**Native machine-program module**
+: The target-specific `.hmod` containing native executable workflow code,
+  explicit resumable context, ABI requirements, and the IR-derived transition
+  metadata required for checkpoints and observability.
+
 **Dynamic score**
-: The compiled state/transition graph containing operations, guards, bounded
-  retries, deadlines, resource ownership, and local trajectory tracks.
+: The combined runtime behavior of native machine-program modules and the
+  immutable trajectory chapters they start. The term describes a
+  sensor-dependent score, not a bytecode virtual machine.
 
 **Trajectory chapter**
 : An uninterrupted set of precompiled timestamped HELIX tracks admitted
@@ -115,7 +137,10 @@ async def change_material(machine, requested):
 `async` and `await` identify suspension and evidence points; they do not
 require asyncio on Klipper. The decorator returns a normal callable wrapper.
 The host executor drives its operation awaitables with the Klippy reactor.
-The compiler consumes the same awaitables to produce score nodes.
+The compiler consumes the same portable semantics to produce an explicit
+resumable context and native entry points. An `await` returns control to the
+HELIX kernel; the matching completion, observation, or deadline later invokes
+the native resume entry point. There is no Python frame on the MCU.
 
 If an annotation is added only as metadata to an existing synchronous Klippy
 function, the normal-host implementation may return that function unchanged.
@@ -225,8 +250,9 @@ because a completion was lost.
 Every portable workflow compiles to explicit requirements:
 
 ```text
-score_vm >= 1
 machine_program_abi >= 1
+native_module_abi >= 1
+target_class = <queried target>
 operations:
     track.run@2
     sensor.wait@1
@@ -239,7 +265,8 @@ roles:
 bounds:
     max_duration
     maximum retries by phase
-    maximum state and journal storage
+    maximum code, state, stack, and journal storage
+    maximum invocation cycles
 ```
 
 The capsule verifier compares these requirements with the printer-fabric
@@ -262,9 +289,11 @@ The compiler rejects unsupported syntax with the function and source
 location.
 
 Compilation is effect-oriented. It does not translate arbitrary CPython
-bytecode instruction by instruction. It executes or analyzes portable
-functions until they request a declared machine effect or unknown future
-observation, then records the effect and finite continuations.
+bytecode instruction by instruction. It analyzes portable functions into
+typed effects and finite continuations, validates their statechart, then
+lowers their executable control flow through C or compiler IR into target
+instructions. The statechart remains a semantic oracle and journal map, not
+the target's instruction stream.
 
 Boolean observations form two branches. Enums form their declared finite
 cases. Numeric observations form intervals from declared predicates rather
@@ -283,7 +312,8 @@ chapter N, anchored at C0
 ```
 
 Every local motion inside a workflow remains an ordinary HELIX trajectory
-track. The score VM waits for its execution checkpoint before advancing.
+track. The native coordinator waits for its execution checkpoint before
+advancing.
 
 The following print chapter is not assigned an absolute timestamp until the
 workflow establishes its postconditions. This preserves deterministic motion
@@ -380,9 +410,9 @@ gcode:
 All decisions after that call occur in one workflow. A Jinja template never
 tries to inspect the result of a G-code command that has not executed.
 
-## Score IR and mainboard VM
+## Compiler IR and target-native execution
 
-The score IR is a bounded statechart containing:
+The compiler IR is a bounded statechart containing:
 
 * typed states and variables;
 * event and completion transitions;
@@ -396,20 +426,24 @@ The score IR is a bounded statechart containing:
 * forward-recovery branches; and
 * terminal complete, safe-hold, cancelled, and failed states.
 
-The verifier proves before arming:
+The verifier proves before native-code generation and again before arming:
 
 * all references and ABI versions resolve;
 * every reachable wait has a deadline or a declared indefinite safe-hold
   policy;
 * loops and retries are bounded;
-* state and stack memory fit;
+* generated context, code, data, and stack memory fit;
 * resource ordering is valid;
 * every non-terminal path has a successor;
 * terminal paths release resources and apply safe-state policy; and
 * required trajectory tracks and content hashes exist.
 
-The VM journals state transitions and operation results, not every interpreter
-instruction.
+The compiler then emits native resumable entry points and a fixed-layout
+context. The `.hmod` carries a compact mapping from native continuation points
+back to IR states so the kernel can journal semantic transitions and operation
+results without tracing every native instruction. Container, loader, target,
+memory, security, and real-time contracts are defined in
+[24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).
 
 ## OpenAMS reference extraction
 
@@ -469,12 +503,15 @@ recorded here without publishing unfinished OpenAMS implementation work.
   and forward recovery.
 - [ ] Physically qualify the new workflow through live Klipper.
 
-### Phase 4 — compiler and score VM
+### Phase 4 — compiler and native module runtime
 
-- [ ] Compile portable functions to a bounded score IR.
+- [ ] Compile portable functions through bounded typed IR into target-native
+  resumable modules.
 - [ ] Add score requirements to the capsule manifest and verifier.
-- [ ] Implement the mainboard VM and structured journal.
-- [ ] Prove simulator, Klipper executor, and score VM semantic equivalence.
+- [ ] Implement the mainboard native loader, semantic import API, explicit
+  context, and structured journal.
+- [ ] Prove simulator, Klipper executor, and native module semantic
+  equivalence.
 
 ### Phase 5 — autonomous multi-material gate
 
@@ -491,7 +528,8 @@ The architecture is qualified only when:
 
 1. upstream Klipper executes the rewritten workflow source without a core
    patch;
-2. the same source compiles into a HELIX score;
+2. the same source compiles into target-native HELIX modules and an
+   inspectable statechart;
 3. domain and workflow modules import without Klipper installed;
 4. unsupported host-only behavior fails compilation before arming;
 5. every physical operation is bounded and generation-matched;
@@ -499,7 +537,7 @@ The architecture is qualified only when:
 7. cancel and reconnect reconcile physical evidence instead of guessing;
 8. resource races between runout, tool change, and operator commands are
    rejected deterministically;
-9. simulator, Klipper, and VM semantic traces agree; and
+9. simulator, Klipper, and native-module semantic traces agree; and
 10. a physical hostless multi-material print completes safely.
 
 ## Rejected alternatives
@@ -509,6 +547,11 @@ The architecture is qualified only when:
 
 **Compile arbitrary Python bytecode**
 : Cannot safely bound general Python I/O, reflection, memory, or control flow.
+
+**Interpret a universal workflow bytecode**
+: Adds a portable instruction machine to the execution path when the host can
+  instead compile the validated source for the exact target. HELIX preserves
+  the state graph for proof and observability but executes native code.
 
 **Maintain one macro implementation and one HELIX implementation**
 : Behavior and recovery will drift.

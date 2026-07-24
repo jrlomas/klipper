@@ -51,19 +51,21 @@ status line records its more precise state.
 | [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md) | Configurable time authorities, timestamp adapters, protocol bridges, quality propagation, and motion-safe failover | Architecture and phased implementation plan; current primary-MCU/USB/CAN mechanisms remain the compatibility baseline |
 | [21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md) | Stored deterministic job capsules, a network-mainboard printer fabric, replicated repositories, and host-independent completion | Architecture and phased implementation plan; physical autonomous execution pending |
 | [22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md) | Deep per-MCU staging, negotiated queue capacity, renewable group execution grants, bounded coordinated stop, and recovery | Phase A/B implementation and three-board homing/coordinated-motion gate pass; physical expiry-bound and recovery qualification in progress |
-| [23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md) | One restricted-Python workflow source for live Klipper and compiled dynamic scores, with typed operations, resource leases, evidence, and forward recovery | Architecture and implementation proposal; OpenAMS extraction complete locally, compiler/VM and physical gates pending |
+| [23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md) | One restricted-Python workflow source for live Klipper and target-native HELIX execution, with typed operations, resource leases, evidence, and forward recovery | Architecture and implementation proposal; OpenAMS extraction complete locally, compiler/loader and physical gates pending |
+| [24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md) | Target-compiled native applications loaded from local storage without reflashing; module ABI, loader, isolation, lifecycle, hard-real-time domains, and portable BLDC/FOC | Architecture and implementation plan; board syscall substrate exists, compiler/loader/control-domain implementation pending |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 22 → 10 → 04 → 01 → 20 → 21 → 23 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
-* *Host / klippy*: 02 → 05 → 22 → 21 → 23 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
+* *Protocol / firmware*: 02 → 22 → 10 → 04 → 01 → 20 → 21 → 23 → 24 → 13 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 12
+* *Host / klippy*: 02 → 05 → 22 → 21 → 23 → 24 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 22 (bounded group execution) → 21
-  (host-independent execution) → 23 (bounded dynamic workflows) → 02
+  (host-independent execution) → 23 (bounded dynamic workflows) → 24
+  (native module isolation and physical gates) → 02
   (underrun) → 03
-* *Third-party device vendor*: 10 → 02 → 03 → 20 → 21 → 23 → 17 → 07 → 15 → 16 → 19 → 11
+* *Third-party device vendor*: 10 → 02 → 03 → 20 → 21 → 23 → 24 → 13 → 17 → 07 → 15 → 16 → 19 → 11
 
 ## Glossary
 
@@ -83,9 +85,19 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
   autonomous local execution
   ([21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md)).
 * **Machine program / dynamic score** — one portable, bounded workflow source
-  that live Klipper executes through an adapter and HELIX compiles into an
-  event-driven statechart between timed trajectory chapters
+  that live Klipper executes through an adapter and HELIX compiles through an
+  inspectable statechart into target-native resumable code between timed
+  trajectory chapters
   ([23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md)).
+* **HELIX native module (`.hmod`)** — a target-specific, content-addressed
+  package of native instructions, data, restricted relocations, imports,
+  budgets, and provenance that HELIX loads from local storage into executable
+  memory without reflashing the kernel
+  ([24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md)).
+* **Control domain** — a kernel-owned, hardware-timed environment such as
+  synchronized ADC/PWM motor control that invokes a separately qualified
+  bounded native callback with fixed input/output frames
+  ([24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md)).
 * **Printer fabric** — the typed in-machine control, time, delivery, and
   telemetry plane joining the network mainboard to local actuators and
   downstream CAN/CAN-FD, serial, or future transport adapters. It is not a
