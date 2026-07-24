@@ -483,6 +483,25 @@ the `TRAJECTORY_STATUS` (and optional `BEZIER_MOVE`) commands - see the
 #   Set quadratic only as an explicit compatibility mode for older
 #   trajectory firmware without higher-order support. Neither mode uses the
 #   legacy queue_step pulse firehose on opted-in steppers.
+#execution_grants: False
+#   Enables the FD-0001 coordinated execution horizon. Every participating
+#   trajectory MCU must run firmware with the trajectory-group grant ABI.
+#   Klippy installs one epoch-bound, renewable machine-time horizon on all
+#   boards; loss or non-qualification of any member stops all renewals.
+#   Firmware then discards the uncommitted suffix and performs its local
+#   controlled-stop ramp at the last grant. This remains disabled by default
+#   until the topology has passed the physical link-loss gates in FD-0001
+#   doc 22.
+#execution_grant_horizon: 1.5
+#   Seconds of motion authorized by each grant. This is independent of the
+#   potentially much deeper staged queue. The accepted range is 0.5 to 5.0
+#   seconds; the default is 1.5.
+#execution_grant_interval: 0.250
+#   Seconds between all-member grant renewals. It must be less than half of
+#   execution_grant_horizon. The accepted range is 0.050 to 1.0 seconds.
+#execution_group_id: 1
+#   Nonzero coordination-group identifier. A printer with one toolhead and
+#   one coordinated motion system normally keeps the default.
 #enable_bezier_move: False
 #   Enables the BEZIER_MOVE command, an advanced commissioning tool that
 #   drives a single trajectory joint along a cubic/quintic Bezier curve,

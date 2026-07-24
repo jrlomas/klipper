@@ -118,15 +118,16 @@ traj_pwm_start(struct trajq *tq)
 }
 
 static void
-traj_pwm_stop(struct trajq *tq)
+traj_pwm_stop(struct trajq *tq, uint32_t clock)
 {
     struct traj_pwm *p = container_of(tq, struct traj_pwm, tq);
     sched_del_timer(&p->time);
     // Freeze the output (leave the last written level untouched) and
     // record the live sub-unit position back into the anchor, so the
     // host can recover exact state (FD-0001 doc 04 stop table).
-    if (tq->flags & TQF_ACTIVE) {
-        uint32_t t = timer_read_time() - tq->seg_start_clock;
+    if ((tq->flags & TQF_ACTIVE)
+        && !timer_is_before(clock, tq->seg_start_clock)) {
+        uint32_t t = clock - tq->seg_start_clock;
         if (t > tq->duration)
             t = tq->duration;
         tq->acc = trajq_acc_add(

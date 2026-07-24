@@ -27,6 +27,231 @@
 
 static struct task_wake traj_event_wake;
 
+// Every trajectory backend on one MCU participates in one local execution
+// group.  The registry is deliberately fixed and allocation-free: it is used
+// by the grant-expiry timer in IRQ context.  A normal printer has fewer than
+// ten entries; 32 leaves ample room without making target RAM scale with the
+// runtime move pool.
+#define TRAJQ_REGISTRY_MAX 32
+static struct trajq *trajq_registry[TRAJQ_REGISTRY_MAX];
+static uint8_t trajq_registry_count;
+
+enum {
+    TGF_CONFIGURED = 1 << 0,
+    TGF_ARMED = 1 << 1,
+    TGF_EXPIRED = 1 << 2,
+};
+enum {
+    TGR_OK,
+    TGR_NOT_CONFIGURED,
+    TGR_IDENTITY,
+    TGR_OLD_SEQUENCE,
+    TGR_NONMONOTONIC,
+    TGR_TOO_CLOSE,
+    TGR_NOT_STAGED,
+    TGR_EXPIRED,
+    TGR_ACTIVE_RECONFIG,
+};
+
+struct traj_group {
+    struct timer timer;
+    uint32_t group_id, epoch_hi, epoch_lo;
+    uint32_t sequence, machine_clock, local_clock;
+    uint16_t accepted, rejected;
+    uint8_t flags, reject_reason;
+};
+static struct traj_group traj_group;
+
+static uint8_t
+traj_group_ingest_open(void)
+{
+    return !(traj_group.flags & TGF_CONFIGURED)
+        || ((traj_group.flags & TGF_ARMED)
+            && !(traj_group.flags & TGF_EXPIRED));
+}
+
+static void
+traj_group_send_state(void)
+{
+    sendf("trajectory_group_state group_id=%u epoch_hi=%u epoch_lo=%u"
+          " sequence=%u machine_clock=%u local_clock=%u flags=%c"
+          " reject_reason=%c accepted=%hu rejected=%hu",
+          traj_group.group_id, traj_group.epoch_hi, traj_group.epoch_lo,
+          traj_group.sequence, traj_group.machine_clock,
+          traj_group.local_clock, traj_group.flags,
+          traj_group.reject_reason, traj_group.accepted,
+          traj_group.rejected);
+}
+
+static uint8_t
+traj_group_any_active(void)
+{
+    uint8_t i;
+    for (i = 0; i < trajq_registry_count; i++)
+        if (trajq_registry[i]->flags & (TQF_ACTIVE | TQF_RAMPING))
+            return 1;
+    return 0;
+}
+
+static uint8_t
+trajq_holds_at_horizon(struct trajq *tq)
+{
+    if (move_queue_empty(&tq->mq))
+        return !!(tq->seg_flags & TSEG_HOLD_AT_END);
+    struct traj_segment *tail = container_of(
+        tq->mq.last, struct traj_segment, node);
+    return tail->kind == TSEGK_MOTION
+        && !!(tail->flags & TSEG_HOLD_AT_END);
+}
+
+static uint8_t
+traj_group_all_staged(uint32_t local_clock)
+{
+    uint8_t i;
+    for (i = 0; i < trajq_registry_count; i++) {
+        struct trajq *tq = trajq_registry[i];
+        // An idle output is already holding and needs no queued suffix.
+        if (!(tq->flags & TQF_ACTIVE))
+            continue;
+        if (timer_is_before(tq->horizon_clock, local_clock)
+            && !trajq_holds_at_horizon(tq))
+            return 0;
+    }
+    return 1;
+}
+
+static uint_fast8_t
+traj_group_timer_event(struct timer *timer)
+{
+    uint32_t clock = timer->waketime;
+    traj_group.flags &= ~TGF_ARMED;
+    if (!traj_group_any_active())
+        // An idle machine needs no recovery merely because a host stopped
+        // renewing. It remains closed to new ingestion until a later grant.
+        return SF_DONE;
+    traj_group.flags |= TGF_EXPIRED;
+    uint8_t i;
+    for (i = 0; i < trajq_registry_count; i++)
+        trajq_group_expire(trajq_registry[i], clock);
+    return SF_DONE;
+}
+
+void
+command_trajectory_group_config(uint32_t *args)
+{
+    uint32_t group_id = args[0], epoch_hi = args[1], epoch_lo = args[2];
+    if (traj_group_any_active()) {
+        traj_group.reject_reason = TGR_ACTIVE_RECONFIG;
+        traj_group.rejected++;
+        traj_group_send_state();
+        return;
+    }
+    if (traj_group.flags & TGF_ARMED)
+        sched_del_timer(&traj_group.timer);
+    traj_group.group_id = group_id;
+    traj_group.epoch_hi = epoch_hi;
+    traj_group.epoch_lo = epoch_lo;
+    traj_group.sequence = 0;
+    traj_group.machine_clock = 0;
+    traj_group.local_clock = 0;
+    traj_group.flags = TGF_CONFIGURED;
+    traj_group.reject_reason = TGR_OK;
+    traj_group.accepted++;
+    traj_group_send_state();
+}
+DECL_COMMAND(command_trajectory_group_config,
+             "trajectory_group_config group_id=%u epoch_hi=%u epoch_lo=%u");
+
+void
+command_trajectory_group_grant(uint32_t *args)
+{
+    uint32_t group_id = args[0], epoch_hi = args[1], epoch_lo = args[2];
+    uint32_t sequence = args[3], machine_clock = args[4];
+    uint32_t local_clock = args[5];
+    uint8_t reject = TGR_OK;
+    if (!(traj_group.flags & TGF_CONFIGURED))
+        reject = TGR_NOT_CONFIGURED;
+    else if (group_id != traj_group.group_id
+             || epoch_hi != traj_group.epoch_hi
+             || epoch_lo != traj_group.epoch_lo)
+        reject = TGR_IDENTITY;
+    else if (traj_group.flags & TGF_EXPIRED)
+        reject = TGR_EXPIRED;
+    else if ((int32_t)(sequence - traj_group.sequence) < 0)
+        reject = TGR_OLD_SEQUENCE;
+    else if (sequence == traj_group.sequence
+             && (machine_clock != traj_group.machine_clock
+                 || local_clock != traj_group.local_clock))
+        reject = TGR_OLD_SEQUENCE;
+    else if (sequence != traj_group.sequence
+             && traj_group.sequence
+             && (!timer_is_before(traj_group.machine_clock, machine_clock)
+                 || !timer_is_before(traj_group.local_clock, local_clock)))
+        reject = TGR_NONMONOTONIC;
+    else if (!timesync_class0_ok())
+        reject = TGR_TOO_CLOSE;
+    else {
+        // Ten milliseconds is intentionally much larger than timer dispatch
+        // uncertainty on every supported MCU and leaves room to replace the
+        // currently installed timer before its boundary.
+        uint32_t now = timer_read_time();
+        uint32_t min_lead = CONFIG_CLOCK_FREQ / 100;
+        if (timer_is_before(local_clock, now + min_lead))
+            reject = TGR_TOO_CLOSE;
+        else if (!traj_group_all_staged(local_clock))
+            reject = TGR_NOT_STAGED;
+    }
+    if (reject) {
+        traj_group.reject_reason = reject;
+        traj_group.rejected++;
+        traj_group_send_state();
+        return;
+    }
+    // Exact duplicate grants are idempotent. Do not remove/reinsert the timer
+    // at the same clock because doing so could perturb its ordering against a
+    // trajectory edge scheduled for that boundary.
+    if (sequence != traj_group.sequence) {
+        if (traj_group.flags & TGF_ARMED)
+            sched_del_timer(&traj_group.timer);
+        traj_group.sequence = sequence;
+        traj_group.machine_clock = machine_clock;
+        traj_group.local_clock = local_clock;
+        traj_group.timer.waketime = local_clock;
+        traj_group.flags |= TGF_ARMED;
+        sched_add_timer(&traj_group.timer);
+    }
+    traj_group.reject_reason = TGR_OK;
+    traj_group.accepted++;
+    traj_group_send_state();
+}
+DECL_COMMAND(command_trajectory_group_grant,
+             "trajectory_group_grant group_id=%u epoch_hi=%u epoch_lo=%u"
+             " sequence=%u machine_clock=%u local_clock=%u");
+
+void
+command_trajectory_group_query(uint32_t *args)
+{
+    traj_group_send_state();
+}
+DECL_COMMAND(command_trajectory_group_query, "trajectory_group_query");
+
+void
+traj_group_init(void)
+{
+    traj_group.timer.func = traj_group_timer_event;
+}
+DECL_INIT(traj_group_init);
+
+void
+traj_group_shutdown(void)
+{
+    if (traj_group.flags & TGF_ARMED)
+        sched_del_timer(&traj_group.timer);
+    traj_group.flags = 0;
+    trajq_registry_count = 0;
+}
+DECL_SHUTDOWN(traj_group_shutdown);
+
 static inline uint32_t
 trajq_horizon_us(struct trajq *tq)
 {
@@ -413,6 +638,9 @@ void
 trajq_setup(struct trajq *tq, uint8_t oid, const struct trajq_backend_ops *ops
             , uint32_t underrun_decel)
 {
+    if (trajq_registry_count >= TRAJQ_REGISTRY_MAX)
+        shutdown("Too many trajectory queues");
+    trajq_registry[trajq_registry_count++] = tq;
     tq->oid = oid;
     tq->ops = ops;
     tq->underrun_decel = underrun_decel;
@@ -581,7 +809,7 @@ void
 trajq_queue_segment(struct trajq *tq, uint8_t flags, uint32_t duration
                     , int32_t velocity, int32_t accel)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         // Machine-time discipline stale - refuse ingest (FD-0001 doc 01)
         tq->dropped++;
         return;
@@ -661,7 +889,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
                        , int32_t velocity, int32_t accel, int32_t jerk
                        , int32_t snap, int32_t crackle)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         tq->dropped++;
         return;
     }
@@ -838,7 +1066,7 @@ trajq_rebase_at_local_clock(struct trajq *tq, uint32_t clock, int32_t pos,
 int
 trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         // A rebase is the anchor for subsequent Class-0 segments.  Do not
         // translate it through a mapping that is still moving or stale.
         tq->dropped++;
@@ -853,7 +1081,7 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
 int
 trajq_rebase_local(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         tq->dropped++;
         return 0;
     }
@@ -869,7 +1097,7 @@ int
 trajq_rebase_recovery(struct trajq *tq, uint32_t clock, int32_t pos,
                       int32_t aux)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         tq->dropped++;
         return 0;
     }
@@ -881,7 +1109,7 @@ int
 trajq_rebase_recovery_local(struct trajq *tq, uint32_t clock, int32_t pos,
                             int32_t aux)
 {
-    if (!timesync_class0_ok()) {
+    if (!traj_group_ingest_open() || !timesync_class0_ok()) {
         tq->dropped++;
         return 0;
     }
@@ -894,7 +1122,7 @@ trajq_rebase_recovery_local(struct trajq *tq, uint32_t clock, int32_t pos,
 void
 trajq_halt(struct trajq *tq, uint8_t set_flags)
 {
-    tq->ops->stop(tq);
+    tq->ops->stop(tq, timer_read_time());
     tq->flags &= ~(TQF_ACTIVE | TQF_RAMPING);
     tq->flags |= set_flags;
     tq->horizon_clock = tq->seg_start_clock;
@@ -903,6 +1131,45 @@ trajq_halt(struct trajq *tq, uint8_t set_flags)
         move_free(container_of(mn, struct traj_segment, node));
     }
     tq->queued = 0;
+}
+
+// Stop one trajectory at the shared execution-grant boundary. Unlike an
+// immediate trsync halt, preserve instantaneous velocity and enter the same
+// bounded deceleration ramp used for an ordinary queue underrun. The staged
+// suffix is discarded and the halt barrier prevents stale transport traffic
+// from resurrecting it before coordinated recovery.
+void
+trajq_group_expire(struct trajq *tq, uint32_t clock)
+{
+    if (!(tq->flags & TQF_ACTIVE))
+        return;
+    uint32_t t = 0;
+    uint8_t started = !timer_is_before(clock, tq->seg_start_clock);
+    if (started) {
+        t = clock - tq->seg_start_clock;
+        if (t > tq->duration)
+            t = tq->duration;
+    }
+    int32_t velocity = started ? trajq_velocity_at_seg(tq, t) : 0;
+    tq->ops->stop(tq, clock);
+    while (!move_queue_empty(&tq->mq)) {
+        struct move_node *mn = move_queue_pop(&tq->mq);
+        move_free(container_of(mn, struct traj_segment, node));
+    }
+    tq->queued = 0;
+    tq->horizon_clock = tq->seg_start_clock;
+    tq->flags &= ~(TQF_ACTIVE | TQF_RAMPING);
+    tq->flags |= TQF_HALT_BARRIER;
+    if (trajq_synth_ramp(tq, velocity)) {
+        tq->flags |= TQF_ACTIVE;
+        tq->ops->start(tq);
+        return;
+    }
+    tq->flags |= TQF_UNDERRUN | TQF_NEED_REBASE | TQF_EVENT_PENDING;
+    tq->event_clock = tq->seg_start_clock;
+    tq->event_pos = (int32_t)(tq->acc >> 32);
+    execlog_append(EL_UNDERRUN, tq->oid, tq->event_clock, tq->event_pos, 0);
+    sched_wake_task(&traj_event_wake);
 }
 
 void

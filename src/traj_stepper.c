@@ -1702,7 +1702,7 @@ traj_stepper_test_prestart_stop(void)
 #endif
 
 static void
-traj_stepper_stop(struct trajq *tq)
+traj_stepper_stop(struct trajq *tq, uint32_t clock)
 {
     struct traj_stepper *s = container_of(tq, struct traj_stepper, tq);
 #if CONFIG_WANT_ESP32_I2S_SHIFT
@@ -1716,7 +1716,7 @@ traj_stepper_stop(struct trajq *tq)
     // An active stream may still be scheduled in the future. Stopping in
     // that lead window must retain its start position rather than unsigned-
     // wrapping the elapsed time and recording the segment endpoint.
-    traj_stepper_record_stop(tq, timer_read_time());
+    traj_stepper_record_stop(tq, clock);
 }
 
 static void

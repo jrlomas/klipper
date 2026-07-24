@@ -26,7 +26,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import logging, collections, math
+import logging, collections, math, secrets
 import chelper
 
 SUBUNITS = 65536.
@@ -299,6 +299,56 @@ DEFAULT_UNDERRUN_DECEL = 5000.  # mm/s^2
 # Rolling intention record depth (the host twin of the MCU execlog
 # window - FD-0001 doc 08); sized like the execlog ring by default.
 DEFAULT_INTENTION_RECORD = 256
+
+TGF_CONFIGURED = 1 << 0
+TGF_ARMED = 1 << 1
+TGF_EXPIRED = 1 << 2
+TGR_OK = 0
+
+
+class TrajectoryGroupMember:
+    def __init__(self, owner, mcu):
+        self.owner = owner
+        self.mcu = mcu
+        self.name = mcu.get_name()
+        self.command_queue = None
+        self.config_cmd = self.grant_cmd = self.query_cmd = None
+        self.state = None
+
+    def connect(self):
+        self.command_queue = self.mcu.alloc_command_queue()
+        cq = self.command_queue
+        self.config_cmd = self.mcu.try_lookup_command(
+            "trajectory_group_config group_id=%u epoch_hi=%u epoch_lo=%u",
+            cq=cq)
+        self.grant_cmd = self.mcu.try_lookup_command(
+            "trajectory_group_grant group_id=%u epoch_hi=%u epoch_lo=%u"
+            " sequence=%u machine_clock=%u local_clock=%u", cq=cq)
+        self.query_cmd = self.mcu.try_lookup_command(
+            "trajectory_group_query", cq=cq)
+        if None in (self.config_cmd, self.grant_cmd, self.query_cmd):
+            raise self.mcu.error(
+                "Firmware for %s lacks the trajectory execution-grant ABI"
+                % (self.name,))
+        self.mcu.register_serial_response(
+            self._handle_state, "trajectory_group_state")
+
+    def _handle_state(self, params):
+        self.state = dict(params)
+        self.owner._handle_group_state(self, self.state)
+
+    def configure(self, group_id, epoch_hi, epoch_lo):
+        self.config_cmd.send([group_id, epoch_hi, epoch_lo])
+
+    def grant(self, group_id, epoch_hi, epoch_lo, sequence,
+              machine_clock, local_clock):
+        self.grant_cmd.send([
+            group_id, epoch_hi, epoch_lo, sequence,
+            machine_clock & 0xffffffff, local_clock & 0xffffffff])
+
+    def is_paused(self):
+        checker = getattr(self.mcu, 'is_link_paused', None)
+        return bool(checker is not None and checker())
 
 
 class TrajectoryStepper:
@@ -1326,6 +1376,28 @@ class TrajectoryQueuing:
         self.atlas_trace = None
         self.recovery_active = False
         self.recovery_trigger = None
+        self.execution_grants = config.getboolean(
+            'execution_grants', False)
+        self.execution_grant_horizon = config.getfloat(
+            'execution_grant_horizon', 1.5, minval=.5, maxval=5.)
+        self.execution_grant_interval = config.getfloat(
+            'execution_grant_interval', .250, minval=.050, maxval=1.)
+        if self.execution_grant_interval * 2 >= self.execution_grant_horizon:
+            raise config.error(
+                "execution_grant_interval must be less than half of"
+                " execution_grant_horizon")
+        self.execution_group_id = config.getint(
+            'execution_group_id', 1, minval=1, maxval=0xffffffff)
+        epoch = secrets.randbits(64)
+        self.execution_epoch_hi = epoch >> 32
+        self.execution_epoch_lo = epoch & 0xffffffff
+        self.group_members = {}
+        self.group_sequence = 0
+        self.group_pending = None
+        self.group_next_proposal = 0.
+        self.group_committed_sequence = 0
+        self.group_grant_ready = not self.execution_grants
+        self.group_timer = None
         # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
         # but trajectory steppers receive per-joint quintic intentions and
         # synthesize their own pulses on the MCU.  Quadratic remains an
@@ -1355,6 +1427,15 @@ class TrajectoryQueuing:
     def get_status(self, eventtime=None):
         return {'recovery_active': self.recovery_active,
                 'recovery_trigger': self.recovery_trigger,
+                'execution_grants': self.execution_grants,
+                'execution_grant_ready': self.group_grant_ready,
+                'execution_group_id': self.execution_group_id,
+                'execution_epoch': "%08x%08x" % (
+                    self.execution_epoch_hi, self.execution_epoch_lo),
+                'execution_sequence': self.group_committed_sequence,
+                'execution_members': {
+                    name: member.state
+                    for name, member in self.group_members.items()},
                 'trajectory_steppers': [ts.describe() for ts in self.steppers]}
 
     cmd_TRAJECTORY_STATUS_help = ("Report the state of every actuator on the"
@@ -1364,6 +1445,14 @@ class TrajectoryQueuing:
             gcmd.respond_info("No steppers use 'motion_protocol: trajectory'")
             return
         lines = []
+        if self.execution_grants:
+            lines.append(
+                "group=%u epoch=%08x%08x committed_sequence=%u ready=%d"
+                " horizon=%.3fs interval=%.3fs"
+                % (self.execution_group_id, self.execution_epoch_hi,
+                   self.execution_epoch_lo, self.group_committed_sequence,
+                   self.group_grant_ready, self.execution_grant_horizon,
+                   self.execution_grant_interval))
         for ts in self.steppers:
             d = ts.describe()
             fw = ts.firmware_status()
@@ -1448,6 +1537,9 @@ class TrajectoryQueuing:
         ts = TrajectoryStepper(self, mcu_stepper, config)
         self.steppers.append(ts)
         mcu = mcu_stepper.get_mcu()
+        if self.execution_grants and mcu.get_name() not in self.group_members:
+            self.group_members[mcu.get_name()] = TrajectoryGroupMember(
+                self, mcu)
         mcu.register_serial_response(
             lambda params, ts=ts: self._handle_underrun(ts, params),
             "traj_underrun oid=%c clock=%u pos=%i", mcu_stepper.get_oid())
@@ -1503,6 +1595,11 @@ class TrajectoryQueuing:
         # extra axis moves.  A secondary kinematic joint is conservatively
         # treated as part of every Cartesian move because CoreXY/delta-style
         # coupling is not expressible as one axis_d index here.
+        if (getattr(self, 'execution_grants', False)
+                and not self.group_grant_ready):
+            raise self.printer.command_error(
+                "HELIX execution group has no all-MCU grant;"
+                " refusing move before lookahead")
         for ts in self.steppers:
             if ts.mcu is self.get_machine_mcu():
                 continue
@@ -1563,6 +1660,15 @@ class TrajectoryQueuing:
         self.atlas_trace = self.printer.lookup_object('atlas_trace', None)
         for ts in self.steppers:
             ts.connect()
+        if self.execution_grants:
+            for member in self.group_members.values():
+                member.connect()
+                member.configure(
+                    self.execution_group_id, self.execution_epoch_hi,
+                    self.execution_epoch_lo)
+            reactor = self.printer.get_reactor()
+            self.group_timer = reactor.register_timer(
+                self._grant_timer, reactor.monotonic() + .050)
         if self.steppers:
             mq = self.printer.lookup_object('motion_queuing')
             kin_flush_delay = TRAJECTORY_KIN_FLUSH_DELAY
@@ -1574,6 +1680,74 @@ class TrajectoryQueuing:
                     ts.ffi_lib.itersolve_get_gen_steps_post_active(sk))
             mq.register_kin_flush_delay(kin_flush_delay)
             mq.register_flush_callback(self._flush)
+
+    def _group_healthy(self):
+        if self.recovery_active:
+            return False
+        for member in self.group_members.values():
+            if member.is_paused() or not self.is_mcu_synced(member.mcu):
+                return False
+        return True
+
+    def _grant_timer(self, eventtime):
+        if not self.execution_grants:
+            return self.printer.get_reactor().NEVER
+        if not self._group_healthy():
+            # Deliberately do not renew: every board already has the same
+            # bounded stop contract. A missing member must not cause the
+            # reachable subset to run farther ahead.
+            return eventtime + self.execution_grant_interval
+        if self.group_pending is None:
+            if eventtime < self.group_next_proposal:
+                return self.group_next_proposal
+            self.group_sequence = (self.group_sequence + 1) & 0xffffffff
+            if not self.group_sequence:
+                self.group_sequence = 1
+            grant_time = max(
+                member.mcu.estimated_print_time(eventtime)
+                for member in self.group_members.values())
+            grant_time += self.execution_grant_horizon
+            machine_clock = self.get_machine_mcu().print_time_to_clock(
+                grant_time) & 0xffffffff
+            self.group_pending = {
+                'sequence': self.group_sequence,
+                'machine_clock': machine_clock,
+                'grant_time': grant_time,
+                'acked': set()}
+        pending = self.group_pending
+        for member in self.group_members.values():
+            local_clock = member.mcu.print_time_to_clock(
+                pending['grant_time'])
+            member.grant(
+                self.execution_group_id, self.execution_epoch_hi,
+                self.execution_epoch_lo, pending['sequence'],
+                pending['machine_clock'], local_clock)
+        return eventtime + min(.100, self.execution_grant_interval)
+
+    def _handle_group_state(self, member, state):
+        pending = self.group_pending
+        if pending is None:
+            return
+        if (int(state.get('group_id', 0)) != self.execution_group_id
+                or int(state.get('epoch_hi', 0))
+                != self.execution_epoch_hi
+                or int(state.get('epoch_lo', 0))
+                != self.execution_epoch_lo
+                or int(state.get('sequence', 0)) != pending['sequence']
+                or int(state.get('machine_clock', 0))
+                != pending['machine_clock']
+                or int(state.get('reject_reason', -1)) != TGR_OK
+                or not (int(state.get('flags', 0)) & TGF_ARMED)):
+            return
+        pending['acked'].add(member.name)
+        if len(pending['acked']) != len(self.group_members):
+            return
+        self.group_committed_sequence = pending['sequence']
+        self.group_pending = None
+        self.group_next_proposal = (
+            self.printer.get_reactor().monotonic()
+            + self.execution_grant_interval)
+        self.group_grant_ready = True
 
     def _flush(self, flush_time, step_gen_time):
         for ts in self.steppers:

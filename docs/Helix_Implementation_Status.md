@@ -371,6 +371,21 @@ pass.
   regressions pass and RP2040, ESP32, and STM32G0B1 target images build. A
   physical two-pass Z home and complete Rodent print-start regression remain
   required before this item is qualified.
+* The subsequent Rodent print reached real motion but exposed an independent
+  queue-liveness limit: while WiFi stayed associated at approximately -50 dBm
+  and firmware reported zero RX-ring, TX-ring, and send drops, the reliable
+  datagram RTO repeatedly reached 800 ms against an approximately 1.0--1.1 s
+  directly executable trajectory horizon. The immediate datagram default is
+  now a 2.0 s motion buffer with 1.0 s startup reserve. FD-0001
+  [doc 22](founding/0001-motion-intentions/22-Coordinated_Execution_Horizon.md)
+  defines the complete correction: deep capacity-negotiated staging separated
+  from a short shared execution grant. Firmware and host now implement the
+  optional epoch/sequence state machine, live shared move-pool reporting,
+  all-member acknowledgement, closed ingest after expiry, staged-suffix
+  discard, and controlled-stop/recovery barrier. Workstation state-machine
+  tests pass and RP2040, STM32G0B1, and ESP32/Rodent images build. The option
+  remains disabled by default until the multi-board physical expiry,
+  divergence-bound, and recovery tests pass.
 * Normal G0/G1 is now the production quintic path for trajectory steppers.
   Klippy retains Cartesian lookahead, kinematics, and the authoritative
   toolhead position; the fitter sends synchronized per-joint quintic

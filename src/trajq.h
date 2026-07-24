@@ -64,7 +64,7 @@ struct trajq_backend_ops {
     void (*start)(struct trajq *tq);
     // Halt motion immediately (trsync trigger or shutdown) and
     // record the live position back into tq->acc. Called irqs off.
-    void (*stop)(struct trajq *tq);
+    void (*stop)(struct trajq *tq, uint32_t clock);
     // Apply backend-specific state at a rebase boundary.  For steppers this
     // synchronizes the physical integer step counter; value outputs need no
     // auxiliary state and may leave this NULL. Called irqs off.
@@ -151,6 +151,7 @@ int trajq_rebase_recovery_local(struct trajq *tq, uint32_t clock, int32_t pos,
                                 int32_t aux);
 int trajq_advance(struct trajq *tq);
 void trajq_halt(struct trajq *tq, uint8_t set_flags);
+void trajq_group_expire(struct trajq *tq, uint32_t clock);
 int64_t trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel);
 int32_t trajq_velocity_at(int32_t velocity, int32_t accel, uint32_t t);
 int64_t trajq_pos_at(int32_t velocity, int32_t accel, uint32_t t);
