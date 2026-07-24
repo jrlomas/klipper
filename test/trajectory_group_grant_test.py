@@ -65,6 +65,30 @@ class FakeMember:
         self.sent.append(args)
 
 
+class FakeCommand:
+    def send(self, args=()):
+        pass
+
+
+class FakeConnectMCU:
+    error = RuntimeError
+
+    def __init__(self):
+        self.response_format = None
+
+    def get_name(self):
+        return 'mcu'
+
+    def alloc_command_queue(self):
+        return object()
+
+    def try_lookup_command(self, msgformat, cq=None):
+        return FakeCommand()
+
+    def register_serial_response(self, callback, msgformat, oid=None):
+        self.response_format = msgformat
+
+
 def make_owner():
     owner = trajectory_queuing.TrajectoryQueuing.__new__(
         trajectory_queuing.TrajectoryQueuing)
@@ -78,7 +102,9 @@ def make_owner():
     owner.group_sequence = 0
     owner.group_pending = None
     owner.group_next_proposal = 0.
+    owner.group_proposal_time = None
     owner.group_committed_sequence = 0
+    owner.group_committed_until = None
     owner.group_grant_ready = False
     owner.recovery_active = False
     primary = FakeMCU('mcu', 12_000_000., 20.)
@@ -141,14 +167,19 @@ def test_duplicate_and_rejected_states_do_not_commit():
         'reject_reason': 6,
     })
     assert not owner.group_grant_ready
-    assert owner.group_pending is pending
+    assert owner.group_pending is None
+    owner._grant_timer(10.1)
+    assert owner.group_sequence == 2
 
 
 def test_missing_member_stops_all_renewals():
     owner = make_owner()
+    owner.group_grant_ready = True
+    owner.group_committed_until = 20.
     owner.group_members['rodent'].mcu.paused = True
     next_time = owner._grant_timer(10.)
     assert next_time == 10.25
+    assert not owner.group_grant_ready
     assert owner.group_sequence == 0
     assert owner.group_pending is None
     assert all(not member.sent for member in owner.group_members.values())
@@ -165,6 +196,67 @@ def test_renewal_respects_interval_after_all_ack():
     assert owner.group_sequence == 1
     owner._grant_timer(10.25)
     assert owner.group_sequence == 2
+
+
+def test_expired_host_lease_revokes_ready_state():
+    owner = make_owner()
+    owner.group_grant_ready = True
+    owner.group_committed_until = 21.
+    assert owner._execution_grant_valid(10.)
+    owner.group_committed_until = 20.
+    assert not owner._execution_grant_valid(10.)
+    assert not owner.group_grant_ready
+
+
+def test_reproposal_horizon_never_moves_backwards():
+    owner = make_owner()
+    owner._grant_timer(10.)
+    first_grant_time = owner.group_pending['grant_time']
+    first, _second = owner.group_members.values()
+    owner._handle_group_state(first, {
+        'group_id': owner.execution_group_id,
+        'epoch_hi': owner.execution_epoch_hi,
+        'epoch_lo': owner.execution_epoch_lo,
+        'sequence': owner.group_pending['sequence'],
+        'machine_clock': owner.group_pending['machine_clock'],
+        'flags': trajectory_queuing.TGF_CONFIGURED,
+        'reject_reason': 5,
+    })
+    for member in owner.group_members.values():
+        member.mcu.estimate = 5.
+    owner._grant_timer(10.1)
+    assert owner.group_pending['grant_time'] > first_grant_time
+
+
+def test_proposal_advances_past_each_member_clock():
+    owner = make_owner()
+    old_grant_time = 30.
+    machine_clock = owner.machine.print_time_to_clock(old_grant_time)
+    for member in owner.group_members.values():
+        member.state = {
+            'group_id': owner.execution_group_id,
+            'epoch_hi': owner.execution_epoch_hi,
+            'epoch_lo': owner.execution_epoch_lo,
+            'sequence': 12,
+            'machine_clock': machine_clock & 0xffffffff,
+            'local_clock': (
+                member.mcu.print_time_to_clock(old_grant_time)
+                & 0xffffffff),
+        }
+    for member in owner.group_members.values():
+        member.mcu.estimate = 5.
+    owner._grant_timer(10.)
+    assert owner.group_pending['grant_time'] > old_grant_time
+
+
+def test_member_registers_complete_response_format():
+    mcu = FakeConnectMCU()
+    member = trajectory_queuing.TrajectoryGroupMember(object(), mcu)
+    member.connect()
+    assert mcu.response_format == (
+        "trajectory_group_state group_id=%u epoch_hi=%u epoch_lo=%u"
+        " sequence=%u machine_clock=%u local_clock=%u flags=%c"
+        " reject_reason=%c accepted=%hu rejected=%hu")
 
 
 def test_firmware_has_closed_epoch_and_controlled_expiry():
@@ -185,6 +277,10 @@ def main():
         test_duplicate_and_rejected_states_do_not_commit,
         test_missing_member_stops_all_renewals,
         test_renewal_respects_interval_after_all_ack,
+        test_expired_host_lease_revokes_ready_state,
+        test_reproposal_horizon_never_moves_backwards,
+        test_proposal_advances_past_each_member_clock,
+        test_member_registers_complete_response_format,
         test_firmware_has_closed_epoch_and_controlled_expiry,
     ]
     for test in tests:

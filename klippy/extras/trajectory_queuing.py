@@ -304,6 +304,10 @@ TGF_CONFIGURED = 1 << 0
 TGF_ARMED = 1 << 1
 TGF_EXPIRED = 1 << 2
 TGR_OK = 0
+TRAJECTORY_GROUP_STATE_FORMAT = (
+    "trajectory_group_state group_id=%u epoch_hi=%u epoch_lo=%u"
+    " sequence=%u machine_clock=%u local_clock=%u flags=%c"
+    " reject_reason=%c accepted=%hu rejected=%hu")
 
 
 class TrajectoryGroupMember:
@@ -331,7 +335,7 @@ class TrajectoryGroupMember:
                 "Firmware for %s lacks the trajectory execution-grant ABI"
                 % (self.name,))
         self.mcu.register_serial_response(
-            self._handle_state, "trajectory_group_state")
+            self._handle_state, TRAJECTORY_GROUP_STATE_FORMAT)
 
     def _handle_state(self, params):
         self.state = dict(params)
@@ -1395,7 +1399,9 @@ class TrajectoryQueuing:
         self.group_sequence = 0
         self.group_pending = None
         self.group_next_proposal = 0.
+        self.group_proposal_time = None
         self.group_committed_sequence = 0
+        self.group_committed_until = None
         self.group_grant_ready = not self.execution_grants
         self.group_timer = None
         # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
@@ -1425,6 +1431,8 @@ class TrajectoryQueuing:
                                    desc=self.cmd_BEZIER_MOVE_help)
 
     def get_status(self, eventtime=None):
+        if self.execution_grants and eventtime is not None:
+            self._execution_grant_valid(eventtime)
         return {'recovery_active': self.recovery_active,
                 'recovery_trigger': self.recovery_trigger,
                 'execution_grants': self.execution_grants,
@@ -1596,7 +1604,8 @@ class TrajectoryQueuing:
         # treated as part of every Cartesian move because CoreXY/delta-style
         # coupling is not expressible as one axis_d index here.
         if (getattr(self, 'execution_grants', False)
-                and not self.group_grant_ready):
+                and not self._execution_grant_valid(
+                    self.printer.get_reactor().monotonic())):
             raise self.printer.command_error(
                 "HELIX execution group has no all-MCU grant;"
                 " refusing move before lookahead")
@@ -1689,13 +1698,82 @@ class TrajectoryQueuing:
                 return False
         return True
 
+    def _execution_grant_valid(self, eventtime):
+        if not self.execution_grants:
+            return True
+        if not self.group_grant_ready or self.group_committed_until is None:
+            return False
+        current_time = max(
+            member.mcu.estimated_print_time(eventtime)
+            for member in self.group_members.values())
+        if current_time < self.group_committed_until:
+            return True
+        self.group_grant_ready = False
+        return False
+
+    @staticmethod
+    def _clock_is_after(new_clock, old_clock):
+        delta = (int(new_clock) - int(old_clock)) & 0xffffffff
+        return 0 < delta < 0x80000000
+
+    def _advance_grant_past_member_clocks(self, grant_time):
+        # Firmware rejects a new sequence unless both its machine and local
+        # clocks advance modulo 32 bits.  Clock regressions may settle after
+        # one MCU accepted a proposal, so monotonic host print_time alone is
+        # insufficient.  Raise the next proposal beyond every last accepted
+        # clock reported for this epoch.
+        machine_mcu = self.get_machine_mcu()
+        constraints = []
+        for member in self.group_members.values():
+            state = member.state
+            if (state is None
+                    or int(state.get('group_id', 0))
+                    != self.execution_group_id
+                    or int(state.get('epoch_hi', 0))
+                    != self.execution_epoch_hi
+                    or int(state.get('epoch_lo', 0))
+                    != self.execution_epoch_lo
+                    or not int(state.get('sequence', 0))):
+                continue
+            constraints.append(
+                (machine_mcu, int(state.get('machine_clock', 0))))
+            constraints.append(
+                (member.mcu, int(state.get('local_clock', 0))))
+        # One pass normally suffices.  Iterate because advancing print_time
+        # for one clock domain can cross a 32-bit wrap in another.
+        for _retry in range(4):
+            advance = 0.
+            for mcu, old_clock in constraints:
+                new_clock = mcu.print_time_to_clock(grant_time) & 0xffffffff
+                if self._clock_is_after(new_clock, old_clock):
+                    continue
+                one_second = (
+                    mcu.print_time_to_clock(grant_time + 1.)
+                    - mcu.print_time_to_clock(grant_time))
+                frequency = abs(float(one_second))
+                if frequency < 1.:
+                    continue
+                forward_ticks = (
+                    (old_clock - new_clock) & 0xffffffff)
+                advance = max(
+                    advance, forward_ticks / frequency
+                    + self.execution_grant_interval)
+            if not advance:
+                return grant_time
+            grant_time += advance
+        return grant_time
+
     def _grant_timer(self, eventtime):
         if not self.execution_grants:
             return self.printer.get_reactor().NEVER
+        self._execution_grant_valid(eventtime)
         if not self._group_healthy():
             # Deliberately do not renew: every board already has the same
             # bounded stop contract. A missing member must not cause the
             # reachable subset to run farther ahead.
+            self.group_grant_ready = False
+            self.group_pending = None
+            self.group_next_proposal = 0.
             return eventtime + self.execution_grant_interval
         if self.group_pending is None:
             if eventtime < self.group_next_proposal:
@@ -1707,6 +1785,17 @@ class TrajectoryQueuing:
                 member.mcu.estimated_print_time(eventtime)
                 for member in self.group_members.values())
             grant_time += self.execution_grant_horizon
+            # Startup clock fits can settle sharply backwards (notably on a
+            # Wi-Fi MCU).  A subset of the group may already have accepted
+            # the preceding proposal, so never let a fresh sequence move its
+            # machine-time horizon backwards.  Keep the high-water mark for
+            # every proposal, not only fully committed ones.
+            if (self.group_proposal_time is not None
+                    and grant_time <= self.group_proposal_time):
+                grant_time = (self.group_proposal_time
+                              + self.execution_grant_interval)
+            grant_time = self._advance_grant_past_member_clocks(grant_time)
+            self.group_proposal_time = grant_time
             machine_clock = self.get_machine_mcu().print_time_to_clock(
                 grant_time) & 0xffffffff
             self.group_pending = {
@@ -1732,17 +1821,33 @@ class TrajectoryQueuing:
                 or int(state.get('epoch_hi', 0))
                 != self.execution_epoch_hi
                 or int(state.get('epoch_lo', 0))
-                != self.execution_epoch_lo
-                or int(state.get('sequence', 0)) != pending['sequence']
+                != self.execution_epoch_lo):
+            return
+        reject_reason = int(state.get('reject_reason', -1))
+        if reject_reason != TGR_OK:
+            # A proposal may be accepted by one MCU while another MCU's
+            # Class-0 gate is momentarily closed.  Retrying that same
+            # future clock eventually turns it into a permanently stale
+            # proposal.  Close host ingestion and create a new, later
+            # sequence on the next timer pass.
+            logging.warning(
+                "HELIX execution grant %u rejected by %s (reason=%u);"
+                " reproposing a fresh coordinated horizon",
+                pending['sequence'], member.name, reject_reason)
+            self.group_pending = None
+            self.group_grant_ready = False
+            self.group_next_proposal = 0.
+            return
+        if (int(state.get('sequence', 0)) != pending['sequence']
                 or int(state.get('machine_clock', 0))
                 != pending['machine_clock']
-                or int(state.get('reject_reason', -1)) != TGR_OK
                 or not (int(state.get('flags', 0)) & TGF_ARMED)):
             return
         pending['acked'].add(member.name)
         if len(pending['acked']) != len(self.group_members):
             return
         self.group_committed_sequence = pending['sequence']
+        self.group_committed_until = pending['grant_time']
         self.group_pending = None
         self.group_next_proposal = (
             self.printer.get_reactor().monotonic()
