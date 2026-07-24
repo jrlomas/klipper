@@ -1136,6 +1136,24 @@ def test_trajectory_end_always_queues_terminal_hold():
     assert not stepper.anchored
 
 
+def test_trajectory_status_reports_shared_move_pool_capacity():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.oid = 7
+    stepper.status_cmd = FakeCommand({
+        'oid': 7, 'flags': 4, 'queued': 19, 'dropped': 0,
+        'horizon_clock': 123456, 'pos': -42})
+    stepper.capacity_cmd = FakeCommand({
+        'oid': 7, 'total': 417, 'free': 301, 'slot_bytes': 48})
+    status = stepper.firmware_status()
+    assert status['queued'] == 19
+    assert status['pool_total'] == 417
+    assert status['pool_free'] == 301
+    assert status['pool_slot_bytes'] == 48
+    assert stepper.status_cmd.sent == [[7]]
+    assert stepper.capacity_cmd.sent == [[7]]
+
+
 def test_secondary_terminal_hold_respects_short_machine_gap():
     class MixedClockOwner:
         def __init__(self):
@@ -2010,6 +2028,8 @@ def main():
     test_trajectory_end_always_queues_terminal_hold()
     print("PASS: every completed trajectory queues an explicit terminal"
           " hold")
+    test_trajectory_status_reports_shared_move_pool_capacity()
+    print("PASS: trajectory status reports shared move-pool capacity")
     test_secondary_terminal_hold_respects_short_machine_gap()
     print("PASS: secondary-MCU holds fit short machine-time gaps")
     test_wire_record_preserves_exact_segment_coefficients()

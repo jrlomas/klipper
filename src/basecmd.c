@@ -62,8 +62,9 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
 static struct move_node *move_free_list;
 static void *move_list;
 static uint16_t move_count;
+static uint16_t move_free_count;
 #if CONFIG_WANT_TRAFFIC_CLASSES
-static uint16_t move_free_count, move_reserve_count;
+static uint16_t move_reserve_count;
 #endif
 static uint8_t move_item_size;
 
@@ -82,9 +83,7 @@ move_free(void *m)
     struct move_node *mf = m;
     mf->next = move_free_list;
     move_free_list = mf;
-#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count++;
-#endif
 }
 
 // Allocate runtime storage
@@ -96,9 +95,7 @@ move_alloc(void)
     if (!mf)
         shutdown("Move queue overflow");
     move_free_list = mf->next;
-#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count--;
-#endif
     irq_restore(flag);
     return mf;
 }
@@ -178,6 +175,20 @@ move_queue_setup(struct move_queue_head *mh, int size)
         move_item_size = size;
 }
 
+// Snapshot the shared runtime move pool. Trajectory capacity negotiation
+// needs both the configured ceiling and the live free count; reporting only
+// an actuator's private queue would conceal slots held by GPIO/PWM or another
+// trajectory actuator on the same MCU.
+void
+move_get_status(uint16_t *total, uint16_t *free_count, uint8_t *slot_bytes)
+{
+    irqstatus_t flag = irq_save();
+    *total = move_count;
+    *free_count = move_free_count;
+    *slot_bytes = move_item_size;
+    irq_restore(flag);
+}
+
 void
 move_reset(void)
 {
@@ -192,9 +203,7 @@ move_reset(void)
     struct move_node *mf = move_list + (move_count - 1)*move_item_size;
     mf->next = NULL;
     move_free_list = move_list;
-#if CONFIG_WANT_TRAFFIC_CLASSES
     move_free_count = move_count;
-#endif
 }
 DECL_SHUTDOWN(move_reset);
 
@@ -315,8 +324,9 @@ config_reset(uint32_t *args)
     move_free_list = NULL;
     move_list = NULL;
     move_count = move_item_size = 0;
+    move_free_count = 0;
 #if CONFIG_WANT_TRAFFIC_CLASSES
-    move_free_count = move_reserve_count = 0;
+    move_reserve_count = 0;
 #endif
     alloc_init();
     sched_timer_reset();

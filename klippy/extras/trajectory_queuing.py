@@ -324,6 +324,7 @@ class TrajectoryStepper:
         self.recovery_rebase_cmd = None
         self.local_recovery_rebase_cmd = None
         self.status_cmd = None
+        self.capacity_cmd = None
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
         self.need_rebase = True
@@ -475,6 +476,12 @@ class TrajectoryStepper:
                 "traj_status oid=%c flags=%c queued=%hu dropped=%hu"
                 " horizon_clock=%u pos=%i",
                 oid=self.oid, cq=cmd_queue)
+        if self.mcu.try_lookup_command("traj_capacity_query oid=%c",
+                                       cq=cmd_queue) is not None:
+            self.capacity_cmd = self.mcu.lookup_query_command(
+                "traj_capacity_query oid=%c",
+                "traj_capacity oid=%c total=%hu free=%hu slot_bytes=%c",
+                oid=self.oid, cq=cmd_queue)
 
     def _setup_fitter_kinematics(self, sk):
         freq = self.mcu.seconds_to_clock(1.)
@@ -580,7 +587,13 @@ class TrajectoryStepper:
     def firmware_status(self):
         if self.status_cmd is None:
             return None
-        return self.status_cmd.send([self.oid])
+        status = self.status_cmd.send([self.oid])
+        if self.capacity_cmd is not None:
+            status.update({
+                'pool_' + key: value for key, value in
+                self.capacity_cmd.send([self.oid]).items()
+                if key != 'oid'})
+        return status
 
     def bezier_move(self, duration_s, ctrl_su):
         # Advanced/commissioning primitive: drive THIS joint alone along a
@@ -1361,6 +1374,11 @@ class TrajectoryQueuing:
                     " horizon=%u fw_pos=%d"
                     % (fw['flags'], fw['queued'], fw['dropped'],
                        fw['horizon_clock'], fw['pos']))
+                if 'pool_total' in fw:
+                    fw_text += (
+                        " pool_free=%d/%d slot_bytes=%d"
+                        % (fw['pool_free'], fw['pool_total'],
+                           fw['pool_slot_bytes']))
             lines.append(
                 "%s: anchored=%d need_rebase=%d recovery_hold=%d"
                 " higher_order=%d"

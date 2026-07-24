@@ -21,6 +21,8 @@ int move_queue_push(struct move_node *m, struct move_queue_head *mh);
 struct move_node *move_queue_pop(struct move_queue_head *mh);
 void move_queue_clear(struct move_queue_head *mh);
 void move_queue_setup(struct move_queue_head *mh, int size);
+void move_get_status(uint16_t *total, uint16_t *free_count,
+                     uint8_t *slot_bytes);
 void *oid_lookup(uint8_t oid, void *type);
 void *oid_alloc(uint8_t oid, void *type, uint16_t size);
 void *oid_next(uint8_t *i, void *type);

@@ -1928,6 +1928,21 @@ command_traj_query(uint32_t *args)
 }
 DECL_COMMAND(command_traj_query, "traj_query oid=%c");
 
+void
+command_traj_capacity_query(uint32_t *args)
+{
+    uint8_t oid = args[0];
+    // Validate that the requested actuator exists even though allocation is
+    // shared across all move-producing objects on this MCU.
+    traj_stepper_oid_lookup(oid);
+    uint16_t total, free_count;
+    uint8_t slot_bytes;
+    move_get_status(&total, &free_count, &slot_bytes);
+    sendf("traj_capacity oid=%c total=%hu free=%hu slot_bytes=%c",
+          oid, total, free_count, slot_bytes);
+}
+DECL_COMMAND(command_traj_capacity_query, "traj_capacity_query oid=%c");
+
 // Homing/probing stop, underrun event reporting, shutdown
 
 static void
