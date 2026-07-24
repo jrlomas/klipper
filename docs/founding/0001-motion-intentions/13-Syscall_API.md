@@ -4,6 +4,8 @@ Status: Implemented in HELIX 0.9 (board syscall ABI v1.0). It is the
 low-level substrate for the planned
 [target-native module architecture](24-Target_Native_Machine_Modules.md), not
 the capability boundary exposed directly to ordinary machine applications.
+That boundary is the
+[portable Python module API](25-Portable_Python_Module_API.md).
 
 ## Why this exists
 
@@ -80,7 +82,9 @@ and a build without it is byte-for-byte unaffected.
   specified in
   [24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).
   Those application APIs sit above this table; an ordinary job module does
-  not receive raw GPIO setup or interrupt-control authority.
+  not receive raw GPIO setup or interrupt-control authority. Their concrete
+  source surface is
+  [25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md).
 
 ## The idea this came from
 

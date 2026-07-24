@@ -306,7 +306,9 @@ target-native modules. The H7 does not run Klippy, Jinja, arbitrary Python, or
 a universal score bytecode VM. The complete source/operation contract is in
 [23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md); container,
 loader, isolation, target, and hard-real-time contracts are in
-[24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md).
+[24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md);
+the concrete cross-family Python calls and capability handles are in
+[25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md).
 
 Version 1 may prohibit live speed-factor changes. A later version may provide
 bounded local time scaling only after proving that motion, extrusion,

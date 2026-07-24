@@ -98,7 +98,8 @@ defines how one typed BLDC/FOC algorithm source can be compiled into
 target-native modules and deployed without reflashing. The target binding
 still owns synchronized ADC/PWM/DMA, gate-driver safety, and the physical
 motor interface; the portable control module owns transforms, estimators, and
-control policy.
+control policy. Its cross-family source and control-frame API is defined in
+[25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md).
 
 * **Control loop timing:** the FOC loop runs at its qualified rate on its own
   synchronized ADC/PWM control domain—it must never enter the ordinary

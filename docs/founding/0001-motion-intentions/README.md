@@ -53,19 +53,21 @@ status line records its more precise state.
 | [22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md) | Deep per-MCU staging, negotiated queue capacity, renewable group execution grants, bounded coordinated stop, and recovery | Phase A/B implementation and three-board homing/coordinated-motion gate pass; physical expiry-bound and recovery qualification in progress |
 | [23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md) | One restricted-Python workflow source for live Klipper and target-native HELIX execution, with typed operations, resource leases, evidence, and forward recovery | Architecture and implementation proposal; OpenAMS extraction complete locally, compiler/loader and physical gates pending |
 | [24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md) | Target-compiled native applications loaded from local storage without reflashing; module ABI, loader, isolation, lifecycle, hard-real-time domains, and portable BLDC/FOC | Architecture and implementation plan; board syscall substrate exists, compiler/loader/control-domain implementation pending |
+| [25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md) | Versioned cross-family Python types, actors, machine programs, capability handles, semantic operations, scoped I/O, and hard-real-time frames derived from HELIX's common firmware engines | API architecture and source contract draft; common engines exist, Python package/LLVM frontend/native adapters pending |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 22 → 10 → 04 → 01 → 20 → 21 → 23 → 24 → 13 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 12
-* *Host / klippy*: 02 → 05 → 22 → 21 → 23 → 24 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
+* *Protocol / firmware*: 02 → 22 → 10 → 04 → 01 → 20 → 21 → 23 → 24 → 25 → 13 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 12
+* *Host / klippy*: 02 → 05 → 22 → 21 → 23 → 25 → 24 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 22 (bounded group execution) → 21
-  (host-independent execution) → 23 (bounded dynamic workflows) → 24
+  (host-independent execution) → 23 (bounded dynamic workflows) → 25
+  (portable authority surface) → 24
   (native module isolation and physical gates) → 02
   (underrun) → 03
-* *Third-party device vendor*: 10 → 02 → 03 → 20 → 21 → 23 → 24 → 13 → 17 → 07 → 15 → 16 → 19 → 11
+* *Third-party device vendor*: 10 → 02 → 03 → 20 → 21 → 23 → 25 → 24 → 13 → 17 → 07 → 15 → 16 → 19 → 11
 
 ## Glossary
 
@@ -98,6 +100,12 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
   synchronized ADC/PWM motor control that invokes a separately qualified
   bounded native callback with fixed input/output frames
   ([24-Target_Native_Machine_Modules.md](24-Target_Native_Machine_Modules.md)).
+* **Portable Python module API** — the versioned authoring surface of fixed
+  types, stateful actors, machine programs, semantic capability handles,
+  typed operations, evidence, scoped device I/O, and control frames that
+  lowers onto HELIX's common firmware engines without exposing MCU-family
+  details
+  ([25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md)).
 * **Printer fabric** — the typed in-machine control, time, delivery, and
   telemetry plane joining the network mainboard to local actuators and
   downstream CAN/CAN-FD, serial, or future transport adapters. It is not a

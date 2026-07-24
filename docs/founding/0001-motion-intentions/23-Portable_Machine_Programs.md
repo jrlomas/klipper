@@ -14,7 +14,10 @@ This document extends the
 [coordinated execution horizon](22-Coordinated_Execution_Horizon.md). The
 target-native deployment, isolation, and hard-real-time control architecture
 is specified separately in
-[target-native machine modules](24-Target_Native_Machine_Modules.md).
+[target-native machine modules](24-Target_Native_Machine_Modules.md). The
+concrete cross-family Python packages, types, handles, calls, and callback
+profiles are specified in
+[the portable Python module API](25-Portable_Python_Module_API.md).
 
 ## Problem
 
@@ -291,9 +294,10 @@ location.
 Compilation is effect-oriented. It does not translate arbitrary CPython
 bytecode instruction by instruction. It analyzes portable functions into
 typed effects and finite continuations, validates their statechart, then
-lowers their executable control flow through C or compiler IR into target
-instructions. The statechart remains a semantic oracle and journal map, not
-the target's instruction stream.
+lowers their executable control flow directly to LLVM IR and target
+instructions. LLVM is a workstation compiler backend, not a target runtime.
+The statechart remains a semantic oracle and journal map, not the target's
+instruction stream.
 
 Boolean observations form two branches. Enums form their declared finite
 cases. Numeric observations form intervals from declared predicates rather

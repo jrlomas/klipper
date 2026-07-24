@@ -10,7 +10,9 @@ This document extends the
 [board syscall ABI](13-Syscall_API.md),
 [DMA acquisition architecture](17-DMA_ADC_Acquisition.md),
 [autonomous job capsule](21-Autonomous_Job_Execution.md), and
-[portable machine-program source model](23-Portable_Machine_Programs.md).
+[portable machine-program source model](23-Portable_Machine_Programs.md). The
+concrete cross-family authoring surface is
+[the portable Python module API](25-Portable_Python_Module_API.md).
 
 ## Thesis
 
@@ -33,10 +35,10 @@ restricted Python source
   typed/effect-checked IR
           |
           v
- generated C or LLVM input       host reference implementation
+        LLVM IR                  host reference implementation
           |                                 |
           v                                 v
- target cross-compiler              simulator / live Klipper
+ LLVM target backend                simulator / live Klipper
           |
           v
  native target instructions
@@ -207,18 +209,22 @@ The proposed `helixc` pipeline is:
 5. prove finite continuations, bounded retries, declared waits, and context
    size;
 6. emit a statechart for inspection and trace mapping;
-7. lower the executable paths to C or a compiler IR;
-8. invoke the target's ordinary cross-compiler and linker;
+7. lower the executable paths directly to LLVM IR;
+8. invoke the LLVM target backend and embedded linker to emit a relocatable
+   object;
 9. reduce the relocatable result to the allowlisted module sections and
    relocations;
 10. attach capability requirements, budgets, provenance, and state schema;
 11. produce host reference code and conformance vectors from the same IR; and
 12. hash, optionally sign, and package the `.hmod`.
 
-C is a practical initial lowering because every supported firmware target
-already has a qualified C toolchain. It is an implementation detail, not a
-portable application ABI. The stable contracts are the source semantics,
-typed IR, module container, and HELIX import surfaces.
+LLVM IR is a temporary workstation compiler artifact, not a portable module
+format or runtime instruction set. Direct lowering avoids introducing C
+integer promotion, undefined behavior, generated headers, and a second parser
+between HELIX semantics and native object code. The stable contracts are the
+source semantics, typed frontend model, module container, and HELIX import
+surfaces. A diagnostic C emitter may exist later, but it does not define
+production semantics.
 
 ### Language restrictions
 
@@ -376,6 +382,10 @@ checkpoints, journal events, and terminal results
 
 They cannot configure a timer register, claim arbitrary DMA, disable an IRQ,
 or write an unowned GPIO.
+
+The exact Python types, methods, callbacks, handle semantics, and their
+lowering onto this import surface are defined in
+[25-Portable_Python_Module_API.md](25-Portable_Python_Module_API.md).
 
 ### Hard-real-time control-domain API
 
@@ -924,7 +934,7 @@ safety, fault handling, and physical qualification remain mandatory.
 
 ### Phase 1 — container and workstation toolchain
 
-- [ ] Implement typed portable-source validation and a minimal C lowering.
+- [ ] Implement typed portable-source validation and direct LLVM IR lowering.
 - [ ] Produce deterministic target-native objects for at least two target
   classes.
 - [ ] Implement ELF-to-`.hmod` reduction with restricted sections, imports,
@@ -1029,6 +1039,11 @@ The architecture is complete only when:
 **Compile each application into the firmware image**
 : Preserves native speed but couples behavior deployment to a bootloader,
   reset, firmware rollback, and whole-image qualification.
+
+**Transpile production modules through generated C**
+: Adds C promotions, undefined-behavior rules, declarations, parsing, and
+  source mapping as an unnecessary semantic layer. The frontend lowers its
+  resolved typed model directly to LLVM IR; C may remain a diagnostic emitter.
 
 **Execute directly from the SD card**
 : Ordinary SD is not memory-mapped executable storage and has unbounded
