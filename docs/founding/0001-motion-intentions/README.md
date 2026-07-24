@@ -50,15 +50,17 @@ status line records its more precise state.
 | [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One typed gateway runtime with USB and Ethernet host links, CAN and serial services, transport-independent time sources, and exact delivery accounting | Workstation core/proxy/RMII implementation compile-tested; Ethernet/PTP/H723 hardware gates pending |
 | [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md) | Configurable time authorities, timestamp adapters, protocol bridges, quality propagation, and motion-safe failover | Architecture and phased implementation plan; current primary-MCU/USB/CAN mechanisms remain the compatibility baseline |
 | [21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md) | Stored deterministic job capsules, a network-mainboard printer fabric, replicated repositories, and host-independent completion | Architecture and phased implementation plan; physical autonomous execution pending |
+| [22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md) | Deep per-MCU staging, negotiated queue capacity, renewable group execution grants, bounded coordinated stop, and recovery | Architecture and implementation plan; interim two-second datagram buffer active, execution grants pending |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 10 → 04 → 01 → 20 → 21 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
-* *Host / klippy*: 02 → 05 → 21 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
+* *Protocol / firmware*: 02 → 22 → 10 → 04 → 01 → 20 → 21 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
+* *Host / klippy*: 02 → 05 → 22 → 21 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
-  (pause-and-hold, heater policy) → 21 (host-independent execution) → 02
+  (pause-and-hold, heater policy) → 22 (bounded group execution) → 21
+  (host-independent execution) → 02
   (underrun) → 03
 * *Third-party device vendor*: 10 → 02 → 03 → 20 → 21 → 17 → 07 → 15 → 16 → 19 → 11
 
@@ -96,6 +98,11 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
 * **Horizon** — how far into the future an actuator's queued segments
   extend, in machine time; reported by the MCU and used for refill
   flow control.
+* **Committed horizon / execution grant** — the shared machine-time bound
+  through which a coordination group is currently authorized to execute.
+  Work may be staged beyond it but remains inert until every essential
+  participant acknowledges a later grant
+  ([22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md)).
 * **Underrun ramp** — the deceleration-to-zero an actuator executes
   autonomously if its queue runs dry mid-motion; a resumable event,
   not a shutdown.
