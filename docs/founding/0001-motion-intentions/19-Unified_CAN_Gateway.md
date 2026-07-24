@@ -21,13 +21,24 @@ This document defines one HELIX CAN gateway architecture with interchangeable
 host links, time sources, and CAN controllers. It extends the CAN FD rules in
 [15-CANFD_Transport.md](15-CANFD_Transport.md), the Ethernet target plan in
 [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md), and the general link
-model in [07-Link_Transport.md](07-Link_Transport.md).
+model in [07-Link_Transport.md](07-Link_Transport.md). Its autonomous
+network-mainboard role and evolution into a typed printer fabric are specified
+in [21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md).
 
 The central decision is simple: **USB-to-CAN and Ethernet-to-CAN are not two
 bridges. They are two host-link adapters around the same CAN gateway core.**
 The common boundary is a canonical CAN frame plus explicit control and
 delivery records. It is not a byte stream, USB endpoint packet, `gs_usb`
 structure, UDP datagram, or Ethernet descriptor.
+
+In the autonomous network-mainboard profile, these adapters are no longer
+only alternate ways for a live host to reach CAN. Ethernet is the provisioning
+and management plane; the mainboard's local job coordinator is also a producer
+of typed traffic; CAN/CAN FD is the first downstream printer-fabric adapter.
+The same core must therefore admit local producers and eventually carry typed
+job-track, ownership, time, prompt-control, delivery, and telemetry records
+over CAN, serial, RS-485, or future buses without flattening their native
+semantics into a byte tunnel.
 
 ## Goals
 
@@ -476,7 +487,10 @@ producer.
 
 This lease is the architectural hook for future host redundancy. It is not a
 promise that automatic failover is safe before coordinated pause/resume and
-state reconstruction are qualified.
+state reconstruction are qualified. In autonomous mode the lease controls
+external mutation, not execution authorization: lease expiry cannot revoke a
+persisted armed job. The mainboard remains authoritative for that job's state
+while any number of hosts attach read-only.
 
 ## Linux and Klippy integration
 

@@ -12,7 +12,9 @@ This document extends the original [time model](01-Time_Model.md), the
 [transport-derived synchronization study](../../Transport_Time_Synchronization.md),
 the [CAN-FD timestamp path](15-CANFD_Transport.md), the
 [F767 Ethernet/PTP plan](16-STM32F767_Ethernet.md), and the
-[unified gateway architecture](19-Unified_CAN_Gateway.md).
+[unified gateway architecture](19-Unified_CAN_Gateway.md). The autonomous
+network-mainboard profile that consumes this fabric is specified in
+[21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md).
 
 The central decision mirrors the gateway decision:
 
@@ -311,6 +313,15 @@ The existing behavior remains the default. The primary MCU counter establishes
 the epoch, the host estimates its mapping, and secondary adapters consume
 observations expressed in that time. This requires no new hardware and keeps
 all existing printer configurations valid.
+
+For an armed autonomous job, this is a required profile rather than merely a
+default. The network mainboard's monotonic counter establishes the persisted
+job epoch, and all downstream clocks are disciplined replicas. A NIC PHC or
+external PTP grandmaster may improve its rate estimate and cross-printer
+comparability, but remains an upstream reference: losing or replacing it
+enters bounded mainboard holdover and cannot silently replace the active job
+epoch. Authority selection may change only while no scheduled job is active or
+through the explicit hold-and-requalify transaction below.
 
 ### Host NIC PHC
 

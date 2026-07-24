@@ -176,6 +176,7 @@ nav:
       - founding/0001-motion-intentions/18-Autonomous_Heater_Control.md
       - founding/0001-motion-intentions/19-Unified_CAN_Gateway.md
       - founding/0001-motion-intentions/20-Unified_Machine_Time.md
+      - founding/0001-motion-intentions/21-Autonomous_Job_Execution.md
     - FD-0002 — Atlas, the Companion System:
       - founding/0002-companion-system/README.md
       - founding/0002-companion-system/00-Vision.md

@@ -179,6 +179,22 @@ board, which intentionally turns its heater off; host redundancy is therefore
 an orchestration feature above this controller, not something inferred from
 RAM retention.
 
+### Autonomous job authorization
+
+The stored-job architecture in
+[21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md) adds a local
+supervisory authority above this loop. When a complete capsule is armed, its
+persisted execution generation, heater envelope, target track, maximum
+duration, and terminal policy authorize the controller; an external host
+heartbeat does not. Loss of Klippy or the farm network therefore changes
+observability, not heater ownership or target.
+
+This does not weaken the controller's local safety bounds. Sensor validity,
+runaway detection, maximum temperature and power, watchdogs, and a configured
+absolute duration ceiling remain firmware invariants. The capsule may narrow
+those limits but cannot widen them. A host reconnects by adopting the active
+generation, not by replaying heater configuration.
+
 ## Autotune
 
 System identification remains on the host because it is rare, numerical, and

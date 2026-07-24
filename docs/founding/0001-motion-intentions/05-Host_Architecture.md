@@ -12,6 +12,15 @@ thing** — a smooth per-joint position trajectory — it just destroys it
 by flattening to step pulses before transmission. The new host work is
 therefore mostly *subtraction*, plus one new module.
 
+For live-streaming mode, the host remains the active producer described
+below. In the autonomous architecture, this same post-lookahead,
+post-quantization path becomes the first job-capsule compiler: it records the
+exact intentions once, provisions them to the network mainboard, and leaves
+execution to the printer. See
+[21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md). This avoids
+creating a second planner whose output could diverge from the qualified live
+path.
+
 ## Survives unchanged
 
 * G-code frontend, macros, API server, all `extras/` modules.

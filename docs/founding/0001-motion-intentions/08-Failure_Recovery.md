@@ -112,7 +112,8 @@ and what was already printed, and re-plans from ground truth.
 | Queue underrun (host stall, link congestion) | segment queue empty at v≠0 | decel ramp → hold ([02](02-Intention_Protocol.md)) | Yes — rebase and continue |
 | Link loss, board still powered (loose cable, AP dropout) | Class-0 silence / beacon loss past budget ([01](01-Time_Model.md)) | **pause-and-hold**: finish or ramp out current motion, hold positions, heaters per failure policy, keep logging | Yes — replug/reassociate, re-handshake, rebase, continue |
 | Board reset / power loss | reconnect handshake shows fresh boot (uptime, config CRC) | that board's volatile state is gone; *other* boards pause-and-hold | Partially — see per-joint recovery below |
-| Host crash / host power loss | all boards lose beacons + Class-0 traffic | machine-wide pause-and-hold (autonomous — no host needed) | Yes — host restarts, reads positions + execution logs, resumes |
+| Host crash / host power loss in live-streaming mode | boards lose host-relayed beacons + Class-0 traffic | machine-wide pause-and-hold (the hold itself needs no host) | Yes — host restarts, reads positions + execution logs, resumes |
+| External host/control-plane loss with a complete autonomous capsule armed | mainboard loses authenticated observer/owner session; local job and printer fabric remain healthy | continue the locally authorized job and journal observer loss | Not interrupted — host may reattach read-only |
 | Trigger abort (unexpected endstop, servo fault) | trsync fires | coordinated stop (as today), then **hold, not shutdown** | Usually — host inspects logs and decides |
 | Genuine firmware fault (watchdog, assertion, `Timer too close` on Class 0) | internal | full shutdown, as today — pause-and-hold requires a *trustworthy* MCU | Via log dump after restart, best-effort |
 
@@ -120,6 +121,15 @@ The last row is the honest boundary: pause-and-hold is for failures
 *around* a healthy MCU (links, hosts, cables, queues). When the MCU
 itself cannot be trusted, the existing shutdown path — including its
 heater cutoff — is the right answer, unchanged.
+
+The autonomous row is deliberately narrower than a general permission to
+ignore communications loss. It applies only after the transactional
+stage/verify/qualify/arm sequence in
+[21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md) has committed
+the complete job locally. Loss of an essential downstream node, printer-fabric
+time quality, or local storage runway still invokes coordinated hold or
+controlled stop. An incomplete live stream never inherits autonomous
+authorization.
 
 ## Pause-and-hold: the machine state
 
