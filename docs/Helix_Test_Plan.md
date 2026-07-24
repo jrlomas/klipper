@@ -1091,6 +1091,15 @@ Phases 3/7/8 over each real transport.
     holds. This qualifies one active I2S trajectory axis; simultaneous-axis
     saturation remains part of the print soak rather than being inferred from
     this result.
+  - [x] **Rodent WiFi latency A/B (2026-07-23):** with modem sleep already
+    disabled, A-MPDU RX/TX produced 1.202/1.223-second maximum RTT and
+    1%/2% loss in matched 20 pps/5 pps samples. Disabling only A-MPDU reduced
+    those samples to 29.960/11.435 ms maximum, 4.309/4.209 ms mean, and zero
+    loss. An extended 1,000-packet 20 pps run then recorded 0.1% loss,
+    3.742 ms mean, and 29.001 ms maximum. Live firmware readback proved
+    `power_save=none(valid=1)`, `ampdu_rx=0`, and `ampdu_tx=0`; Rodent stayed
+    converged with no disconnect, socket, receive-ring, or invalid-byte
+    errors. This accepts the no-A-MPDU profile for the physical print soak.
   - [ ] **Post-recovery print soak:** that first print stopped when Rodent
     ceased answering. The wired host and nearby access point remained up.
     The capture did not distinguish a station disconnect from an MCU reset,
@@ -1098,9 +1107,10 @@ Phases 3/7/8 over each real transport.
     firmware re-associated WiFi without recreating the UDP socket ESP-IDF had
     invalidated. Both component and modem socket owners now close on
     disconnect and reopen only after a fresh IP event; Rodent also disables
-    modem sleep, caps lab transmit power at 8.5 dBm, expands the receive ring,
-    and reports reset/disconnect/drop/socket counters through
-    `HELIX_WIFI_STATUS`. Cross-builds and the source-contract regression pass;
+    modem sleep and A-MPDU RX/TX, caps lab transmit power at 8.5 dBm, expands
+    the receive ring, and reports effective power-save, compiled aggregation,
+    reset/disconnect/drop/socket counters through `HELIX_WIFI_STATUS`.
+    Cross-builds, the source-contract regression, and the latency A/B pass;
     repeat a complete physical print and record those counters before checking
     the parent gate.
 - [ ] **9.4 — Ethernet (RMII).** Same as 9.3 over Ethernet.

@@ -30,8 +30,13 @@ def main():
     assert "IP_EVENT_STA_GOT_IP" in wifi
     assert "network_changed(1)" in wifi
     assert "ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE))" in wifi
+    assert "ESP_ERROR_CHECK(esp_wifi_get_ps(&ps))" in wifi
+    assert "ps == WIFI_PS_NONE ? ESP_OK : ESP_FAIL" in wifi
     assert "esp_wifi_set_max_tx_power" in wifi
     assert "CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34" in rodent
+    assert "CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n" in rodent
+    assert "CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n" in rodent
+    assert "ps_mode=%u ps_valid=%u ampdu_rx=%u ampdu_tx=%u" in wifi
 
     # Both ESP32 architectures must discard and recreate their socket after
     # link loss; merely calling esp_wifi_connect() is not sufficient.

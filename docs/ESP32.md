@@ -111,7 +111,16 @@ The command link is configured for latency and recoverability rather than
 maximum radio range:
 
 * Modem sleep is disabled with `esp_wifi_set_ps(WIFI_PS_NONE)` (the ESP-IDF
-  equivalent of Arduino's `WiFi.setSleep(false)`).
+  equivalent of Arduino's `WiFi.setSleep(false)`). Firmware applies this
+  before the initial association, reads it back, and refuses bring-up if the
+  effective policy is not `WIFI_PS_NONE`.
+* The Rodent low-latency profile disables A-MPDU RX and TX. This follows
+  [Espressif's recommendation](https://github.com/espressif/esp-faq/blob/master/docs/en/software-framework/wifi.rst#after-disabling-modem-sleep-the-ping-latency-is-still-high-how-can-it-be-further-optimized)
+  when latency remains unstable after modem sleep is disabled, trading bulk
+  WiFi throughput for independently completed command datagrams.
+  `HELIX_WIFI_STATUS` reports the compiled RX/TX settings and the live
+  power-save readback so the experiment does not rely on a setter call or
+  build-file assumption.
 * The Rodent profile requests a maximum transmit power of 8.5 dBm. The Kconfig
   value is in quarter-dBm units, so
   `CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34`. The classic ESP32's supported
@@ -144,11 +153,39 @@ HELIX_WIFI_STATUS MCU=rodent
 ```
 
 The response includes association/IP state, RSSI, configured transmit power,
-disconnect count and last reason, ESP reset reason, socket reopen count,
-datagrams received/transmitted, receive-ring drops, and socket errors. After a
-future communication pause, re-establish the host session without first
-issuing an MCU reset and capture this status; otherwise a deliberate software
+effective power-save mode, compiled A-MPDU RX/TX state, disconnect count and
+last reason, ESP reset reason, socket reopen count, datagrams
+received/transmitted, receive-ring drops, and socket errors. After a future
+communication pause, re-establish the host session without first issuing an
+MCU reset and capture this status; otherwise a deliberate software
 reset can overwrite the reset cause that would distinguish a brownout.
+
+### Rodent A-MPDU latency experiment (2026-07-23)
+
+The controlled A/B used the same Rodent, access point, wired host, 8.5 dBm
+requested transmit-power profile, disabled modem sleep, and active Klipper
+session. Only A-MPDU RX/TX changed. The enabled baseline exhibited second-long
+service freezes:
+
+| ICMP workload | A-MPDU RX/TX | Loss | Mean RTT | Maximum RTT |
+| --- | --- | ---: | ---: | ---: |
+| 100 packets at 20 pps | enabled | 1% | 211.8 ms | 1202 ms |
+| 100 packets at 20 pps | disabled | 0% | 4.309 ms | 29.960 ms |
+| 50 packets at 5 pps | enabled | 2% | 155 ms | 1223 ms |
+| 50 packets at 5 pps | disabled | 0% | 4.209 ms | 11.435 ms |
+| 1000 packets at 20 pps | disabled | 0.1% | 3.742 ms | 29.001 ms |
+
+The flashed firmware reported `power_save=none(valid=1)`, `ampdu_rx=0`,
+`ampdu_tx=0`, RSSI -46 dBm, and no WiFi disconnect, UDP socket, receive-ring,
+or invalid-byte errors. Rodent remained machine-time converged through the
+extended run. Its host transport showed a 5 ms SRTT, 25 ms RTO, and only 49
+additional retransmitted bytes during the extended measurement, rather than
+the earlier multi-kilobyte growth and 1.57-second RTO.
+
+This is strong causal evidence that aggregation was the dominant source of
+the observed one-second latency tail on this AP/ESP32 combination. It does not
+yet qualify print-length reliability: retain the no-A-MPDU profile and repeat
+a complete supervised print while checking the same counters.
 
 For a secondary network MCU that may recover, configure:
 

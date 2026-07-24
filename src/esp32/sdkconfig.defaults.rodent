@@ -23,6 +23,13 @@ CONFIG_KLIPPER_UDP_PORT=41414
 # uses quarter-dBm units: 34 = 8.5 dBm.
 CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34
 
+# Low-latency motion-command experiment. Espressif recommends disabling
+# A-MPDU aggregation when disabling modem sleep alone does not bound ping
+# latency. This trades bulk throughput for shorter, independently completed
+# frames; HELIX's small authenticated UDP datagrams do not need aggregation.
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
+
 # The first transport qualification should measure the native link before
 # choosing the 50%-overhead pair-FEC profile.
 CONFIG_KLIPPER_FEC_PAIR=n

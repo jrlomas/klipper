@@ -85,7 +85,7 @@ Terms like *segment*, *execution log*, or *framing v2* are defined in the
 | --- | --- |
 | `HELIX_SELF_TEST [MCU=<name>]` | Run each board's live verification gates through the protocol — wire CRC vector, timer monotonicity, RAM pattern, and the trajectory fixed-point kernel against host golden vectors — plus a link round-trip measurement. The verification stage as a console command; once green, a field diagnostic. `on_connect`/`required` options run it automatically at connect. |
 | `HELIX_OUTPUT_STATUS MCU=<name> [STEP_BIT=<0..15> DIR_BIT=<0..15>]` | Report sparse-output serializer state, write count, wire bitrate, and measured average/worst CPU-cycle cost on supported boards (currently the Rodent ESP32 backend). Supplying both bit numbers resets and enables latch-edge monitoring; subsequent queries report step-rise interval, pulse-high width, and direction stability in MCU timer ticks. |
-| `HELIX_WIFI_STATUS MCU=<name>` | Report component-mode ESP32 association/IP state, RSSI and transmit power, disconnect/reset evidence, UDP socket reopen and error counts, and receive-ring drops. |
+| `HELIX_WIFI_STATUS MCU=<name>` | Report component-mode ESP32 association/IP state, RSSI and transmit power, effective power-save mode, compiled A-MPDU RX/TX state, disconnect/reset evidence, UDP socket reopen and error counts, and receive-ring drops. |
 
 ## Config surface (new)
 

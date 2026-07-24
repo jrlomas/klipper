@@ -40,8 +40,10 @@ static void
 wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        __atomic_add_fetch(&wifi_connect_attempts, 1, __ATOMIC_RELAXED);
-        esp_wifi_connect();
+        // esp32_wifi_start() connects explicitly only after applying and
+        // verifying the no-power-save policy. Connecting from this event
+        // races that policy setter and can begin association in the default
+        // WIFI_PS_MIN_MODEM mode.
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
         __atomic_store_n(&wifi_connected, 1, __ATOMIC_RELEASE);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
@@ -105,10 +107,17 @@ esp32_wifi_start(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
     // ESP-IDF equivalent of Arduino's WiFi.setSleep(false): keep modem
-    // sleep off on a real-time command link.
+    // sleep off on a real-time command link. Apply this before association,
+    // then read it back so a setter that returned success but did not change
+    // the effective policy fails bring-up instead of silently adding latency.
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    wifi_ps_type_t ps;
+    ESP_ERROR_CHECK(esp_wifi_get_ps(&ps));
+    ESP_ERROR_CHECK(ps == WIFI_PS_NONE ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(
                         CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM));
+    __atomic_add_fetch(&wifi_connect_attempts, 1, __ATOMIC_RELAXED);
+    ESP_ERROR_CHECK(esp_wifi_connect());
 }
 
 #if !KLIPPER_ARCH_MODEM
@@ -118,21 +127,27 @@ command_wifi_get_status(uint32_t *args)
     (void)args;
     int8_t tx_power = CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM;
     int32_t rssi = -127;
+    wifi_ps_type_t ps = WIFI_PS_MAX_MODEM;
     wifi_ap_record_t ap;
+    uint32_t ps_valid = esp_wifi_get_ps(&ps) == ESP_OK;
     if (esp_wifi_get_max_tx_power(&tx_power) != ESP_OK)
         tx_power = CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
         rssi = ap.rssi;
     sendf("wifi_status connected=%u got_ip=%u connect_attempts=%u"
           " disconnects=%u got_ips=%u last_reason=%u"
-          " tx_power_qdbm=%i rssi=%i reset_reason=%u",
+          " tx_power_qdbm=%i rssi=%i reset_reason=%u"
+          " ps_mode=%u ps_valid=%u ampdu_rx=%u ampdu_tx=%u",
           __atomic_load_n(&wifi_connected, __ATOMIC_ACQUIRE),
           __atomic_load_n(&wifi_got_ip, __ATOMIC_ACQUIRE),
           __atomic_load_n(&wifi_connect_attempts, __ATOMIC_RELAXED),
           __atomic_load_n(&wifi_disconnects, __ATOMIC_RELAXED),
           __atomic_load_n(&wifi_got_ips, __ATOMIC_RELAXED),
           __atomic_load_n(&wifi_last_disconnect_reason, __ATOMIC_ACQUIRE),
-          (int32_t)tx_power, rssi, (uint32_t)esp_reset_reason());
+          (int32_t)tx_power, rssi, (uint32_t)esp_reset_reason(),
+          (uint32_t)ps, ps_valid,
+          (uint32_t)WIFI_AMPDU_RX_ENABLED,
+          (uint32_t)WIFI_AMPDU_TX_ENABLED);
 }
 DECL_COMMAND_FLAGS(command_wifi_get_status, HF_IN_SHUTDOWN,
                    "wifi_get_status");

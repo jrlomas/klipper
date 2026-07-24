@@ -289,7 +289,8 @@ class HelixSelfTest:
             'wifi_get_status',
             'wifi_status connected=%u got_ip=%u connect_attempts=%u'
             ' disconnects=%u got_ips=%u last_reason=%u'
-            ' tx_power_qdbm=%i rssi=%i reset_reason=%u').send([])
+            ' tx_power_qdbm=%i rssi=%i reset_reason=%u'
+            ' ps_mode=%u ps_valid=%u ampdu_rx=%u ampdu_tx=%u').send([])
         port = None
         if mcu.try_lookup_command('udp_port_get_status') is not None:
             port = mcu.lookup_query_command(
@@ -302,12 +303,18 @@ class HelixSelfTest:
             "HELIX WiFi status: mcu=%s connected=%u got_ip=%u"
             " attempts=%u disconnects=%u got_ips=%u last_reason=%u"
             " tx_power=%.2fdBm rssi=%ddBm reset_reason=%u(%s)"
+            " power_save=%s(valid=%u) ampdu_rx=%u ampdu_tx=%u"
             % (only, wifi['connected'], wifi['got_ip'],
                wifi['connect_attempts'], wifi['disconnects'],
                wifi['got_ips'], wifi['last_reason'],
                wifi['tx_power_qdbm'] / 4., wifi['rssi'],
                wifi['reset_reason'], self._ESP_RESET_REASONS.get(
-                   wifi['reset_reason'], 'unrecognized')))
+                   wifi['reset_reason'], 'unrecognized'),
+               ('none' if wifi['ps_mode'] == 0
+                else 'min_modem' if wifi['ps_mode'] == 1
+                else 'max_modem' if wifi['ps_mode'] == 2
+                else 'unknown(%d)' % (wifi['ps_mode'],)),
+               wifi['ps_valid'], wifi['ampdu_rx'], wifi['ampdu_tx']))
         if port is not None:
             message += (
                 " udp(socket=%u opens=%u open_failures=%u rx=%u"
