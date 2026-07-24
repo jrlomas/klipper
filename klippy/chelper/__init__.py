@@ -211,6 +211,8 @@ defs_serialqueue = """
                                    , double data_frequency);
     void serialqueue_set_receive_window(struct serialqueue *sq
         , int receive_window);
+    void serialqueue_set_send_ahead(struct serialqueue *sq
+                                    , double send_ahead);
     void serialqueue_set_clock_est(struct serialqueue *sq, double est_freq
         , double conv_time, uint64_t conv_clock, uint64_t last_clock);
     void serialqueue_get_stats(struct serialqueue *sq, char *buf, int len);

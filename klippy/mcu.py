@@ -2126,6 +2126,8 @@ class MCU:
         return self._hw_endstop_observer
     def get_multi_mcu_homing_timeout(self):
         return self._multi_mcu_homing_timeout
+    def set_serial_send_ahead(self, seconds):
+        self._serial.set_send_ahead(seconds)
     # MCU Configuration wrappers
     def setup_pin(self, pin_type, pin_params):
         return self._config_helper.setup_pin(pin_type, pin_params)

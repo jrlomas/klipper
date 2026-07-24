@@ -64,6 +64,9 @@ class IntentprotoTransport:
         self.name = config.get_name().split()[-1]
         self.mode = config.getchoice(
             'mode', {'bch': 'bch', 'datagram': 'datagram'})
+        self.send_ahead = config.getfloat(
+            'send_ahead', 1.0 if self.mode == 'datagram' else .100,
+            minval=.100, maxval=30.0)
         default_pty = '/tmp/intentproto-%s' % (self.name,)
         self.pty_link = config.get('pty', default_pty)
         # Authentication: a PSK file, or the explicit trust-network confession.
@@ -145,6 +148,13 @@ class IntentprotoTransport:
                 " the link in v1 pass-through", self.name, mcu_name)
             return
         if self.mode == 'datagram':
+            # Klipper's serialqueue normally releases reqclock-tagged
+            # commands only 100ms before their MCU deadline.  A datagram ARQ
+            # can legitimately back off longer than that while the toolhead
+            # still has seconds of planned motion.  Release this link's
+            # commands early enough for the configured network buffer to be
+            # physically staged instead of merely present in lookahead.
+            self._configure_datagram_serial(mcu)
             self._lookup_datagram_diagnostics(mcu)
             return
         # Capability-driven negotiation for the bch envelope.
@@ -162,6 +172,9 @@ class IntentprotoTransport:
                 "intentproto_transport %s: board does not advertise"
                 " FRAMING_V2 (stock firmware, or WANT_CONSOLE_FRAMING_V2"
                 " not built) — staying in plain v1 pass-through", self.name)
+
+    def _configure_datagram_serial(self, mcu):
+        mcu.set_serial_send_ahead(self.send_ahead)
 
     def _lookup_datagram_diagnostics(self, mcu):
         if mcu.try_lookup_command('udp_console_get_status') is not None:

@@ -74,7 +74,7 @@ struct serialqueue {
     pthread_mutex_t lock; // protects variables below
     // Baud / clock tracking
     int receive_window;
-    double bittime_adjust, idle_time;
+    double bittime_adjust, idle_time, send_ahead;
     double can_data_bittime;
     uint8_t can_payload_size, can_bitrate_switch;
     struct clock_estimate ce;
@@ -113,7 +113,7 @@ struct serialqueue {
 #define MIN_RTO 0.025
 #define MAX_RTO 5.000
 #define MAX_PENDING_BLOCKS 12
-#define MIN_REQTIME_DELTA 0.100
+#define DEFAULT_SEND_AHEAD 0.100
 #define MIN_BACKGROUND_DELTA 0.005
 #define IDLE_QUERY_TIME 1.0
 
@@ -865,13 +865,13 @@ check_send_command(struct serialqueue *sq, int pending, double eventtime)
             &cq->ready.msg_queue, struct queue_message, node);
         uint64_t req_clock = qm->req_clock;
         double bgtime = pending ? idletime : sq->idle_time;
-        double bgoffset = MIN_REQTIME_DELTA + MIN_BACKGROUND_DELTA;
+        double bgoffset = sq->send_ahead + MIN_BACKGROUND_DELTA;
         if (req_clock == BACKGROUND_PRIORITY_CLOCK)
             req_clock = clock_from_time(&sq->ce, bgtime + bgoffset);
         if (req_clock < min_ready_clock)
             min_ready_clock = req_clock;
     }
-    uint64_t reqclock_delta = MIN_REQTIME_DELTA * sq->ce.est_freq;
+    uint64_t reqclock_delta = sq->send_ahead * sq->ce.est_freq;
     if (min_ready_clock <= ack_clock + reqclock_delta)
         return PR_NOW;
 
@@ -944,6 +944,7 @@ serialqueue_alloc(int serial_fd, char serial_fd_type, int client_id
     sq->serial_fd_type = serial_fd_type;
     sq->client_id = client_id;
     sq->can_payload_size = 8;
+    sq->send_ahead = DEFAULT_SEND_AHEAD;
     strncpy(sq->name, name, sizeof(sq->name));
     sq->name[sizeof(sq->name)-1] = '\0';
 
@@ -1349,6 +1350,19 @@ serialqueue_set_receive_window(struct serialqueue *sq, int receive_window)
     pthread_mutex_lock(&sq->lock);
     sq->receive_window = receive_window;
     pthread_mutex_unlock(&sq->lock);
+}
+
+void __visible
+serialqueue_set_send_ahead(struct serialqueue *sq, double send_ahead)
+{
+    if (send_ahead < DEFAULT_SEND_AHEAD)
+        send_ahead = DEFAULT_SEND_AHEAD;
+    pthread_mutex_lock(&sq->lock);
+    sq->send_ahead = send_ahead;
+    pthread_mutex_unlock(&sq->lock);
+    // A larger horizon may make already queued commands eligible now.
+    pollreactor_update_timer(sq->pr, SQPT_COMMAND, PR_NOW);
+    kick_bg_thread(sq);
 }
 
 // Set the estimated clock rate of the mcu on the other end of the

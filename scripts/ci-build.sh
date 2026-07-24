@@ -112,6 +112,7 @@ for TEST in \
     test/segfit_fidelity_test.py \
     test/segment_lib_test.py \
     test/session_bridge_test.py \
+    test/serialqueue_send_ahead_test.py \
     test/timesync_gate_test.py \
     test/tmc_motion_poll_test.py \
     test/tmc_uart_baud_test.py \

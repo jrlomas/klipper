@@ -125,6 +125,9 @@ class SerialReader:
             self.ffi_lib.serialqueue_set_receive_window(
                 self.serialqueue, receive_window)
         return True
+    def set_send_ahead(self, seconds):
+        self.ffi_lib.serialqueue_set_send_ahead(
+            self.serialqueue, float(seconds))
     def connect_canbus(self, canbus_uuid, canbus_nodeid, canbus_iface="can0",
                        canfd_mtu=8, canfd_brs=False,
                        canfd_data_bitrate=1000000):
