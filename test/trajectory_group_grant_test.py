@@ -168,6 +168,7 @@ def test_grant_requires_every_member_ack():
 
 def test_duplicate_and_rejected_states_do_not_commit():
     owner = make_owner()
+    owner.printer.reactor.now = 10.
     owner._grant_timer(10.)
     first, second = owner.group_members.values()
     ack_for(owner, first)
@@ -184,7 +185,8 @@ def test_duplicate_and_rejected_states_do_not_commit():
     })
     assert not owner.group_grant_ready
     assert owner.group_pending is None
-    owner._grant_timer(10.1)
+    assert owner._grant_timer(10.1) == 10.25
+    owner._grant_timer(10.25)
     assert owner.group_sequence == 2
 
 
@@ -225,6 +227,7 @@ def test_active_rejection_latches_and_stops_reproposal():
 
 def test_startup_planning_lead_does_not_latch_idle_rejection():
     owner = make_owner()
+    owner.printer.reactor.now = 10.
     owner._grant_timer(10.)
     # Klippy establishes a future scheduling horizon while connecting even
     # though no trajectory segment has been queued.
@@ -240,7 +243,8 @@ def test_startup_planning_lead_does_not_latch_idle_rejection():
         'reject_reason': 5,
     })
     assert owner.group_renewal_fault is None
-    owner._grant_timer(10.1)
+    assert owner._grant_timer(10.1) == 10.25
+    owner._grant_timer(10.25)
     assert owner.group_sequence == 2
     assert owner.group_pending is not None
 
@@ -283,6 +287,7 @@ def test_expired_host_lease_revokes_ready_state():
 
 def test_reproposal_horizon_never_moves_backwards():
     owner = make_owner()
+    owner.printer.reactor.now = 10.
     owner._grant_timer(10.)
     first_grant_time = owner.group_pending['grant_time']
     first, _second = owner.group_members.values()
@@ -297,8 +302,38 @@ def test_reproposal_horizon_never_moves_backwards():
     })
     for member in owner.group_members.values():
         member.mcu.estimate = 5.
-    owner._grant_timer(10.1)
+    owner._grant_timer(10.25)
     assert owner.group_pending['grant_time'] > first_grant_time
+
+
+def test_idle_reproposal_horizon_does_not_run_ahead_of_time():
+    owner = make_owner()
+    now = 10.
+    estimate = 20.
+    for _attempt in range(160):
+        owner.printer.reactor.now = now
+        for member in owner.group_members.values():
+            member.mcu.estimate = estimate
+        owner._grant_timer(now)
+        pending = owner.group_pending
+        assert pending is not None
+        first, _second = owner.group_members.values()
+        owner._handle_group_state(first, {
+            'group_id': owner.execution_group_id,
+            'epoch_hi': owner.execution_epoch_hi,
+            'epoch_lo': owner.execution_epoch_lo,
+            'sequence': pending['sequence'],
+            'machine_clock': pending['machine_clock'],
+            'flags': trajectory_queuing.TGF_CONFIGURED,
+            'reject_reason': 5,
+        })
+        assert owner.group_next_proposal == (
+            now + owner.execution_grant_interval)
+        # The next normal cadence advances real and estimated time together.
+        now += owner.execution_grant_interval
+        estimate += owner.execution_grant_interval
+    assert pending['grant_time'] <= (
+        estimate + owner.execution_grant_horizon)
 
 
 def test_proposal_advances_past_each_member_clock():
@@ -357,6 +392,7 @@ def main():
         test_renewal_respects_interval_after_all_ack,
         test_expired_host_lease_revokes_ready_state,
         test_reproposal_horizon_never_moves_backwards,
+        test_idle_reproposal_horizon_does_not_run_ahead_of_time,
         test_proposal_advances_past_each_member_clock,
         test_member_registers_complete_response_format,
         test_firmware_has_closed_epoch_and_controlled_expiry,

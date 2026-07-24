@@ -1876,9 +1876,16 @@ class TrajectoryQueuing:
                     pending['sequence'], member.name, reject_reason)
             self.group_pending = None
             self.group_grant_ready = False
+            reactor = self.printer.get_reactor()
+            # Rate-limit idle reproposals to the normal renewal cadence.
+            # Advancing a fresh proposal by one renewal interval every
+            # 100ms response retry made its expiry race ahead of wall time;
+            # after a long Wi-Fi qualification interval, a 64MHz MCU could
+            # see the new local expiry more than half a 32-bit timer wrap
+            # beyond its last accepted one and reject it as non-monotonic.
             self.group_next_proposal = (
-                0. if not active
-                else self.printer.get_reactor().NEVER)
+                reactor.monotonic() + self.execution_grant_interval
+                if not active else reactor.NEVER)
             return
         if (int(state.get('sequence', 0)) != pending['sequence']
                 or int(state.get('machine_clock', 0))
