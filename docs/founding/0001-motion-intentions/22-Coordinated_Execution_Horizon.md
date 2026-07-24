@@ -307,6 +307,43 @@ brief carrier outage until its bounded grant expires.
 * keep the committed horizon short enough for acceptable control latency; and
 * reuse the identical machinery for autonomous job-track dispatch.
 
+## Phase A/B commissioning record
+
+The first three-board physical commissioning run used the V0 Pico (RP2040),
+Rodent (ESP32/WiFi), and EBB36 (STM32G0B1/CAN) as one execution group. It
+deliberately included hardware-triggered homing, whose short drip-fed queues
+are the counterexample that established why a grant must be a ceiling rather
+than a promise of staged depth.
+
+- [x] RP2040, ESP32, and STM32G0B1 firmware built with the group ABI; fresh
+      `e5c121b4` images were flashed to all three motion participants.
+- [x] A transiently unqualified WiFi member at startup closed admission
+      without latching a false active-motion fault; idle reproposals later
+      converged all members on one epoch and sequence.
+- [x] A complete physical `G28` retained the hardware-trigger path and ended
+      with `xyz` homed at `[110,110,30]`; all three members reported committed
+      sequence 378 with no recovery or renewal fault.
+- [x] A subsequent coordinated G1 moved Pico X/Y and Rodent Z to
+      `[60,60,40]`; all members reported sequence 495, remained clock
+      qualified, and Klipper stayed ready.
+- [ ] Physically interrupt a member during simultaneous multi-axis and
+      extrusion motion, independently measure each held endpoint, and
+      qualify the declared divergence and recovery bounds.
+
+Two commissioning defects were corrected before those passes:
+
+1. `toolhead.get_last_move_time()` includes Klippy's future startup scheduling
+   lead, so it falsely classified an idle rejection as active motion. The host
+   now decides this from each trajectory stepper's primary-machine-domain
+   horizon of actually queued nonzero motion; a confirmed trigger or underrun
+   clears that horizon.
+2. An idle rejection was retried every 100 ms while advancing its proposal by
+   the 250 ms renewal interval. That made the expiry race ahead of wall time
+   and eventually exceeded the safe half-wrap comparison interval of a
+   64 MHz timer. Idle reproposals now use the normal renewal cadence. A
+   160-renewal workstation regression proves the proposal remains at the
+   configured horizon instead of running away.
+
 ## Qualification gates
 
 No “coordinated pause” claim is complete until all of these pass:

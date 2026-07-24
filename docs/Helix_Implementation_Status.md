@@ -395,8 +395,18 @@ pass.
   bound independent of staged depth; a shorter queue stops earlier. Grant
   machine time is based only on the primary MCU clock, and every secondary
   derives the local expiry from its onboard discipline instead of trusting a
-  noisy host-side local-clock conversion. Reflashing and the repeat physical
-  homing/expiry tests remain required.
+  noisy host-side local-clock conversion. Fresh `e5c121b4` images were then
+  flashed to Pico, Rodent, and EBB36. Commissioning found and fixed two
+  host-only startup defects: Klippy's future planning lead was mistaken for
+  active physical motion, and rejected idle proposals advanced the grant
+  horizon faster than wall time. The corrected host tracks only queued
+  nonzero-motion clocks and paces idle reproposals at the renewal interval.
+  On `6ada3ca6`, Pico, Rodent, and EBB36 converged on one epoch and sequence;
+  a full `G28` completed at `[110,110,30]`, followed by a coordinated G1 to
+  `[60,60,40]`. The shared sequence advanced from 378 to 495 with every member
+  equal, all clock disciplines remained converged, and no renewal fault,
+  recovery hold, or printer shutdown occurred. Physical link-expiry,
+  divergence-bound, and recovery tests remain required.
 * Normal G0/G1 is now the production quintic path for trajectory steppers.
   Klippy retains Cartesian lookahead, kinematics, and the authoritative
   toolhead position; the fitter sends synchronized per-joint quintic
