@@ -392,6 +392,11 @@ class TrajectoryStepper:
         self.rebase_min_clock = 0
         self.rebase_min_execution_clock = 0
         self.wire_clock = None
+        # Primary-machine clock through which nonzero physical motion has
+        # actually been queued.  The toolhead's last_move_time is a planning
+        # horizon and may lead the MCU during an otherwise idle startup, so it
+        # cannot distinguish an active grant renewal from an idle one.
+        self.motion_horizon_clock = None
         self.wire_acc = None
         self.activity_cursor = 0.
         self.su_per_mm = 1.
@@ -592,6 +597,7 @@ class TrajectoryStepper:
             self.rebase_requires_hold = False
             self.rebase_min_clock = 0
             self.rebase_min_execution_clock = 0
+            self.motion_horizon_clock = None
             self.recovery_rebase = True
 
     def note_homing_held(self, clock, pos_su):
@@ -1314,6 +1320,8 @@ class TrajectoryStepper:
             exec_duration, velocity, accel, jerk, snap, crackle)
         self.wire_clock += int(duration)
         self.execution_clock += int(exec_duration)
+        if velocity or accel or jerk or snap or crackle:
+            self.motion_horizon_clock = self.wire_clock
         self._record_wire({
             'event': 'hold' if flags & 1 else 'segment',
             'start_clock': start_clock, 'end_clock': self.wire_clock,
@@ -1701,16 +1709,18 @@ class TrajectoryQueuing:
         return True
 
     def _group_motion_active(self, eventtime):
-        toolhead = self.printer.lookup_object('toolhead', None)
-        if toolhead is None:
-            return False
         try:
-            current_time = self.get_machine_mcu().estimated_print_time(
-                eventtime)
-            return toolhead.get_last_move_time() > current_time + .001
+            machine_mcu = self.get_machine_mcu()
+            current_clock = machine_mcu.print_time_to_clock(
+                machine_mcu.estimated_print_time(eventtime))
+            return any(
+                ts.motion_horizon_clock is not None
+                and ts.motion_horizon_clock > current_clock
+                for ts in self.steppers)
         except Exception:
-            # Failing closed here would prevent harmless idle startup
-            # reproposals on reduced test/toolhead implementations.
+            # Failing closed here would prevent harmless idle reproposals on
+            # reduced test implementations.  Live trajectory steppers always
+            # publish a primary-machine-domain motion horizon.
             return False
 
     def _execution_grant_valid(self, eventtime):

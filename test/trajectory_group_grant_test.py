@@ -122,6 +122,7 @@ def make_owner():
     owner.group_renewal_fault = None
     owner.group_grant_ready = False
     owner.recovery_active = False
+    owner.steppers = []
     primary = FakeMCU('mcu', 12_000_000., 20.)
     rodent = FakeMCU('rodent', 80_000_000., 20.1)
     owner.machine = primary
@@ -203,7 +204,8 @@ def test_missing_member_stops_all_renewals():
 def test_active_rejection_latches_and_stops_reproposal():
     owner = make_owner()
     owner._grant_timer(10.)
-    owner.printer.toolhead.last_move_time = 30.
+    owner.steppers = [
+        types.SimpleNamespace(motion_horizon_clock=30 * 12_000_000)]
     first, _second = owner.group_members.values()
     owner._handle_group_state(first, {
         'group_id': owner.execution_group_id,
@@ -219,6 +221,41 @@ def test_active_rejection_latches_and_stops_reproposal():
     owner._grant_timer(10.1)
     assert owner.group_sequence == 1
     assert owner.group_pending is None
+
+
+def test_startup_planning_lead_does_not_latch_idle_rejection():
+    owner = make_owner()
+    owner._grant_timer(10.)
+    # Klippy establishes a future scheduling horizon while connecting even
+    # though no trajectory segment has been queued.
+    owner.printer.toolhead.last_move_time = 30.
+    first, _second = owner.group_members.values()
+    owner._handle_group_state(first, {
+        'group_id': owner.execution_group_id,
+        'epoch_hi': owner.execution_epoch_hi,
+        'epoch_lo': owner.execution_epoch_lo,
+        'sequence': owner.group_pending['sequence'],
+        'machine_clock': owner.group_pending['machine_clock'],
+        'flags': trajectory_queuing.TGF_CONFIGURED,
+        'reject_reason': 5,
+    })
+    assert owner.group_renewal_fault is None
+    owner._grant_timer(10.1)
+    assert owner.group_sequence == 2
+    assert owner.group_pending is not None
+
+
+def test_stopped_stepper_clears_motion_horizon():
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    stepper.anchored = True
+    stepper.rebase_requires_hold = False
+    stepper.rebase_min_clock = 123
+    stepper.rebase_min_execution_clock = 456
+    stepper.motion_horizon_clock = 789
+    stepper.recovery_rebase = False
+    stepper.note_rebase_needed(stopped=True)
+    assert stepper.motion_horizon_clock is None
 
 
 def test_renewal_respects_interval_after_all_ack():
@@ -315,6 +352,8 @@ def main():
         test_duplicate_and_rejected_states_do_not_commit,
         test_missing_member_stops_all_renewals,
         test_active_rejection_latches_and_stops_reproposal,
+        test_startup_planning_lead_does_not_latch_idle_rejection,
+        test_stopped_stepper_clears_motion_horizon,
         test_renewal_respects_interval_after_all_ack,
         test_expired_host_lease_revokes_ready_state,
         test_reproposal_horizon_never_moves_backwards,
