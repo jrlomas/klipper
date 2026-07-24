@@ -48,16 +48,17 @@ status line records its more precise state.
 | [17-DMA_ADC_Acquisition.md](17-DMA_ADC_Acquisition.md) | Unified DMA ownership and block streams; STM32/RP2040/ESP32 ADC acquisition, oversampling, watchdogs, and reporting | Workstation implementation complete; F072/H723/RP2040/ESP32 live gates and RP2040 consumer/restart migration pass; remaining target/waveform/contention fixtures are explicit |
 | [18-Autonomous_Heater_Control.md](18-Autonomous_Heater_Control.md) | Host-configured MCU PID and predictive thermal control, guarded characterization, local safety, and host-loss continuity | PID physically qualified; predictive controller implemented and workstation-tested, with paired physical gates remaining |
 | [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One typed gateway runtime with USB and Ethernet host links, CAN and serial services, transport-independent time sources, and exact delivery accounting | Workstation core/proxy/RMII implementation compile-tested; Ethernet/PTP/H723 hardware gates pending |
+| [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md) | Configurable time authorities, timestamp adapters, protocol bridges, quality propagation, and motion-safe failover | Architecture and phased implementation plan; current primary-MCU/USB/CAN mechanisms remain the compatibility baseline |
 
 ## Reading order
 
 Start with [00-Vision.md](00-Vision.md). Then, by interest:
 
-* *Protocol / firmware*: 02 → 10 → 04 → 01 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
-* *Host / klippy*: 02 → 05 → 10 → 17 → 18 → 15 → 16 → 19 → 08 → 06
+* *Protocol / firmware*: 02 → 10 → 04 → 01 → 20 → 03 → 09 → 17 → 18 → 07 → 15 → 16 → 19 → 11 → 13 → 12
+* *Host / klippy*: 02 → 05 → 10 → 20 → 17 → 18 → 15 → 16 → 19 → 08 → 06
 * *"Is this safe and landable?"*: 00 → 06 (risk register, fleet) → 08
   (pause-and-hold, heater policy) → 02 (underrun) → 03
-* *Third-party device vendor*: 10 → 02 → 03 → 17 → 07 → 15 → 16 → 19 → 11
+* *Third-party device vendor*: 10 → 02 → 03 → 20 → 17 → 07 → 15 → 16 → 19 → 11
 
 ## Glossary
 
@@ -67,9 +68,11 @@ Start with [00-Vision.md](00-Vision.md). Then, by interest:
 * **Joint / actuator** — one independently driven degree of freedom in
   the machine's *actuator* space (a stepper, a BLDC servo, a DAC
   channel) — after kinematics, not a cartesian axis.
-* **Machine time** — the timeline all intentions are scheduled
-  against; defined as the primary MCU's counter
-  ([01-Time_Model.md](01-Time_Model.md)).
+* **Machine time** — the canonical timeline all intentions are scheduled
+  against. It is currently defined as the primary MCU's counter
+  ([01-Time_Model.md](01-Time_Model.md)); the compatible evolution to
+  configurable authorities and transport-neutral timestamp adapters is
+  [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md).
 * **Actuator backend** — the MCU-side executor that realizes segments
   on specific hardware (step/dir pulses, FOC setpoints, PWM duty).
 * **Segment core** — the actuator-independent MCU module owning

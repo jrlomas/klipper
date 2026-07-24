@@ -5,13 +5,16 @@ uses the public MCU ClockSync accessor; host preflight and firmware both gate
 every trajectory anchor/segment on secondary convergence and freewheel
 freshness. Independent-USB testing proved that those internal gates do not by
 themselves establish the target absolute inter-MCU phase; optional hardware-
-bounded timing assurance remains open.
+bounded timing assurance remains open. The primary-MCU authority described
+here remains the compatibility default; its planned evolution into
+configurable authorities, timestamp adapters, protocol bridges, and explicit
+quality propagation is [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md).
 
 This document defines **machine time** — the timeline every intention
 is scheduled against — and moves its authority from the host's
 statistical estimate to the primary MCU's physical counter.
 
-## Authority: machine time is the primary MCU's clock
+## Current authority: machine time is the primary MCU's clock
 
 Today, each MCU free-runs its own counter (e.g. `DWT->CYCCNT` on ARM,
 see [src/generic/armcm_timer.c](../../../src/generic/armcm_timer.c)),
@@ -67,6 +70,11 @@ crystal ticks — but the contract changes:
   constants. Beacon priming measures residual oscillator drift across the
   full priming span; it does not try to rediscover a large nominal ratio
   from individual short USB intervals.
+
+This remains the behavior of existing configurations. The unified
+machine-time fabric does not silently redefine their timeline: selecting a NIC
+PHC, PTP grandmaster, or gateway clock requires an explicit authority,
+authority epoch, time-path configuration, and coordinated requalification.
 
 Rationale for ingest-time conversion over host-side conversion
 (today's model): it makes segments *identical for every board* (one

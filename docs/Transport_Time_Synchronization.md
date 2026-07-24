@@ -5,7 +5,10 @@
 Status: design proposal. USB Start-of-Frame discipline is implemented and
 physically characterized. The CAN, Ethernet/PTP, WiFi/TSF, and dedicated-capture
 profiles in this document are researched implementation candidates and must not
-be reported as qualified until their acceptance tests pass.
+be reported as qualified until their acceptance tests pass. The canonical
+authority/adapter/bridge abstraction and phased integration plan are now
+[FD-0001 document 20](founding/0001-motion-intentions/20-Unified_Machine_Time.md);
+this document remains the substrate capability and qualification study.
 
 ## 1. Purpose
 

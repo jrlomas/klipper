@@ -443,6 +443,12 @@ The common core consumes a `machine_time_provider` with:
 * qualified/degraded/invalid state; and
 * conversion between local hardware ticks and machine time.
 
+The provider's transport-neutral authority, observation, bridge, quality, and
+failover contracts are specified in
+[20-Unified_Machine_Time.md](20-Unified_Machine_Time.md). This gateway remains
+one consumer and bridge implementation of that fabric; it does not define a
+second time architecture.
+
 IRQ-entry timestamps are diagnostics only. They must never substitute for MAC
 or CAN peripheral timestamps when those exist. A clock-quality transition is
 carried in the profile/session epoch so queued work cannot silently cross from
