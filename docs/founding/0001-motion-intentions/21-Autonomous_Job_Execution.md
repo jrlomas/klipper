@@ -12,7 +12,9 @@ This document extends the [host architecture](05-Host_Architecture.md),
 [failure recovery](08-Failure_Recovery.md), [CAN FD transport](15-CANFD_Transport.md),
 [autonomous heater control](18-Autonomous_Heater_Control.md),
 [unified gateway](19-Unified_CAN_Gateway.md), and
-[machine-time fabric](20-Unified_Machine_Time.md).
+[machine-time fabric](20-Unified_Machine_Time.md). Portable, event-driven
+behavior inside a capsule is defined by
+[machine programs and dynamic scores](23-Portable_Machine_Programs.md).
 
 ## Thesis
 
@@ -219,7 +221,9 @@ The capsule contains separate, timestamped tracks for:
   scheduled peripherals;
 * synchronization barriers and coordinated checkpoints;
 * expected execution-log checkpoints;
-* local prompt commands and bounded state transitions; and
+* local prompt commands and bounded state transitions;
+* portable machine-program statecharts for tool changes, runout, calibration,
+  and other variable-duration distributed workflows; and
 * terminal safe-state actions.
 
 Tracks use the same exact quantized coefficients sent over the current HELIX
@@ -274,6 +278,20 @@ Not every operation can be reduced to one unconditional timeline:
 * resuming after a non-checkpoint interruption may require a returning host to
   compile a splice trajectory; and
 * arbitrary host shell commands are rejected from autonomous capsules.
+
+The capsule therefore contains timed trajectory **chapters** separated by
+event-driven **workflow barriers**. A portable machine program may wait on
+typed sensor evidence, dispatch bounded leaf-device operations, run local
+trajectory tracks, retry according to an explicit policy, and enter forward
+recovery. When its postconditions are committed, the coordinator rebases the
+next trajectory chapter to current machine time.
+
+The source language remains ordinary Python through `@machine_program`.
+Unmodified Klipper executes the same source through a compatibility adapter;
+HELIX compiles it into a bounded score IR. The H7 does not run Klippy, Jinja,
+or arbitrary Python. The complete contract, restrictions, operation ABI, and
+qualification gates are in
+[23-Portable_Machine_Programs.md](23-Portable_Machine_Programs.md).
 
 Version 1 may prohibit live speed-factor changes. A later version may provide
 bounded local time scaling only after proving that motion, extrusion,
@@ -732,12 +750,17 @@ reads and healthy dispatch remain aggregated telemetry.
 
 - [ ] Define the manifest, track, chunk, checkpoint, and terminal-result
   schemas with explicit versions and bounds.
+- [ ] Define the portable machine-program annotation, semantic operation ABI,
+  dynamic-score statechart schema, capability manifest, and Klipper
+  compatibility executor.
 - [ ] Generate capsules by intercepting the current post-lookahead,
   post-quantization HELIX command path.
 - [ ] Add content hashes, optional signatures, configuration/calibration
   binding, and capability requirements.
 - [ ] Reject host-only macros and unresolved nondeterministic behavior with
   actionable compiler errors.
+- [ ] Compile supported sensor branches, bounded retries, resource leases, and
+  forward-recovery paths instead of flattening them into one timeline.
 - [ ] Build an offline validator and human-readable inspector.
 - [ ] Prove live-stream and capsule byte equivalence for the golden corpus.
 
@@ -785,6 +808,8 @@ reads and healthy dispatch remain aggregated telemetry.
 - [ ] Implement at least one non-CAN adapter or loopback conformance target to
   prove the abstraction is not a renamed CAN API.
 - [ ] Qualify local axes plus a CAN toolhead in one autonomous print.
+- [ ] Execute one distributed portable workflow spanning mainboard motion and
+  at least two downstream semantic device roles.
 - [ ] Disconnect external Ethernet while the internal fabric continues.
 
 ### Phase 6 — host independence and reconnection
