@@ -61,6 +61,14 @@ carrier. Set `multi_mcu_homing_timeout` in the transport section only after
 qualifying both the link latency distribution and the resulting mechanical
 overshoot bound.
 
+Trsync watchdog renewals are control traffic and become eligible for
+transmission at the status observation that justified the renewal. They are
+not held until the newly proposed expiry. This distinction is immaterial for
+the classic 25ms watchdog (shorter than serialqueue's normal 100ms send
+horizon), but is required for a longer qualified network watchdog: delaying a
+renewal until 100ms before its *new* expiry can place it after the *old*
+expiry.
+
 Should high latency result in a failure (or if some other
 communication issue is detected) then Helix will raise a
 "Communication timeout during homing" error. (This overshoot-and-timeout

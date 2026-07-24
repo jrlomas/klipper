@@ -54,7 +54,14 @@ send_trsync_set_timeout(struct trdispatch_mcu *tdm)
         tdm->set_timeout_msgtag, tdm->trsync_oid, tdm->expire_clock
     };
     struct queue_message *qm = message_alloc_and_encode(msg, ARRAY_SIZE(msg));
-    qm->req_clock = tdm->expire_clock;
+    // This is a watchdog renewal, not work scheduled for expire_clock.
+    // Tag it with the status observation that justified the new expiry so
+    // serialqueue sends it before the *old* watchdog can fire.  Tagging it
+    // with expire_clock happened to work with Klipper's 25ms watchdog and
+    // 100ms send horizon (it was immediately eligible), but a qualified
+    // 250ms network watchdog was held until 100ms before the new expiry,
+    // which could be later than the old expiry.
+    qm->req_clock = tdm->expire_clock - tdm->expire_ticks;
     serialqueue_send_one(tdm->sq, tdm->cq, qm);
 }
 

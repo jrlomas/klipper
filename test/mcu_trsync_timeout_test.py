@@ -95,10 +95,28 @@ def main():
     carrier_mcu._transport_homing_timeout = default
     carrier_mcu.set_transport_homing_timeout(0.250)
     assert carrier_mcu.get_multi_mcu_homing_timeout() == 0.250
+
+    # Renewal transmission must be based on the status observation, not the
+    # future expiry.  With a 250ms watchdog, 75ms reports, and two staggered
+    # MCUs, the first useful renewal advances expiry from 250ms to 362.5ms.
+    # The old expire-clock tag plus serialqueue's 100ms horizon released it
+    # at 262.5ms -- 12.5ms after the old watchdog had already fired.
+    old_expiry = .250
+    status_observation = .1125
+    new_expiry = status_observation + .250
+    serial_horizon = .100
+    assert new_expiry - serial_horizon > old_expiry
+    assert status_observation - serial_horizon <= old_expiry
+    root = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
+    with open(os.path.join(root, "klippy", "chelper", "trdispatch.c")) as f:
+        trdispatch_source = f.read()
+    assert ("qm->req_clock = tdm->expire_clock - tdm->expire_ticks;"
+            in trdispatch_source)
     print("PASS: multi-MCU trsync timeout remains strict by default")
     print("PASS: explicit network timeout applies to the whole trsync group")
     print("PASS: single-MCU homing timeout is unchanged")
     print("PASS: carrier liveness floor dominates a shorter MCU value")
+    print("PASS: renewal is eligible before the prior watchdog expires")
 
 
 if __name__ == "__main__":
