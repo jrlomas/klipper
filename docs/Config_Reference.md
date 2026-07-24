@@ -176,6 +176,12 @@ the associated G-Code commands.
 #execlog_size: 256
 #   Number of records retained in each micro-controller's execution
 #   log ring buffer. Must be between 16 and 4096. The default is 256.
+#execlog_auto_size: 128
+#   Ring size for trajectory MCUs that are included automatically but are not
+#   named in execlog_mcus. This separate, bounded default prevents adding
+#   observability from exhausting a smaller board's MCU config allocator.
+#   The default is the smaller of execlog_size and 128; accepted range is
+#   16 to 4096.
 #execlog_stream_max: 8
 #   Maximum execution-log records the MCU may stream per scheduler wake.
 #   Live records are persisted beside Atlas trace/intention events; the

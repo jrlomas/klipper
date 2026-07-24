@@ -514,14 +514,18 @@ def test_flight_recorder_auto_includes_trajectory_mcus():
     printer = FakePrinter()
     f = make_fr(printer)
     f.execlog_mcu_names = ('mcu', 'ebb36')
+    f.execlog_size = 1024
+    f.execlog_auto_size = 128
     rodent = FakeMcu('rodent')
     duplicate = FakeMcu('ebb36')
     printer.objects['trajectory_queuing'] = FakeTrajQueuing([
         FakeTrajStepper('stepper_z', 1, rodent),
         FakeTrajStepper('extruder', 2, duplicate),
     ])
-    assert f._get_execlog_mcu_names() == ['mcu', 'ebb36', 'rodent']
-    print("PASS: flight recorder includes every trajectory MCU once")
+    assert f._get_execlog_targets() == [
+        ('mcu', 1024), ('ebb36', 1024), ('rodent', 128)]
+    print("PASS: flight recorder includes every trajectory MCU once"
+          " with a bounded automatic ring")
 
 
 # ---- Scenarios -------------------------------------------------------

@@ -331,6 +331,9 @@ class FailureRecovery:
         self.printer = config.get_printer()
         self.execlog_size = config.getint(
             'execlog_size', EXECLOG_DEFAULT_SIZE, minval=16, maxval=4096)
+        self.execlog_auto_size = config.getint(
+            'execlog_auto_size', min(self.execlog_size, 128),
+            minval=16, maxval=4096)
         self.execlog_stream_max = config.getint(
             'execlog_stream_max', 8, minval=0, maxval=64)
         self.resume_sync_timeout = config.getfloat(
@@ -407,7 +410,7 @@ class FailureRecovery:
         # Include every trajectory participant automatically.  A newly added
         # motion MCU must not disappear from the flight recorder merely
         # because an older config list was not extended at the same time.
-        for name in self._get_execlog_mcu_names():
+        for name, size in self._get_execlog_targets():
             objname = 'mcu' if name == 'mcu' else 'mcu ' + name
             mcu = self.printer.lookup_object(objname, None)
             if mcu is None:
@@ -417,22 +420,25 @@ class FailureRecovery:
                 logging.info("failure_recovery: mcu '%s' lacks execlog",
                              name)
                 continue
-            self.execlogs.append(McuExecLog(self, mcu, self.execlog_size))
+            self.execlogs.append(McuExecLog(self, mcu, size))
 
-    def _get_execlog_mcu_names(self):
-        names = list(self.execlog_mcu_names)
-        tq = self.printer.lookup_object('trajectory_queuing', None)
-        if tq is not None:
-            names.extend(ts.mcu.get_name()
-                         for ts in tq.get_trajectory_steppers())
-        unique = []
+    def _get_execlog_targets(self):
+        targets = []
         seen = set()
-        for name in names:
+        for name in self.execlog_mcu_names:
             if name in seen:
                 continue
             seen.add(name)
-            unique.append(name)
-        return unique
+            targets.append((name, self.execlog_size))
+        tq = self.printer.lookup_object('trajectory_queuing', None)
+        if tq is not None:
+            for ts in tq.get_trajectory_steppers():
+                name = ts.mcu.get_name()
+                if name in seen:
+                    continue
+                seen.add(name)
+                targets.append((name, self.execlog_auto_size))
+        return targets
 
     def _handle_connect(self):
         for el in self.execlogs:
