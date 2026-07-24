@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "board/gpio.h" // struct gpio_in
+#include "sched.h" // struct timer
 
 // Hardware event trigger sources (FD-0001 doc 09): edge interrupts
 // and analog comparators fire trsync directly, replacing timer-list
@@ -13,6 +14,10 @@ struct trsync;
 
 struct trigger_source {
     struct trsync *ts;
+    // Production homing arms at the same MCU clock carried by the motion
+    // start.  This prevents an early host command from observing the old
+    // switch level and stopping a still-pending retract.
+    struct timer arm_timer;
     // Mask/unmask the hardware event delivery (called irqs off or
     // from irq context); may be NULL for always-on sources.
     void (*hw_arm)(struct trigger_source *tsrc, int enable);
@@ -41,6 +46,7 @@ enum {
     // Observer mode timestamps and records the edge but deliberately does
     // not fire trsync. It permits a direct comparison with legacy polling.
     TSRC_OBSERVER = 1 << 5,
+    TSRC_ARM_PENDING = 1 << 6,
 };
 
 // Allocate a trigger source oid for a non-gpio hardware kind (e.g.

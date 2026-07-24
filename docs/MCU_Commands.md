@@ -520,8 +520,17 @@ without host polling (FD-0001
   leaves the [low, high] range.
 
 * `trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c` : Arms
-  the source to signal the given trsync with 'reason' on the next event;
-  'capture' requests an input-capture timestamp.
+  the source immediately to signal the given trsync with 'reason' on the next
+  event; 'capture' requests an input-capture timestamp. This legacy command is
+  retained for compatibility and commissioning. Production homing uses the
+  scheduled form below.
+
+* `trigger_source_arm_at oid=%c clock=%u trsync_oid=%c reason=%c capture=%c` :
+  Attaches the source to the given trsync immediately but leaves its
+  peripheral masked until `clock`. At that boundary it atomically unmasks the
+  edge source and samples the current level. Scheduling the arm with the
+  motion boundary prevents an early command on one transport from stopping a
+  retract that is still queued on another MCU.
 
 * `trigger_source_observe oid=%c capture=%c` : Arms a passive commissioning
   observer that timestamps and logs the edge but does not fire trsync. This

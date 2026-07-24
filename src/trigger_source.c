@@ -31,6 +31,7 @@
 #define QUALIFY_MAX_TICKS (CONFIG_CLOCK_FREQ / 2000)
 
 void command_config_trigger_gpio(uint32_t *args);
+static uint_fast8_t trigger_source_arm_event(struct timer *t);
 
 struct trigger_source *
 trigger_source_alloc(uint8_t oid, uint8_t kind)
@@ -41,6 +42,7 @@ trigger_source_alloc(uint8_t oid, uint8_t kind)
         oid, command_config_trigger_gpio, sizeof(*tsrc));
     tsrc->oid = oid;
     tsrc->kind = kind;
+    tsrc->arm_timer.func = trigger_source_arm_event;
     return tsrc;
 }
 
@@ -103,21 +105,39 @@ trigger_gpio_oid_lookup(uint8_t oid)
     return oid_lookup(oid, command_config_trigger_gpio);
 }
 
-// Arm: attach to a trsync session. Fires trsync_do_trigger(reason)
-// on the (qualified) hardware event.
-void
-command_trigger_source_arm(uint32_t *args)
+// Prepare a source for a new arm transaction while leaving its peripheral
+// masked.  The scheduled command uses this state later from arm_timer; the
+// legacy command activates it immediately.
+static void
+trigger_source_prepare(struct trigger_source *tsrc, struct trsync *ts,
+                       uint8_t reason, uint8_t capture)
 {
-    struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
-    struct trsync *ts = trsync_oid_lookup(args[1]);
     irq_disable();
+    // Keep cancellation and peripheral masking in one critical section.  In
+    // particular, do not leave a window in which an old edge can fire after
+    // its arm timer was removed but before the source itself is masked.
+    sched_del_timer(&tsrc->arm_timer);
+    if (tsrc->hw_arm)
+        tsrc->hw_arm(tsrc, 0);
     tsrc->ts = ts;
-    tsrc->reason = args[2];
-    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON | TSRC_OBSERVER);
+    tsrc->reason = reason;
+    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON | TSRC_OBSERVER
+                     | TSRC_ARMED | TSRC_ARM_PENDING);
     // Use the hardware-captured edge tick when the host requests it
     // and the board actually wired a capture channel for this source.
-    if (args[3] && (tsrc->flags & TSRC_CAN_CAPTURE))
+    if (capture && (tsrc->flags & TSRC_CAN_CAPTURE))
         tsrc->flags |= TSRC_CAPTURE_ON;
+    irq_enable();
+}
+
+// Activate a prepared source. Called with interrupts disabled either directly
+// by the legacy command or from the scheduler timer IRQ.
+static void
+trigger_source_arm_now(struct trigger_source *tsrc)
+{
+    tsrc->flags &= ~TSRC_ARM_PENDING;
+    if (!tsrc->ts)
+        return;
     tsrc->flags |= TSRC_ARMED;
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 1);
@@ -125,16 +145,58 @@ command_trigger_source_arm(uint32_t *args)
     // they were armed.  Check the GPIO after unmasking while interrupts are
     // still disabled: an active level is a valid immediate trigger, and an
     // edge racing this read remains latched for delivery on irq_enable().
-    // This is essential for the second homing pass when mechanical travel or
-    // backlash leaves the switch asserted after the retract.  It also closes
-    // the query-to-arm race without reverting normal detection to polling.
+    // At the scheduled arm boundary this makes a switch that genuinely
+    // remained asserted after retract an immediate, diagnosable trigger. It
+    // also closes the query-to-arm race without reverting normal detection
+    // to polling.
     if (tsrc->kind == TS_KIND_GPIO
         && gpio_in_read(tsrc->pin_in) == tsrc->edge)
         trigger_source_notify(tsrc, timer_read_time());
+}
+
+static uint_fast8_t
+trigger_source_arm_event(struct timer *t)
+{
+    struct trigger_source *tsrc = container_of(
+        t, struct trigger_source, arm_timer);
+    trigger_source_arm_now(tsrc);
+    return SF_DONE;
+}
+
+// Legacy immediate arm. Retained so old hosts can control new firmware;
+// production homing prefers trigger_source_arm_at below.
+void
+command_trigger_source_arm(uint32_t *args)
+{
+    struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
+    trigger_source_prepare(tsrc, trsync_oid_lookup(args[1]),
+                           args[2], args[3]);
+    irq_disable();
+    trigger_source_arm_now(tsrc);
     irq_enable();
 }
 DECL_COMMAND(command_trigger_source_arm,
              "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c");
+
+// Scheduled arm: attach to trsync now, but do not expose the current GPIO
+// level or unmask its edge IRQ until the supplied MCU clock.  In particular,
+// a second homing pass cannot stop a retract that is queued for that same
+// future motion boundary merely because this command arrived first.
+void
+command_trigger_source_arm_at(uint32_t *args)
+{
+    struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
+    trigger_source_prepare(tsrc, trsync_oid_lookup(args[2]),
+                           args[3], args[4]);
+    irq_disable();
+    tsrc->flags |= TSRC_ARM_PENDING;
+    tsrc->arm_timer.waketime = args[1];
+    irq_enable();
+    sched_add_timer(&tsrc->arm_timer);
+}
+DECL_COMMAND(command_trigger_source_arm_at,
+             "trigger_source_arm_at oid=%c clock=%u trsync_oid=%c"
+             " reason=%c capture=%c");
 
 // Commissioning-only passive observer: latch and log the hardware edge but
 // leave the legacy endstop timer solely responsible for firing trsync.
@@ -143,9 +205,12 @@ command_trigger_source_observe(uint32_t *args)
 {
     struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
     irq_disable();
+    sched_del_timer(&tsrc->arm_timer);
+    if (tsrc->hw_arm)
+        tsrc->hw_arm(tsrc, 0);
     tsrc->ts = NULL;
     tsrc->reason = 0;
-    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON);
+    tsrc->flags &= ~(TSRC_TRIGGERED | TSRC_CAPTURE_ON | TSRC_ARM_PENDING);
     if (args[1] && (tsrc->flags & TSRC_CAN_CAPTURE))
         tsrc->flags |= TSRC_CAPTURE_ON;
     tsrc->flags |= TSRC_ARMED | TSRC_OBSERVER;
@@ -161,9 +226,10 @@ command_trigger_source_disarm(uint32_t *args)
 {
     struct trigger_source *tsrc = trigger_gpio_oid_lookup(args[0]);
     irq_disable();
+    sched_del_timer(&tsrc->arm_timer);
     if (tsrc->hw_arm)
         tsrc->hw_arm(tsrc, 0);
-    tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER);
+    tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER | TSRC_ARM_PENDING);
     tsrc->ts = NULL;
     irq_enable();
 }
@@ -237,9 +303,10 @@ trigger_source_shutdown(void)
     uint8_t oid;
     struct trigger_source *tsrc;
     foreach_oid(oid, tsrc, command_config_trigger_gpio) {
+        sched_del_timer(&tsrc->arm_timer);
         if (tsrc->hw_arm)
             tsrc->hw_arm(tsrc, 0);
-        tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER);
+        tsrc->flags &= ~(TSRC_ARMED | TSRC_OBSERVER | TSRC_ARM_PENDING);
         tsrc->ts = NULL;
     }
 }

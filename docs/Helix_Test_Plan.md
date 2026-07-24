@@ -1131,6 +1131,24 @@ Phases 3/7/8 over each real transport.
     reconverged after restart. The switch remained physically open, so this
     checks the carrier gate only; a successful two-pass physical home remains
     part of the print-soak gate below.
+  - [x] **Scheduled interrupt-arm regression (2026-07-24):** intermittent
+    second-pass Z homes exposed that the immediate GPIO-arm command could
+    arrive on Pico while Rodent's retract was still queued. Pico sampled the
+    old asserted level and stopped the retract, making the slow pass appear to
+    remain against the switch. Firmware now provides
+    `trigger_source_arm_at`; Klippy schedules it at the homing move's MCU
+    clock and safely falls back to polling with older immediate-only
+    firmware. All seven host path regressions passed; RP2040 and STM32G0B1
+    target builds passed and advertised the new command. Pico was flashed with
+    `b3205996-dirty-20260724_093152-linuxathena`. From a clean, converged
+    execution epoch, two consecutive physical two-pass Z homes completed with
+    fast-to-slow trigger separations of 3.055 s and 3.026 s, remained ready,
+    retained Z qualification, and completed the `_HOME_Z` move at Z=30.
+    A deliberately queued five-home stress script separately exposed the
+    already-tracked Rodent WiFi liveness/recovery path: Rodent expired its
+    250 ms trsync watchdog and a subsequent recovery rebase was rejected as
+    `Trajectory anchor in past`. That failure occurred on the motion MCU and
+    is not an early Pico arm; it is not counted as scheduled-arm evidence.
   - [ ] **Post-recovery print soak:** that first print stopped when Rodent
     ceased answering. The wired host and nearby access point remained up.
     The capture did not distinguish a station disconnect from an MCU reset,

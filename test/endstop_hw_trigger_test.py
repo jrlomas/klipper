@@ -5,7 +5,8 @@
 #
 #   1. when the firmware advertises the trigger_source command set, a
 #      triggered=True homing move arms the hardware edge interrupt
-#      (trigger_source_arm) instead of the polled endstop_home, and
+#      (trigger_source_arm_at) instead of the polled endstop_home, and
+#      schedules arming at the homing move's MCU clock;
 #      reads the latched edge tick back from trigger_source_query with
 #      no rest_ticks back-dating;
 #   2. a triggered=False move (waiting for release) still uses the
@@ -96,8 +97,10 @@ class FakePrinter:
 
 
 class FakeMCU:
-    def __init__(self, has_trigger=True, want_hw=True, want_observer=False):
+    def __init__(self, has_trigger=True, has_arm_at=True, want_hw=True,
+                 want_observer=False):
         self._has_trigger = has_trigger
+        self._has_arm_at = has_arm_at
         self._want_hw = want_hw
         self._want_observer = want_observer
         self._oid = 0
@@ -136,6 +139,11 @@ class FakeMCU:
     def lookup_command(self, fmt, cq=None):
         return FakeCmd(fmt, self.sends)
 
+    def try_lookup_command(self, fmt, cq=None):
+        if fmt.startswith("trigger_source_arm_at") and not self._has_arm_at:
+            return None
+        return self.lookup_command(fmt, cq=cq)
+
     def lookup_query_command(self, fmt, resp, oid=None, cq=None,
                              is_async=False):
         if fmt.startswith("trigger_source_query"):
@@ -168,8 +176,10 @@ class FakeMCU:
 PIN = {'pin': 'PA1', 'pullup': 1, 'invert': 0}
 
 
-def make_endstop(has_trigger=True, want_hw=True, want_observer=False):
-    mcu = FakeMCU(has_trigger=has_trigger, want_hw=want_hw,
+def make_endstop(has_trigger=True, has_arm_at=True, want_hw=True,
+                 want_observer=False):
+    mcu = FakeMCU(has_trigger=has_trigger, has_arm_at=has_arm_at,
+                  want_hw=want_hw,
                   want_observer=want_observer)
     # Patch out the real TriggerDispatch (chelper trdispatch + trsync) so
     # the test exercises only the endstop's detection-path selection.
@@ -198,8 +208,15 @@ def test_hw_trigger_used():
     comp = e.home_start(1.0, 0.001, 4, 0.01, triggered=True)
     assert comp == "completion"
     # Armed the hardware edge interrupt, not the polled endstop_home.
-    assert "trigger_source_arm" in sent_names(mcu)
+    assert "trigger_source_arm_at" in sent_names(mcu)
+    assert "trigger_source_arm" not in sent_names(mcu)
     assert "endstop_home" not in sent_names(mcu)
+    arm = next(entry for entry in mcu.sends
+               if entry[0] == "trigger_source_arm_at")
+    # The firmware arm time and the serial release deadline are the same
+    # clock as the motion boundary.
+    assert arm[1][1] == 1000, arm
+    assert arm[2] == 1000, arm
     res = e.home_wait(2.0)
     # Disarmed the hardware source and read the latched edge tick back;
     # the returned trigger time is the exact tick, un-back-dated.
@@ -215,7 +232,7 @@ def test_release_move_uses_polled():
     # the fixed-edge hardware source; it must use the polled path.
     e.home_start(1.0, 0.001, 4, 0.01, triggered=False)
     assert "endstop_home" in sent_names(mcu)
-    assert "trigger_source_arm" not in sent_names(mcu)
+    assert "trigger_source_arm_at" not in sent_names(mcu)
     res = e.home_wait(2.0)
     # Polled path back-dates next_clock by rest_ticks (=0.01*1000).
     expected = (mcu.endstop_next_clock - 10) / 1000.
@@ -229,8 +246,18 @@ def test_fallback_when_absent():
                    for c in mcu.config_cmds)
     e.home_start(1.0, 0.001, 4, 0.01, triggered=True)
     assert "endstop_home" in sent_names(mcu)
-    assert "trigger_source_arm" not in sent_names(mcu)
+    assert "trigger_source_arm_at" not in sent_names(mcu)
     print("PASS: firmware without trigger_source -> polled fallback")
+
+
+def test_old_immediate_arm_falls_back_to_polled():
+    mcu, e = make_endstop(has_trigger=True, has_arm_at=False, want_hw=True)
+    e.home_start(1.0, 0.001, 4, 0.01, triggered=True)
+    names = sent_names(mcu)
+    assert "endstop_home" in names
+    assert "trigger_source_arm" not in names
+    assert "trigger_source_arm_at" not in names
+    print("PASS: old immediate-only trigger firmware -> polled fallback")
 
 
 def test_disabled_opt_out():
@@ -250,7 +277,7 @@ def test_polling_with_shadow_observer():
     names = sent_names(mcu)
     assert "trigger_source_observe" in names
     assert "endstop_home" in names
-    assert "trigger_source_arm" not in names
+    assert "trigger_source_arm_at" not in names
     res = e.home_wait(2.0)
     names = sent_names(mcu)
     assert "trigger_source_disarm" in names
@@ -278,6 +305,7 @@ def main():
     test_hw_trigger_used()
     test_release_move_uses_polled()
     test_fallback_when_absent()
+    test_old_immediate_arm_falls_back_to_polled()
     test_disabled_opt_out()
     test_polling_with_shadow_observer()
     test_commissioning_observer_api_with_hw_homing_enabled()

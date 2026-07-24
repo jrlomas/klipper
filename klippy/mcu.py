@@ -402,6 +402,7 @@ class MCU_endstop:
         # always kept for query_endstop and as the automatic fallback.
         self._trigger_oid = None
         self._trigger_arm_cmd = self._trigger_disarm_cmd = None
+        self._trigger_arm_at_cmd = None
         self._trigger_observe_cmd = None
         self._trigger_query_cmd = None
         self._trigger_edge = 0
@@ -460,6 +461,14 @@ class MCU_endstop:
         self._trigger_arm_cmd = self._mcu.lookup_command(
             "trigger_source_arm oid=%c trsync_oid=%c reason=%c capture=%c",
             cq=cmd_queue)
+        # The scheduled form is required for production hardware homing.
+        # An immediate arm can arrive on the endstop MCU before a retract
+        # queued on another transport has physically run, observe the old
+        # asserted level, and stop that retract. Older firmware therefore
+        # falls back to the safe polled command, which already carries clock.
+        self._trigger_arm_at_cmd = self._mcu.try_lookup_command(
+            "trigger_source_arm_at oid=%c clock=%u trsync_oid=%c"
+            " reason=%c capture=%c", cq=cmd_queue)
         # Always resolve the passive observer when the firmware provides the
         # trigger-source command set.  Normal homing still selects it only
         # when hardware_endstop_observer is enabled, but commissioning tools
@@ -479,6 +488,7 @@ class MCU_endstop:
         # can look for either level per move.
         return (self._mcu.want_hw_endstop_trigger()
                 and self._trigger_oid is not None
+                and self._trigger_arm_at_cmd is not None
                 and bool(triggered) == bool(self._trigger_edge ^ self._invert))
     def _use_hw_observer(self, triggered):
         return (not self._mcu.want_hw_endstop_trigger()
@@ -514,9 +524,12 @@ class MCU_endstop:
         trigger_completion = self._dispatch.start(print_time)
         if self._use_hw_trigger(triggered):
             # Hardware edge interrupt fires trsync directly - no polling.
+            # Arm at the move's MCU clock, not when the transport happens to
+            # deliver this command. This is critical for the retract between
+            # first and second homing passes on different MCUs.
             self._hw_triggered = True
-            self._trigger_arm_cmd.send(
-                [self._trigger_oid, self._dispatch.get_oid(),
+            self._trigger_arm_at_cmd.send(
+                [self._trigger_oid, clock, self._dispatch.get_oid(),
                  MCU_trsync.REASON_ENDSTOP_HIT, 1],
                 reqclock=clock)
             return trigger_completion

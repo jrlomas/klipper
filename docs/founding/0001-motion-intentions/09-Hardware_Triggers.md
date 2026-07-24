@@ -205,15 +205,17 @@ built for that board), each digital endstop/probe configures **both** a
 polled `config_endstop` (kept for `query_endstop` and as the fallback)
 and a hardware `config_trigger_gpio` on the same pin. A normal homing
 move (`triggered=True`) then arms the edge interrupt with
-`trigger_source_arm` — attaching it to the same trsync dispatch the
-polled path used, so the coordinated-stop fan-out is unchanged — and
+`trigger_source_arm_at` at the move's MCU clock — attaching it to the same
+trsync dispatch the polled path used, so the coordinated-stop fan-out is
+unchanged — and
 reads the latched edge tick back from `trigger_source_query` (a
 hardware input-capture timestamp where the port wired one, else the
 ISR-entry read), with no `rest_ticks` back-dating. A move that instead
 waits for the pin to *release* (`triggered=False`) stays on the polled
 path, whose edge sense is chosen per move; a board without the
-`trigger_source` commands (e.g. a code-size-constrained target) also
-falls back silently. This covers every consumer of the digital endstop
+scheduled `trigger_source_arm_at` command (including an older image that has
+only the immediate arm command) also falls back silently. This covers every
+consumer of the digital endstop
 interface — cartesian/CoreXY homing, trajectory-stepper homing, `probe`,
 and `bltouch` — because they all drive `home_start`/`home_wait`
 polymorphically. Set
@@ -222,14 +224,17 @@ on a given MCU. Pair it temporarily with
 `hardware_endstop_observer: True` to timestamp polling edges for direct
 qualification; the observer is not a production operating mode.
 
-Arming is level-safe as well as edge-driven. The firmware unmasks the edge
-peripheral and then, with interrupts still disabled, reads the current GPIO
-level. If the requested level was already active before arming, it performs
-the same bounded qualification and fires trsync immediately. If an edge races
-the read, the peripheral latch delivers it after interrupts are restored.
-This closes the query-to-arm race and ensures a second homing pass whose
-retract did not release the switch reports the real condition instead of
-moving to its limit while waiting for an impossible new edge.
+Arming is time-aligned and level-safe as well as edge-driven. The host may
+deliver the arm command early, but firmware leaves the peripheral masked until
+the supplied MCU clock—the same boundary used to start that homing move. This
+matters between the two homing passes: an endstop-MCU packet can no longer see
+the still-pressed switch and stop a retract scheduled on another transport
+before it has run. At the scheduled boundary firmware unmasks the edge
+peripheral and, with interrupts still disabled, reads the current GPIO level.
+If the requested level is then already active, it performs the same bounded
+qualification and fires trsync immediately. If an edge races the read, the
+peripheral latch delivers it after interrupts are restored. This closes both
+the cross-transport early-arm race and the query-to-arm race.
 
 ### RP2040 live result
 
