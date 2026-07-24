@@ -347,9 +347,11 @@ class TrajectoryGroupMember:
 
     def grant(self, group_id, epoch_hi, epoch_lo, sequence,
               machine_clock, local_clock):
-        self.grant_cmd.send([
-            group_id, epoch_hi, epoch_lo, sequence,
-            machine_clock & 0xffffffff, local_clock & 0xffffffff])
+        self.grant_cmd.send(
+            [group_id, epoch_hi, epoch_lo, sequence,
+             machine_clock & 0xffffffff, local_clock & 0xffffffff],
+            retry_class=SERIAL_RETRY_BUFFERED,
+            retry_clock=local_clock)
 
     def is_paused(self):
         checker = getattr(self.mcu, 'is_link_paused', None)
@@ -1444,6 +1446,9 @@ class TrajectoryQueuing:
                                             self._handle_connect)
         self.printer.register_event_handler("toolhead:check_move",
                                             self._handle_check_move)
+        self.printer.register_event_handler(
+            "timesync:convergence_changed",
+            self._handle_timesync_convergence)
         # Advanced single-joint Bezier move is opt-in and hazardous (it
         # bypasses the kinematic planner and desyncs the toolhead
         # position), exactly like [force_move] enable_force_move.
@@ -1632,6 +1637,52 @@ class TrajectoryQueuing:
         return sorted(set(
             ts.mcu.get_name() for ts in self.steppers
             if ts.mcu is not machine_mcu and not self.is_mcu_synced(ts.mcu)))
+
+    def _print_ingestion_active(self):
+        virtual_sd = self.printer.lookup_object('virtual_sdcard', None)
+        return bool(
+            virtual_sd is not None
+            and getattr(virtual_sd, 'is_active', lambda: False)())
+
+    def _latch_group_recovery(self, trigger):
+        if self.recovery_active:
+            return False
+        self.recovery_active = True
+        self.recovery_grant_active = False
+        self.group_config_pending = None
+        self.group_config_error = None
+        self.group_grant_ready = False
+        self.group_pending = None
+        self.group_next_proposal = 0.
+        self.recovery_trigger = dict(trigger)
+        for peer in self.steppers:
+            peer.recovery_hold = True
+            # No more host intentions may be appended after the group closes.
+            # The installed lease supplies the bounded physical stop; the
+            # recovery query later replaces this planned horizon with each
+            # MCU's authoritative held accumulator.
+            peer.note_rebase_needed(stopped=True)
+        logging.error(
+            "HELIX coordinated recovery hold latched: %s",
+            self.recovery_trigger)
+        self.printer.send_event(
+            "trajectory_queuing:recovery_hold", self.recovery_trigger)
+        return True
+
+    def _handle_timesync_convergence(self, mcu_name, converged):
+        if converged or mcu_name not in self.group_members:
+            return
+        eventtime = self.printer.get_reactor().monotonic()
+        if not (self._print_ingestion_active()
+                or self._group_motion_active(eventtime)):
+            return
+        self._latch_group_recovery({
+            'reason': 'timesync_lost',
+            'mcu': mcu_name,
+            'joint': None,
+            'clock': None,
+            'pos': None,
+        })
 
     def _handle_check_move(self, move):
         # Fail before toolhead.move() commits this move to lookahead.  The
@@ -1913,6 +1964,19 @@ class TrajectoryQueuing:
             self.group_grant_ready = False
             self.group_pending = None
             self.group_next_proposal = 0.
+            if (self._print_ingestion_active()
+                    or self._group_motion_active(eventtime)):
+                unsynced = sorted(
+                    name for name, member in self.group_members.items()
+                    if (member.is_paused()
+                        or not self.is_mcu_synced(member.mcu)))
+                self._latch_group_recovery({
+                    'reason': 'execution_group_unhealthy',
+                    'mcu': ",".join(unsynced) if unsynced else None,
+                    'joint': None,
+                    'clock': None,
+                    'pos': None,
+                })
             return eventtime + self.execution_grant_interval
         if self.group_pending is None:
             if eventtime < self.group_next_proposal:
@@ -2004,6 +2068,14 @@ class TrajectoryQueuing:
                     " during active motion; closing ingestion and allowing"
                     " the installed bounded leases to stop the group",
                     pending['sequence'], member.name, reject_reason)
+                self._latch_group_recovery({
+                    'reason': 'execution_grant_rejected',
+                    'mcu': member.name,
+                    'joint': None,
+                    'clock': pending['machine_clock'],
+                    'pos': None,
+                    'reject_reason': reject_reason,
+                })
             else:
                 logging.warning(
                     "HELIX execution grant %u rejected by %s (reason=%u);"
@@ -2058,10 +2130,16 @@ class TrajectoryQueuing:
             self.group_grant_ready = False
             self.group_pending = None
             self.recovery_trigger = {
+                'reason': 'trajectory_underrun',
                 'mcu': ts.mcu.get_name(), 'joint': ts.name,
                 'clock': int(params['clock']), 'pos': int(params['pos'])}
             for peer in self.steppers:
                 peer.recovery_hold = True
+        elif (self.recovery_trigger is not None
+              and self.recovery_trigger.get('joint') is None):
+            self.recovery_trigger['first_stop'] = {
+                'mcu': ts.mcu.get_name(), 'joint': ts.name,
+                'clock': int(params['clock']), 'pos': int(params['pos'])}
         logging.warning(
             "Trajectory underrun on %s: clock=%d pos=%d; recovery hold %s",
             ts.name, params['clock'], params['pos'],

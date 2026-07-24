@@ -45,6 +45,7 @@ HOST_RESEED_RATE_ERROR_PPM = 10.0
 HOST_DIVERGE_COUNT = 3      # sustained out-of-budget SOF phase misses
 SOF_UNCLASSIFIED_DISABLE_COUNT = 8
 SOF_CAPTURE_DELAY = 0.010
+SERIAL_RETRY_BUFFERED = 1
 
 # timesync_state flag bits (must match src/timesync.c)
 TS_ENABLED = 1
@@ -353,12 +354,29 @@ class SecondaryLink:
                 # for isolated outliers, as the exact-SOF path already does.
                 # The MCU's independent phase gate remains authoritative, and
                 # sustained disagreement still fails closed.
+                # ClockSync's fitted frequency can move substantially when a
+                # delayed WiFi sample changes its regression window.  That is
+                # not oscillator evidence while the independently projected
+                # phase remains inside this transport's qualified envelope
+                # and firmware still reports its map converged.  Hold the
+                # qualified rate through that estimator-only disagreement;
+                # a real divergence accumulates phase and still fails closed.
+                firmware_converged = bool(
+                    self.last_state['flags'] & TS_CONVERGED)
+                phase_qualified = phase_steady and firmware_converged
                 if rate_steady and phase_steady:
                     self.host_bad_count = 0
                     self.host_stable_count = HOST_STABLE_COUNT
                     self.host_model_stable = True
                     self.host_qualified_rate = (
                         self.relay_rate or self.host_rate)
+                elif phase_qualified:
+                    self.host_bad_count = 0
+                    self.host_stable_count = HOST_STABLE_COUNT
+                    self.host_model_stable = True
+                    if predicted_local is not None:
+                        local_est = predicted_local
+                        self.host_filtered_count += 1
                 else:
                     self.host_bad_count += 1
                     if self.host_bad_count < HOST_DIVERGE_COUNT:
@@ -406,8 +424,9 @@ class SecondaryLink:
         self.last_machine_clock = machine_clock
         self.last_local_est = local_est
         self.last_raw_local_est = raw_local_est
-        self.relay_cmd.send([seq, machine_clock & 0xffffffff,
-                             local_est & 0xffffffff])
+        self.relay_cmd.send(
+            [seq, machine_clock & 0xffffffff, local_est & 0xffffffff],
+            retry_class=SERIAL_RETRY_BUFFERED)
         # systime is the host-monotonic instant corresponding to the
         # primary's sampled machine clock. It is also the host's freshness
         # witness for the firmware freewheel gate.
@@ -485,9 +504,10 @@ class SecondaryLink:
             # Suppress that response's later software-derived relay so one
             # beacon cannot discipline the firmware twice.
             self.sof_unpaired_beacons += 1
-        self.sof_relay_cmd.send([
-            seq, machine_clock & 0xffffffff,
-            filtered_local_clock & 0xffffffff])
+        self.sof_relay_cmd.send(
+            [seq, machine_clock & 0xffffffff,
+             filtered_local_clock & 0xffffffff],
+            retry_class=SERIAL_RETRY_BUFFERED)
     def query(self):
         self.last_state = self.query_cmd.send([])
         return self.last_state
@@ -927,10 +947,15 @@ class MachineTimeSync:
                     # absence must fail the trust gate closed, but must not
                     # turn a delayed or canceled status response into a
                     # machine-wide emergency stop.
+                    was_converged = self._last_converged.get(link.name)
                     self._last_converged[link.name] = False
                     logging.warning(
                         "timesync: status query to MCU '%s' failed (%s);"
                         " treating link as unconverged", link.name, exc)
+                    if was_converged is True:
+                        self.printer.send_event(
+                            "timesync:convergence_changed",
+                            link.name, False)
                     continue
                 logging.debug(
                     "timesync sample: mcu='%s' relay_m=%s relay_l=%s"
@@ -943,13 +968,18 @@ class MachineTimeSync:
                     state['last_err'], state['machine_ref'],
                     state['local_ref'])
                 converged = link.is_converged(self.reactor.monotonic())
-                if self._last_converged.get(link.name) != converged:
+                was_converged = self._last_converged.get(link.name)
+                if was_converged != converged:
                     logging.info(
                         "timesync: mcu '%s' %s flags=%d rate=%d"
                         " last_err=%d ticks",
                         link.name, "converged" if converged else "syncing",
                         state['flags'], state['rate'], state['last_err'])
                     self._last_converged[link.name] = converged
+                    if was_converged is True and not converged:
+                        self.printer.send_event(
+                            "timesync:convergence_changed",
+                            link.name, False)
         finally:
             self._convergence_query_active = False
     # Host-visible counterpart of the firmware ingest gate. trajq.c calls

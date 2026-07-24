@@ -1139,8 +1139,10 @@ Phases 3/7/8 over each real transport.
     segments and holds now retain their MCU execution clock through
     serialqueue, use the datagram link's 100 ms buffered retry floor while
     slack permits, and clip the retry to preserve its configured deadline
-    margin. Configuration, queries, grants, watchdogs, homing, rebases, and
-    recovery retain the urgent 25 ms path. Deterministic PTY tests prove the
+    margin. Routine machine-time relays and execution-grant renewals also use
+    the buffered floor; grants carry their local expiry as a deadline.
+    Configuration, queries, watchdogs, homing, rebases, and recovery retain
+    the urgent 25 ms path. Deterministic PTY tests prove the
     buffered floor, urgent floor, deadline clipping, retry-class block
     isolation, and the cumulative-ack rule that a later urgent block pulls
     the whole window forward. Separate timeout/NAK and urgent/buffered
@@ -1159,6 +1161,20 @@ Phases 3/7/8 over each real transport.
     Record wall time, print result, `bytes_retransmit`, timeout-versus-NAK
     bytes/events, urgent-versus-buffered retry events, WiFi disconnect/socket/
     ring counters, queue minimum/high-water, and trajectory underruns.
+    The first split-policy print reached 16.16 percent before the all-MCU
+    grant closed. Rodent had zero WiFi disconnects, socket/ring loss, invalid
+    bytes, and trajectory underruns; it recorded 235 timeout and 19 NAK
+    retransmissions, split 244 urgent versus only 10 buffered events.
+    Firmware stayed converged at -616 us inside the configured ±1 ms WiFi
+    phase envelope, but a noisy host ClockSync frequency fit crossed the
+    separate 150 ppm gate at -160.37 ppm. The host now treats phase plus
+    firmware convergence as the steady-state authority, filtering rate-only
+    estimator movement while a true drift still accumulates phase and fails
+    closed. Convergence loss also latches the coordinated recovery hold and
+    makes virtual-SD pause on the still-unconsumed command instead of invoking
+    `on_error_gcode` and then shutting down in `flush_handler`. Workstation
+    regressions cover both sides of that gate; repeat the complete print and
+    collect the same counter set before checking this item.
   - [x] **Authenticated exact-copy carrier (2026-07-24):** a one-copy
     Rodent/Pico Z search timed out despite a healthy WiFi association and
     zero firmware socket/ring drops because ordered-delivery stalls exceeded

@@ -209,6 +209,11 @@ Datagram transports now install two host delivery policies:
 * buffered trajectory segments use a 100 ms minimum RTO, but carry their MCU
   execution clock into serialqueue. The retry is pulled earlier whenever
   waiting 100 ms would consume the configured 100 ms recovery margin.
+* routine machine-time relays and all-MCU execution-grant renewals also use
+  the buffered floor. They are periodic, have seconds of qualified
+  holdover/lease runway, and gain nothing from retransmitting at 25 ms.
+  Execution grants carry their local expiry clock as the retry deadline;
+  startup, rebase, homing, watchdog, and recovery controls remain prompt.
 
 The policy is cumulative-ack aware. Urgent and buffered commands are placed
 in separate protocol blocks, and a later urgent block pulls the retry of the
@@ -234,13 +239,40 @@ policy values. Compare these counters before and after a matched print; total
 `bytes_retransmit` alone cannot distinguish actual receiver NAKs from an
 over-eager host timeout.
 
-The 2026-07-24 live load gate restarted the idle three-MCU V0 without flashing
+The 2026-07-24 live-load gate restarted the idle three-MCU V0 without flashing
 any board. Rodent reported the active 25/100/100 ms policy, zero invalid
 bytes, and separate timeout/NAK counters; its host time model reached eight
 stable samples and the Pico/Rodent/EBB36 execution group committed sequence
 74. Startup retries were all classified urgent, as expected before any
-trajectory was queued. A matched physical print A/B remains required to
-measure the reduction in buffered retry traffic.
+trajectory was queued.
+
+The first physical print with that policy reached 16.16 percent before the
+host revoked the all-MCU execution grant. This was not a radio or queue
+failure: Rodent reported zero WiFi disconnects, socket/ring loss, invalid
+bytes, and trajectory underruns. It recorded 235 timeout retransmissions and
+19 NAK retransmissions; 244 events were urgent and only 10 buffered. The
+firmware remained converged (`flags=7`) and its phase error was -616 us,
+inside Rodent's configured ±1 ms envelope, while the separate host
+ClockSync frequency fit briefly read -160.37 ppm against a 150 ppm
+qualification threshold.
+
+That run exposed two host-policy defects. First, the fitted frequency is an
+estimator, not independent physical truth: delayed WiFi samples can move its
+regression even while the measured projected phase and firmware discipline
+agree. A qualified link now holds its last accepted rate through
+rate-only regression disagreement. Real oscillator divergence still
+accumulates phase error and revokes qualification after three out-of-envelope
+observations. Second, genuine convergence loss now latches the all-MCU
+recovery hold before the next virtual-SD command. The rejected command remains
+unconsumed, the installed execution leases stop the group, and virtual-SD
+enters a macro-free recoverable pause instead of running `on_error_gcode` and
+then failing inside `flush_handler`.
+
+A complete matched physical print remains required to close the A/B, but this
+failed attempt is now attributable and covered by deterministic regressions:
+rate-only estimator noise retains qualification, sustained phase divergence
+fails closed, convergence loss latches coordinated recovery, and virtual-SD
+preserves the rejected command boundary.
 
 For a secondary network MCU that may recover, configure:
 

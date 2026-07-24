@@ -102,8 +102,11 @@ Per-class staging in the transmit path:
   links, trajectory payloads carry a host-only buffered-retry annotation and
   their local execution clock. They default to a 100 ms retry floor while
   sufficient staged slack remains, then retry early enough to preserve the
-  configured deadline margin. Rebase, grant, watchdog, homing, recovery, and
-  other safety-control messages retain the urgent 25 ms floor.
+  configured deadline margin. Routine time beacons and execution-grant
+  renewals also use the buffered floor because they have seconds of
+  holdover/lease runway; each grant carries its local expiry as its retry
+  deadline. Rebase, watchdog, homing, recovery, and other safety-control
+  messages retain the urgent 25 ms floor.
 * **Class 1** is a FIFO dispatched whenever no Class-0 message is due,
   ahead of Class 2.
 * **Class 2** fills remaining frame space and idle links; under
@@ -114,12 +117,14 @@ This is an evolution of `serialqueue.c`'s existing two-stage
 (upcoming/ready) design, not a rewrite.
 
 The delivery annotation is deliberately narrower than the command's semantic
-class. Both trajectory data and its grant/recovery controls are Class 0, but
-only data already covered by staged lookahead can tolerate a patient retry.
-Urgent and buffered records are not packed under one sequence number. Because
-acks are cumulative, a later urgent record is allowed to pull the complete
-outstanding window forward; otherwise a watchdog could accidentally inherit
-the motion-data RTO.
+class. Trajectory data, periodic time/grant maintenance, and immediate
+recovery controls are all Class 0, but their available slack differs:
+lookahead data has an execution clock, grants have an expiry clock, and
+recovery controls have no patient-retry budget. Urgent and buffered records
+are not packed under one sequence number. Because acks are cumulative, a
+later urgent record is allowed to pull the complete outstanding window
+forward; otherwise a watchdog could accidentally inherit the motion-data
+RTO.
 
 ## MCU-side buffer accounting
 

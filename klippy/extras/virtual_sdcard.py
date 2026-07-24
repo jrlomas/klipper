@@ -221,6 +221,23 @@ class VirtualSD:
         self.next_file_position = pos
     def is_cmd_from_sd(self):
         return self.cmd_from_sd
+    def _pause_trajectory_recovery(self):
+        trajectory = self.printer.lookup_object(
+            'trajectory_queuing', None)
+        if (trajectory is None
+                or not trajectory.is_recovery_active()):
+            return False
+        pause_resume = self.printer.lookup_object('pause_resume', None)
+        if pause_resume is None:
+            return False
+        try:
+            pause_resume.pause_for_recovery()
+        except Exception:
+            logging.exception(
+                "virtual_sdcard: unable to enter trajectory recovery pause")
+            return False
+        return pause_resume.get_status(
+            self.reactor.monotonic())['is_paused']
     # Background work timer
     def work_handler(self, eventtime):
         logging.info("Starting SD card print (position %d)", self.file_position)
@@ -272,6 +289,16 @@ class VirtualSD:
             try:
                 self.gcode.run_script(line)
             except self.gcode.error as e:
+                if self._pause_trajectory_recovery():
+                    # Keep file_position on the rejected command so
+                    # RESUME_MOTION retries it after the all-MCU rebase.
+                    # This is a controlled pause, not a print error: do not
+                    # run on_error_gcode (which may itself contain motion).
+                    logging.warning(
+                        "virtual_sdcard: trajectory recovery paused before"
+                        " command at position %d: %s",
+                        self.file_position, e)
+                    break
                 error_message = str(e)
                 try:
                     self.gcode.run_script(self.on_error_gcode.render())

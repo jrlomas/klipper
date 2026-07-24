@@ -101,6 +101,28 @@ the reactor. USB CDC also clears partial receive/transmit staging when the
 endpoint is configured again. This prevents stale timers, LED updates, or
 motion/meta commands from arriving as a reconnect burst.
 
+A 2026-07-24 Rodent print found the analogous boundary for a live but
+temporarily unqualified network MCU. The firmware remained converged and
+inside its configured phase envelope, but a delayed WiFi observation moved
+the host's independent frequency regression just beyond its qualification
+threshold. The old host closed the all-MCU grant, raised on the next
+virtual-SD move, ran the print's error macro, and then raised again while
+flushing already-planned work. This turned a recoverable time-quality event
+into machine shutdown.
+
+The host now uses measured phase plus the firmware's converged state as the
+steady-state authority. A rate-only regression change holds the last
+qualified rate; actual divergence necessarily accumulates phase and remains
+fail-closed. If convergence genuinely changes from qualified to unqualified,
+the time layer signals the execution group immediately. Klippy closes
+ingestion, marks every trajectory joint recovery-held, and lets the already
+installed bounded leases bring the group to a controlled stop. Virtual-SD
+keeps the rejected command unconsumed and enters the macro-free recovery
+pause, so `RESUME_MOTION` can obtain a fresh unanimous grant, reconcile held
+positions, and retry that command. Deterministic tests cover rate-only noise,
+sustained phase divergence, loss-to-group-hold propagation, and the
+virtual-SD command boundary; a complete physical retry remains open.
+
 Resume then stops being inference: the host diffs *intentions sent*
 against *executions logged*, knows exactly where every joint stopped
 and what was already printed, and re-plans from ground truth.

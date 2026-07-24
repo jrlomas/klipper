@@ -39,6 +39,8 @@ class FakePrinter:
     def __init__(self):
         self.reactor = FakeReactor()
         self.toolhead = FakeToolhead()
+        self.virtual_sdcard = None
+        self.events = []
 
     def get_reactor(self):
         return self.reactor
@@ -46,7 +48,12 @@ class FakePrinter:
     def lookup_object(self, name, default=None):
         if name == 'toolhead':
             return self.toolhead
+        if name == 'virtual_sdcard':
+            return self.virtual_sdcard
         return default
+
+    def send_event(self, name, *args):
+        self.events.append((name, args))
 
     def command_error(self, message):
         return RuntimeError(message)
@@ -99,8 +106,11 @@ class FakeMember:
 
 
 class FakeCommand:
-    def send(self, args=()):
-        pass
+    def __init__(self):
+        self.sent = []
+
+    def send(self, args=(), **kwargs):
+        self.sent.append((args, kwargs))
 
 
 class FakeConnectMCU:
@@ -145,6 +155,7 @@ def make_owner():
     owner.recovery_grant_active = False
     owner.group_timer = object()
     owner.recovery_active = False
+    owner.recovery_trigger = None
     owner.steppers = []
     primary = FakeMCU('mcu', 12_000_000., 20.)
     rodent = FakeMCU('rodent', 80_000_000., 20.1)
@@ -156,6 +167,16 @@ def make_owner():
     owner.get_machine_mcu = lambda: owner.machine
     owner.is_mcu_synced = lambda mcu: True
     return owner
+
+
+class FakeRecoveryStepper:
+    def __init__(self):
+        self.recovery_hold = False
+        self.motion_horizon_clock = None
+        self.stopped = []
+
+    def note_rebase_needed(self, stopped=False):
+        self.stopped.append(stopped)
 
 
 def ack_for(owner, member):
@@ -241,8 +262,9 @@ def test_missing_member_stops_all_renewals():
 def test_active_rejection_latches_and_stops_reproposal():
     owner = make_owner()
     owner._grant_timer(10.)
-    owner.steppers = [
-        types.SimpleNamespace(motion_horizon_clock=30 * 12_000_000)]
+    stepper = FakeRecoveryStepper()
+    stepper.motion_horizon_clock = 30 * 12_000_000
+    owner.steppers = [stepper]
     first, _second = owner.group_members.values()
     owner._handle_group_state(first, {
         'group_id': owner.execution_group_id,
@@ -255,9 +277,47 @@ def test_active_rejection_latches_and_stops_reproposal():
     })
     assert owner.group_renewal_fault['member'] == 'mcu'
     assert not owner.group_grant_ready
+    assert owner.recovery_active
+    assert stepper.recovery_hold
+    assert stepper.stopped == [True]
+    assert owner.recovery_trigger['reason'] == 'execution_grant_rejected'
+    assert owner.printer.events[-1][0] == (
+        'trajectory_queuing:recovery_hold')
     owner._grant_timer(10.1)
     assert owner.group_sequence == 1
     assert owner.group_pending is None
+
+
+def test_timesync_loss_pauses_group_before_next_print_move():
+    owner = make_owner()
+    owner.printer.virtual_sdcard = types.SimpleNamespace(
+        is_active=lambda: True)
+    stepper = FakeRecoveryStepper()
+    owner.steppers = [stepper]
+    owner._handle_timesync_convergence('rodent', False)
+    assert owner.recovery_active
+    assert not owner.group_grant_ready
+    assert stepper.recovery_hold
+    assert stepper.stopped == [True]
+    assert owner.recovery_trigger['reason'] == 'timesync_lost'
+    assert owner.recovery_trigger['mcu'] == 'rodent'
+    assert owner.printer.events == [(
+        'trajectory_queuing:recovery_hold',
+        (owner.recovery_trigger,))]
+
+
+def test_execution_grant_uses_deadline_aware_delivery():
+    mcu = FakeConnectMCU()
+    owner = types.SimpleNamespace(_handle_group_state=lambda *args: None)
+    member = trajectory_queuing.TrajectoryGroupMember(owner, mcu)
+    member.connect()
+    member.grant(9, 1, 2, 3, 4, 5)
+    args, options = member.grant_cmd.sent[-1]
+    assert args == [9, 1, 2, 3, 4, 5]
+    assert options == {
+        'retry_class': trajectory_queuing.SERIAL_RETRY_BUFFERED,
+        'retry_clock': 5,
+    }
 
 
 def test_startup_planning_lead_does_not_latch_idle_rejection():
@@ -488,6 +548,8 @@ def main():
         test_duplicate_and_rejected_states_do_not_commit,
         test_missing_member_stops_all_renewals,
         test_active_rejection_latches_and_stops_reproposal,
+        test_timesync_loss_pauses_group_before_next_print_move,
+        test_execution_grant_uses_deadline_aware_delivery,
         test_startup_planning_lead_does_not_latch_idle_rejection,
         test_stopped_stepper_clears_motion_horizon,
         test_renewal_respects_interval_after_all_ack,

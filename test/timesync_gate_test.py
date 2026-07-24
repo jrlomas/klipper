@@ -278,10 +278,15 @@ def test_timesync_status_timeout_fails_closed_without_shutdown():
     owner._paused_mcus = set()
     owner._last_converged = {BrokenLink.name: True}
     owner._convergence_query_active = False
-    owner.printer = types.SimpleNamespace(command_error=RuntimeError)
+    events = []
+    owner.printer = types.SimpleNamespace(
+        command_error=RuntimeError,
+        send_event=lambda *args: events.append(args))
     owner._check_convergence()
     assert owner._last_converged[BrokenLink.name] is False
     assert not owner._convergence_query_active
+    assert events == [
+        ('timesync:convergence_changed', BrokenLink.name, False)]
 
 
 def test_timesync_status_poll_is_not_reentrant():
@@ -431,7 +436,7 @@ def test_live_host_model_holds_through_isolated_regression_update():
     assert link.host_bad_count == 0
 
 
-def test_live_host_model_requires_sustained_divergence_to_revoke():
+def test_live_host_model_ignores_rate_only_regression_noise():
     primary_sync = FakeClockSync()
     primary_sync.clock_est = (0., 0., 1_000_000.)
     primary_sync.min_half_rtt = .000050
@@ -441,18 +446,53 @@ def test_live_host_model_requires_sustained_divergence_to_revoke():
     mcu = FakeMCU(clocksync=local_sync)
     link = timesync.SecondaryLink(mcu, 1_000_000., primary_sync)
     link.setup(5., .000100)
+    link.query()
     for index in range(19):
         link.relay(index, index * 1_000_000, float(index))
     assert link.host_model_stable
     local_sync.clock_est = (0., 0., 1_001_000.)
     filtered_before = link.host_filtered_count
+    for _miss in range(1, timesync.HOST_DIVERGE_COUNT + 1):
+        index += 1
+        link.relay(index, index * 1_000_000, float(index))
+        assert link.host_model_stable
+        assert link.is_converged(float(index))
+    assert link.host_filtered_count == (
+        filtered_before + timesync.HOST_DIVERGE_COUNT)
+    assert mcu.commands['sync_beacon_relay'].send_options[-1] == {
+        'retry_class': 1,
+    }
+
+
+def test_live_host_model_still_revokes_sustained_phase_divergence():
+    primary_sync = FakeClockSync()
+    primary_sync.clock_est = (0., 0., 1_000_000.)
+    primary_sync.min_half_rtt = .000050
+
+    class OffsetClockSync(FakeClockSync):
+        offset = 0
+        def systime_to_local_clock(self, systime):
+            return int(systime * 1_000_000.) + self.offset
+
+    local_sync = OffsetClockSync()
+    local_sync.clock_est = (0., 0., 1_000_000.)
+    local_sync.min_half_rtt = .001
+    mcu = FakeMCU(clocksync=local_sync)
+    link = timesync.SecondaryLink(mcu, 1_000_000., primary_sync)
+    link.setup(5., .000100)
+    link.query()
+    for index in range(19):
+        link.relay(index, index * 1_000_000, float(index))
+    assert link.host_model_stable
     for miss in range(1, timesync.HOST_DIVERGE_COUNT + 1):
         index += 1
+        local_sync.offset += 1_000
+        # Force the endpoint observation to remain independent of the old
+        # robust-fit window; this models a sustained physical phase ramp.
+        link.relay_samples = []
         link.relay(index, index * 1_000_000, float(index))
         assert link.host_model_stable == (
             miss < timesync.HOST_DIVERGE_COUNT)
-    assert link.host_filtered_count == (
-        filtered_before + timesync.HOST_DIVERGE_COUNT - 1)
 
 
 class NoisyClockSync:
@@ -1978,8 +2018,10 @@ def main():
     print("PASS: relay fit rejects the short priming-burst span")
     test_live_host_model_holds_through_isolated_regression_update()
     print("PASS: live host clock models hold through isolated updates")
-    test_live_host_model_requires_sustained_divergence_to_revoke()
-    print("PASS: sustained host-model divergence revokes Class-0")
+    test_live_host_model_ignores_rate_only_regression_noise()
+    print("PASS: rate-only ClockSync noise retains qualified phase holdover")
+    test_live_host_model_still_revokes_sustained_phase_divergence()
+    print("PASS: sustained host-model phase divergence revokes Class-0")
     test_relay_regression_rejects_endpoint_jitter()
     print("PASS: relay regression suppresses noisy endpoint estimates")
     test_relay_regression_rejects_mid_window_clock_update()
