@@ -42,6 +42,10 @@ void serialqueue_send_one(struct serialqueue *sq, struct command_queue *cq
 void serialqueue_send(struct serialqueue *sq, struct command_queue *cq
                       , uint8_t *msg, int len, uint64_t min_clock
                       , uint64_t req_clock, uint64_t notify_id);
+void serialqueue_send_class(struct serialqueue *sq, struct command_queue *cq
+                            , uint8_t *msg, int len, uint64_t min_clock
+                            , uint64_t req_clock, uint64_t notify_id
+                            , uint8_t retry_class, uint64_t retry_clock);
 void serialqueue_pull(struct serialqueue *sq, struct pull_queue_message *pqm);
 void serialqueue_set_wire_frequency(struct serialqueue *sq, double frequency);
 int serialqueue_set_canfd_mode(struct serialqueue *sq, int payload_size,
@@ -50,6 +54,10 @@ void serialqueue_set_receive_window(struct serialqueue *sq, int receive_window);
 void serialqueue_set_receive_frame_window(struct serialqueue *sq,
                                           int receive_frame_window);
 void serialqueue_set_send_ahead(struct serialqueue *sq, double send_ahead);
+void serialqueue_set_retransmit_policy(struct serialqueue *sq,
+                                       double urgent_rto,
+                                       double buffered_rto,
+                                       double deadline_margin);
 void serialqueue_set_clock_est(struct serialqueue *sq, double est_freq
                                , double conv_time, uint64_t conv_clock
                                , uint64_t last_clock);

@@ -193,6 +193,55 @@ the observed one-second latency tail on this AP/ESP32 combination. It does not
 yet qualify print-length reliability: retain the no-A-MPDU profile and repeat
 a complete supervised print while checking the same counters.
 
+### Host retry policy for a deep trajectory queue
+
+A deep MCU queue does not by itself change Klipper's host ARQ timer. The
+historical serialqueue policy retransmitted its complete unacknowledged window
+after a minimum 25 ms, even when the missing acknowledgement covered
+trajectory already staged roughly a second ahead. On WiFi, a delayed
+acknowledgement could therefore create extra datagrams and radio contention
+without improving the execution deadline.
+
+Datagram transports now install two host delivery policies:
+
+* prompt configuration, watchdog, status, and recovery traffic retains the
+  25 ms minimum RTO;
+* buffered trajectory segments use a 100 ms minimum RTO, but carry their MCU
+  execution clock into serialqueue. The retry is pulled earlier whenever
+  waiting 100 ms would consume the configured 100 ms recovery margin.
+
+The policy is cumulative-ack aware. Urgent and buffered commands are placed
+in separate protocol blocks, and a later urgent block pulls the retry of the
+whole outstanding window forward. A timeout attributable only to buffered
+motion backs off that block without inflating the global urgent RTO. This is
+delivery policy, not permission to execute: the all-MCU execution grant still
+bounds every board, and an unreachable member still enters coordinated
+recovery.
+
+The defaults may be made explicit in the transport section:
+
+```ini
+[intentproto_transport rodent]
+urgent_rto: 0.025
+buffered_rto: 0.100
+retry_deadline_margin: 0.100
+```
+
+`mcu`/serialqueue statistics expose `retransmit_timeout`,
+`retransmit_nak`, `retransmit_urgent`, `retransmit_buffered`,
+`bytes_retransmit_timeout`, and `bytes_retransmit_nak`, plus the three active
+policy values. Compare these counters before and after a matched print; total
+`bytes_retransmit` alone cannot distinguish actual receiver NAKs from an
+over-eager host timeout.
+
+The 2026-07-24 live load gate restarted the idle three-MCU V0 without flashing
+any board. Rodent reported the active 25/100/100 ms policy, zero invalid
+bytes, and separate timeout/NAK counters; its host time model reached eight
+stable samples and the Pico/Rodent/EBB36 execution group committed sequence
+74. Startup retries were all classified urgent, as expected before any
+trajectory was queued. A matched physical print A/B remains required to
+measure the reduction in buffered retry traffic.
+
 For a secondary network MCU that may recover, configure:
 
 ```

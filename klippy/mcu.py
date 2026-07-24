@@ -130,9 +130,12 @@ class CommandWrapper:
         if conn_helper.get_mcu().is_fileoutput():
             # Can't use send_wait_ack when in debugging mode
             self.send_wait_ack = self.send
-    def send(self, data=(), minclock=0, reqclock=0):
+    def send(self, data=(), minclock=0, reqclock=0,
+             retry_class=0, retry_clock=0):
         cmd = self._cmd.encode(data)
-        self._serial.raw_send(cmd, minclock, reqclock, self._cmd_queue)
+        self._serial.raw_send(
+            cmd, minclock, reqclock, self._cmd_queue,
+            retry_class, retry_clock)
     def send_wait_ack(self, data=(), minclock=0, reqclock=0):
         cmd = self._cmd.encode(data)
         self._serial.raw_send_wait_ack(cmd, minclock, reqclock, self._cmd_queue)
@@ -2154,6 +2157,10 @@ class MCU:
         self._transport_homing_timeout = timeout
     def set_serial_send_ahead(self, seconds):
         self._serial.set_send_ahead(seconds)
+    def set_serial_retransmit_policy(self, urgent_rto, buffered_rto,
+                                     deadline_margin):
+        self._serial.set_retransmit_policy(
+            urgent_rto, buffered_rto, deadline_margin)
     # MCU Configuration wrappers
     def setup_pin(self, pin_type, pin_params):
         return self._config_helper.setup_pin(pin_type, pin_params)

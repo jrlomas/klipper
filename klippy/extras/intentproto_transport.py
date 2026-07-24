@@ -75,6 +75,15 @@ class IntentprotoTransport:
             DATAGRAM_MULTI_MCU_HOMING_TIMEOUT
             if self.mode == 'datagram' else .025,
             minval=.025, maxval=.250)
+        self.urgent_rto = config.getfloat(
+            'urgent_rto', .025, minval=.025, maxval=1.)
+        self.buffered_rto = config.getfloat(
+            'buffered_rto', .100, minval=.025, maxval=1.)
+        if self.buffered_rto < self.urgent_rto:
+            raise config.error(
+                "buffered_rto must be greater than or equal to urgent_rto")
+        self.retry_deadline_margin = config.getfloat(
+            'retry_deadline_margin', .100, minval=0., maxval=5.)
         default_pty = '/tmp/intentproto-%s' % (self.name,)
         self.pty_link = config.get('pty', default_pty)
         # Authentication: a PSK file, or the explicit trust-network confession.
@@ -187,10 +196,18 @@ class IntentprotoTransport:
 
     def _configure_datagram_serial(self, mcu):
         mcu.set_serial_send_ahead(self.send_ahead)
+        mcu.set_serial_retransmit_policy(
+            self.urgent_rto, self.buffered_rto,
+            self.retry_deadline_margin)
         mcu.set_transport_homing_timeout(self.multi_mcu_homing_timeout)
         logging.info(
-            "intentproto_transport %s: multi-MCU homing liveness floor"
-            " %.1fms", self.name, self.multi_mcu_homing_timeout * 1000.)
+            "intentproto_transport %s: datagram retry policy urgent=%.1fms"
+            " buffered=%.1fms deadline_margin=%.1fms;"
+            " multi-MCU homing liveness floor %.1fms",
+            self.name, self.urgent_rto * 1000.,
+            self.buffered_rto * 1000.,
+            self.retry_deadline_margin * 1000.,
+            self.multi_mcu_homing_timeout * 1000.)
 
     def _lookup_datagram_diagnostics(self, mcu):
         if mcu.try_lookup_command('udp_console_get_status') is not None:

@@ -184,10 +184,16 @@ class _DiagnosticMCU:
             if udp_schema is None else udp_schema)
         self.lookups = []
         self.send_ahead = None
+        self.retransmit_policy = None
         self.homing_timeout = None
 
     def set_serial_send_ahead(self, seconds):
         self.send_ahead = seconds
+
+    def set_serial_retransmit_policy(self, urgent_rto, buffered_rto,
+                                     deadline_margin):
+        self.retransmit_policy = (
+            urgent_rto, buffered_rto, deadline_margin)
 
     def set_transport_homing_timeout(self, seconds):
         self.homing_timeout = seconds
@@ -254,10 +260,14 @@ class TestDatagramDiagnostics(unittest.TestCase):
     def test_datagram_link_physically_stages_ahead_of_arq(self):
         transport = self._transport(transport_glue.ETH_MAC_STATUS_F7)
         transport.send_ahead = 1.0
+        transport.urgent_rto = .025
+        transport.buffered_rto = .100
+        transport.retry_deadline_margin = .100
         transport.multi_mcu_homing_timeout = 0.250
         mcu = _DiagnosticMCU(transport_glue.ETH_MAC_STATUS_F7)
         transport._configure_datagram_serial(mcu)
         self.assertEqual(mcu.send_ahead, 1.0)
+        self.assertEqual(mcu.retransmit_policy, (.025, .100, .100))
         self.assertEqual(mcu.homing_timeout, 0.250)
 
 

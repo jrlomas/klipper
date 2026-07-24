@@ -866,6 +866,15 @@ reads. Time enters only as the `now_ticks` argument to
   next `need_retransmit()` poll, or when the RTO expires, **every**
   unacked frame is retransmitted in order, preceded by a lone sync byte
   so a receiver stuck mid-frame can resynchronise.
+* **Deadline-aware outer ARQ.** In the live Klippy integration, the legacy
+  serialqueue is the outer cumulative-ack owner and the v2 bridge preserves
+  its bytes. Datagram links classify queued trajectory blocks as buffered and
+  attach their MCU execution clock. Prompt traffic keeps a 25 ms minimum RTO;
+  buffered motion defaults to 100 ms, clipped earlier to preserve 100 ms of
+  execution slack. The two classes do not share one protocol block, and a
+  later urgent block can pull the cumulative retry window forward. This
+  prevents a healthy one-second MCU queue from generating a speculative
+  replay every 25 ms while retaining prompt recovery behavior.
 * **Framing negotiation** ([§6](#6-negotiation-and-fallback)) is driven
   from here: `session_enable_v2()`, the `Legacy/Probing/V2` machine, and
   the `v2_rejected` fallback latch.
@@ -953,8 +962,9 @@ envelope framing transform (see the as-built callout):
   ([klippy/intentproto_transport.py](../klippy/intentproto_transport.py),
   configured by `[intentproto_transport]`) sits *below* the serial fd via a
   PTY and re-frames each stock v1 frame to v2 on the wire (datagram or BCH
-  console), leaving `serialqueue`/`serialhdl.py`/`msgproto.py`
-  byte-identical to upstream. Tested by loopback
+  console). The v1 payload remains byte-identical; serialqueue additionally
+  carries host-only retry class and execution-deadline metadata so datagram
+  ARQ can use the policy above. Tested by loopback
   ([test/intentproto_transport_test.py](../test/intentproto_transport_test.py)):
   exact v1 reconstruction both directions, chunked input, resync bytes,
   datagram auth tamper-rejection, and a real-PTY bridge round-trip.

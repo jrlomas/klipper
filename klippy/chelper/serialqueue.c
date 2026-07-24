@@ -85,6 +85,10 @@ struct serialqueue {
     uint64_t ignore_nak_seq, last_ack_seq, retransmit_seq, rtt_sample_seq;
     struct list_head sent_queue;
     double srtt, rttvar, rto;
+    double urgent_rto, buffered_rto, retry_deadline_margin;
+    uint32_t retransmit_timeout_count, retransmit_nak_count;
+    uint32_t retransmit_urgent_count, retransmit_buffered_count;
+    uint32_t bytes_retransmit_timeout, bytes_retransmit_nak;
     // Pending transmission message queues
     struct list_head ready_queues;
     int ready_bytes, need_ack_bytes, last_ack_bytes;
@@ -305,6 +309,73 @@ calculate_record_bittime(struct serialqueue *sq, uint8_t *buf, int buflen)
     return total;
 }
 
+// Return the delay for the oldest unacknowledged block. Buffered trajectory
+// work may wait through an ordinary datagram latency tail, but never beyond
+// the point that would consume its configured recovery margin.
+static double
+retransmit_delay(struct serialqueue *sq, struct queue_message *sent
+                 , double eventtime)
+{
+    double delay = sq->rto;
+    double floor = sq->urgent_rto;
+    if (sent->retry_class == MESSAGE_RETRY_BUFFERED
+        && sq->buffered_rto > floor)
+        floor = sq->buffered_rto;
+    if (sent->retry_class == MESSAGE_RETRY_BUFFERED
+        && sent->retry_attempts) {
+        for (uint_fast8_t i = 0; i < sent->retry_attempts; i++) {
+            floor *= 2.;
+            if (floor >= MAX_RTO) {
+                floor = MAX_RTO;
+                break;
+            }
+        }
+    }
+    if (delay < floor)
+        delay = floor;
+    if (sent->retry_class != MESSAGE_RETRY_BUFFERED
+        || !sent->retry_clock || !sq->ce.est_freq
+        || sq->retry_deadline_margin <= 0.)
+        return delay;
+    double deadline = clock_to_time(&sq->ce, sent->retry_clock);
+    double latest_retry = deadline - sq->retry_deadline_margin;
+    if (eventtime + delay > latest_retry)
+        delay = latest_retry - eventtime;
+    // A deadline already inside the urgent floor must not create a tight
+    // userspace retry spin. Higher layers will hold if delivery cannot beat
+    // the actual execution boundary.
+    if (delay < sq->urgent_rto)
+        delay = sq->urgent_rto;
+    return delay;
+}
+
+// Return the earliest retry demanded by any outstanding block.  A later
+// urgent block depends on the cumulative acknowledgement of every preceding
+// block, so it must be allowed to pull the whole window forward.
+static double
+pending_retransmit_delay(struct serialqueue *sq, double eventtime)
+{
+    double delay = MAX_RTO;
+    struct queue_message *qm;
+    list_for_each_entry(qm, &sq->sent_queue, node) {
+        double qdelay = retransmit_delay(sq, qm, eventtime);
+        if (qdelay < delay)
+            delay = qdelay;
+    }
+    return delay;
+}
+
+static int
+pending_has_urgent(struct serialqueue *sq)
+{
+    struct queue_message *qm;
+    list_for_each_entry(qm, &sq->sent_queue, node) {
+        if (qm->retry_class == MESSAGE_RETRY_URGENT)
+            return 1;
+    }
+    return 0;
+}
+
 // Update internal state when the receive sequence increases
 static void
 update_receive_seq(struct serialqueue *sq, double eventtime, uint64_t rseq)
@@ -350,8 +421,8 @@ update_receive_seq(struct serialqueue *sq, double eventtime, uint64_t rseq)
         if (rttvar4 < 0.001)
             rttvar4 = 0.001;
         sq->rto = sq->srtt + rttvar4;
-        if (sq->rto < MIN_RTO)
-            sq->rto = MIN_RTO;
+        if (sq->rto < sq->urgent_rto)
+            sq->rto = sq->urgent_rto;
         else if (sq->rto > MAX_RTO)
             sq->rto = MAX_RTO;
         sq->rtt_sample_seq = 0;
@@ -361,7 +432,8 @@ update_receive_seq(struct serialqueue *sq, double eventtime, uint64_t rseq)
     } else {
         struct queue_message *sent = list_first_entry(
             &sq->sent_queue, struct queue_message, node);
-        double nr = eventtime + sq->rto + calculate_bittime(sq, sent->len);
+        double nr = eventtime + pending_retransmit_delay(sq, eventtime)
+            + calculate_bittime(sq, sent->len);
         pollreactor_update_timer(sq->pr, SQPT_RETRANSMIT, nr);
     }
 }
@@ -666,6 +738,8 @@ retransmit_event(struct serialqueue *sq, double eventtime)
     int buflen = 0, first_buflen = 0;
     buf[buflen++] = MESSAGE_SYNC;
     struct queue_message *qm;
+    struct queue_message *first = list_first_entry(
+        &sq->sent_queue, struct queue_message, node);
     list_for_each_entry(qm, &sq->sent_queue, node) {
         memcpy(&buf[buflen], qm->msg, qm->len);
         buflen += qm->len;
@@ -676,23 +750,39 @@ retransmit_event(struct serialqueue *sq, double eventtime)
     sq->bytes_retransmit += buflen;
 
     // Update rto
-    if (pollreactor_get_timer(sq->pr, SQPT_RETRANSMIT) == PR_NOW) {
+    int is_nak = pollreactor_get_timer(
+        sq->pr, SQPT_RETRANSMIT) == PR_NOW;
+    if (is_nak) {
         // Retransmit due to nak
+        sq->retransmit_nak_count++;
+        sq->bytes_retransmit_nak += buflen;
         sq->ignore_nak_seq = sq->receive_seq;
         if (sq->receive_seq < sq->retransmit_seq)
             // Second nak for this retransmit - don't allow third
             sq->ignore_nak_seq = sq->retransmit_seq;
     } else {
         // Retransmit due to timeout
-        sq->rto *= 2.0;
-        if (sq->rto > MAX_RTO)
-            sq->rto = MAX_RTO;
+        sq->retransmit_timeout_count++;
+        sq->bytes_retransmit_timeout += buflen;
+        if (!pending_has_urgent(sq)) {
+            if (first->retry_attempts < 8)
+                first->retry_attempts++;
+        } else {
+            sq->rto *= 2.0;
+            if (sq->rto > MAX_RTO)
+                sq->rto = MAX_RTO;
+        }
         sq->ignore_nak_seq = sq->send_seq;
     }
+    if (pending_has_urgent(sq))
+        sq->retransmit_urgent_count++;
+    else
+        sq->retransmit_buffered_count++;
     sq->retransmit_seq = sq->send_seq;
     sq->rtt_sample_seq = 0;
     sq->idle_time = eventtime + calculate_record_bittime(sq, buf, buflen);
-    double waketime = (eventtime + sq->rto
+    double waketime = (eventtime
+                       + pending_retransmit_delay(sq, eventtime)
                        + calculate_record_bittime(sq, buf, first_buflen));
 
     pthread_mutex_unlock(&sq->lock);
@@ -705,6 +795,8 @@ build_and_send_command(struct serialqueue *sq, uint8_t *buf, int pending
                        , double eventtime)
 {
     int len = MESSAGE_HEADER_SIZE;
+    int retry_class = -1;
+    uint64_t retry_clock = 0;
     while (sq->ready_bytes) {
         // Find highest priority message (message with lowest req_clock)
         uint64_t min_clock = MAX_CLOCK;
@@ -719,6 +811,11 @@ build_and_send_command(struct serialqueue *sq, uint8_t *buf, int pending
                 qm = m;
             }
         }
+        // A protocol block has one sequence number and one retry timer.
+        // Keep urgent traffic out of buffered trajectory blocks so an
+        // unrelated query or watchdog cannot collapse their patient RTO.
+        if (retry_class >= 0 && qm->retry_class != retry_class)
+            break;
         // Append message to outgoing command
         if (len + qm->len > MESSAGE_MAX - MESSAGE_TRAILER_SIZE)
             break;
@@ -728,6 +825,10 @@ build_and_send_command(struct serialqueue *sq, uint8_t *buf, int pending
         memcpy(&buf[len], qm->msg, qm->len);
         len += qm->len;
         sq->ready_bytes -= qm->len;
+        retry_class = qm->retry_class;
+        if (qm->retry_clock
+            && (!retry_clock || qm->retry_clock < retry_clock))
+            retry_clock = qm->retry_clock;
         if (qm->notify_id) {
             // Message requires notification - add to notify list
             qm->req_clock = sq->send_seq;
@@ -754,8 +855,14 @@ build_and_send_command(struct serialqueue *sq, uint8_t *buf, int pending
     out->len = len;
     out->sent_time = eventtime;
     out->receive_time = idletime;
-    if (list_empty(&sq->sent_queue))
-        pollreactor_update_timer(sq->pr, SQPT_RETRANSMIT, idletime + sq->rto);
+    out->retry_class = (retry_class < 0
+                        ? MESSAGE_RETRY_URGENT : retry_class);
+    out->retry_clock = retry_clock;
+    double retransmit = idletime + retransmit_delay(sq, out, idletime);
+    if (list_empty(&sq->sent_queue)
+        || retransmit < pollreactor_get_timer(sq->pr, SQPT_RETRANSMIT))
+        pollreactor_update_timer(
+            sq->pr, SQPT_RETRANSMIT, retransmit);
     if (!sq->rtt_sample_seq)
         sq->rtt_sample_seq = sq->send_seq;
     sq->send_seq++;
@@ -957,6 +1064,8 @@ serialqueue_alloc(int serial_fd, char serial_fd_type, int client_id
     sq->client_id = client_id;
     sq->can_payload_size = 8;
     sq->send_ahead = DEFAULT_SEND_AHEAD;
+    sq->urgent_rto = MIN_RTO;
+    sq->buffered_rto = MIN_RTO;
     strncpy(sq->name, name, sizeof(sq->name));
     sq->name[sizeof(sq->name)-1] = '\0';
 
@@ -1271,10 +1380,24 @@ serialqueue_send(struct serialqueue *sq, struct command_queue *cq, uint8_t *msg
                  , int len, uint64_t min_clock, uint64_t req_clock
                  , uint64_t notify_id)
 {
+    serialqueue_send_class(
+        sq, cq, msg, len, min_clock, req_clock, notify_id,
+        MESSAGE_RETRY_URGENT, req_clock);
+}
+
+void __visible
+serialqueue_send_class(struct serialqueue *sq, struct command_queue *cq
+                       , uint8_t *msg, int len, uint64_t min_clock
+                       , uint64_t req_clock, uint64_t notify_id
+                       , uint8_t retry_class, uint64_t retry_clock)
+{
     struct queue_message *qm = message_fill(msg, len);
     qm->min_clock = min_clock;
     qm->req_clock = req_clock;
     qm->notify_id = notify_id;
+    qm->retry_class = (retry_class == MESSAGE_RETRY_BUFFERED
+                       ? MESSAGE_RETRY_BUFFERED : MESSAGE_RETRY_URGENT);
+    qm->retry_clock = retry_clock;
     serialqueue_send_one(sq, cq, qm);
 }
 
@@ -1395,6 +1518,45 @@ serialqueue_set_send_ahead(struct serialqueue *sq, double send_ahead)
     kick_bg_thread(sq);
 }
 
+void __visible
+serialqueue_set_retransmit_policy(struct serialqueue *sq, double urgent_rto
+                                  , double buffered_rto
+                                  , double deadline_margin)
+{
+    if (urgent_rto < MIN_RTO)
+        urgent_rto = MIN_RTO;
+    else if (urgent_rto > MAX_RTO)
+        urgent_rto = MAX_RTO;
+    if (buffered_rto < urgent_rto)
+        buffered_rto = urgent_rto;
+    else if (buffered_rto > MAX_RTO)
+        buffered_rto = MAX_RTO;
+    if (deadline_margin < 0.)
+        deadline_margin = 0.;
+    else if (deadline_margin > MAX_RTO)
+        deadline_margin = MAX_RTO;
+    pthread_mutex_lock(&sq->lock);
+    sq->urgent_rto = urgent_rto;
+    sq->buffered_rto = buffered_rto;
+    sq->retry_deadline_margin = deadline_margin;
+    if (sq->rto < urgent_rto)
+        sq->rto = urgent_rto;
+    if (!list_empty(&sq->sent_queue)) {
+        struct queue_message *sent = list_first_entry(
+            &sq->sent_queue, struct queue_message, node);
+        double now = get_monotonic();
+        double waketime = now + pending_retransmit_delay(sq, now)
+            + calculate_bittime(sq, sent->len);
+        double old_waketime = pollreactor_get_timer(
+            sq->pr, SQPT_RETRANSMIT);
+        if (waketime < old_waketime)
+            pollreactor_update_timer(
+                sq->pr, SQPT_RETRANSMIT, waketime);
+    }
+    pthread_mutex_unlock(&sq->lock);
+    kick_bg_thread(sq);
+}
+
 // Set the estimated clock rate of the mcu on the other end of the
 // serial port
 void __visible
@@ -1431,15 +1593,26 @@ serialqueue_get_stats(struct serialqueue *sq, char *buf, int len)
         : (uint32_t)(stats.send_seq - stats.receive_seq);
     snprintf(buf, len, "bytes_write=%u bytes_read=%u"
              " bytes_retransmit=%u bytes_invalid=%u"
+             " retransmit_timeout=%u retransmit_nak=%u"
+             " retransmit_urgent=%u retransmit_buffered=%u"
+             " bytes_retransmit_timeout=%u bytes_retransmit_nak=%u"
              " send_seq=%u receive_seq=%u retransmit_seq=%u"
              " srtt=%.3f rttvar=%.3f rto=%.3f"
+             " urgent_rto=%.3f buffered_rto=%.3f"
+             " retry_deadline_margin=%.3f"
              " ready_bytes=%u upcoming_bytes=%u"
              " receive_frame_window=%u pending_blocks=%u"
              , stats.bytes_write, stats.bytes_read
              , stats.bytes_retransmit, stats.bytes_invalid
+             , stats.retransmit_timeout_count, stats.retransmit_nak_count
+             , stats.retransmit_urgent_count
+             , stats.retransmit_buffered_count
+             , stats.bytes_retransmit_timeout, stats.bytes_retransmit_nak
              , (int)stats.send_seq, (int)stats.receive_seq
              , (int)stats.retransmit_seq
              , stats.srtt, stats.rttvar, stats.rto
+             , stats.urgent_rto, stats.buffered_rto
+             , stats.retry_deadline_margin
              , stats.ready_bytes, stats.transmit_requests.upcoming_bytes
              , stats.can_receive_frame_window
              , pending_blocks);

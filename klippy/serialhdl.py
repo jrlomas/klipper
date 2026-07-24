@@ -133,6 +133,11 @@ class SerialReader:
     def set_send_ahead(self, seconds):
         self.ffi_lib.serialqueue_set_send_ahead(
             self.serialqueue, float(seconds))
+    def set_retransmit_policy(self, urgent_rto, buffered_rto,
+                              deadline_margin):
+        self.ffi_lib.serialqueue_set_retransmit_policy(
+            self.serialqueue, float(urgent_rto), float(buffered_rto),
+            float(deadline_margin))
     def _require_canfd_frame_window(self, mtu):
         if (mtu > 8 and self.msgparser.get_constant_int(
                 'CANBUS_RX_FRAME_WINDOW', 0) < 2):
@@ -395,9 +400,16 @@ class SerialReader:
             else:
                 self.handlers[name, oid] = callback
     # Command sending
-    def raw_send(self, cmd, minclock, reqclock, cmd_queue):
-        self.ffi_lib.serialqueue_send(self.serialqueue, cmd_queue,
-                                      cmd, len(cmd), minclock, reqclock, 0)
+    def raw_send(self, cmd, minclock, reqclock, cmd_queue,
+                 retry_class=0, retry_clock=0):
+        if retry_class or retry_clock:
+            self.ffi_lib.serialqueue_send_class(
+                self.serialqueue, cmd_queue, cmd, len(cmd), minclock,
+                reqclock, 0, retry_class, retry_clock)
+            return
+        self.ffi_lib.serialqueue_send(
+            self.serialqueue, cmd_queue, cmd, len(cmd),
+            minclock, reqclock, 0)
     def raw_send_wait_ack(self, cmd, minclock, reqclock, cmd_queue):
         self.last_notify_id += 1
         nid = self.last_notify_id

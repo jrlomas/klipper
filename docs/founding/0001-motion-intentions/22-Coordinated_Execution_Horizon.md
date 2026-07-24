@@ -363,6 +363,27 @@ into physically transmissible work early enough to survive the observed ARQ
 backoff. It does not widen the executable safety boundary; the short
 all-participant execution grant remains authoritative.
 
+The send horizon and retransmission timer are now coupled by explicit
+deadline metadata rather than by one fixed 25 ms serial assumption.
+Trajectory segment and terminal-hold records carry their local execution
+clock into serialqueue. Datagram motion uses a 100 ms buffered retry floor
+while the deadline has ample slack, then clips that delay to preserve a
+100 ms recovery margin. Grants, watchdogs, rebases, homing, configuration,
+and recovery remain urgent at 25 ms. The packer keeps those retry classes in
+separate sequence blocks, and cumulative acknowledgement semantics allow any
+outstanding urgent block to advance the whole-window retry. Buffered-only
+timeouts back off locally instead of poisoning the RTO used by later safety
+traffic.
+
+This answers a key queue-depth question: ten seconds of RAM on an ESP32 is
+useful only if host delivery policy knows it has ten seconds. Queue capacity,
+physical staging, execution permission, and retry deadline are distinct
+quantities; the implementation now transports the last of those explicitly.
+The first live host load reported the active 25/100/100 ms values and
+reconverged Pico, Rodent, and EBB36 at execution sequence 74 with zero invalid
+Rodent bytes. Because that idle startup emitted no buffered trajectory, it
+qualifies integration only; the matched physical print A/B remains open.
+
 That stop also proved the recovery epoch rule. Firmware correctly refuses to
 extend an expired epoch, while the original host grant timer correctly
 refused to renew anything during a recovery hold. The two safe local rules

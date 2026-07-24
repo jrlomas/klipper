@@ -17,6 +17,12 @@
 #define MESSAGE_DEST 0x10
 #define MESSAGE_SYNC 0x7E
 
+// Delivery semantics retained after commands are packed into protocol blocks.
+// Urgent is the historical behavior. Buffered work may use a more patient
+// transport RTO while its execution deadline remains safely in the future.
+#define MESSAGE_RETRY_URGENT   0
+#define MESSAGE_RETRY_BUFFERED 1
+
 struct queue_message {
     int len;
     uint8_t msg[MESSAGE_MAX];
@@ -30,7 +36,10 @@ struct queue_message {
             double sent_time, receive_time;
         };
     };
+    uint64_t retry_clock;
     uint64_t notify_id;
+    uint8_t retry_class;
+    uint8_t retry_attempts;
     struct list_node node;
 };
 

@@ -57,7 +57,12 @@ line.
 now default to making timed commands physically transmissible one second
 before their MCU deadline instead of inheriting serialqueue's 100 ms serial
 window. This keeps network retransmission latency from consuming an
-apparently deep planner buffer. `[failure_recovery]` now automatically
+apparently deep planner buffer. Datagram links also gained `urgent_rto`,
+`buffered_rto`, and `retry_deadline_margin`. Buffered trajectory blocks now
+use their execution clock and available lookahead to avoid false 25 ms
+retries, while prompt traffic retains the 25 ms floor and can pull a
+cumulative retry window forward. New serial statistics separate timeout from
+NAK and urgent from buffered retransmissions. `[failure_recovery]` now automatically
 includes every trajectory MCU in its execution logs, and `RESUME_MOTION`
 establishes a fresh all-MCU execution epoch and grant before recovery rebases.
 

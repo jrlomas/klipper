@@ -1257,6 +1257,7 @@ def test_g1_quintic_segments_use_higher_order_wire_command():
     stepper.quintic_cmd = FakeCommand()
     stepper.hold_cmd = FakeCommand()
     stepper.wire_clock = 1_000_000
+    stepper.execution_clock = 5_333_333
     stepper.wire_acc = 0
     stepper._send_segs(1)
     assert stepper.quintic_cmd.sent == [
@@ -1264,6 +1265,10 @@ def test_g1_quintic_segments_use_higher_order_wire_command():
          12000, 101, 202, 303, 404, 505]]
     assert stepper.queue_cmd.sent == []
     assert stepper.hold_cmd.sent == []
+    assert stepper.quintic_cmd.send_options == [{
+        'retry_class': trajectory_queuing.SERIAL_RETRY_BUFFERED,
+        'retry_clock': 5_333_333,
+    }]
     record = stepper.owner.records[-1]
     assert record['duration'] == 2250
     assert record['execution_duration'] == 12000

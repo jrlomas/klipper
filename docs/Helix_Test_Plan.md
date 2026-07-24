@@ -1135,6 +1135,30 @@ Phases 3/7/8 over each real transport.
     `power_save=none(valid=1)`, `ampdu_rx=0`, and `ampdu_tx=0`; Rodent stayed
     converged with no disconnect, socket, receive-ring, or invalid-byte
     errors. This accepts the no-A-MPDU profile for the physical print soak.
+  - [x] **Deadline-aware host ARQ workstation gate (2026-07-24):** trajectory
+    segments and holds now retain their MCU execution clock through
+    serialqueue, use the datagram link's 100 ms buffered retry floor while
+    slack permits, and clip the retry to preserve its configured deadline
+    margin. Configuration, queries, grants, watchdogs, homing, rebases, and
+    recovery retain the urgent 25 ms path. Deterministic PTY tests prove the
+    buffered floor, urgent floor, deadline clipping, retry-class block
+    isolation, and the cumulative-ack rule that a later urgent block pulls
+    the whole window forward. Separate timeout/NAK and urgent/buffered
+    counters make the next physical A/B attributable.
+  - [x] **Deadline-aware host ARQ live-load gate (2026-07-24):** an idle
+    Klipper restart loaded the host-only policy without a firmware flash.
+    Rodent advertised `urgent_rto=0.025`, `buffered_rto=0.100`, and
+    `retry_deadline_margin=0.100`; the new counters remained parseable with
+    zero invalid bytes. Its time model reached eight stable samples and the
+    Pico/Rodent/EBB36 execution group became ready at committed sequence 74.
+    The 65 startup retransmit bytes were all urgent (three timeout events and
+    one NAK event), so this proves policy installation and classification but
+    is not substituted for the motion A/B below.
+  - [ ] **Deadline-aware host ARQ physical A/B:** run matched Rodent prints
+    with the legacy 25 ms all-traffic floor and the split 25/100 ms policy.
+    Record wall time, print result, `bytes_retransmit`, timeout-versus-NAK
+    bytes/events, urgent-versus-buffered retry events, WiFi disconnect/socket/
+    ring counters, queue minimum/high-water, and trajectory underruns.
   - [x] **Authenticated exact-copy carrier (2026-07-24):** a one-copy
     Rodent/Pico Z search timed out despite a healthy WiFi association and
     zero firmware socket/ring drops because ordered-delivery stalls exceeded

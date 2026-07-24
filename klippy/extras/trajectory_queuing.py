@@ -59,6 +59,7 @@ TSEG_POLY_CUBIC = 1 << 6
 TSEG_POLY_QUINTIC = 2 << 6
 TSEG_POLY_MASK = 3 << 6
 TSEG_LOCAL_TIME = 1 << 1
+SERIAL_RETRY_BUFFERED = 1
 
 # ---- Higher-order (cubic / quintic) Bezier segments (FD-0001 doc 02) ----
 #
@@ -1143,7 +1144,10 @@ class TrajectoryStepper:
         # back is safe only for the primary MCU, where both domains coincide;
         # connect() rejects an older secondary-MCU firmware image.
         cmd = getattr(self, 'local_hold_cmd', None) or self.hold_cmd
-        cmd.send([self.oid, duration])
+        cmd.send(
+            [self.oid, duration],
+            retry_class=SERIAL_RETRY_BUFFERED,
+            retry_clock=int(getattr(self, 'execution_clock', 0) or 0))
 
     def _record_intention(self, prev_acc, prev_time):
         # Append (start_clock, end_clock, end_pos_subunits) for the span
@@ -1267,15 +1271,22 @@ class TrajectoryStepper:
                               | TSEG_LOCAL_TIME)
                 self.quintic_cmd.send(
                     [self.oid, base_flags, s.duration, s.velocity, s.accel,
-                     s.jerk, s.snap, s.crackle])
+                     s.jerk, s.snap, s.crackle],
+                    retry_class=SERIAL_RETRY_BUFFERED,
+                    retry_clock=int(
+                        getattr(self, 'execution_clock', 0) or 0))
                 self._wire_segment(
                     s.flags | TSEG_LOCAL_TIME, machine_duration,
                     s.velocity, s.accel, s.jerk, s.snap, s.crackle,
                     exec_duration=s.duration)
             elif not order:
                 local_flags = s.flags | TSEG_LOCAL_TIME
-                self.queue_cmd.send([self.oid, local_flags, s.duration,
-                                     s.velocity, s.accel])
+                self.queue_cmd.send(
+                    [self.oid, local_flags, s.duration,
+                     s.velocity, s.accel],
+                    retry_class=SERIAL_RETRY_BUFFERED,
+                    retry_clock=int(
+                        getattr(self, 'execution_clock', 0) or 0))
                 self._wire_segment(local_flags, machine_duration,
                                    s.velocity, s.accel,
                                    exec_duration=s.duration)
@@ -1361,8 +1372,12 @@ class TrajectoryStepper:
                 raise self.mcu.error(
                     "Firmware for %s lacks higher-order trajectory support"
                     % (self.name,))
-            self.cubic_cmd.send([self.oid, base_flags, duration,
-                                 c['v'], c['a'], c['j']])
+            self.cubic_cmd.send(
+                [self.oid, base_flags, duration,
+                 c['v'], c['a'], c['j']],
+                retry_class=SERIAL_RETRY_BUFFERED,
+                retry_clock=int(
+                    getattr(self, 'execution_clock', 0) or 0))
             self._wire_segment(base_flags | TSEG_POLY_CUBIC,
                                machine_duration, c['v'], c['a'], c['j'],
                                exec_duration=duration)
@@ -1371,8 +1386,11 @@ class TrajectoryStepper:
             raise self.mcu.error(
                 "Firmware for %s lacks higher-order trajectory support"
                 % (self.name,))
-        self.quintic_cmd.send([self.oid, base_flags, duration,
-                               c['v'], c['a'], c['j'], c['s'], c['c']])
+        self.quintic_cmd.send(
+            [self.oid, base_flags, duration,
+             c['v'], c['a'], c['j'], c['s'], c['c']],
+            retry_class=SERIAL_RETRY_BUFFERED,
+            retry_clock=int(getattr(self, 'execution_clock', 0) or 0))
         self._wire_segment(base_flags | TSEG_POLY_QUINTIC,
                            machine_duration, c['v'], c['a'], c['j'],
                            c['s'], c['c'], exec_duration=duration)

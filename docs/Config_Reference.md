@@ -395,6 +395,21 @@ One section per bridged micro-controller.
 #   to 0.100 second. The accepted range is 0.100 to 30.0 seconds. This is a
 #   transport staging horizon, not an execution grant: firmware may execute
 #   only through the separately committed all-MCU grant.
+#urgent_rto: 0.025
+#   Minimum retransmission timeout, in seconds, for configuration, queries,
+#   watchdogs, recovery, and other prompt traffic. The default and minimum
+#   are 0.025 seconds; the accepted range ends at 1.0 second.
+#buffered_rto: 0.100
+#   Minimum retransmission timeout for trajectory segments already protected
+#   by MCU lookahead. The default is 0.100 seconds. This avoids treating an
+#   ordinary WiFi acknowledgement tail as loss and needlessly replaying the
+#   complete cumulative-ack window. It must be at least urgent_rto.
+#   The accepted range is 0.025 to 1.0 second.
+#retry_deadline_margin: 0.100
+#   Amount of execution slack, in seconds, that buffered delivery attempts
+#   preserve. A segment whose execution clock is approaching pulls its retry
+#   earlier than buffered_rto; the retry never spins faster than urgent_rto.
+#   The default is 0.100 seconds; the accepted range is 0.0 to 5.0 seconds.
 #multi_mcu_homing_timeout: 0.250
 #   Datagram mode: carrier liveness floor for homing or probing whose
 #   endstop and stepper are on different MCUs. Datagram ARQ may legitimately
