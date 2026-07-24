@@ -939,7 +939,14 @@ heaters `failure_policy: hold`. **Do this before trusting a long print.**
   records at a time and waits on a same-queue response barrier after every
   chunk. Two physical pulls of 1,475 and 1,500 retained records completed with
   Pico and EBB36 `bytes_invalid` unchanged at zero. Both heater targets were
-  zero throughout.
+  zero throughout. On 2026-07-24, automatic trajectory-MCU discovery added
+  Rodent to this recorder. A first live restart proved that copying the
+  explicit 1,024-record ring to the ESP32 exhausted its config allocator;
+  automatic participants now use the separately bounded
+  `execlog_auto_size` (128 by default). The corrected firmware restart
+  configured Rodent successfully, reconverged Pico/Rodent/EBB36 on unanimous
+  execution grant sequence 8, and drained 1,098 records including attributed
+  `execlog[rodent]` entries with every link's `bytes_invalid` still zero.
 - [ ] **8.7 — Full replug cycle under print.** Combine 8.3–8.5 during an
   actual short print; reseat a toolhead cable.
   Pass: the part survives; no cold-bed detach; layers align across the

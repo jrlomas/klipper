@@ -373,6 +373,16 @@ acknowledgement, commits one all-MCU grant, and only then emits coordinated
 recovery rebases. Ordinary G-Code ingress remains closed during the entire
 transaction, and a timeout leaves the print paused and retryable.
 
+The live host deployment also caught a capacity mistake in observability:
+blindly applying the explicitly configured 1,024-record execution-log ring to
+newly discovered Rodent exhausted its MCU config allocator. Automatic
+trajectory participants now use a separate bounded `execlog_auto_size`
+(128 records by default), while explicitly named boards retain
+`execlog_size`. After firmware restart Rodent configured 363 move slots, all
+three motion participants converged and committed grant sequence 8, and a
+reliable `EXECLOG_DUMP` returned named Rodent records as part of 1,098 total
+records with no invalid transport bytes.
+
 ## Qualification gates
 
 No “coordinated pause” claim is complete until all of these pass:
