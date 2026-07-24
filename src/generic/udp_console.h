@@ -38,6 +38,10 @@ struct udp_console_ops {
 // emits parity after each pair and reconstructs either single loss in order.
 // 0 leaves the erasure layer off; other values fail closed at encode.
 void udp_console_set_fec_k(uint8_t fec_k);
+// Number of wire-identical copies of each established-session response.
+// The authenticated replay window suppresses delivered duplicates.
+// Values outside 1..3 are clamped to one.
+void udp_console_set_session_tx_copies(uint8_t copies);
 void udp_console_init(const struct udp_console_ops *ops, void *ctx
                       , const uint8_t *psk, uint32_t psk_len);
 // Signal that datagram(s) are ready for ops->recv (callable from

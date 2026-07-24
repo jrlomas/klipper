@@ -149,6 +149,46 @@ class TestSessionBridge(unittest.TestCase):
             bridge.close()
             resp.stop()
 
+    def test_session_copies_are_replay_suppressed(self):
+        import intentproto_transport as ipt
+        resp = _Responder()
+        resp.start()
+        pty_link = '/tmp/helix_sess_bridge_copies'
+        bridge = ipt.TransportBridge(
+            'datagram', pty_link, psk=PSK, session=True,
+            board_id=b'test-board', session_tx_copies=2,
+            udp_board=('127.0.0.1', resp.port), udp_listen=0)
+        slave = None
+        try:
+            bridge.open()
+            slave = os.open(pty_link, os.O_RDWR | os.O_NOCTTY)
+            os.set_blocking(slave, False)
+            msg = b'\x07\x11copy!\x7e'
+            before = bridge.stats()['tx_datagrams']
+            os.write(slave, msg)
+
+            got = b''
+            deadline = time.time() + 3.0
+            while len(got) < len(msg) and time.time() < deadline:
+                r, _, _ = select.select([slave], [], [], 0.2)
+                if slave in r:
+                    got += os.read(slave, 4096)
+            # The responder accepts and echoes one copy; its replay window
+            # rejects the identical second copy before byte-stream delivery.
+            self.assertEqual(got, msg)
+            time.sleep(.05)
+            self.assertGreaterEqual(
+                resp.sess.diag()['replays_rejected'], 1)
+            st = bridge.stats()
+            self.assertEqual(st['session_tx_copies'], 2)
+            self.assertEqual(st['tx_datagrams'] - before, 2)
+            self.assertEqual(st['session_redundant_tx'], 1)
+        finally:
+            if slave is not None:
+                os.close(slave)
+            bridge.close()
+            resp.stop()
+
     def test_identity_mismatch_rejected(self):
         # The responder presents 'test-board'; a bridge configured to
         # expect a different identity must reject the handshake.
@@ -184,6 +224,16 @@ class TestSessionBridge(unittest.TestCase):
             ipt.TransportBridge(
                 'datagram', '/tmp/helix_sess_longid', psk=PSK,
                 session=True, board_id=b'x' * 25,
+                udp_board=('127.0.0.1', 9))
+        with self.assertRaisesRegex(ipt.FrameError, 'between 1 and 3'):
+            ipt.TransportBridge(
+                'datagram', '/tmp/helix_sess_bad_copies', psk=PSK,
+                session=True, board_id=b'x', session_tx_copies=4,
+                udp_board=('127.0.0.1', 9))
+        with self.assertRaisesRegex(ipt.FrameError, 'not available'):
+            ipt.TransportBridge(
+                'datagram', '/tmp/helix_sess_fec', psk=PSK, fec_k=2,
+                session=True, board_id=b'x',
                 udp_board=('127.0.0.1', 9))
 
 

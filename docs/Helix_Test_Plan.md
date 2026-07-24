@@ -1118,6 +1118,19 @@ Phases 3/7/8 over each real transport.
     `power_save=none(valid=1)`, `ampdu_rx=0`, and `ampdu_tx=0`; Rodent stayed
     converged with no disconnect, socket, receive-ring, or invalid-byte
     errors. This accepts the no-A-MPDU profile for the physical print soak.
+  - [x] **Authenticated exact-copy carrier (2026-07-24):** a one-copy
+    Rodent/Pico Z search timed out despite a healthy WiFi association and
+    zero firmware socket/ring drops because ordered-delivery stalls exceeded
+    the bounded 250 ms homing watchdog. The host and Rodent now each send two
+    wire-identical sealed-session datagrams. Replay protection suppresses the
+    duplicate before serial-stream delivery. A live 115 mm search reached its
+    ordinary end-of-travel terminal state without a communication timeout;
+    after flashing the matching firmware, both directions reported redundant
+    transmissions and peer replay rejection with zero authentication,
+    datagram-loss, WiFi-disconnect, socket, ring, or send errors. Rodent
+    reconverged after restart. The switch remained physically open, so this
+    checks the carrier gate only; a successful two-pass physical home remains
+    part of the print-soak gate below.
   - [ ] **Post-recovery print soak:** that first print stopped when Rodent
     ceased answering. The wired host and nearby access point remained up.
     The capture did not distinguish a station disconnect from an MCU reset,

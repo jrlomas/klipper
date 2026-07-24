@@ -34,13 +34,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import intentproto_transport as ipt
 
 
-UDP_CONSOLE_STATUS = (
+UDP_CONSOLE_STATUS_V1 = (
     'udp_console_status decoded=%u responses=%u response_drops=%u'
     ' flushes=%u no_peer_drops=%u send_failures=%u'
     ' session_tx_epoch=%u session_tx_seq=%u'
     ' session_rx_epoch=%u session_rx_top=%u'
     ' session_auth_failures=%u session_replays=%u'
     ' session_old_epoch=%u')
+UDP_CONSOLE_STATUS_V2 = (
+    UDP_CONSOLE_STATUS_V1 + ' session_tx_copies=%u session_redundant_tx=%u')
 DATAGRAM_MULTI_MCU_HOMING_TIMEOUT = .250
 ETH_MAC_STATUS_F7 = (
     'eth_mac_status ready=%c init_error=%c link=%c speed100=%c'
@@ -103,6 +105,9 @@ class IntentprotoTransport:
             host, port = addr.rsplit(':', 1)
             listen = config.getint('listen_port', 41414)
             session = config.getboolean('session', False)
+            session_tx_copies = config.getint(
+                'session_tx_copies', 2 if session else 1,
+                minval=1, maxval=3)
             board_id = config.get('board_id', '').encode()
             if session and psk is None:
                 raise config.error(
@@ -116,7 +121,8 @@ class IntentprotoTransport:
             self._bridge = ipt.TransportBridge(
                 'datagram', self.pty_link, psk=psk, fec_k=self.fec_k,
                 udp_board=(host, int(port)), udp_listen=listen,
-                session=session, board_id=board_id)
+                session=session, board_id=board_id,
+                session_tx_copies=session_tx_copies)
         else:  # bch — a real serial device to the MCU
             device = config.get('device')
             baud = config.getint('baud', 250000)
@@ -188,8 +194,18 @@ class IntentprotoTransport:
 
     def _lookup_datagram_diagnostics(self, mcu):
         if mcu.try_lookup_command('udp_console_get_status') is not None:
-            self._udp_status_cmd = mcu.lookup_query_command(
-                'udp_console_get_status', UDP_CONSOLE_STATUS)
+            if mcu.check_valid_response(UDP_CONSOLE_STATUS_V2):
+                response = UDP_CONSOLE_STATUS_V2
+            elif mcu.check_valid_response(UDP_CONSOLE_STATUS_V1):
+                response = UDP_CONSOLE_STATUS_V1
+            else:
+                logging.warning(
+                    "intentproto_transport %s: udp_console_get_status has"
+                    " an unrecognized response schema", self.name)
+                response = None
+            if response is not None:
+                self._udp_status_cmd = mcu.lookup_query_command(
+                    'udp_console_get_status', response)
         if mcu.try_lookup_command('eth_mac_get_status') is None:
             return
         if mcu.check_valid_response(ETH_MAC_STATUS_F7):
@@ -216,14 +232,17 @@ class IntentprotoTransport:
                 "intentproto_transport %s is not a datagram transport"
                 % self.name)
         diagnostics = {}
+        bridge = getattr(self, '_bridge', None)
+        if bridge is not None:
+            diagnostics['bridge'] = bridge.stats()
         if self._udp_status_cmd is not None:
             diagnostics['console'] = dict(self._udp_status_cmd.send())
         if self._eth_status_cmd is not None:
             diagnostics['ethernet'] = dict(self._eth_status_cmd.send())
         if not diagnostics:
             raise gcmd.error(
-                "intentproto_transport %s firmware does not expose"
-                " datagram diagnostics" % self.name)
+                "intentproto_transport %s exposes no datagram diagnostics"
+                % self.name)
         self._mcu_diagnostics = diagnostics
         for label, params in sorted(diagnostics.items()):
             gcmd.respond_info(self._format_diagnostics(label, params))

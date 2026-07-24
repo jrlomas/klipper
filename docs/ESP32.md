@@ -60,6 +60,11 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   replay protection, and a board identity verified by the host.  Once it is
   established, static datagrams cannot bypass it.  The legacy static HMAC
   envelope remains available only for backward-compatible bootstrap.
+  `CONFIG_KLIPPER_SESSION_TX_COPIES` selects one to three wire-identical
+  response transmissions; the Rodent profile uses two. The peer's
+  authenticated replay window suppresses a delivered duplicate before it
+  reaches the serial stream, giving sparse control traffic immediate
+  single-loss tolerance.
 * The socket itself sits behind a three-function ops struct, so the
   identical glue serves ESP32 WiFi, ESP32 Ethernet (RMII - replace
   the WiFi bringup with `esp_eth`, the binding is unchanged), and the
@@ -72,7 +77,8 @@ src/esp32/modem.c (modem)         - or -  src/linux/udp.c
   and stats traffic through a controlled proxy that dropped the first data
   packet of a protected pair, proving recovery over the real WiFi/UDP path.
   FEC remains off by default until link-profile measurements show that its
-  50% packet overhead is beneficial; the default recovery path is frame ARQ.
+  50% packet overhead is beneficial. It applies only to the static envelope;
+  session mode instead uses immediate exact-copy replication plus frame ARQ.
 
 ## Core pinning (FD-0001 doc 07) - component architecture
 
@@ -977,8 +983,9 @@ in rough order:
   polled dispatch) once hardware allows comparing the two; then
   reinstating `rmt_step.c` on the bare core.
 * Measure whether the optional `fec_k=2` path's 50% packet overhead helps the
-  target WiFi loss profile. Controlled first-packet loss recovery already
-  passes on the Lolin32; this remaining item is a deployment tradeoff study.
+  target static-envelope WiFi loss profile. Controlled first-packet loss
+  recovery already passes on the Lolin32; session links use exact-copy
+  replication because sparse watchdog traffic cannot wait for a pair block.
 * On-silicon bring-up of the RMT step backend (see the
   [RMT step bring-up checklist](#rmt-step-bring-up-checklist)); PCNT
   step verification as a homing-position cross-check; FOC backend

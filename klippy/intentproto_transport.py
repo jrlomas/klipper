@@ -194,7 +194,7 @@ SESSION_ID_MAX = 24
 class TransportBridge(object):
     def __init__(self, mode, pty_link, psk=None, fec_k=0,
                  udp_board=None, udp_listen=0, stream_wire_fd=None,
-                 session=False, board_id=b""):
+                 session=False, board_id=b"", session_tx_copies=1):
         # mode: 'bch' (byte-stream re-framing) or 'datagram' (UDP envelope).
         # pty_link: symlink klippy opens as its serial port.
         # udp_board: (host, port) for datagram mode.
@@ -210,6 +210,7 @@ class TransportBridge(object):
         self.udp_listen = udp_listen
         self.use_session = session
         self.board_id = board_id
+        self.session_tx_copies = session_tx_copies
         self.master_fd = None
         self._stop = False
         self._thread = None
@@ -225,6 +226,7 @@ class TransportBridge(object):
         self.wire_bytes = 0
         self.tx_datagrams = 0
         self.rx_datagrams = 0
+        self.session_redundant_tx = 0
         if mode == 'bch':
             self._codec = BchConsoleCodec()
             # bch starts in v1 PASS-THROUGH: the MCU's console accepts both
@@ -233,6 +235,13 @@ class TransportBridge(object):
             # FRAMING_V2 (or never, for a stock board — graceful fallback).
             self.v2_active = False
         elif mode == 'datagram':
+            if session_tx_copies < 1 or session_tx_copies > 3:
+                raise FrameError("session_tx_copies must be between 1 and 3")
+            if session_tx_copies != 1 and not session:
+                raise FrameError("session_tx_copies requires session mode")
+            if session and fec_k:
+                raise FrameError("fec_k is not available in session mode;"
+                                 " use session_tx_copies instead")
             self._codec = load_datagram_codec()(psk, fec_k)
             self.v2_active = True  # the datagram MCU console only speaks v2
             if session:
@@ -270,6 +279,8 @@ class TransportBridge(object):
               'session_established': self.session_established,
               'session_confirmed': self.session_confirmed,
               'session_fin_retransmits': self.session_fin_retransmits,
+              'session_tx_copies': self.session_tx_copies,
+              'session_redundant_tx': self.session_redundant_tx,
               'host_bytes': self.host_bytes, 'wire_bytes': self.wire_bytes,
               'tx_datagrams': self.tx_datagrams,
               'rx_datagrams': self.rx_datagrams,
@@ -426,11 +437,17 @@ class TransportBridge(object):
             while data:
                 chunk, data = data[:limit], data[limit:]
                 if self.session_established:
-                    # Session datagrams carry the rotating-key seal in place of
-                    # the static HMAC; no erasure parity in session mode.
-                    self._sock.sendto(self._session.encode(chunk),
-                                      self.udp_board)
-                    self.tx_datagrams += 1
+                    # Session replication gives sparse Class-0 traffic
+                    # immediate single-loss tolerance. Seal once and repeat
+                    # the exact datagram: the authenticated replay window
+                    # suppresses a delivered duplicate before arbitrary PTY
+                    # chunks can be appended to the serial byte stream.
+                    wire = self._session.encode(chunk)
+                    for copy_index in range(self.session_tx_copies):
+                        self._sock.sendto(wire, self.udp_board)
+                        self.tx_datagrams += 1
+                        if copy_index:
+                            self.session_redundant_tx += 1
                     continue
                 self._sock.sendto(self._codec.encode(chunk), self.udp_board)
                 self.tx_datagrams += 1

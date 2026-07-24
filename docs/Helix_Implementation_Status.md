@@ -371,6 +371,26 @@ pass.
   regressions pass and RP2040, ESP32, and STM32G0B1 target images build. A
   physical two-pass Z home and complete Rodent print-start regression remain
   required before this item is qualified.
+* The next Rodent/Pico Z regression isolated WiFi liveness from that halt
+  barrier. A 100ms trsync policy was shorter than the carrier's 200ms ARQ
+  backoff, and the first 250ms implementation incorrectly scheduled a
+  renewal relative to its new expiry rather than the observation that
+  justified it. The carrier now publishes a bounded 250ms floor and trsync
+  renewals become eligible before the prior expiry. Real WiFi still produced
+  occasional longer ordered-delivery stalls with zero socket/ring drops, so
+  authenticated sessions now send two wire-identical datagram copies; replay
+  protection suppresses the duplicate before byte-stream delivery. A live
+  115mm Z search then completed without communication timeout and terminated
+  normally at end-of-travel. The switch remained physically open, so Klipper
+  correctly reported `No trigger on stepper_z after full movement`; the
+  transport gate passes, while the physical two-pass home remains open.
+  The matching Rodent image was subsequently flashed with two response
+  copies. A fresh live session reported 196/197 redundant host/firmware
+  transmissions, 197/197 peer-side replay rejections, zero authentication
+  failures, zero host loss/reordering, and zero WiFi disconnect/socket/ring/
+  send errors. Rodent then reconverged at 270 us instantaneous fit error
+  inside its measured +/-2.27 ms network RTT bound. This closes the
+  bidirectional exact-copy carrier gate, not the mechanical switch gate.
 * The subsequent Rodent print reached real motion but exposed an independent
   queue-liveness limit: while WiFi stayed associated at approximately -50 dBm
   and firmware reported zero RX-ring, TX-ring, and send drops, the reliable

@@ -36,6 +36,7 @@ def main():
     assert "CONFIG_KLIPPER_WIFI_MAX_TX_POWER_QDBM=34" in rodent
     assert "CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n" in rodent
     assert "CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n" in rodent
+    assert "CONFIG_KLIPPER_SESSION_TX_COPIES=2" in rodent
     assert "ps_mode=%u ps_valid=%u ampdu_rx=%u ampdu_tx=%u" in wifi
 
     # Both ESP32 architectures must discard and recreate their socket after
@@ -60,6 +61,7 @@ def main():
     assert "udp_port_get_status" in udp
     assert "wifi_get_status" in wifi
     assert "HELIX_WIFI_STATUS" in host
+    assert "udp_console_set_session_tx_copies" in udp
 
     print("PASS: ESP32 WiFi recovery recreates sockets and exposes evidence")
 

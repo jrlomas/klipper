@@ -419,7 +419,9 @@ One section per bridged micro-controller.
 #   XOR erasure coding: 2 protects each data pair with one parity datagram
 #   and recovers either single loss in original order. Must match the board's
 #   setting. 0 disables the erasure layer; other values are rejected. The
-#   default is 0.
+#   default is 0. This static-envelope mechanism is not used by session mode;
+#   setting fec_k with session: True is rejected instead of being silently
+#   ignored.
 #session: False
 #   Datagram mode: establish the DTLS-class authenticated session
 #   (HKDF per-session keys, epoch key rotation, per-board identity,
@@ -428,6 +430,16 @@ One section per bridged micro-controller.
 #   is keyed from the PSK) and a board built with WANT_DATAGRAM_SESSION;
 #   a board that never sees a ClientHello stays on the static path. The
 #   default is False.
+#session_tx_copies: 2
+#   Session mode: transmit this many wire-identical copies of each sealed
+#   datagram. The authenticated replay window accepts the first arrival and
+#   suppresses any delivered duplicate before it reaches the serial byte
+#   stream. Two copies therefore tolerate one immediate packet loss without
+#   waiting for a parity block or ARQ timeout. Accepted values are 1 through
+#   3; the session-mode default is 2. Non-session mode requires 1. Expected
+#   delivered copies increment the receiver's replay-rejection counter;
+#   HELIX_DATAGRAM_STATUS reports both endpoints' copy/redundant-tx values
+#   for correlation.
 #board_id:
 #   Datagram session mode: the identity the board must present in the
 #   session handshake (its CONFIG_DATAGRAM_SESSION_ID). The handshake

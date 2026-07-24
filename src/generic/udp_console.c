@@ -51,6 +51,7 @@ static void *udp_ops_ctx;
 static struct task_wake udp_wake;
 // XOR erasure block size; 0 = erasure layer off (set before init)
 static uint8_t udp_fec_k;
+static uint8_t udp_session_tx_copies = 1;
 
 // Reassembled receive stream (frame bytes unwrapped from datagrams)
 static uint8_t receive_buf[2 * UDPDG_FRAMES_MAX];
@@ -70,6 +71,7 @@ static uint8_t tx_dgram[UDPDG_DATAGRAM_MAX];
 static uint32_t console_rx_decoded, console_responses;
 static uint32_t console_response_drops, console_flushes;
 static uint32_t console_no_peer_drops, console_send_failures;
+static uint32_t console_session_redundant_tx;
 
 void *
 udp_console_get_rx_buf(void)
@@ -139,14 +141,22 @@ udp_console_flush(void)
     // datagrams (rotating keys, replay-protected). The static path and
     // its erasure-FEC layer are used only before/without a session.
     if (udpsess_established()) {
+        uint_fast8_t copies = udp_session_tx_copies;
+        // Seal once and repeat the exact authenticated datagram. The peer's
+        // replay window suppresses a delivered duplicate before arbitrary
+        // response-stream fragments can be appended to its serial stream.
         uint32_t slen = udpsess_encode(tx_dgram, sizeof(tx_dgram),
                                        tx_stage, len);
-        if (slen) {
+        for (uint_fast8_t i = 0; i < copies; i++) {
+            if (!slen)
+                break;
             if (udp_ops->send_checked) {
                 int ret = udp_ops->send_checked(udp_ops_ctx, tx_dgram, slen);
                 udp_console_record_send(ret);
             } else
                 udp_ops->send(udp_ops_ctx, tx_dgram, slen);
+            if (i)
+                console_session_redundant_tx++;
         }
         return;
     }
@@ -315,13 +325,16 @@ command_udp_console_get_status(uint32_t *args)
           " session_tx_epoch=%u session_tx_seq=%u"
           " session_rx_epoch=%u session_rx_top=%u"
           " session_auth_failures=%u session_replays=%u"
-          " session_old_epoch=%u",
+          " session_old_epoch=%u session_tx_copies=%u"
+          " session_redundant_tx=%u",
           console_rx_decoded, console_responses, console_response_drops,
           console_flushes, console_no_peer_drops, console_send_failures,
           session.tx_epoch, session.tx_seq,
           session.rx_epoch, session.rx_window_top,
           session.auth_failures, session.replays_rejected,
-          session.old_epoch_rejected);
+          session.old_epoch_rejected,
+          (uint32_t)udp_session_tx_copies,
+          console_session_redundant_tx);
 }
 DECL_COMMAND_FLAGS(command_udp_console_get_status, HF_IN_SHUTDOWN,
                    "udp_console_get_status");
@@ -339,6 +352,12 @@ void
 udp_console_set_fec_k(uint8_t fec_k)
 {
     udp_fec_k = fec_k;
+}
+
+void
+udp_console_set_session_tx_copies(uint8_t copies)
+{
+    udp_session_tx_copies = copies >= 1 && copies <= 3 ? copies : 1;
 }
 
 #if CONFIG_WANT_DATAGRAM_SESSION

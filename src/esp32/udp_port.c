@@ -280,6 +280,9 @@ esp32_udp_port_setup(uint16_t port, const uint8_t *psk, uint32_t psk_len)
 #if CONFIG_KLIPPER_FEC_PAIR
     udp_console_set_fec_k(2);
 #endif
+#if CONFIG_KLIPPER_DATAGRAM_SESSION
+    udp_console_set_session_tx_copies(CONFIG_KLIPPER_SESSION_TX_COPIES);
+#endif
     udp_console_init(&esp32_udp_ops, NULL, psk, psk_len);
     // Keep this immediately below lwIP's priority (18). Espressif warns
     // that a network-using task must not outrank lwIP, while the previous

@@ -149,6 +149,18 @@ config KLIPPER_FEC_PAIR
         RAM buffer. The host must also use --fec-k 2. Leave disabled until
         measurement shows the target WiFi loss profile benefits.
 
+config KLIPPER_SESSION_TX_COPIES
+    int "Authenticated session transmit copies"
+    range 1 3
+    default 1
+    depends on KLIPPER_DATAGRAM_SESSION
+    help
+        Send this many wire-identical copies of every sealed session
+        response. The peer's authenticated replay window suppresses a
+        delivered duplicate before it reaches the serial byte stream. Two
+        copies give sparse Class-0 traffic immediate single-loss tolerance
+        without waiting for a parity block or ARQ timeout.
+
 config KLIPPER_PSK
     string "Pre-shared key (build-time fallback)"
     default ""

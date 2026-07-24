@@ -69,6 +69,37 @@ horizon), but is required for a longer qualified network watchdog: delaying a
 renewal until 100ms before its *new* expiry can place it after the *old*
 expiry.
 
+Authenticated datagram sessions additionally default to two wire-identical
+transmissions per host datagram. The first arrival is accepted and the
+session replay window suppresses the duplicate before it can repeat an
+arbitrary serial-stream fragment. This immediate replication is the right
+primitive for sparse watchdog renewals: pair-FEC cannot recover a first loss
+until another data datagram and its parity have both been sent.
+
+The Rodent/Pico physical regression on 2026-07-24 established both failure
+and recovery boundaries. With one session copy, WiFi remained associated at
+-57 dBm, A-MPDU and power save were disabled, all firmware socket/ring drop
+counters stayed zero, but serial ARQ bursts still exceeded the bounded 250ms
+watchdog and produced `Communication timeout during homing`. With two
+wire-identical host copies, timesync reconverged normally and a complete
+115mm Z homing search reached the ordinary `PAST_END_TIME` terminal state
+without a communication timeout. That run did not qualify the mechanical
+home—the physical switch remained open and Klipper correctly reported `No
+trigger on stepper_z after full movement`—but it independently qualifies the
+transport liveness correction without claiming an endstop success.
+
+The matching two-copy Rodent firmware was then flashed and reconnected through
+a fresh authenticated session. Live `HELIX_DATAGRAM_STATUS` evidence showed
+two copies in both directions: the host reported 196 redundant transmissions
+and rejected 197 replayed responses, while firmware reported 197 redundant
+responses and rejected 197 replayed host datagrams. Both sides reported zero
+authentication failures and zero lost/reordered host datagrams; WiFi reported
+zero disconnects, socket errors, ring drops, or send errors. Rodent
+reconverged after restart with a 270 us instantaneous fit error inside its
+measured +/-2.27 ms network RTT bound. This proves exact-copy suppression in
+the deployed bidirectional carrier; it does not close the still-open physical
+switch gate.
+
 Should high latency result in a failure (or if some other
 communication issue is detected) then Helix will raise a
 "Communication timeout during homing" error. (This overshoot-and-timeout

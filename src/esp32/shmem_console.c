@@ -111,6 +111,9 @@ shmem_console_init(void)
 #if CONFIG_KLIPPER_FEC_PAIR
     udp_console_set_fec_k(2);
 #endif
+#if CONFIG_KLIPPER_DATAGRAM_SESSION
+    udp_console_set_session_tx_copies(CONFIG_KLIPPER_SESSION_TX_COPIES);
+#endif
     udp_console_init(&shmem_console_ops, NULL
                      , esp32_shmem.psk, esp32_shmem.psk_len);
 }

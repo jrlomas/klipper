@@ -177,8 +177,11 @@ class _DiagnosticQuery:
 
 
 class _DiagnosticMCU:
-    def __init__(self, eth_schema):
+    def __init__(self, eth_schema, udp_schema=None):
         self.eth_schema = eth_schema
+        self.udp_schema = (
+            transport_glue.UDP_CONSOLE_STATUS_V1
+            if udp_schema is None else udp_schema)
         self.lookups = []
         self.send_ahead = None
         self.homing_timeout = None
@@ -193,7 +196,7 @@ class _DiagnosticMCU:
         return object()
 
     def check_valid_response(self, response):
-        return response == self.eth_schema
+        return response in (self.eth_schema, self.udp_schema)
 
     def lookup_query_command(self, command, response):
         self.lookups.append((command, response))
@@ -215,7 +218,7 @@ class _GCodeCommand:
 
 
 class TestDatagramDiagnostics(unittest.TestCase):
-    def _transport(self, schema):
+    def _transport(self, schema, udp_schema=None):
         transport = transport_glue.IntentprotoTransport.__new__(
             transport_glue.IntentprotoTransport)
         transport.name = 'f767'
@@ -223,7 +226,8 @@ class TestDatagramDiagnostics(unittest.TestCase):
         transport._udp_status_cmd = None
         transport._eth_status_cmd = None
         transport._mcu_diagnostics = {}
-        transport._lookup_datagram_diagnostics(_DiagnosticMCU(schema))
+        transport._lookup_datagram_diagnostics(
+            _DiagnosticMCU(schema, udp_schema))
         return transport
 
     def test_f7_status_includes_queue_counters(self):
@@ -240,6 +244,12 @@ class TestDatagramDiagnostics(unittest.TestCase):
         gcmd = _GCodeCommand()
         transport.cmd_HELIX_DATAGRAM_STATUS(gcmd)
         self.assertEqual(len(gcmd.responses), 2)
+
+    def test_udp_copy_status_schema_is_preferred_when_advertised(self):
+        transport = self._transport(
+            transport_glue.ETH_MAC_STATUS_F7,
+            transport_glue.UDP_CONSOLE_STATUS_V2)
+        self.assertIsNotNone(transport._udp_status_cmd)
 
     def test_datagram_link_physically_stages_ahead_of_arq(self):
         transport = self._transport(transport_glue.ETH_MAC_STATUS_F7)

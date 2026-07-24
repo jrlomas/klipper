@@ -717,6 +717,21 @@ epoch's `tx_key`.
   per-epoch sequence (`rx_window_top` + a 64-bit `rx_window_bits`
   mask). A sequence at or below the window that is already set, or
   further back than 64, is rejected (`replays_rejected`).
+* **Immediate loss tolerance.** A carrier may transmit a sealed session
+  datagram more than once without creating a second command: every copy is
+  wire-identical, so the first arrival authenticates and advances the replay
+  window and every later arrival is rejected before its payload reaches the
+  serial stream. `[intentproto_transport]` exposes this as
+  `session_tx_copies` (default 2, range 1--3), and the ESP32 Rodent profile
+  uses two response copies. This is intentionally different from
+  `fec_k=2`: pair parity needs a second data packet before it can repair a
+  loss, so it cannot protect sparse trsync/watchdog traffic promptly.
+  Static pair-FEC and session replication are mutually exclusive rather than
+  silently ignoring `fec_k`. A receiver cannot distinguish an expected
+  identical copy from a hostile replay of that same authenticated packet, so
+  both increment `replays_rejected`; operational diagnostics also expose the
+  configured copy count and the sender's `session_redundant_tx` total for
+  correlation.
 * **Epoch safety.** The receiver verifies the tag under the key for the
   datagram's *stated* epoch **before** trusting anything in the header,
   so a forged high epoch cannot reset the replay window. An older epoch
@@ -765,7 +780,8 @@ static codec. Both directions were exercised end to end over a real UDP
 socket against `linuxprocess` firmware
 ([test/datagram_session_live_test.py](../test/datagram_session_live_test.py))
 and in a firmware-free host loopback
-([test/session_bridge_test.py](../test/session_bridge_test.py)).
+([test/session_bridge_test.py](../test/session_bridge_test.py)), including
+exact-copy replay suppression.
 
 ---
 
