@@ -195,6 +195,30 @@ class LookAheadQueue:
 BUFFER_TIME_HIGH = 1.0
 BUFFER_TIME_START = 0.250
 PRIMING_CMD_TIME = 0.100
+DATAGRAM_BUFFER_TIME_HIGH = 2.0
+DATAGRAM_BUFFER_TIME_START = 1.0
+
+def _get_buffer_times(config):
+    # Stock serial links normally recover within the one-second queue
+    # horizon.  A datagram transport can remain authenticated and connected
+    # while v1 ARQ backs off through a transient WiFi loss burst.  Keep a
+    # second second of already-planned motion in front of every actuator when
+    # any configured MCU uses the datagram envelope.  The toolhead horizon is
+    # machine-wide, so a per-MCU value would only create unequal endpoints.
+    has_datagram = any(
+        section.get('mode', None) == 'datagram'
+        for section in config.get_prefix_sections('intentproto_transport '))
+    default_high = (DATAGRAM_BUFFER_TIME_HIGH if has_datagram
+                    else BUFFER_TIME_HIGH)
+    default_start = (DATAGRAM_BUFFER_TIME_START if has_datagram
+                     else BUFFER_TIME_START)
+    high = config.getfloat(
+        'buffer_time_high', default_high, minval=BUFFER_TIME_HIGH,
+        maxval=5.0)
+    start = config.getfloat(
+        'buffer_time_start', min(default_start, high), above=0.,
+        maxval=high)
+    return high, start
 
 # Main code to track events (and their timing) on the printer toolhead
 class ToolHead:
@@ -202,8 +226,10 @@ class ToolHead:
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
         self.mcu = self.printer.lookup_object('mcu')
+        self.buffer_time_high, self.buffer_time_start = \
+            _get_buffer_times(config)
         self.lookahead = LookAheadQueue()
-        self.lookahead.set_flush_time(BUFFER_TIME_HIGH)
+        self.lookahead.set_flush_time(self.buffer_time_high)
         self.commanded_pos = [0., 0., 0., 0.]
         # Velocity and acceleration control
         self.max_velocity = config.getfloat('max_velocity', above=0.)
@@ -261,7 +287,8 @@ class ToolHead:
         curtime = self.reactor.monotonic()
         est_print_time = self.mcu.estimated_print_time(curtime)
         kin_time = self.motion_queuing.calc_step_gen_restart(est_print_time)
-        min_print_time = max(est_print_time + BUFFER_TIME_START, kin_time)
+        min_print_time = max(
+            est_print_time + self.buffer_time_start, kin_time)
         if min_print_time > self.print_time:
             self.print_time = min_print_time
             self.printer.send_event("toolhead:sync_print_time",
@@ -303,7 +330,7 @@ class ToolHead:
         self._process_lookahead()
         self.special_queuing_state = "NeedPrime"
         self.need_check_pause = -1.
-        self.lookahead.set_flush_time(BUFFER_TIME_HIGH)
+        self.lookahead.set_flush_time(self.buffer_time_high)
         self.check_stall_time = 0.
         if is_runout and prev_print_time != self.print_time:
             self.check_stall_time = self.print_time
@@ -350,7 +377,8 @@ class ToolHead:
         if self.priming_timer is None:
             self.priming_timer = self.reactor.register_timer(
                 self._priming_handler)
-        will_pause_time = self.print_time - est_print_time - BUFFER_TIME_HIGH
+        will_pause_time = (
+            self.print_time - est_print_time - self.buffer_time_high)
         wtime = eventtime + max(0., will_pause_time) + PRIMING_CMD_TIME
         self.reactor.update_timer(self.priming_timer, wtime)
     def _check_pause(self):
@@ -362,7 +390,8 @@ class ToolHead:
         did_pause = False
         while 1:
             est_print_time = self.mcu.estimated_print_time(eventtime)
-            pause_time = self.print_time - est_print_time - BUFFER_TIME_HIGH
+            pause_time = (
+                self.print_time - est_print_time - self.buffer_time_high)
             if pause_time <= 0.:
                 break
             if not self.can_pause:
@@ -522,6 +551,8 @@ class ToolHead:
                      'max_accel': self.max_accel,
                      'minimum_cruise_ratio': self.min_cruise_ratio,
                      'square_corner_velocity': self.square_corner_velocity,
+                     'buffer_time_high': self.buffer_time_high,
+                     'buffer_time_start': self.buffer_time_start,
                      'extra_axes': self.extra_axes_status})
         return res
     def _handle_shutdown(self):

@@ -77,6 +77,10 @@ enum {
     TQF_ACTIVE        = 1 << 2, // backend executing
     TQF_RAMPING       = 1 << 3, // current segment is a synthesized ramp
     TQF_EVENT_PENDING = 1 << 4, // task must emit traj_underrun
+    // A trigger stopped the executor.  Ordinary rebases already waiting in
+    // the transport belong to the interrupted path and must not resurrect
+    // it; only the explicit recovery-rebase ABI may clear this barrier.
+    TQF_HALT_BARRIER  = 1 << 5,
 };
 
 struct trajq {
@@ -141,6 +145,10 @@ void trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 int trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux);
 int trajq_rebase_local(struct trajq *tq, uint32_t clock, int32_t pos,
                        int32_t aux);
+int trajq_rebase_recovery(struct trajq *tq, uint32_t clock, int32_t pos,
+                          int32_t aux);
+int trajq_rebase_recovery_local(struct trajq *tq, uint32_t clock, int32_t pos,
+                                int32_t aux);
 int trajq_advance(struct trajq *tq);
 void trajq_halt(struct trajq *tq, uint8_t set_flags);
 int64_t trajq_end_delta(uint32_t duration, int32_t velocity, int32_t accel);

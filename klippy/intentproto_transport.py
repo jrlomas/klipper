@@ -184,6 +184,7 @@ import errno
 import select
 import socket
 import threading
+import time
 
 DATAGRAM_MAX = 1472
 DATAGRAM_OVERHEAD = 3 + 8  # header + HMAC tag
@@ -216,6 +217,9 @@ class TransportBridge(object):
         self._sock = None                  # datagram: UDP socket
         self._session = None
         self.session_established = False
+        self.session_confirmed = False
+        self.session_fin_retransmits = 0
+        self._session_fin = None
         self.peer_id = b""
         self.host_bytes = 0
         self.wire_bytes = 0
@@ -264,6 +268,8 @@ class TransportBridge(object):
         st = {'mode': 'datagram', 'v2_active': self.v2_active,
               'session': self.use_session,
               'session_established': self.session_established,
+              'session_confirmed': self.session_confirmed,
+              'session_fin_retransmits': self.session_fin_retransmits,
               'host_bytes': self.host_bytes, 'wire_bytes': self.wire_bytes,
               'tx_datagrams': self.tx_datagrams,
               'rx_datagrams': self.rx_datagrams,
@@ -322,10 +328,14 @@ class TransportBridge(object):
                 continue
             fin = self._session.on_handshake(data)
             if fin:
-                # There is no fourth handshake acknowledgement. Duplicate
-                # ClientFin is harmless and makes a single lost final packet
-                # substantially less likely to strand the responder half-open.
-                self._sock.sendto(fin, self.udp_board)
+                # There is no fourth handshake acknowledgement. Retain the
+                # exact ClientFin and keep retransmitting it from the pump
+                # until the first authenticated session response proves that
+                # the responder adopted the new keys. This is essential on a
+                # reconnect: losing the final packet leaves the board on its
+                # previous live session while the host believes the new one
+                # is ready.
+                self._session_fin = fin
                 self._sock.sendto(fin, self.udp_board)
             if self._session.established:
                 # Enforce the configured board identity: the ServerHello's
@@ -366,15 +376,30 @@ class TransportBridge(object):
 
     def _pump(self):
         fds = [self.master_fd, self._wire_readfd()]
+        next_fin = time.monotonic() + 0.050
         while not self._stop:
+            timeout = 0.050 if (self.session_established
+                                and not self.session_confirmed) else 0.2
             try:
-                r, _, _ = select.select(fds, [], [], 0.2)
+                r, _, _ = select.select(fds, [], [], timeout)
             except (OSError, ValueError):
                 break
             if self.master_fd in r:
                 self._host_to_wire()
             if self._wire_readfd() in r:
                 self._wire_to_host()
+            if (self.session_established and not self.session_confirmed
+                    and self._session_fin is not None
+                    and time.monotonic() >= next_fin):
+                # Duplicate ClientFin is idempotent before adoption and is
+                # ignored after adoption. Spread retries across time instead
+                # of sending one correlated burst.
+                try:
+                    self._sock.sendto(self._session_fin, self.udp_board)
+                    self.session_fin_retransmits += 1
+                except OSError:
+                    pass
+                next_fin = time.monotonic() + 0.100
 
     def _read(self, fd, n=4096):
         try:
@@ -441,6 +466,8 @@ class TransportBridge(object):
                     # Auth failure / malformed / replay: drop; v1 ARQ
                     # recovers.
                     return
+                self.session_confirmed = True
+                self._session_fin = None
                 if payload:
                     self._write_master(payload)
                 return

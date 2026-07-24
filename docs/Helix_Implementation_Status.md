@@ -359,6 +359,18 @@ pass.
   stops, found five explicit holds, and reported zero errors. The recorded
   unwrapped path crossed -2³¹ sub-units while the compact wire phase wrapped
   exactly as designed.
+* The first Rodent/WiFi print startup exposed a cross-command-queue trsync
+  race rather than a lost link. The Pico endstop relay stopped Rodent, but an
+  ordinary trajectory rebase already staged behind the independent motion
+  command queue then cleared `NEED_REBASE` and admitted the interrupted
+  homing suffix. The real retract rebase correctly failed with `Rebase after
+  moving trajectory`; the later communication timeout was only the shutdown
+  symptom. Firmware now retains a halt barrier across ordinary rebases and
+  accepts only the explicit `trajectory_rebase_recovery[_local]` command
+  after the host has collected the terminal trsync state. Focused host
+  regressions pass and RP2040, ESP32, and STM32G0B1 target images build. A
+  physical two-pass Z home and complete Rodent print-start regression remain
+  required before this item is qualified.
 * Normal G0/G1 is now the production quintic path for trajectory steppers.
   Klippy retains Cartesian lookahead, kinematics, and the authoritative
   toolhead position; the fitter sends synchronized per-joint quintic

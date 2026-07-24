@@ -266,6 +266,8 @@ static void
 traj_pwm_trigger_stop(struct trsync_signal *tss, uint8_t reason)
 {
     struct traj_pwm *p = container_of(tss, struct traj_pwm, stop_signal);
+    // Value trajectories do not participate in stepper homing's
+    // multi-command-queue trigger relay.  Keep their existing rebase ABI.
     trajq_halt(&p->tq, TQF_NEED_REBASE);
     execlog_append(EL_TRIGGER, p->tq.oid, p->tq.seg_start_clock
                    , (int32_t)(p->tq.acc >> 32), reason);

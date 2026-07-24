@@ -602,6 +602,18 @@ max_accel:
 #   decelerate to zero at each corner. The value specified here may be
 #   changed at runtime using the SET_VELOCITY_LIMIT command. The
 #   default is 5mm/s.
+#buffer_time_high: 1.0
+#   Seconds of planned motion retained ahead of execution. The default
+#   is 1.0 for serial-only printers and 2.0 when any configured
+#   [intentproto_transport] uses datagram mode. The datagram default
+#   tolerates a transient network/ARQ backoff without exhausting a
+#   trajectory MCU. Values from 1.0 through 5.0 are accepted; larger
+#   values consume more MCU move-queue capacity.
+#buffer_time_start: 0.250
+#   Seconds between priming an idle motion queue and beginning execution.
+#   The default is 0.250 for serial-only printers and 1.0 when any
+#   configured [intentproto_transport] uses datagram mode. This value
+#   must be positive and no greater than buffer_time_high.
 ```
 
 ### [stepper]

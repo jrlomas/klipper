@@ -321,6 +321,8 @@ class TrajectoryStepper:
         self.queue_cmd = self.hold_cmd = self.local_hold_cmd = None
         self.rebase_cmd = None
         self.local_rebase_cmd = None
+        self.recovery_rebase_cmd = None
+        self.local_recovery_rebase_cmd = None
         self.status_cmd = None
         self.cubic_cmd = self.quintic_cmd = None
         self.anchored = False
@@ -331,6 +333,7 @@ class TrajectoryStepper:
         # positions and scheduled one coordinated future rebase.
         self.recovery_hold = False
         self.rebase_requires_hold = False
+        self.recovery_rebase = False
         self.rebase_min_clock = 0
         self.rebase_min_execution_clock = 0
         self.wire_clock = None
@@ -450,6 +453,12 @@ class TrajectoryStepper:
         self.local_rebase_cmd = self.mcu.try_lookup_command(
             "trajectory_rebase_local oid=%c machine_clock=%u"
             " local_clock=%u pos=%i mcu_pos=%i", cq=cmd_queue)
+        self.recovery_rebase_cmd = self.mcu.try_lookup_command(
+            "trajectory_rebase_recovery oid=%c clock=%u pos=%i mcu_pos=%i",
+            cq=cmd_queue)
+        self.local_recovery_rebase_cmd = self.mcu.try_lookup_command(
+            "trajectory_rebase_recovery_local oid=%c machine_clock=%u"
+            " local_clock=%u pos=%i mcu_pos=%i", cq=cmd_queue)
         # Higher-order commands exist only if the firmware was built with
         # CONFIG_WANT_TRAJECTORY_HIGHER_ORDER; look them up optionally.
         self.cubic_cmd = self.mcu.try_lookup_command(
@@ -485,11 +494,16 @@ class TrajectoryStepper:
             self._setup_fitter_kinematics(sk)
 
     def connect(self):
+        if self.recovery_rebase_cmd is None:
+            raise self.mcu.error(
+                "Firmware for %s lacks the trajectory recovery-rebase ABI"
+                % (self.name,))
         if (self.mcu is not self._machine_mcu()
                 and (self.local_rebase_cmd is None
-                     or self.local_hold_cmd is None)):
+                     or self.local_hold_cmd is None
+                     or self.local_recovery_rebase_cmd is None)):
             raise self.mcu.error(
-                "Firmware for %s lacks the local-clock rebase/hold ABI"
+                "Firmware for %s lacks the local-clock rebase/hold/recovery ABI"
                 " required by secondary-MCU trajectory streams"
                 % (self.name,))
         if self.g1_segment_order == TSEG_POLY_QUINTIC >> 6 \
@@ -517,6 +531,7 @@ class TrajectoryStepper:
             self.rebase_requires_hold = False
             self.rebase_min_clock = 0
             self.rebase_min_execution_clock = 0
+            self.recovery_rebase = True
 
     def note_homing_held(self, clock, pos_su):
         # trsync has stopped the executor, so its accumulator is now the
@@ -722,19 +737,28 @@ class TrajectoryStepper:
         # late and triggered "Timer too close".  All commands for this joint
         # share one command queue, and the MCU validates the rebase clock
         # against its queued horizon, so transmit the barrier ahead of time.
+        recovery = getattr(self, 'recovery_rebase', False)
         if self.mcu is self._machine_mcu():
-            self.rebase_cmd.send(
+            cmd = self.recovery_rebase_cmd if recovery else self.rebase_cmd
+            if cmd is None:
+                raise self.mcu.error(
+                    "Firmware for %s lacks the trajectory recovery-rebase ABI"
+                    % (self.name,))
+            cmd.send(
                 [self.oid, clock & 0xffffffff, wire_pos_su, mcu_pos],
                 minclock=0, reqclock=local_clock)
         else:
-            if self.local_rebase_cmd is None:
+            cmd = (self.local_recovery_rebase_cmd if recovery
+                   else self.local_rebase_cmd)
+            if cmd is None:
                 raise self.mcu.error(
                     "Firmware for %s lacks the local-clock rebase barrier"
                     % (self.name,))
-            self.local_rebase_cmd.send(
+            cmd.send(
                 [self.oid, clock & 0xffffffff, local_clock & 0xffffffff,
                  wire_pos_su, mcu_pos],
                 minclock=0, reqclock=local_clock)
+        self.recovery_rebase = False
         self._wire_rebase(clock, pos_su, mcu_pos,
                           execution_clock=local_clock)
         self.rebase_min_clock = 0

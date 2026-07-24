@@ -1431,6 +1431,7 @@ def test_confirmed_stop_does_not_queue_a_pre_rebase_hold():
     stepper.anchored = True
     stepper.need_rebase = False
     stepper.rebase_requires_hold = False
+    stepper.recovery_rebase = False
     stepper.rebase_min_clock = 1234
     stepper.rebase_min_execution_clock = 5678
     stepper.note_rebase_needed(stopped=True)
@@ -1438,6 +1439,53 @@ def test_confirmed_stop_does_not_queue_a_pre_rebase_hold():
     assert not stepper.rebase_requires_hold
     assert stepper.rebase_min_clock == 0
     assert stepper.rebase_min_execution_clock == 0
+    assert stepper.recovery_rebase
+
+
+def test_trigger_rebase_uses_recovery_barrier_after_stale_stream():
+    class PhysicalStepper:
+        def commanded_to_mcu_position_su(self, pos):
+            return 777
+        def get_mcu_position(self, pos):
+            return 12
+
+    stepper = trajectory_queuing.TrajectoryStepper.__new__(
+        trajectory_queuing.TrajectoryStepper)
+    machine_mcu = FakeMCU()
+    stepper.owner = types.SimpleNamespace(
+        get_machine_mcu=lambda: machine_mcu)
+    stepper.mcu = FakeMCU()
+    stepper.mcu_stepper = PhysicalStepper()
+    stepper.oid = 4
+    stepper.name = 'stepper_z'
+    stepper.rebase_cmd = FakeCommand()
+    stepper.recovery_rebase_cmd = FakeCommand()
+    stepper.local_rebase_cmd = FakeCommand()
+    stepper.local_recovery_rebase_cmd = FakeCommand()
+    stepper.rebase_min_clock = 0
+    stepper.rebase_min_execution_clock = 0
+    stepper.recovery_rebase = True
+    stepper.intentions = []
+    stepper._record_wire = lambda fields: None
+    stepper._send_rebase(10., 777, 12)
+    assert not stepper.local_rebase_cmd.sent
+    assert stepper.local_recovery_rebase_cmd.sent == [
+        [4, 10_000_000, 10_000_000, 777, 12]]
+    assert not stepper.recovery_rebase
+
+
+def test_firmware_trigger_barrier_rejects_stale_regular_rebase():
+    trajq_h = open(os.path.join(ROOT, 'src', 'trajq.h')).read()
+    trajq_c = open(os.path.join(ROOT, 'src', 'trajq.c')).read()
+    stepper_c = open(os.path.join(ROOT, 'src', 'traj_stepper.c')).read()
+    assert 'TQF_HALT_BARRIER' in trajq_h
+    assert 'if (tq->flags & TQF_HALT_BARRIER)' in trajq_c
+    reject = trajq_c.index('if (!recovery)', trajq_c.index(
+        'TQF_HALT_BARRIER'))
+    clear = trajq_c.index('| TQF_HALT_BARRIER);', reject)
+    assert trajq_c.index('return 0;', reject) < clear
+    assert ('TQF_NEED_REBASE | TQF_HALT_BARRIER' in stepper_c)
+    assert 'trajectory_rebase_recovery_local' in stepper_c
 
 
 def test_underrun_latches_machine_wide_recovery_hold():
@@ -1979,6 +2027,10 @@ def main():
     print("PASS: an active path gets an explicit hold before rebase")
     test_confirmed_stop_does_not_queue_a_pre_rebase_hold()
     print("PASS: a confirmed trigger stop rebases without a stale hold")
+    test_trigger_rebase_uses_recovery_barrier_after_stale_stream()
+    print("PASS: a trigger stop uses the explicit recovery-rebase barrier")
+    test_firmware_trigger_barrier_rejects_stale_regular_rebase()
+    print("PASS: trigger barriers discard staged pre-trigger rebases")
     test_underrun_latches_machine_wide_recovery_hold()
     print("PASS: an underrun freezes the complete trajectory group once")
     test_recovery_hold_makes_flush_a_strict_noop()

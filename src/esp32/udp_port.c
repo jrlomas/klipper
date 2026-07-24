@@ -4,8 +4,10 @@
 // work; this file only moves datagrams: a blocking-recvfrom task
 // pinned to core 0 (the WiFi/lwIP core) feeds a single-producer/
 // single-consumer slot ring that the klipper task on core 1 drains
-// through the udp_console_ops.recv callback.  Transmit is a direct
-// sendto() from the klipper task (lwIP sockets are thread safe).
+// through the udp_console_ops.recv callback.  Transmit crosses a second
+// bounded SPSC ring to a core-0 task.  The motion/command core must never
+// enter lwIP: WiFi driver backpressure can block sendto() while the radio
+// and ICMP tasks on core 0 remain healthy.
 // The peer address is only latched after a datagram passes HMAC
 // authentication (ops.rx_accepted).
 //
@@ -31,7 +33,8 @@ static uint16_t udp_port;
 static volatile uint8_t network_up;
 static uint32_t socket_opens, socket_failures;
 static uint32_t rx_packets, rx_ring_drops, recv_errors;
-static uint32_t tx_packets, send_errors;
+static uint32_t tx_packets, tx_ring_drops, tx_ring_highwater;
+static uint32_t send_errors, send_transient_drops;
 
 // Receive ring: written by the rx task (core 0), drained by the
 // klipper task (core 1).  Slot data is fully written before the
@@ -44,10 +47,39 @@ static struct rx_slot {
 } rx_ring[RX_SLOTS];
 static uint32_t rx_head, rx_tail;
 
+// Core 1 is the only producer and the core-0 TX task is the only consumer.
+// A full queue drops the datagram; Helix ARQ will retransmit the underlying
+// frame without ever stalling motion or command dispatch.
+#define TX_SLOTS 16
+static struct tx_slot {
+    uint16_t len;
+    struct sockaddr_in dst;
+    uint8_t data[UDPDG_DATAGRAM_MAX];
+} tx_ring[TX_SLOTS];
+static uint32_t tx_head, tx_tail;
+static TaskHandle_t udp_tx_task_handle;
+
 // Source of the last datagram handed to the console, and the last
 // source that passed authentication (only the latter is replied to)
 static struct sockaddr_in rx_candidate, tx_peer;
 static volatile uint8_t have_peer;
+
+static uint32_t
+ring_depth(uint32_t head, uint32_t tail, uint32_t slots)
+{
+    return head >= tail ? head - tail : slots - tail + head;
+}
+
+static void
+note_tx_highwater(uint32_t depth)
+{
+    uint32_t old = __atomic_load_n(&tx_ring_highwater, __ATOMIC_RELAXED);
+    while (depth > old
+           && !__atomic_compare_exchange_n(
+               &tx_ring_highwater, &old, depth, 0,
+               __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        ;
+}
 
 static void
 udp_close_socket(void)
@@ -161,31 +193,77 @@ udp_port_rx_accepted(void *ctx)
 }
 
 static void
+udp_queue_send(const struct sockaddr_in *dst, const uint8_t *data,
+               uint32_t len)
+{
+    if (len > UDPDG_DATAGRAM_MAX) {
+        __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    uint32_t head = tx_head;
+    uint32_t next = (head + 1) % TX_SLOTS;
+    uint32_t tail = __atomic_load_n(&tx_tail, __ATOMIC_ACQUIRE);
+    if (next == tail) {
+        __atomic_add_fetch(&tx_ring_drops, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    struct tx_slot *s = &tx_ring[head];
+    s->len = len;
+    s->dst = *dst;
+    memcpy(s->data, data, len);
+    __atomic_store_n(&tx_head, next, __ATOMIC_RELEASE);
+    note_tx_highwater(ring_depth(next, tail, TX_SLOTS));
+    TaskHandle_t task =
+        __atomic_load_n(&udp_tx_task_handle, __ATOMIC_ACQUIRE);
+    if (task)
+        xTaskNotifyGive(task);
+}
+
+static void
+udp_tx_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t tail = tx_tail;
+        while (tail != __atomic_load_n(&tx_head, __ATOMIC_ACQUIRE)) {
+            struct tx_slot *s = &tx_ring[tail];
+            int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
+            int ret = -1;
+            int err = ENETDOWN;
+            if (sock >= 0)
+                ret = sendto(sock, s->data, s->len, MSG_DONTWAIT,
+                             (const struct sockaddr *)&s->dst,
+                             sizeof(s->dst));
+            if (ret < 0) {
+                if (sock >= 0)
+                    err = errno;
+                __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
+                if (err == EAGAIN || err == EWOULDBLOCK || err == ENOMEM)
+                    __atomic_add_fetch(&send_transient_drops, 1,
+                                       __ATOMIC_RELAXED);
+            } else {
+                __atomic_add_fetch(&tx_packets, 1, __ATOMIC_RELAXED);
+            }
+            tail = (tail + 1) % TX_SLOTS;
+            __atomic_store_n(&tx_tail, tail, __ATOMIC_RELEASE);
+        }
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+    }
+}
+
+static void
 udp_port_send(void *ctx, const uint8_t *data, uint32_t len)
 {
     (void)ctx;
-    if (!have_peer)
-        return;
-    int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
-    if (sock < 0
-        || sendto(sock, data, len, 0, (const struct sockaddr *)&tx_peer,
-                  sizeof(tx_peer)) < 0)
-        __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
-    else
-        __atomic_add_fetch(&tx_packets, 1, __ATOMIC_RELAXED);
+    if (have_peer)
+        udp_queue_send(&tx_peer, data, len);
 }
 
 static void
 udp_port_send_candidate(void *ctx, const uint8_t *data, uint32_t len)
 {
     (void)ctx;
-    int sock = __atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE);
-    if (sock < 0
-        || sendto(sock, data, len, 0, (const struct sockaddr *)&rx_candidate,
-                  sizeof(rx_candidate)) < 0)
-        __atomic_add_fetch(&send_errors, 1, __ATOMIC_RELAXED);
-    else
-        __atomic_add_fetch(&tx_packets, 1, __ATOMIC_RELAXED);
+    udp_queue_send(&rx_candidate, data, len);
 }
 
 static const struct udp_console_ops esp32_udp_ops = {
@@ -208,6 +286,8 @@ esp32_udp_port_setup(uint16_t port, const uint8_t *psk, uint32_t psk_len)
     // priority 10 allowed avoidable socket queue buildup under motion load.
     xTaskCreatePinnedToCore(udp_rx_task, "klipper_udp_rx", 4096, NULL
                             , 17, NULL, 0);
+    xTaskCreatePinnedToCore(udp_tx_task, "klipper_udp_tx", 4096, NULL
+                            , 17, &udp_tx_task_handle, 0);
     ESP_LOGI(TAG, "datagram console on udp port %d (auth=%s)", port
              , psk_len ? "on" : "TRUSTED NETWORK");
     return 0;
@@ -225,7 +305,9 @@ command_udp_port_get_status(uint32_t *args)
     (void)args;
     sendf("udp_port_status network_up=%u socket_up=%u socket_opens=%u"
           " socket_failures=%u rx_packets=%u ring_drops=%u"
-          " recv_errors=%u tx_packets=%u send_errors=%u",
+          " recv_errors=%u tx_packets=%u send_errors=%u"
+          " tx_ring_drops=%u tx_ring_highwater=%u"
+          " send_transient_drops=%u",
           (uint32_t)__atomic_load_n(&network_up, __ATOMIC_ACQUIRE),
           (uint32_t)(__atomic_load_n(&udp_sock, __ATOMIC_ACQUIRE) >= 0),
           __atomic_load_n(&socket_opens, __ATOMIC_RELAXED),
@@ -234,7 +316,10 @@ command_udp_port_get_status(uint32_t *args)
           __atomic_load_n(&rx_ring_drops, __ATOMIC_RELAXED),
           __atomic_load_n(&recv_errors, __ATOMIC_RELAXED),
           __atomic_load_n(&tx_packets, __ATOMIC_RELAXED),
-          __atomic_load_n(&send_errors, __ATOMIC_RELAXED));
+          __atomic_load_n(&send_errors, __ATOMIC_RELAXED),
+          __atomic_load_n(&tx_ring_drops, __ATOMIC_RELAXED),
+          __atomic_load_n(&tx_ring_highwater, __ATOMIC_RELAXED),
+          __atomic_load_n(&send_transient_drops, __ATOMIC_RELAXED));
 }
 DECL_COMMAND_FLAGS(command_udp_port_get_status, HF_IN_SHUTDOWN,
                    "udp_port_get_status");

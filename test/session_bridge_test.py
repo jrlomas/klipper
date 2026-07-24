@@ -26,7 +26,7 @@ PSK = b'0123456789abcdef'
 class _Responder(threading.Thread):
     """A board stand-in: completes the handshake, then echoes every session
     datagram's payload back inside the session."""
-    def __init__(self):
+    def __init__(self, drop_client_fins=0):
         super().__init__(daemon=True)
         import intentproto as ip
         self.sess = ip.SecureSession(False, PSK, b'test-board')
@@ -34,6 +34,7 @@ class _Responder(threading.Thread):
         self.sock.bind(('127.0.0.1', 0))
         self.port = self.sock.getsockname()[1]
         self._stopping = False
+        self.drop_client_fins = drop_client_fins
 
     def run(self):
         while not self._stopping:
@@ -47,6 +48,10 @@ class _Responder(threading.Thread):
                     break
                 raise
             if not self.sess.established:
+                if (data and data[0] == 0x53
+                        and self.drop_client_fins > 0):
+                    self.drop_client_fins -= 1
+                    continue
                 out = self.sess.on_handshake(data)
                 if out:
                     self.sock.sendto(out, addr)
@@ -96,6 +101,48 @@ class TestSessionBridge(unittest.TestCase):
                 if slave in r:
                     got += os.read(slave, 4096)
             self.assertEqual(got, msg)
+            self.assertTrue(bridge.session_confirmed)
+        finally:
+            if slave is not None:
+                os.close(slave)
+            bridge.close()
+            resp.stop()
+
+    def test_lost_client_fin_is_retransmitted_until_session_confirmed(self):
+        import intentproto_transport as ipt
+        # Lose the initial ClientFin and two time-separated retries. The
+        # fourth copy must still establish the board session and carry data.
+        resp = _Responder(drop_client_fins=3)
+        resp.start()
+        pty_link = '/tmp/helix_sess_bridge_fin_loss'
+        bridge = ipt.TransportBridge(
+            'datagram', pty_link, psk=PSK, session=True,
+            board_id=b'test-board',
+            udp_board=('127.0.0.1', resp.port), udp_listen=0)
+        slave = None
+        try:
+            bridge.open()
+            slave = os.open(pty_link, os.O_RDWR | os.O_NOCTTY)
+            os.set_blocking(slave, False)
+            msg = b'\x07\x11retry\x7e'
+            got = b''
+            deadline = time.time() + 3.0
+            next_send = 0.
+            while len(got) < len(msg) and time.time() < deadline:
+                now = time.time()
+                if now >= next_send:
+                    # Real Klipper's inner v1 ARQ retries the outstanding
+                    # identify/command frame while ClientFin is being
+                    # retransmitted. Mirror that behavior in this raw-byte
+                    # bridge test.
+                    os.write(slave, msg)
+                    next_send = now + 0.2
+                r, _, _ = select.select([slave], [], [], 0.05)
+                if slave in r:
+                    got += os.read(slave, 4096)
+            self.assertIn(msg, got)
+            self.assertTrue(bridge.session_confirmed)
+            self.assertGreaterEqual(bridge.session_fin_retransmits, 3)
         finally:
             if slave is not None:
                 os.close(slave)

@@ -1866,6 +1866,25 @@ DECL_COMMAND(command_trajectory_rebase_local,
              " pos=%i mcu_pos=%i");
 
 void
+command_trajectory_rebase_recovery(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    trajq_rebase_recovery(&s->tq, args[1], args[2], args[3]);
+}
+DECL_COMMAND(command_trajectory_rebase_recovery,
+             "trajectory_rebase_recovery oid=%c clock=%u pos=%i mcu_pos=%i");
+
+void
+command_trajectory_rebase_recovery_local(uint32_t *args)
+{
+    struct traj_stepper *s = traj_stepper_oid_lookup(args[0]);
+    trajq_rebase_recovery_local(&s->tq, args[2], args[3], args[4]);
+}
+DECL_COMMAND(command_trajectory_rebase_recovery_local,
+             "trajectory_rebase_recovery_local oid=%c machine_clock=%u"
+             " local_clock=%u pos=%i mcu_pos=%i");
+
+void
 command_traj_get_position(uint32_t *args)
 {
     uint8_t oid = args[0];
@@ -1916,7 +1935,7 @@ traj_stepper_trigger_stop(struct trsync_signal *tss, uint8_t reason)
 {
     struct traj_stepper *s = container_of(
         tss, struct traj_stepper, stop_signal);
-    trajq_halt(&s->tq, TQF_NEED_REBASE);
+    trajq_halt(&s->tq, TQF_NEED_REBASE | TQF_HALT_BARRIER);
     execlog_append(EL_TRIGGER, s->tq.oid, s->tq.seg_start_clock
                    , (int32_t)(s->tq.acc >> 32), reason);
 }

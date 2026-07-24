@@ -76,6 +76,9 @@ config_trajectory oid=%c backend=%c underrun_decel=%u
 trajectory_rebase oid=%c clock=%u pos=%i mcu_pos=%i
 trajectory_rebase_local oid=%c machine_clock=%u local_clock=%u pos=%i \
     mcu_pos=%i
+trajectory_rebase_recovery oid=%c clock=%u pos=%i mcu_pos=%i
+trajectory_rebase_recovery_local oid=%c machine_clock=%u local_clock=%u \
+    pos=%i mcu_pos=%i
 queue_traj_segment oid=%c flags=%c duration=%u velocity=%i accel=%i
 queue_traj_segment_cubic oid=%c flags=%c duration=%u velocity=%i accel=%i \
     jerk=%i                                       (Kconfig-gated)
@@ -97,6 +100,16 @@ or broadcast streams. `traj_hold_local` is the terminal/dwell form for a
 `TSEG_LOCAL_TIME` stream. Mixing the legacy hold into a secondary local-time
 stream would scale the hold by the primary-to-secondary clock ratio and make
 the firmware horizon disagree with the host's next rebase barrier.
+
+The two `trajectory_rebase_recovery*` commands are the one-shot post-stop
+forms. A trsync stop raises an MCU-side halt barrier before it flushes the
+actuator queue. While that barrier is set, ordinary rebases and segments are
+stale traffic from the interrupted stream and are discarded. Only a recovery
+rebase may establish the first new anchor and clear the barrier. This
+distinction matters because Klipper's trsync relay and trajectory stream use
+different command queues: on a delayed or retransmitting link, a trigger can
+legitimately overtake already-staged motion without violating either queue's
+ordering.
 
 MCU→host messages:
 
@@ -457,6 +470,16 @@ where `stepper_stop()` registers today
 ([src/stepper.c](../../../src/stepper.c)): on trigger, *in interrupt
 context*, it aborts the actuator's segment queue, invokes the
 backend's stop, and preserves the position accumulator.
+
+The abort also raises `TQF_HALT_BARRIER`. This closes a cross-command-queue
+race that queue flushing alone cannot solve. A pre-trigger ordinary rebase
+may still be waiting in the transport when the trigger executes; if that
+rebase were allowed to clear `NEED_REBASE`, its following stale homing suffix
+could restart the motor after the endstop stop. Ordinary rebases are
+therefore ignored until the host has collected the terminal trsync state and
+sends `trajectory_rebase_recovery` (or its local-clock form). The recovery
+command is accepted only while the executor is stopped and needs a rebase; it
+cannot cross an active moving path.
 
 Consequences:
 

@@ -46,7 +46,17 @@ def main():
         assert "network_up" in source
 
     assert "#define RX_SLOTS 16" in udp
+    assert "#define TX_SLOTS 16" in udp
     assert '"klipper_udp_rx", 4096, NULL\n                            , 17' in udp
+    assert '"klipper_udp_tx", 4096, NULL\n                            , 17' in udp
+    assert "MSG_DONTWAIT" in udp
+    send_start = udp.index("udp_port_send(void *ctx")
+    send_end = udp.index("udp_port_send_candidate", send_start)
+    send_path = udp[send_start:send_end]
+    assert "udp_queue_send" in send_path
+    assert "sendto(" not in send_path
+    assert "tx_ring_drops=%u tx_ring_highwater=%u" in udp
+    assert "send_transient_drops=%u" in udp
     assert "udp_port_get_status" in udp
     assert "wifi_get_status" in wifi
     assert "HELIX_WIFI_STATUS" in host

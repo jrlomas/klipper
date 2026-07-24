@@ -763,7 +763,7 @@ trajq_queue_segment_ho(struct trajq *tq, uint8_t flags, uint32_t duration
 
 static int
 trajq_rebase_at_local_clock(struct trajq *tq, uint32_t clock, int32_t pos,
-                            int32_t aux)
+                            int32_t aux, uint8_t recovery)
 {
     struct traj_segment *barrier = move_alloc();
     barrier->kind = TSEGK_REBASE;
@@ -772,6 +772,44 @@ trajq_rebase_at_local_clock(struct trajq *tq, uint32_t clock, int32_t pos,
     barrier->velocity = pos;
     barrier->accel = aux;
     irq_disable();
+    if (tq->flags & TQF_HALT_BARRIER) {
+        if (!recovery) {
+            // A multi-MCU trigger relay can overtake trajectory commands
+            // that were already staged in another command queue.  Those
+            // stale rebases must not clear NEED_REBASE and restart the
+            // interrupted suffix.  The host acknowledges the stop with the
+            // distinct recovery-rebase command after all trsync peers have
+            // reached their terminal state.
+            tq->dropped++;
+            irq_enable();
+            move_free(barrier);
+            return 0;
+        }
+        if ((tq->flags & TQF_ACTIVE)
+            || !(tq->flags & TQF_NEED_REBASE)) {
+            tq->dropped++;
+            irq_enable();
+            move_free(barrier);
+            return 0;
+        }
+        move_free(barrier);
+        trajq_apply_rebase(tq, clock, pos, aux);
+        tq->horizon_clock = clock;
+        tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING
+                       | TQF_HALT_BARRIER);
+        tq->dropped = 0;
+        irq_enable();
+        return 1;
+    }
+    if (recovery && (!(tq->flags & TQF_NEED_REBASE)
+                     || tq->flags & TQF_ACTIVE)) {
+        // Recovery rebases are one-shot acknowledgements of a stopped or
+        // underrun executor, never general moving-path barriers.
+        tq->dropped++;
+        irq_enable();
+        move_free(barrier);
+        return 0;
+    }
     if (tq->flags & TQF_ACTIVE) {
         // Klipper transmits scheduled commands ahead of their execution
         // time.  A rebase at or beyond the current planned horizon is a
@@ -790,7 +828,8 @@ trajq_rebase_at_local_clock(struct trajq *tq, uint32_t clock, int32_t pos,
     move_free(barrier);
     trajq_apply_rebase(tq, clock, pos, aux);
     tq->horizon_clock = clock;
-    tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING);
+    tq->flags &= ~(TQF_NEED_REBASE | TQF_UNDERRUN | TQF_RAMPING
+                   | TQF_HALT_BARRIER);
     tq->dropped = 0;
     irq_enable();
     return 1;
@@ -808,7 +847,7 @@ trajq_rebase(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
     // The anchor is a machine-time instant (FD-0001 doc 01);
     // identity when timesync is unconfigured.
     return trajq_rebase_at_local_clock(
-        tq, timesync_clock_to_local(clock), pos, aux);
+        tq, timesync_clock_to_local(clock), pos, aux, 0);
 }
 
 int
@@ -823,7 +862,30 @@ trajq_rebase_local(struct trajq *tq, uint32_t clock, int32_t pos, int32_t aux)
     // use the local clock captured with that stream, not re-convert the same
     // machine-time instant through a mapping that may have disciplined since
     // earlier local segments were queued.
-    return trajq_rebase_at_local_clock(tq, clock, pos, aux);
+    return trajq_rebase_at_local_clock(tq, clock, pos, aux, 0);
+}
+
+int
+trajq_rebase_recovery(struct trajq *tq, uint32_t clock, int32_t pos,
+                      int32_t aux)
+{
+    if (!timesync_class0_ok()) {
+        tq->dropped++;
+        return 0;
+    }
+    return trajq_rebase_at_local_clock(
+        tq, timesync_clock_to_local(clock), pos, aux, 1);
+}
+
+int
+trajq_rebase_recovery_local(struct trajq *tq, uint32_t clock, int32_t pos,
+                            int32_t aux)
+{
+    if (!timesync_class0_ok()) {
+        tq->dropped++;
+        return 0;
+    }
+    return trajq_rebase_at_local_clock(tq, clock, pos, aux, 1);
 }
 
 // Abort all motion (trsync trigger, shutdown). Callers must have

@@ -298,7 +298,8 @@ class HelixSelfTest:
                 'udp_port_status network_up=%u socket_up=%u'
                 ' socket_opens=%u socket_failures=%u rx_packets=%u'
                 ' ring_drops=%u recv_errors=%u tx_packets=%u'
-                ' send_errors=%u').send([])
+                ' send_errors=%u tx_ring_drops=%u'
+                ' tx_ring_highwater=%u send_transient_drops=%u').send([])
         message = (
             "HELIX WiFi status: mcu=%s connected=%u got_ip=%u"
             " attempts=%u disconnects=%u got_ips=%u last_reason=%u"
@@ -318,11 +319,15 @@ class HelixSelfTest:
         if port is not None:
             message += (
                 " udp(socket=%u opens=%u open_failures=%u rx=%u"
-                " ring_drops=%u recv_errors=%u tx=%u send_errors=%u)"
+                " ring_drops=%u recv_errors=%u tx=%u send_errors=%u"
+                " tx_ring_drops=%u tx_ring_highwater=%u"
+                " send_transient_drops=%u)"
                 % (port['socket_up'], port['socket_opens'],
                    port['socket_failures'], port['rx_packets'],
                    port['ring_drops'], port['recv_errors'],
-                   port['tx_packets'], port['send_errors']))
+                   port['tx_packets'], port['send_errors'],
+                   port['tx_ring_drops'], port['tx_ring_highwater'],
+                   port['send_transient_drops']))
         gcmd.respond_info(message)
 
     def get_status(self, eventtime):
