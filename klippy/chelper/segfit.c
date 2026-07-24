@@ -829,6 +829,18 @@ segfit_generate(struct segfit *sf, double flush_time)
             next_tick = window_end;
             final_partial = 1;
         }
+        // The sampling grid need not divide the MCU's hard segment-duration
+        // limit.  If the next ordinary sample crosses that boundary, insert
+        // an exact boundary sample instead of emitting the overshooting
+        // sample.  This is observable on fast MCUs (for example, 216MHz with
+        // a 1ms grid: 67,176,000 > 2^26) and would otherwise make valid long
+        // cruises shut down at ingest as "Invalid traj segment".
+        uint64_t segment_limit =
+            sf->gen_ticks + (uint64_t)SEGFIT_MAX_DURATION;
+        if (next_tick > segment_limit) {
+            next_tick = segment_limit;
+            final_partial = 0;
+        }
         double t_print = sf->anchor_print_time + next_tick / sf->mcu_freq;
         double q_mm = sample_position(sf, &cursor, t_print);
         double q_su = (q_mm * sf->su_per_mm + sf->position_offset_su

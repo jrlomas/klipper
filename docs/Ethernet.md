@@ -334,11 +334,56 @@ flashed `klipper.bin` SHA-256 was
 `39f5b5e2179bf06b29230b0bd49feaceca84f2bab0bae1d2972b456abdff74e6`.
 This records the bench artifact; it is not a release signature.
 
+### NUCLEO-F767ZI physical trajectory qualification — 2026-07-23
+
+A BTT TMC2209 V1.3 StepStick was connected with enable on PC8, step on PC9,
+direction on PC10, and single-wire UART on PA3. It drove the V0's BMGZ axis
+while the endstop remained on the primary Pico. The active F767 image reported
+216 MHz and contained the complete quadratic/cubic/quintic trajectory backend.
+Its bench artifact was 98,458 bytes of text, 64 bytes of data, and 37,216 bytes
+of BSS; `klipper.bin` SHA-256 was
+`68a74e52de5d00f2be368bdc0a2133c1802e8e36b377818ab6a551bd07dbd0c9`.
+
+The first bounded 10 mm motion exposed a host fitter limit error, not an
+Ethernet or MCU solver failure. Firmware permits at most 2^26 ticks in one
+trajectory segment. At 216 MHz, the production 1 ms sample grid advanced from
+66,960,000 directly to 67,176,000 ticks, so the former host check missed the
+boundary and emitted an overlong segment. Firmware correctly rejected it as
+`Invalid traj segment`. The fitter now inserts a sample at exactly 67,108,864
+ticks whenever its ordinary grid would cross the cap. A native regression
+uses the real 216 MHz / 1 ms combination, requires every segment to remain
+within the cap, and proves that the total move duration is conserved.
+
+The real print-start then exposed a separate qualification-policy error.
+Software-timestamped Ethernet was inheriting the +/-10 us phase and 2 ppm
+host-rate residual limits selected for exact USB-SOF observations. A healthy
+F767 observation reached -2,314 ticks (-10.71 us), cleared convergence after
+the configured hysteresis, and caused a background trajectory flush to fail
+closed. The link itself remained authenticated and recorded zero datagram
+loss, reordering, replay, old-epoch rejection, or authentication failure.
+The active transport-qualified profile is:
+
+```ini
+[timesync]
+usb_sof: True
+converge_window_f767: 0.000020
+host_rate_tolerance_ppm_f767: 10
+```
+
+This changes admission, not the PI target: the MCU still disciplines toward
+zero phase error. USB-SOF boards retain the strict global defaults. After the
+change, the F767 converged with observations beyond 10 us but within 20 us,
+cross-MCU Z homing passed, a 10 mm out/back move at 10 mm/s returned to the
+same coordinate, complete X/Y/Z print-start homing passed, and the same cube
+entered first-layer material deposition with the F767 still converged and all
+transport integrity counters at zero.
+
 This evidence qualifies the native F767 RMII console and its cache-safe
 descriptor handoff. It does **not** qualify IEEE 1588/PTP discipline: enhanced
 RX/TX descriptor timestamps and host `PHC0` timestamp binding remain Phase 4.
-It also does not satisfy the one-hour solver/execution-log/motion load, FEC
-pair, physical cable flap, or concurrent ADC-DMA gates.
+The added evidence qualifies one Ethernet trajectory axis and heterogeneous
+print-start motion. It does not satisfy the one-hour solver/execution-log
+motion load, FEC pair, physical cable flap, or concurrent ADC-DMA gates.
 
 The compile-qualified `stm32h723-nucleo-ethernet-canfd-gateway.config` image
 uses the Nucleo LAN8742A RMII route, an authenticated HostSession, FDCAN at a

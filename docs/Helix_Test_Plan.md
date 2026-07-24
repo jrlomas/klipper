@@ -1132,6 +1132,23 @@ Phases 3/7/8 over each real transport.
     TX busy, or TX underflow. Wrong-PSK, corrupt-tag, and replay traffic was
     rejected without displacing the valid peer. This closes physical RMII
     console bring-up, not the parent motion, PTP, FEC, or link-flap gate.
+  - [x] **F767 physical trajectory/homing gate (2026-07-23):** a BTT TMC2209
+    V1.3 on PC8 enable, PC9 step, PC10 direction, and PA3 single-wire UART
+    drove the V0 BMGZ axis over authenticated Ethernet. UART initialization,
+    cross-MCU homing (Pico endstop, F767 actuator), a 10 mm out/back move at
+    10 mm/s, the complete X/Y/Z print-start homing sequence, and first-layer
+    motion all passed. Two failures found by this gate are closed:
+    the 216 MHz / 1 ms fitter grid could emit a 67,176,000-tick segment past
+    the firmware's 2^26-tick cap, and the software-timestamped Ethernet clock
+    was incorrectly held to the USB-SOF defaults. The fitter now inserts an
+    exact cap boundary and has a 216 MHz regression. The live F767 profile
+    uses a transport-qualified +/-20 us phase window and 10 ppm host-rate
+    residual while USB-SOF boards retain the strict defaults. The rejected
+    print-start sample was only -10.71 us; after correction, full homing and
+    first-layer motion retained convergence with zero datagram loss, reorder,
+    authentication failure, replay rejection, or old-epoch rejection. This
+    closes single-axis physical Ethernet motion and heterogeneous print-start,
+    not the parent one-hour soak, PTP, FEC, or link-flap gate.
 - [ ] **9.5 — Datagram loss tolerance.** Inject packet loss on 9.3/9.4.
   Pass: FEC + retransmit hide it up to the documented loss rate; beyond
   that it degrades to a clean pause, never a crash.

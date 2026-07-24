@@ -174,6 +174,41 @@ def corner(lib, trapq, start_time):
     return final, {b'x': (start_time, end), b'y': (end, final)}
 
 
+def check_fast_mcu_segment_duration_cap():
+    # Physical F767 regression: its 216MHz timer and the production 1ms
+    # sample grid do not evenly divide the firmware's 2^26-tick segment cap.
+    # The former fitter sampled at 67,176,000 ticks and emitted that overlong
+    # cruise verbatim, which the MCU correctly rejected as an invalid
+    # trajectory segment.
+    import chelper
+    ffi, lib = chelper.get_ffi()
+    freq = 216_000_000.
+    max_duration = 1 << 26
+    start_time = 10.
+    duration = 1.
+    speed = 10.
+    trapq = ffi.gc(lib.trapq_alloc(), lib.trapq_free)
+    lib.trapq_append(
+        trapq, start_time, 0., duration, 0., 0., 0., 0.,
+        1., 0., 0., speed, speed, 0.)
+    sk = ffi.gc(lib.cartesian_stepper_alloc(b'x'), lib.free)
+    lib.itersolve_set_trapq(sk, trapq, STEP_DIST)
+    sf = ffi.gc(lib.segfit_alloc(), lib.segfit_free)
+    lib.segfit_setup(sf, sk, freq, SU_PER_MM, TOLERANCE_SU, .001)
+    lib.segfit_set_cruise_fastpath(sf, 1)
+    lib.segfit_set_order(sf, 2)
+    anchor = round(lib.segfit_get_position(sf, start_time) * SU_PER_MM)
+    lib.segfit_set_anchor(sf, start_time, anchor << 32)
+    lib.segfit_set_anchor_position(sf, anchor)
+    segments = collect_segments(lib, sf, start_time + duration)
+    durations = [segment[0] for segment in segments]
+    assert durations
+    assert max(durations) <= max_duration, durations
+    assert max_duration in durations, durations
+    assert abs(sum(durations) - round(freq * duration)) <= 1, durations
+    print("PASS: 216MHz sampling grid respects 2^26 segment cap")
+
+
 def check_corexy_cancellation():
     # A real calibration-cube diagonal keeps the CoreXY minus motor exactly
     # stationary. Rounding the non-zero x-y anchor to a physical sub-unit
@@ -214,6 +249,7 @@ def main():
         check_path("finite-junction-speed corner", corner,
                    (b'x', b'y'), order)
     check_corexy_cancellation()
+    check_fast_mcu_segment_duration_cap()
     print("segfit_fidelity_test: all paths within motion_tolerance")
     return 0
 
