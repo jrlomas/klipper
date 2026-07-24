@@ -93,33 +93,6 @@ traj_group_any_active(void)
     return 0;
 }
 
-static uint8_t
-trajq_holds_at_horizon(struct trajq *tq)
-{
-    if (move_queue_empty(&tq->mq))
-        return !!(tq->seg_flags & TSEG_HOLD_AT_END);
-    struct traj_segment *tail = container_of(
-        tq->mq.last, struct traj_segment, node);
-    return tail->kind == TSEGK_MOTION
-        && !!(tail->flags & TSEG_HOLD_AT_END);
-}
-
-static uint8_t
-traj_group_all_staged(uint32_t local_clock)
-{
-    uint8_t i;
-    for (i = 0; i < trajq_registry_count; i++) {
-        struct trajq *tq = trajq_registry[i];
-        // An idle output is already holding and needs no queued suffix.
-        if (!(tq->flags & TQF_ACTIVE))
-            continue;
-        if (timer_is_before(tq->horizon_clock, local_clock)
-            && !trajq_holds_at_horizon(tq))
-            return 0;
-    }
-    return 1;
-}
-
 static uint_fast8_t
 traj_group_timer_event(struct timer *timer)
 {
@@ -167,7 +140,11 @@ command_trajectory_group_grant(uint32_t *args)
 {
     uint32_t group_id = args[0], epoch_hi = args[1], epoch_lo = args[2];
     uint32_t sequence = args[3], machine_clock = args[4];
-    uint32_t local_clock = args[5];
+    // Retain the local_clock wire field for ABI compatibility, but do not
+    // trust a host clock-model conversion for the safety boundary.  Each MCU
+    // derives the expiry from its own continuously disciplined mapping.
+    (void)args[5];
+    uint32_t local_clock = traj_group.local_clock;
     uint8_t reject = TGR_OK;
     if (!(traj_group.flags & TGF_CONFIGURED))
         reject = TGR_NOT_CONFIGURED;
@@ -180,26 +157,25 @@ command_trajectory_group_grant(uint32_t *args)
     else if ((int32_t)(sequence - traj_group.sequence) < 0)
         reject = TGR_OLD_SEQUENCE;
     else if (sequence == traj_group.sequence
-             && (machine_clock != traj_group.machine_clock
-                 || local_clock != traj_group.local_clock))
+             && machine_clock != traj_group.machine_clock)
         reject = TGR_OLD_SEQUENCE;
-    else if (sequence != traj_group.sequence
-             && traj_group.sequence
-             && (!timer_is_before(traj_group.machine_clock, machine_clock)
-                 || !timer_is_before(traj_group.local_clock, local_clock)))
-        reject = TGR_NONMONOTONIC;
     else if (!timesync_class0_ok())
         reject = TGR_TOO_CLOSE;
     else {
+        if (sequence != traj_group.sequence)
+            local_clock = timesync_clock_to_local(machine_clock);
+        if (sequence != traj_group.sequence
+            && traj_group.sequence
+            && (!timer_is_before(traj_group.machine_clock, machine_clock)
+                || !timer_is_before(traj_group.local_clock, local_clock)))
+            reject = TGR_NONMONOTONIC;
         // Ten milliseconds is intentionally much larger than timer dispatch
         // uncertainty on every supported MCU and leaves room to replace the
         // currently installed timer before its boundary.
         uint32_t now = timer_read_time();
         uint32_t min_lead = CONFIG_CLOCK_FREQ / 100;
-        if (timer_is_before(local_clock, now + min_lead))
+        if (!reject && timer_is_before(local_clock, now + min_lead))
             reject = TGR_TOO_CLOSE;
-        else if (!traj_group_all_staged(local_clock))
-            reject = TGR_NOT_STAGED;
     }
     if (reject) {
         traj_group.reject_reason = reject;

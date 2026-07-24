@@ -26,9 +26,23 @@ class FakeReactor:
 class FakePrinter:
     def __init__(self):
         self.reactor = FakeReactor()
+        self.toolhead = FakeToolhead()
 
     def get_reactor(self):
         return self.reactor
+
+    def lookup_object(self, name, default=None):
+        if name == 'toolhead':
+            return self.toolhead
+        return default
+
+
+class FakeToolhead:
+    def __init__(self):
+        self.last_move_time = 0.
+
+    def get_last_move_time(self):
+        return self.last_move_time
 
 
 class FakeMCU:
@@ -105,6 +119,7 @@ def make_owner():
     owner.group_proposal_time = None
     owner.group_committed_sequence = 0
     owner.group_committed_until = None
+    owner.group_renewal_fault = None
     owner.group_grant_ready = False
     owner.recovery_active = False
     primary = FakeMCU('mcu', 12_000_000., 20.)
@@ -183,6 +198,27 @@ def test_missing_member_stops_all_renewals():
     assert owner.group_sequence == 0
     assert owner.group_pending is None
     assert all(not member.sent for member in owner.group_members.values())
+
+
+def test_active_rejection_latches_and_stops_reproposal():
+    owner = make_owner()
+    owner._grant_timer(10.)
+    owner.printer.toolhead.last_move_time = 30.
+    first, _second = owner.group_members.values()
+    owner._handle_group_state(first, {
+        'group_id': owner.execution_group_id,
+        'epoch_hi': owner.execution_epoch_hi,
+        'epoch_lo': owner.execution_epoch_lo,
+        'sequence': owner.group_pending['sequence'],
+        'machine_clock': owner.group_pending['machine_clock'],
+        'flags': trajectory_queuing.TGF_CONFIGURED,
+        'reject_reason': 5,
+    })
+    assert owner.group_renewal_fault['member'] == 'mcu'
+    assert not owner.group_grant_ready
+    owner._grant_timer(10.1)
+    assert owner.group_sequence == 1
+    assert owner.group_pending is None
 
 
 def test_renewal_respects_interval_after_all_ack():
@@ -267,6 +303,8 @@ def test_firmware_has_closed_epoch_and_controlled_expiry():
     assert 'trajectory_group_grant group_id=%u epoch_hi=%u epoch_lo=%u' \
         in source
     assert 'traj_group_ingest_open()' in source
+    assert 'local_clock = timesync_clock_to_local(machine_clock)' in source
+    assert 'traj_group_all_staged(local_clock)' not in source
     assert 'trajq_synth_ramp(tq, velocity)' in source
     assert 'TQF_HALT_BARRIER' in source
 
@@ -276,6 +314,7 @@ def main():
         test_grant_requires_every_member_ack,
         test_duplicate_and_rejected_states_do_not_commit,
         test_missing_member_stops_all_renewals,
+        test_active_rejection_latches_and_stops_reproposal,
         test_renewal_respects_interval_after_all_ack,
         test_expired_host_lease_revokes_ready_state,
         test_reproposal_horizon_never_moves_backwards,

@@ -50,11 +50,15 @@ An MCU may receive and validate a deep future suffix without permission to
 execute it. Every actuator in a coordination group may execute only through
 one shared machine-time **committed horizon**, conveyed by a renewable
 **execution grant**. The host or autonomous mainboard extends that horizon
-only after every essential participant has acknowledged enough staged work
-and remains healthy.
+only after every essential participant has acknowledged the grant and remains
+healthy.
 
 The queue answers “what should I do later?” The grant independently answers
-“how far may I proceed now?”
+“how far may I proceed now?” Actual execution ends at the earlier of the
+staged-work horizon and the execution-grant horizon. A grant is a ceiling, not
+a claim that every queue already contains work through that time. This
+distinction is required for endstop-driven homing and probing, whose queues are
+intentionally drip-fed in short interruptible windows.
 
 ## Terms
 
@@ -109,27 +113,42 @@ group_id
 epoch
 grant_sequence
 committed_machine_clock
-staged-manifest/checkpoint digest
 policy flags
 authentication inherited from the carrier session
 ```
 
+Phase C adds a staged-manifest/checkpoint digest for transactional suffix
+replacement. It is not an acceptance precondition for the Phase B liveness
+ceiling.
+
 The rules are deliberately narrow:
 
 1. A new epoch begins closed: no new trajectory may execute.
-2. Every participant stages work and reports its exact staged horizon and
-   checkpoint digest.
-3. The coordinator chooses a committed machine clock no later than the
-   minimum acknowledged staged horizon.
-4. It transmits the future-dated grant to every participant.
-5. A participant accepts a grant only for its current epoch and only when its
-   sequence and horizon advance monotonically.
-6. The coordinator counts the horizon as committed only after every essential
-   participant acknowledges the same epoch, sequence, horizon, and digest.
-7. Until that all-node acknowledgement exists, the preceding committed
-   horizon remains authoritative.
+2. Every participant separately reports health, time qualification, and its
+   exact staged horizon.
+3. The coordinator chooses a future primary-machine clock that bounds
+   execution independently of queue depth.
+4. It transmits the future-dated grant to every participant. The primary MCU
+   owns this machine clock; every secondary derives its local expiry with its
+   onboard disciplined mapping rather than trusting a host-supplied local
+   timestamp.
+5. A participant accepts a grant only for its current epoch, while Class-0
+   time remains qualified, and only when its sequence and machine/local
+   horizons advance monotonically.
+6. The coordinator reports the horizon as group-confirmed only after every
+   essential participant acknowledges the same epoch, sequence, and
+   machine-time horizon.
+7. Until that all-node acknowledgement exists, the preceding group-confirmed
+   horizon remains the host-ingest authority. A subset may already have
+   installed the one newer proposed ceiling; therefore a rejected renewal
+   during active motion closes ingestion and stops further reproposals.
 8. Grants are renewed early enough that retransmission and clock uncertainty
    cannot consume the minimum scheduling lead.
+
+A queue shorter than the grant is valid: it holds, completes, or invokes the
+ordinary controlled-underrun path earlier. Requiring it to be staged through
+the lease would create a circular dependency and makes safe drip-fed homing
+impossible.
 
 Acknowledgements are state reports, so duplicate grant and acknowledgement
 messages are idempotent. A delayed packet from an earlier sequence cannot
@@ -150,7 +169,7 @@ renewing a 1--2 second executable horizon several times per second.
 ## Failure behavior
 
 When an essential participant stops acknowledging, disconnects, resets, loses
-time qualification, or reports insufficient staged work:
+time qualification, or its separately monitored queue margin becomes unsafe:
 
 1. the coordinator immediately stops issuing later grants;
 2. if the affected links still work, it may replace the remaining committed
@@ -180,10 +199,16 @@ that node stopped early.
 HELIX therefore promises a measured **bound**, not impossible atomicity:
 
 ```text
-latest motion <= last all-node committed horizon
-cross-node stop skew <= clock error + IRQ/scheduler error
-                       + the declared controlled-stop policy
+each node's latest motion <= that node's last accepted grant
+partial-delivery divergence <= one renewal increment + clock/IRQ error
+                              + the declared controlled-stop policy
 ```
+
+A coordinator may repropose after a rejection only while the group is idle.
+During active motion, it closes ingestion and lets the already-installed
+bounded grants stop the group. This prevents a reachable subset from walking
+its ceiling forward through repeated proposals while another node rejects
+them.
 
 A common hardware interlock, shared trigger wire, deterministic fieldbus
 broadcast, or redundant safety controller can tighten that bound. An MCU that

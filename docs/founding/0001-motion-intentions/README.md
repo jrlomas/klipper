@@ -50,7 +50,7 @@ status line records its more precise state.
 | [19-Unified_CAN_Gateway.md](19-Unified_CAN_Gateway.md) | One typed gateway runtime with USB and Ethernet host links, CAN and serial services, transport-independent time sources, and exact delivery accounting | Workstation core/proxy/RMII implementation compile-tested; Ethernet/PTP/H723 hardware gates pending |
 | [20-Unified_Machine_Time.md](20-Unified_Machine_Time.md) | Configurable time authorities, timestamp adapters, protocol bridges, quality propagation, and motion-safe failover | Architecture and phased implementation plan; current primary-MCU/USB/CAN mechanisms remain the compatibility baseline |
 | [21-Autonomous_Job_Execution.md](21-Autonomous_Job_Execution.md) | Stored deterministic job capsules, a network-mainboard printer fabric, replicated repositories, and host-independent completion | Architecture and phased implementation plan; physical autonomous execution pending |
-| [22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md) | Deep per-MCU staging, negotiated queue capacity, renewable group execution grants, bounded coordinated stop, and recovery | Architecture and implementation plan; interim two-second datagram buffer active, execution grants pending |
+| [22-Coordinated_Execution_Horizon.md](22-Coordinated_Execution_Horizon.md) | Deep per-MCU staging, negotiated queue capacity, renewable group execution grants, bounded coordinated stop, and recovery | Architecture plus commissioned Phase A/B implementation; physical homing, expiry-bound, and recovery qualification in progress |
 
 ## Reading order
 

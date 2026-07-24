@@ -1402,6 +1402,7 @@ class TrajectoryQueuing:
         self.group_proposal_time = None
         self.group_committed_sequence = 0
         self.group_committed_until = None
+        self.group_renewal_fault = None
         self.group_grant_ready = not self.execution_grants
         self.group_timer = None
         # Normal G1 moves retain Klippy's coordinated Cartesian lookahead,
@@ -1437,6 +1438,7 @@ class TrajectoryQueuing:
                 'recovery_trigger': self.recovery_trigger,
                 'execution_grants': self.execution_grants,
                 'execution_grant_ready': self.group_grant_ready,
+                'execution_grant_fault': self.group_renewal_fault,
                 'execution_group_id': self.execution_group_id,
                 'execution_epoch': "%08x%08x" % (
                     self.execution_epoch_hi, self.execution_epoch_lo),
@@ -1691,12 +1693,25 @@ class TrajectoryQueuing:
             mq.register_flush_callback(self._flush)
 
     def _group_healthy(self):
-        if self.recovery_active:
+        if self.recovery_active or self.group_renewal_fault is not None:
             return False
         for member in self.group_members.values():
             if member.is_paused() or not self.is_mcu_synced(member.mcu):
                 return False
         return True
+
+    def _group_motion_active(self, eventtime):
+        toolhead = self.printer.lookup_object('toolhead', None)
+        if toolhead is None:
+            return False
+        try:
+            current_time = self.get_machine_mcu().estimated_print_time(
+                eventtime)
+            return toolhead.get_last_move_time() > current_time + .001
+        except Exception:
+            # Failing closed here would prevent harmless idle startup
+            # reproposals on reduced test/toolhead implementations.
+            return False
 
     def _execution_grant_valid(self, eventtime):
         if not self.execution_grants:
@@ -1717,11 +1732,12 @@ class TrajectoryQueuing:
         return 0 < delta < 0x80000000
 
     def _advance_grant_past_member_clocks(self, grant_time):
-        # Firmware rejects a new sequence unless both its machine and local
-        # clocks advance modulo 32 bits.  Clock regressions may settle after
-        # one MCU accepted a proposal, so monotonic host print_time alone is
+        # Firmware rejects a new sequence unless its machine clock advances
+        # modulo 32 bits.  A clock regression may settle after one MCU
+        # accepted a proposal, so monotonic host print_time alone is
         # insufficient.  Raise the next proposal beyond every last accepted
-        # clock reported for this epoch.
+        # machine clock reported for this epoch.  Each MCU derives its local
+        # expiry from that clock with its onboard disciplined mapping.
         machine_mcu = self.get_machine_mcu()
         constraints = []
         for member in self.group_members.values():
@@ -1737,8 +1753,6 @@ class TrajectoryQueuing:
                 continue
             constraints.append(
                 (machine_mcu, int(state.get('machine_clock', 0))))
-            constraints.append(
-                (member.mcu, int(state.get('local_clock', 0))))
         # One pass normally suffices.  Iterate because advancing print_time
         # for one clock domain can cross a 32-bit wrap in another.
         for _retry in range(4):
@@ -1781,10 +1795,12 @@ class TrajectoryQueuing:
             self.group_sequence = (self.group_sequence + 1) & 0xffffffff
             if not self.group_sequence:
                 self.group_sequence = 1
-            grant_time = max(
-                member.mcu.estimated_print_time(eventtime)
-                for member in self.group_members.values())
-            grant_time += self.execution_grant_horizon
+            # The primary MCU owns machine time.  A noisy secondary estimate
+            # must never inflate the execution lease; firmware derives its
+            # own local expiry from this primary-machine boundary.
+            grant_time = (
+                self.get_machine_mcu().estimated_print_time(eventtime)
+                + self.execution_grant_horizon)
             # Startup clock fits can settle sharply backwards (notably on a
             # Wi-Fi MCU).  A subset of the group may already have accepted
             # the preceding proposal, so never let a fresh sequence move its
@@ -1830,13 +1846,29 @@ class TrajectoryQueuing:
             # future clock eventually turns it into a permanently stale
             # proposal.  Close host ingestion and create a new, later
             # sequence on the next timer pass.
-            logging.warning(
-                "HELIX execution grant %u rejected by %s (reason=%u);"
-                " reproposing a fresh coordinated horizon",
-                pending['sequence'], member.name, reject_reason)
+            active = self._group_motion_active(
+                self.printer.get_reactor().monotonic())
+            if active:
+                self.group_renewal_fault = {
+                    'sequence': pending['sequence'],
+                    'member': member.name,
+                    'reason': reject_reason,
+                }
+                logging.error(
+                    "HELIX execution grant %u rejected by %s (reason=%u)"
+                    " during active motion; closing ingestion and allowing"
+                    " the installed bounded leases to stop the group",
+                    pending['sequence'], member.name, reject_reason)
+            else:
+                logging.warning(
+                    "HELIX execution grant %u rejected by %s (reason=%u);"
+                    " reproposing a fresh coordinated horizon while idle",
+                    pending['sequence'], member.name, reject_reason)
             self.group_pending = None
             self.group_grant_ready = False
-            self.group_next_proposal = 0.
+            self.group_next_proposal = (
+                0. if not active
+                else self.printer.get_reactor().NEVER)
             return
         if (int(state.get('sequence', 0)) != pending['sequence']
                 or int(state.get('machine_clock', 0))

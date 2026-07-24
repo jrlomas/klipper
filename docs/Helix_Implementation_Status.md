@@ -386,6 +386,17 @@ pass.
   tests pass and RP2040, STM32G0B1, and ESP32/Rodent images build. The option
   remains disabled by default until the multi-board physical expiry,
   divergence-bound, and recovery tests pass.
+* The first physical execution-grant homing pass exposed and safely contained
+  a Phase-B semantic error: renewal required every active queue to be staged
+  through the 1.5 s lease, but hardware-triggered homing deliberately uses
+  short drip-fed windows. Pico rejected renewal with `TGR_NOT_STAGED`, its
+  prior lease expired, and the existing recovery barrier stopped X homing
+  without a printer shutdown. The grant is now explicitly an upper execution
+  bound independent of staged depth; a shorter queue stops earlier. Grant
+  machine time is based only on the primary MCU clock, and every secondary
+  derives the local expiry from its onboard discipline instead of trusting a
+  noisy host-side local-clock conversion. Reflashing and the repeat physical
+  homing/expiry tests remain required.
 * Normal G0/G1 is now the production quintic path for trajectory steppers.
   Klippy retains Cartesian lookahead, kinematics, and the authoritative
   toolhead position; the fitter sends synchronized per-joint quintic
