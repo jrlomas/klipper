@@ -34,6 +34,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import intentproto_transport as ipt
 
 
+UDP_CONSOLE_STATUS = (
+    'udp_console_status decoded=%u responses=%u response_drops=%u'
+    ' flushes=%u no_peer_drops=%u send_failures=%u'
+    ' session_tx_epoch=%u session_tx_seq=%u'
+    ' session_rx_epoch=%u session_rx_top=%u'
+    ' session_auth_failures=%u session_replays=%u'
+    ' session_old_epoch=%u')
+ETH_MAC_STATUS_F7 = (
+    'eth_mac_status ready=%c init_error=%c link=%c speed100=%c'
+    ' full_duplex=%c phy_addr=%c phy_id1=%hu phy_id2=%hu'
+    ' transitions=%u irq=%u rx=%u rx_errors=%u tx=%u tx_errors=%u'
+    ' tx_busy=%u tx_underflows=%u'
+    ' udp_rx=%u udp_slot_drops=%u udp_queue_depth=%c'
+    ' udp_queue_highwater=%c overruns=%u'
+    ' dma_errors=%u mdio_errors=%u'
+    ' ready_highwater=%c dma_pool=%hu dma_used=%hu')
+ETH_MAC_STATUS_H7 = (
+    'eth_mac_status ready=%c link=%c rx=%u tx=%u'
+    ' udp_rx=%u udp_slot_drops=%u udp_queue_depth=%c'
+    ' udp_queue_highwater=%c overruns=%u'
+    ' dma_errors=%u tx_errors=%u ready_highwater=%c'
+    ' dma_pool=%hu dma_used=%hu')
+
+
 class IntentprotoTransport:
     def __init__(self, config):
         self.printer = config.get_printer()
@@ -62,6 +86,9 @@ class IntentprotoTransport:
                 % (self.name,))
         self._serial = None
         self._bridge = None
+        self._udp_status_cmd = None
+        self._eth_status_cmd = None
+        self._mcu_diagnostics = {}
         if self.mode == 'datagram':
             addr = config.get('board_address')
             host, port = addr.rsplit(':', 1)
@@ -101,10 +128,14 @@ class IntentprotoTransport:
         self.printer.register_event_handler('klippy:connect', self._connect)
         self.printer.register_event_handler('klippy:disconnect',
                                              self._disconnect)
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_mux_command(
+            'HELIX_DATAGRAM_STATUS', 'TRANSPORT', self.name,
+            self.cmd_HELIX_DATAGRAM_STATUS,
+            desc='Query Helix datagram session and Ethernet drop counters')
 
     def _connect(self):
-        # Capability-driven negotiation for the bch envelope.
-        if self._bridge is None or self.mode != 'bch':
+        if self._bridge is None:
             return
         mcu_name = 'mcu' if self.name == 'mcu' else 'mcu ' + self.name
         mcu = self.printer.lookup_object(mcu_name, None)
@@ -113,6 +144,10 @@ class IntentprotoTransport:
                 "intentproto_transport %s: no [%s] section found — leaving"
                 " the link in v1 pass-through", self.name, mcu_name)
             return
+        if self.mode == 'datagram':
+            self._lookup_datagram_diagnostics(mcu)
+            return
+        # Capability-driven negotiation for the bch envelope.
         try:
             consts = mcu.get_constants()
         except Exception:
@@ -128,10 +163,54 @@ class IntentprotoTransport:
                 " FRAMING_V2 (stock firmware, or WANT_CONSOLE_FRAMING_V2"
                 " not built) — staying in plain v1 pass-through", self.name)
 
+    def _lookup_datagram_diagnostics(self, mcu):
+        if mcu.try_lookup_command('udp_console_get_status') is not None:
+            self._udp_status_cmd = mcu.lookup_query_command(
+                'udp_console_get_status', UDP_CONSOLE_STATUS)
+        if mcu.try_lookup_command('eth_mac_get_status') is None:
+            return
+        if mcu.check_valid_response(ETH_MAC_STATUS_F7):
+            response = ETH_MAC_STATUS_F7
+        elif mcu.check_valid_response(ETH_MAC_STATUS_H7):
+            response = ETH_MAC_STATUS_H7
+        else:
+            logging.warning(
+                "intentproto_transport %s: eth_mac_get_status has an"
+                " unrecognized response schema", self.name)
+            return
+        self._eth_status_cmd = mcu.lookup_query_command(
+            'eth_mac_get_status', response)
+
+    @staticmethod
+    def _format_diagnostics(label, params):
+        return "%s: %s" % (
+            label, " ".join("%s=%s" % item
+                            for item in sorted(params.items())))
+
+    def cmd_HELIX_DATAGRAM_STATUS(self, gcmd):
+        if self.mode != 'datagram':
+            raise gcmd.error(
+                "intentproto_transport %s is not a datagram transport"
+                % self.name)
+        diagnostics = {}
+        if self._udp_status_cmd is not None:
+            diagnostics['console'] = dict(self._udp_status_cmd.send())
+        if self._eth_status_cmd is not None:
+            diagnostics['ethernet'] = dict(self._eth_status_cmd.send())
+        if not diagnostics:
+            raise gcmd.error(
+                "intentproto_transport %s firmware does not expose"
+                " datagram diagnostics" % self.name)
+        self._mcu_diagnostics = diagnostics
+        for label, params in sorted(diagnostics.items()):
+            gcmd.respond_info(self._format_diagnostics(label, params))
+
     def get_status(self, eventtime):
         if self._bridge is None:
             return {'mode': self.mode, 'v2_active': False}
-        return dict(self._bridge.stats())
+        status = dict(self._bridge.stats())
+        status['mcu_diagnostics'] = dict(self._mcu_diagnostics)
+        return status
 
     def _disconnect(self):
         if self._bridge is not None:

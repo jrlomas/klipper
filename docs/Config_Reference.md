@@ -439,6 +439,13 @@ itself, enable or validate the HELIX datagram carrier, FEC, or ESP32 modem.
 #   streaming while retaining records in the ring. The default is 4.
 #query_interval: 1.0
 #   Seconds between firmware drop-counter queries. The default is 1.0.
+#max_file_size_mb: 256
+#   Rotate the active structured telemetry file before it exceeds this size.
+#   The default is 256 MiB.
+#retained_files: 3
+#   Number of completed telemetry files retained as output.1, output.2, etc.
+#   The default is 3, bounding active plus retained structured telemetry to
+#   approximately 1 GiB. Set to 0 to retain no completed files.
 #core_level: off
 #motion_level: off
 #comms_level: off

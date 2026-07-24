@@ -296,12 +296,33 @@ def test_gateway_status_and_incident_are_distinct():
         print("PASS: normal gateway health and incidents stay distinct")
 
 
+def test_jsonl_writer_rotates_with_bounded_retention():
+    with tempfile.TemporaryDirectory() as tmp:
+        output = os.path.join(tmp, "trace.jsonl")
+        writer = atlas_trace.JsonlWriter(
+            output, max_bytes=120, retained_files=2)
+        writer.write({"kind": "trace", "fields": {"value": "a" * 50}})
+        writer.write({"kind": "trace", "fields": {"value": "b" * 50}})
+        writer.close()
+        assert pathlib.Path(output).exists()
+        assert pathlib.Path(output + ".1").exists()
+        assert writer.rotations == 1
+        records = []
+        for path in (output + ".1", output):
+            records.extend(json.loads(line) for line in
+                           pathlib.Path(path).read_text().splitlines())
+        assert [record["fields"]["value"][0] for record in records] == [
+            "a", "b"]
+        print("PASS: structured telemetry rotates with bounded retention")
+
+
 def main():
     test_configures_and_tolerates_rolling_firmware()
     test_trace_data_renders_and_writes_common_time()
     test_sequence_gaps_and_firmware_drops_are_visible()
     test_execution_and_wire_intention_share_machine_time()
     test_gateway_status_and_incident_are_distinct()
+    test_jsonl_writer_rotates_with_bounded_retention()
     print("ALL PASS")
 
 

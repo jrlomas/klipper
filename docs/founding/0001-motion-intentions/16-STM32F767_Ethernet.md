@@ -164,6 +164,15 @@ spinning in either task or ISR context. Ring sizes become configuration values
 with conservative Nucleo defaults and are tuned from measured high-water
 marks, not intuition.
 
+The MAC descriptor ring is not, by itself, sufficient buffering. After frame
+parsing, the native `nano_udp` adapter must also preserve a bounded burst until
+the cooperative console task runs. Its receive handoff is a four-datagram
+static ring, and each entry owns its payload plus source MAC, IP, and port until
+authentication accepts that exact datagram. Queue depth, high-water, and full
+drops are exported separately from MAC/DMA errors. This prevents a fast
+100-Mbit/s MAC from turning two ordinary back-to-back control requests into an
+avoidable v1 ARQ timeout.
+
 The existing transmit and receive Store-and-Forward settings remain mandatory
 because they are the documented workarounds for F76/77 Ethernet corruption
 errata. The driver does not issue the affected TxFIFO flush sequence.
@@ -314,6 +323,14 @@ build.
 - [x] Bring up the physical LAN8742A at 100 Mbit/s full duplex, acquire DHCP,
   complete a no-retry authenticated identify, and run 45,000+ bidirectional
   Klipper datagrams with complete MAC/DMA/session counters.
+- [x] Complete a 1,733.5-second physical Ethernet print with Z motion on the
+  F767: 2,301,802 G-code bytes, 3,637.98 mm filament, no trajectory
+  underrun/deadline/rebase/invalid-segment event, and no communication
+  shutdown.
+- [x] Correlate the print's unexpectedly high v1 retransmission count to the
+  native UDP software handoff, replace its single pending slot with a
+  four-entry ring, and repeat the idle test with zero new slot drops and zero
+  new retry bytes.
 - [x] Reject wrong-PSK, corrupted-tag, and replay traffic on the physical PHY,
   then prove that the next valid command still completes.
 - [ ] Repeat FEC-off/FEC-on, reconnect, ring exhaustion, and link flap against
@@ -322,6 +339,42 @@ build.
 Gate: a one-hour bidirectional saturation run concurrent with maximum solver
 and execution-log load has no unexplained loss, starvation, memory corruption,
 or ISR-budget violation. All induced drops appear in an accountable counter.
+
+### Physical retransmission investigation (2026-07-23)
+
+The first successful Ethernet print was mechanically clean, but the host
+reported 56,997 retransmitted bytes for 385,660 bytes written to the F767.
+That ratio looked incompatible with a local switched Ethernet path and was
+treated as a defect instead of being excused by the successful part.
+
+The layer-by-layer counters localized it:
+
+| Layer | Observation |
+| --- | ---: |
+| Host NIC | 1 Gbit/s full duplex; zero RX/TX/CRC/frame/missed/FIFO/carrier errors |
+| Host UDP socket | zero socket drops; receive queue empty |
+| Intentproto session | zero lost/reordered MCU-to-host datagrams; zero auth/replay/epoch failures |
+| F767 MAC/DMA | zero RX/TX errors, overruns, DMA errors, TX busy, and underflows |
+| UDP console TX | zero response drops, no-peer drops after pairing, or send failures |
+| Native UDP handoff | **3,509 `udp_slot_drops`** |
+
+The old handoff accepted one UDP payload and rejected every subsequent payload
+until `udp_console_task` drained that slot. ClockSync and HELIX TimeSync both
+run at the same 0.9839-second cadence, so the host commonly emitted a
+two-datagram burst. The dominant host retry increment was exactly eight bytes,
+the retransmitted v1 `timesync_query` wire block.
+
+A controlled idle interval closed the causal loop: 33 additional firmware
+slot drops produced 264 additional host retry bytes, exactly `33 × 8`. After
+installing the four-entry ring, the same periodic traffic reached a queue
+high-water of two, while `udp_slot_drops` remained zero and Klipper's
+`bytes_retransmit` remained unchanged over the 55.2-second comparison window.
+The fix therefore removes self-inflicted software loss; it does not mask a
+weak cable, PHY, switch, kernel, or authenticated datagram layer.
+
+`HELIX_DATAGRAM_STATUS TRANSPORT=f767` now queries these MCU counters on
+demand. It deliberately does not poll in the background, because diagnostic
+traffic must not become part of the condition being measured.
 
 ### Phase 4 - hardware time discipline
 

@@ -17,6 +17,17 @@ qualification. The streamer drains at most one configured batch per wake; a
 periodic host status query paces any backlog so the MCU response queue cannot
 become a second, unaccounted drop point.
 
+The host JSONL boundary is also bounded. Exact wire intentions and execution
+records are intentionally high-volume: a workstation run accumulated
+21,951,270 records (17,128,783 execution records and 4,615,592 intentions)
+and a 9.1 GiB file while all trace levels were off. That was storage
+amplification in the collector, not useful evidence that Atlas needed an
+unbounded lifetime log. The writer now rotates at 256 MiB by default and
+retains three completed files (approximately 1 GiB including the active
+file). Both limits are configurable. The Atlas tail drains unread bytes from
+the renamed inode before following the new file, so retention does not create
+an incident-loss window at a rotation boundary.
+
 Everything else in Atlas reads a timeline. Before there can be a decoder,
 a diagnosis engine, or a companion that answers "why did my print fail?",
 the machine has to be able to *say what it is doing* — cheaply, on the
@@ -97,7 +108,8 @@ it; the health monitor and the LLM interpreter all read the same store.
   [`klippy/extras/atlas_trace.py`](../../../klippy/extras/atlas_trace.py), the
   offline decoder in [`atlas/decode/trace.py`](../../../atlas/decode/trace.py),
   and the trace/execution/link/timesync JSONL boundary in
-  [`atlas/observe.py`](../../../atlas/observe.py).
+  [`atlas/observe.py`](../../../atlas/observe.py). The boundary has bounded,
+  configurable file retention and rotation-safe unread-tail draining.
 - **Merged-timeline store** — the machine-time-ordered stream across all
   MCUs. *Built:* [`atlas/timeline.py`](../../../atlas/timeline.py).
 - **Live viewer** — a Mainsail panel if it reaches, else a standalone

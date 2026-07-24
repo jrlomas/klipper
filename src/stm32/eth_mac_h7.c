@@ -478,11 +478,18 @@ command_eth_mac_get_status(uint32_t *args)
 {
     (void)args;
     struct dma_pool_status pool;
+    uint32_t udp_rx, udp_slot_drops;
+    uint8_t udp_queue_depth, udp_queue_highwater;
     dma_pool_get_status(&pool);
-    sendf("eth_mac_status ready=%c link=%c rx=%u tx=%u overruns=%u"
+    nano_udp_get_io_stats(&udp_rx, &udp_slot_drops);
+    nano_udp_get_queue_stats(&udp_queue_depth, &udp_queue_highwater);
+    sendf("eth_mac_status ready=%c link=%c rx=%u tx=%u"
+          " udp_rx=%u udp_slot_drops=%u udp_queue_depth=%c"
+          " udp_queue_highwater=%c overruns=%u"
           " dma_errors=%u tx_errors=%u ready_highwater=%c"
           " dma_pool=%hu dma_used=%hu",
           eth_ready, eth_link_up, eth_rx_frames, eth_tx_frames,
+          udp_rx, udp_slot_drops, udp_queue_depth, udp_queue_highwater,
           eth_rx_overruns, eth_dma_errors, eth_tx_errors, rx_ready.highwater,
           pool.size, pool.used);
 }

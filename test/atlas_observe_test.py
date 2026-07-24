@@ -66,6 +66,26 @@ def test_structured_tail_handles_partial_rotation_and_bad_data():
               "and rotation")
 
 
+def test_structured_tail_drains_renamed_inode_before_new_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "telemetry.jsonl"
+        first = json.dumps(_record("trace", 1, {"event": "one"}))
+        second = json.dumps(_record("trace", 2, {"event": "two"}))
+        third = json.dumps(_record("trace", 3, {"event": "three"}))
+        path.write_text(first + "\n")
+        tail = StructuredTail(path)
+        assert len(tail.poll()) == 1
+        with path.open("a") as handle:
+            handle.write(second + "\n")
+        os.replace(path, str(path) + ".1")
+        path.write_text(third + "\n")
+        events = tail.poll()
+        assert [event.fields["event"] for event in events] == [
+            "two", "three"]
+        assert tail.rotations == 1
+        print("PASS: structured tail drains unread records across rename")
+
+
 def _diagnosis(pattern):
     best = SimpleNamespace(pattern_id=pattern, cause="cause " + pattern)
     return SimpleNamespace(best=best, case=None)
@@ -158,6 +178,7 @@ def test_daemon_unifies_structured_monitor_and_history():
 def main():
     test_structured_kinds_merge_on_machine_time()
     test_structured_tail_handles_partial_rotation_and_bad_data()
+    test_structured_tail_drains_renamed_inode_before_new_file()
     test_incident_store_deduplicates_persists_and_retains()
     test_monitor_learns_persists_and_flags_drift()
     test_daemon_unifies_structured_monitor_and_history()

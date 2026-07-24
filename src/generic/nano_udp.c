@@ -258,16 +258,25 @@ static int (*mac_emit)(const uint8_t *frame, uint32_t len);
 static void (*rx_notify)(void);
 
 // Latched peer (only after datagram authentication) and the candidate
-// from the most recently received frame
+// associated with the datagram most recently returned by nano_recv().
 static uint8_t cand_mac[6], peer_mac[6];
 static uint32_t cand_ip, peer_ip;
 static uint16_t cand_port, peer_port;
 static uint8_t have_peer;
 
-// Single-slot inbound datagram queue drained by ops->recv
-static uint8_t rx_payload[UDPDG_DATAGRAM_MAX];
-static uint32_t rx_len;
-static uint8_t rx_full;
+// Ethernet DMA may deliver a short burst before the cooperative console task
+// runs.  Keep a bounded ring instead of dropping every datagram after the
+// first; v1 ARQ remains the final overflow recovery mechanism.
+#define NANO_RX_QUEUE_DEPTH 4
+struct nano_rx_slot {
+    uint8_t payload[UDPDG_DATAGRAM_MAX];
+    uint8_t mac[6];
+    uint32_t len;
+    uint32_t ip;
+    uint16_t port;
+};
+static struct nano_rx_slot rx_queue[NANO_RX_QUEUE_DEPTH];
+static uint8_t rx_head, rx_count, rx_highwater;
 static uint32_t rx_udp_frames, rx_slot_drops;
 
 static void
@@ -275,8 +284,7 @@ nano_apply_network(const struct helix_network_params *params)
 {
     our_ip = params->ip;
     our_port = params->port;
-    have_peer = rx_full = 0;
-    rx_len = 0;
+    have_peer = rx_head = rx_count = 0;
 }
 
 void
@@ -394,20 +402,22 @@ nano_udp_input(const uint8_t *frame, uint32_t len)
     if (!nano_udp_parse(frame, len, our_ip, our_port, &payload, &plen,
                         src_mac, &src_ip, &src_port))
         return;
-    if (rx_full || plen > sizeof(rx_payload)) {
-        if (rx_full)
+    if (rx_count >= NANO_RX_QUEUE_DEPTH
+        || plen > sizeof(rx_queue[0].payload)) {
+        if (rx_count >= NANO_RX_QUEUE_DEPTH)
             rx_slot_drops++;
-        return; // console has not drained the slot yet - ARQ recovers
+        return; // console queue is full - v1 ARQ recovers
     }
-    // Commit the candidate peer together with the queued datagram. Parsing a
-    // later packet must not overwrite the source that rx_accepted() will
-    // authorize for this packet.
-    memcpy(cand_mac, src_mac, sizeof(cand_mac));
-    cand_ip = src_ip;
-    cand_port = src_port;
-    memcpy(rx_payload, payload, plen);
-    rx_len = plen;
-    rx_full = 1;
+    uint8_t tail = (rx_head + rx_count) % NANO_RX_QUEUE_DEPTH;
+    struct nano_rx_slot *slot = &rx_queue[tail];
+    memcpy(slot->mac, src_mac, sizeof(slot->mac));
+    slot->ip = src_ip;
+    slot->port = src_port;
+    memcpy(slot->payload, payload, plen);
+    slot->len = plen;
+    rx_count++;
+    if (rx_count > rx_highwater)
+        rx_highwater = rx_count;
     rx_udp_frames++;
     if (rx_notify)
         rx_notify();
@@ -422,17 +432,33 @@ nano_udp_get_io_stats(uint32_t *udp_rx, uint32_t *slot_drops)
         *slot_drops = rx_slot_drops;
 }
 
+void
+nano_udp_get_queue_stats(uint8_t *depth, uint8_t *highwater)
+{
+    if (depth)
+        *depth = rx_count;
+    if (highwater)
+        *highwater = rx_highwater;
+}
+
 static int32_t
 nano_recv(void *ctx, uint8_t *buf, uint32_t cap)
 {
     (void)ctx;
-    if (!rx_full)
+    if (!rx_count)
         return 0;
-    uint32_t n = rx_len;
+    struct nano_rx_slot *slot = &rx_queue[rx_head];
+    uint32_t n = slot->len;
     if (n > cap)
         n = cap;
-    memcpy(buf, rx_payload, n);
-    rx_full = 0;
+    memcpy(buf, slot->payload, n);
+    // Keep the return path for this exact datagram stable until the console
+    // authenticates it and calls rx_accepted() (or sends a handshake reply).
+    memcpy(cand_mac, slot->mac, sizeof(cand_mac));
+    cand_ip = slot->ip;
+    cand_port = slot->port;
+    rx_head = (rx_head + 1) % NANO_RX_QUEUE_DEPTH;
+    rx_count--;
     return n;
 }
 

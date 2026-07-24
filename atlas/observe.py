@@ -84,17 +84,37 @@ class StructuredTail:
             return []
         self.source_available = True
         identity = (stat.st_dev, stat.st_ino)
-        if self._identity is not None and (
-                identity != self._identity or stat.st_size < self._offset):
+        chunks = []
+        if self._identity is not None and identity != self._identity:
+            # JsonlWriter renames the completed inode to ".1" before opening
+            # the new active file. Drain any records appended since our last
+            # poll so a failure at the rotation boundary is not lost.
+            drained_old = False
+            rotated = self.path + ".1"
+            try:
+                old_stat = os.stat(rotated)
+                if (old_stat.st_dev, old_stat.st_ino) == self._identity:
+                    with open(rotated, "r") as handle:
+                        handle.seek(self._offset)
+                        chunks.append(handle.read())
+                    drained_old = True
+            except FileNotFoundError:
+                pass
+            self._offset = 0
+            if not drained_old:
+                self._pending = ""
+            self.rotations += 1
+        elif self._identity is not None and stat.st_size < self._offset:
+            # copytruncate-style rollover
             self._offset = 0
             self._pending = ""
             self.rotations += 1
         self._identity = identity
         with open(self.path, "r") as handle:
             handle.seek(self._offset)
-            chunk = handle.read()
+            chunks.append(handle.read())
             self._offset = handle.tell()
-        self._pending += chunk
+        self._pending += "".join(chunks)
         *lines, self._pending = self._pending.split("\n")
         events = []
         for line in lines:

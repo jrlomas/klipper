@@ -28,6 +28,8 @@ LEVELS = {
     "off": 255,
 }
 DEFAULT_OUTPUT = "~/printer_data/logs/atlas-telemetry.jsonl"
+DEFAULT_MAX_FILE_SIZE_MB = 256
+DEFAULT_RETAINED_FILES = 3
 LEVEL_SEVERITY = {0: "error", 1: "warning", 2: "info", 3: "debug"}
 FORMAT_FIELD = re.compile(r"(\w+)=%([uix])")
 EXECUTION_TYPES = {
@@ -78,11 +80,15 @@ class TraceRenderer:
 
 
 class JsonlWriter:
-    def __init__(self, path, session_id=None):
+    def __init__(self, path, session_id=None, max_bytes=0,
+                 retained_files=0):
         self.path = os.path.abspath(os.path.expanduser(path))
         self.session_id = session_id
+        self.max_bytes = max_bytes
+        self.retained_files = retained_files
         self.fd = None
         self.errors = 0
+        self.rotations = 0
         self.lock = threading.Lock()
         self._open()
 
@@ -99,6 +105,9 @@ class JsonlWriter:
         os.chmod(self.path, 0o600)
 
     def _ensure_current(self):
+        if self.fd is None:
+            self._open()
+            return
         try:
             current = os.stat(self.path)
             opened = os.fstat(self.fd)
@@ -111,6 +120,33 @@ class JsonlWriter:
                 os.close(self.fd)
             self._open()
 
+    def _rotate_if_needed(self, incoming):
+        if not self.max_bytes:
+            return
+        try:
+            size = os.fstat(self.fd).st_size
+        except OSError:
+            return
+        if not size or size + incoming <= self.max_bytes:
+            return
+        os.close(self.fd)
+        self.fd = None
+        try:
+            if self.retained_files:
+                for index in range(self.retained_files, 1, -1):
+                    source = "%s.%d" % (self.path, index - 1)
+                    target = "%s.%d" % (self.path, index)
+                    try:
+                        os.replace(source, target)
+                    except FileNotFoundError:
+                        pass
+                os.replace(self.path, self.path + ".1")
+            else:
+                os.unlink(self.path)
+        finally:
+            self._open()
+        self.rotations += 1
+
     def write(self, record):
         try:
             if self.session_id is not None:
@@ -120,6 +156,7 @@ class JsonlWriter:
                                   separators=(",", ":")) + "\n").encode()
             with self.lock:
                 self._ensure_current()
+                self._rotate_if_needed(len(payload))
                 offset = 0
                 while offset < len(payload):
                     offset += os.write(self.fd, payload[offset:])
@@ -284,6 +321,12 @@ class AtlasTrace:
             "stream_max", 4, minval=0, maxval=64)
         self.query_interval = config.getfloat(
             "query_interval", 1., above=0.)
+        self.max_file_size_mb = config.getint(
+            "max_file_size_mb", DEFAULT_MAX_FILE_SIZE_MB,
+            minval=16, maxval=4096)
+        self.retained_files = config.getint(
+            "retained_files", DEFAULT_RETAINED_FILES,
+            minval=0, maxval=16)
         self.levels = {
             name: config.getchoice("%s_level" % name, LEVELS, "off")
             for name in ("core", "motion", "comms", "heater", "trigger")
@@ -292,7 +335,10 @@ class AtlasTrace:
         if len(set(mcu_names)) != len(mcu_names):
             raise config.error("atlas_trace mcus contains a duplicate")
         self.session_id = uuid.uuid4().hex
-        self.writer = JsonlWriter(self.output, self.session_id)
+        self.writer = JsonlWriter(
+            self.output, self.session_id,
+            max_bytes=self.max_file_size_mb * 1024 * 1024,
+            retained_files=self.retained_files)
         self.links = {
             name: AtlasTraceLink(self, name) for name in mcu_names}
         self.timer = self.reactor.register_timer(self._query_event)
@@ -464,6 +510,9 @@ class AtlasTrace:
         return {
             "output": self.writer.path,
             "write_errors": self.writer.errors,
+            "rotations": self.writer.rotations,
+            "max_file_size_mb": self.max_file_size_mb,
+            "retained_files": self.retained_files,
             "ring_size": self.ring_size,
             "stream_max": self.stream_max,
             "mcus": {name: link.get_status()

@@ -1,7 +1,9 @@
 # FD-0001: Link Layer and Transports
 
-Status: Core and native-RMII software integration are workstation-tested in
-HELIX 0.9; Ethernet/ESP32 board runtime work remains.
+Status: Core transport integration is workstation-tested and the native-RMII
+path is physically qualified through an authenticated F767 Ethernet print.
+Long-duration saturation, link flap, hardware timestamps, and remaining ESP32
+runtime gates remain.
 
 The adopted NUCLEO-F767ZI hardware implementation and qualification sequence
 is specified in
@@ -143,6 +145,13 @@ capability + header bits).
 * **Datagram = one or more complete frames** (typical WiFi MTU fits
   ~20 frames; batching amortizes per-packet overhead exactly as
   today's 64-byte blocks amortize per-byte overhead).
+  A native-MAC receiver must preserve normal host bursts after IP/UDP parsing:
+  the F767/H7 `nano_udp` adapter uses a bounded four-entry ring and exports
+  depth, high-water, and overflow counts. A single software handoff slot was
+  physically shown to drop the second ClockSync/TimeSync request even though
+  every MAC, DMA, socket, and authenticated-session error counter remained
+  zero; see the measured RCA in
+  [16-STM32F767_Ethernet.md](16-STM32F767_Ethernet.md).
 * **Datagram-level 16-bit sequence number** prepended per datagram:
   detects loss/reorder at the transport layer and widens the effective
   window — the in-frame 4-bit sequence (`MESSAGE_SEQ_MASK`) was sized

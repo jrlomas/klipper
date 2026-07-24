@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'klippy'))
 import intentproto_transport as t
+from extras import intentproto_transport as transport_glue
 
 
 def v1_frame(payload, seq_nibble):
@@ -165,6 +166,72 @@ class TestBridge(unittest.TestCase):
             br.close()
             host_end.close()
             mcu_end.close()
+
+
+class _DiagnosticQuery:
+    def __init__(self, response):
+        self.response = response
+
+    def send(self):
+        return dict(self.response)
+
+
+class _DiagnosticMCU:
+    def __init__(self, eth_schema):
+        self.eth_schema = eth_schema
+        self.lookups = []
+
+    def try_lookup_command(self, command):
+        return object()
+
+    def check_valid_response(self, response):
+        return response == self.eth_schema
+
+    def lookup_query_command(self, command, response):
+        self.lookups.append((command, response))
+        if command == 'udp_console_get_status':
+            return _DiagnosticQuery({'decoded': 10, 'response_drops': 0})
+        return _DiagnosticQuery({
+            'udp_slot_drops': 0, 'udp_queue_depth': 0,
+            'udp_queue_highwater': 2})
+
+
+class _GCodeCommand:
+    error = RuntimeError
+
+    def __init__(self):
+        self.responses = []
+
+    def respond_info(self, message):
+        self.responses.append(message)
+
+
+class TestDatagramDiagnostics(unittest.TestCase):
+    def _transport(self, schema):
+        transport = transport_glue.IntentprotoTransport.__new__(
+            transport_glue.IntentprotoTransport)
+        transport.name = 'f767'
+        transport.mode = 'datagram'
+        transport._udp_status_cmd = None
+        transport._eth_status_cmd = None
+        transport._mcu_diagnostics = {}
+        transport._lookup_datagram_diagnostics(_DiagnosticMCU(schema))
+        return transport
+
+    def test_f7_status_includes_queue_counters(self):
+        transport = self._transport(transport_glue.ETH_MAC_STATUS_F7)
+        gcmd = _GCodeCommand()
+        transport.cmd_HELIX_DATAGRAM_STATUS(gcmd)
+        self.assertEqual(
+            transport._mcu_diagnostics['ethernet']['udp_queue_highwater'], 2)
+        self.assertIn('udp_slot_drops=0', gcmd.responses[1])
+        self.assertIn('udp_queue_highwater=2', gcmd.responses[1])
+
+    def test_h7_status_schema_is_supported(self):
+        transport = self._transport(transport_glue.ETH_MAC_STATUS_H7)
+        gcmd = _GCodeCommand()
+        transport.cmd_HELIX_DATAGRAM_STATUS(gcmd)
+        self.assertEqual(len(gcmd.responses), 2)
 
 
 if __name__ == '__main__':

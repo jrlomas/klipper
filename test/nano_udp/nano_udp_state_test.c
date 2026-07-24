@@ -1,8 +1,7 @@
 // Stateful host test for the native-RMII nano UDP console adapter.
 //
-// In particular, prove that a second datagram dropped while the one-slot
-// receive queue is occupied cannot replace the candidate return address for
-// the datagram that the authenticated session is about to accept.
+// Prove that a burst is queued in order, each datagram retains its candidate
+// return address through authentication, and overflow is counted.
 
 #include <stdio.h>
 #include <stdint.h>
@@ -87,19 +86,43 @@ main(void)
     nano_udp_input(frame_a, len_a);
     CHECK(wakeups == 1);
     nano_udp_input(frame_b, len_b);
-    CHECK(wakeups == 1); // occupied slot drops B without changing candidate
+    CHECK(wakeups == 2);
 
+    int32_t got_len = nano_udp_ops.recv(NULL, got, sizeof(got));
     nano_udp_ops.send_candidate(NULL, reply, sizeof(reply));
     CHECK(emits == 1);
     check_emit_to(mac_a, 0xc0a8010a, 4100);
 
-    int32_t got_len = nano_udp_ops.recv(NULL, got, sizeof(got));
     CHECK(got_len == (int32_t)sizeof(payload_a));
     CHECK(memcmp(got, payload_a, sizeof(payload_a)) == 0);
     nano_udp_ops.rx_accepted(NULL);
     nano_udp_ops.send(NULL, reply, sizeof(reply));
     CHECK(emits == 2);
     check_emit_to(mac_a, 0xc0a8010a, 4100);
+
+    got_len = nano_udp_ops.recv(NULL, got, sizeof(got));
+    CHECK(got_len == (int32_t)sizeof(payload_b));
+    CHECK(memcmp(got, payload_b, sizeof(payload_b)) == 0);
+    nano_udp_ops.send_candidate(NULL, reply, sizeof(reply));
+    CHECK(emits == 3);
+    check_emit_to(mac_b, 0xc0a8010b, 4200);
+    nano_udp_ops.rx_accepted(NULL);
+    nano_udp_ops.send(NULL, reply, sizeof(reply));
+    CHECK(emits == 4);
+    check_emit_to(mac_b, 0xc0a8010b, 4200);
+
+    // Four queued datagrams fit; the fifth is rejected and counted without
+    // disturbing either queue order or the authenticated peer.
+    for (int i = 0; i < 5; i++)
+        nano_udp_input(frame_a, len_a);
+    uint32_t udp_rx, slot_drops;
+    uint8_t depth, highwater;
+    nano_udp_get_io_stats(&udp_rx, &slot_drops);
+    nano_udp_get_queue_stats(&depth, &highwater);
+    CHECK(depth == 4);
+    CHECK(highwater == 4);
+    CHECK(slot_drops == 1);
+    CHECK(udp_rx == 6);
 
     if (failures) {
         printf("nano_udp state: %d check(s) FAILED\n", failures);
