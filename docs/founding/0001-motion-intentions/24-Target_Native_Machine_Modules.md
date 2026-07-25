@@ -1,9 +1,13 @@
 # FD-0001: Target-Native Machine Modules
 
-Status: architecture and implementation plan. The board syscall ABI exists,
-but the native-module compiler, container, loader, isolation boundary, storage
-lifecycle, and hard-real-time control domains described here do not. No
-runtime-loaded module or portable BLDC claim is implemented or qualified.
+Status: architecture with an initial workstation compiler/container
+checkpoint. The board syscall ABI exists. `helixc` now parses a deliberately
+small integer-actor subset, lowers it directly to LLVM IR, emits deterministic
+ARMv6-M and ARMv7E-M objects, and reduces self-contained callbacks into a
+hashed `.hmod` version-1 container. Imports, relocations, the firmware loader,
+isolation boundary, storage lifecycle, async workflows, and hard-real-time
+control domains described here do not yet exist. No runtime-loaded module,
+autonomous OpenAMS, or portable BLDC claim is implemented or qualified.
 
 This document extends the
 [actuator-backend contract](04-Actuator_Backends.md),
@@ -935,13 +939,33 @@ safety, fault handling, and physical qualification remain mandatory.
 ### Phase 1 — container and workstation toolchain
 
 - [ ] Implement typed portable-source validation and direct LLVM IR lowering.
-- [ ] Produce deterministic target-native objects for at least two target
+- [x] Produce deterministic target-native objects for at least two target
   classes.
 - [ ] Implement ELF-to-`.hmod` reduction with restricted sections, imports,
   exports, and relocations.
 - [ ] Build human-readable inspect/diff/disassemble tools.
 - [ ] Emit source, compiler, ABI, capability, budget, and state-schema hashes.
 - [ ] Prove reproducible builds for a pinned toolchain.
+
+Implementation checkpoint, 2026-07-24:
+
+* `scripts/helixc.py inspect` resolves module, fixed state, and callback
+  metadata without executing application source.
+* `emit-llvm` and `build-object` lower the first `@on_start` fixed-integer
+  actor slice directly to LLVM IR and real Thumb objects for STM32G0B1,
+  RP2040, STM32F767, and STM32H723 target descriptions.
+* `build` emits `.hmod` rather than ELF. The version-1 packer accepts only
+  allowlisted allocated sections and self-contained HELIX callback exports,
+  rejects code/data relocations, strips trivial ARM unwind metadata, and
+  records canonical state layout, source/compiler identity, section hashes,
+  and a whole-container content root.
+* `inspect-module` verifies the content root, table bounds, target identity,
+  and section hashes before exposing the manifest.
+* The checked Phase 1 target-object item is covered by
+  `test/helix_compiler_test.py`. The broader source language, import and
+  relocation ABI, source maps, capability/budget manifests, signatures,
+  loader, and physical execution remain open, so their parent gates stay
+  unchecked.
 
 ### Phase 2 — mainboard loader and storage lifecycle
 

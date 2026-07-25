@@ -1,11 +1,15 @@
 # FD-0001: Portable Python Module API
 
 Status: API architecture and proposed source contract, version 1.0 draft. The
-common HELIX firmware engines described here exist, but the `helix` Python
-package, LLVM frontend, native import table, resource binder, compatibility
-executor, and runtime-loaded module adapters do not. Names and signatures in
-this document are normative for the first implementation proposal; no
-application compatibility is claimed until they are implemented and tested.
+common HELIX firmware engines described here exist. An initial `helix.types`,
+`helix.module`, and `helix.compiler` checkpoint implements fixed-width host
+integers, declaration metadata, AST validation, direct LLVM lowering, ARM
+object generation, and constrained `.hmod` packaging for a small
+`@on_start` actor subset. The complete type system, semantic resource API,
+native import table, resource binder, compatibility executor, async lowering,
+and runtime-loaded module adapters do not yet exist. Names and signatures in
+this document remain a draft; no application compatibility is claimed until
+the relevant gates are implemented and tested.
 
 This document defines the author-facing API promised by
 [portable machine programs](23-Portable_Machine_Programs.md) and the
@@ -1375,6 +1379,25 @@ bound handle meets the declared transaction and trigger requirements.
   and `.hmod` packages.
 - [ ] Implement the compact native import table and loader adapters.
 - [ ] Prove host and native semantic traces agree.
+
+Implementation checkpoint, 2026-07-24:
+
+The repository now contains the first deliberately narrow vertical compiler
+slice. It supports fixed-width integer state and `@on_start` callbacks,
+rejects imports and syntax outside its allowlist, emits LLVM IR directly,
+builds Thumb objects for the initial STM32G0B1, RP2040, STM32F767, and
+STM32H723 target descriptions, and packages self-contained callbacks in a
+content-verified `.hmod`. Host arithmetic tests cover checked construction
+and explicit wrapping operations. Compiler tests cover rejection behavior,
+state layout, cross-target object generation, deterministic packaging, and
+container corruption.
+
+This checkpoint does not complete any Phase 4 line as written: the supported
+source subset is not yet the proposed portable API, records and operations
+are not lowered, async continuations and source maps are absent, and there is
+no import table or firmware loader. The partial implementation is recorded
+here so later work can distinguish running code from architectural intent
+without weakening the acceptance gates.
 
 ### Phase 5 — cross-family gates
 
