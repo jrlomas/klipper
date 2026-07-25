@@ -1,0 +1,699 @@
+{
+  "oracle": {
+    "commit": "0d43ae1",
+    "normalization": "hierarchical OpenAMS semantic trace v1",
+    "repository": "klipper_openams",
+    "tests": "193 passed"
+  },
+  "schema": 1,
+  "vectors": {
+    "calibrate_while_loaded": [
+      {
+        "effects": [
+          {
+            "calibration": "ptfe",
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "calibrate",
+            "lane": "fps1",
+            "target": [
+              1,
+              3
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": "ptfe",
+            "deadline_at": 150.0,
+            "generation": 1,
+            "kind": "calibrate",
+            "resume_mode": "loaded",
+            "target": [
+              1,
+              3
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "calibrating/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "effect": "deadline.cancel",
+            "generation": 1,
+            "lane": "fps1"
+          },
+          {
+            "code": 0,
+            "effect": "request.settle",
+            "lane": "fps1",
+            "message": "Calibration complete",
+            "ok": true,
+            "value": 123
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": "calibrated",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "loaded/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ],
+    "firmware_liveness_backstop": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "load",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 300.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 300.0,
+            "generation": 1,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ],
+    "generation_wrap": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 0,
+            "kind": "load",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 0,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 0,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 120.0,
+            "generation": 0,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ],
+    "load_success": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "load",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 130.0,
+            "generation": 1,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "effect": "deadline.cancel",
+            "generation": 1,
+            "lane": "fps1"
+          },
+          {
+            "code": 0,
+            "effect": "request.settle",
+            "lane": "fps1",
+            "message": "Spool loaded successfully",
+            "ok": true,
+            "value": null
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": "loaded",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "loaded/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ],
+    "load_timeout": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "load",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 120.0,
+            "generation": 1,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "effect": "deadline.cancel",
+            "generation": 1,
+            "lane": "fps1"
+          },
+          {
+            "effect": "operation.cancel",
+            "generation": 1,
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "code": 1,
+            "effect": "request.settle",
+            "lane": "fps1",
+            "message": "timed out loading spool",
+            "ok": false,
+            "value": null
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": null,
+          "message": "load failed",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "unloaded/idle",
+          "unit": null
+        }
+      }
+    ],
+    "resync_loaded": [
+      {
+        "effects": [],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 0,
+          "group": "T0",
+          "message": null,
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "loaded/idle",
+          "unit": [
+            1,
+            3
+          ]
+        }
+      }
+    ],
+    "runout_no_spare": [
+      {
+        "effects": [
+          {
+            "effect": "print.pause",
+            "lane": "fps1",
+            "reason": "filament runout on group T0 and no spare spool available"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 0,
+          "group": null,
+          "message": "no spare spool",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "unloaded/idle",
+          "unit": null
+        }
+      }
+    ],
+    "runout_reload_success": [
+      {
+        "effects": [],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 0,
+          "group": "T0",
+          "message": null,
+          "operation": null,
+          "runout_origin_mm": 1000.0,
+          "status": "loaded/tail_budget",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "direction": 1,
+            "effect": "follower.set",
+            "enabled": false,
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 0,
+          "group": "T0",
+          "message": null,
+          "operation": null,
+          "runout_origin_mm": 1060.0,
+          "status": "loaded/coasting",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "reload",
+            "lane": "fps1",
+            "target": [
+              1,
+              3
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 123.0,
+            "generation": 1,
+            "kind": "reload",
+            "resume_mode": null,
+            "target": [
+              1,
+              3
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "reloading/reloading",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "effect": "deadline.cancel",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": "next spool loaded",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "loaded/idle",
+          "unit": [
+            1,
+            3
+          ]
+        }
+      }
+    ],
+    "stale_completion": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "load",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 130.0,
+            "generation": 1,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [],
+        "lane": {
+          "follower": {
+            "direction": 1,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 130.0,
+            "generation": 1,
+            "kind": "load",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "loading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ],
+    "unload_failure": [
+      {
+        "effects": [
+          {
+            "calibration": null,
+            "effect": "operation.start",
+            "generation": 1,
+            "kind": "unload",
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "duration": 120.0,
+            "effect": "deadline.arm",
+            "generation": 1,
+            "lane": "fps1"
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 0,
+            "enabled": true
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": null,
+          "operation": {
+            "calibration": null,
+            "deadline_at": 140.0,
+            "generation": 1,
+            "kind": "unload",
+            "resume_mode": null,
+            "target": [
+              1,
+              0
+            ]
+          },
+          "runout_origin_mm": null,
+          "status": "unloading/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "effects": [
+          {
+            "effect": "deadline.cancel",
+            "generation": 1,
+            "lane": "fps1"
+          },
+          {
+            "direction": 0,
+            "effect": "follower.set",
+            "enabled": false,
+            "lane": "fps1",
+            "target": [
+              1,
+              0
+            ]
+          },
+          {
+            "code": 2,
+            "effect": "request.settle",
+            "lane": "fps1",
+            "message": "Spool unloading failed (OAMS is busy with another operation)",
+            "ok": false,
+            "value": null
+          }
+        ],
+        "lane": {
+          "follower": {
+            "direction": 0,
+            "enabled": false
+          },
+          "generation": 1,
+          "group": "T0",
+          "message": "unload failed",
+          "operation": null,
+          "runout_origin_mm": null,
+          "status": "loaded/idle",
+          "unit": [
+            1,
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

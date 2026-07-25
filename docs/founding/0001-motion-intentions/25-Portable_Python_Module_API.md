@@ -1399,6 +1399,24 @@ no import table or firmware loader. The partial implementation is recorded
 here so later work can distinguish running code from architectural intent
 without weakening the acceptance gates.
 
+OpenAMS behavioral checkpoint, 2026-07-24:
+
+`helix.openams` now provides a Klippy-free hierarchical material-lane/runout
+domain model and pure reducer. Active operations, follower state, and runout
+context are structured records with checked invariants instead of an
+unconstrained collection of flags. A ten-scenario, eighteen-transition golden
+corpus covers normal load, stale completion rejection, unload failure,
+calibration, runout replacement, no-spare pause, timeout cleanup, resync,
+firmware-owned liveness, and generation wrap. The corpus is differentially
+checked against the tested OpenAMS reducer at local integration commit
+`0d43ae1`; normalization deliberately ignores dead legacy fields such as a
+pause origin retained after entering coasting.
+
+This establishes only the material-lane/runout semantic oracle. Tool-change
+workflow effects, the Klipper compatibility executor, portable source
+lowering, firmware operation bindings, and native execution remain open, so
+the Phase 3 and Phase 4 parent gates remain unchecked.
+
 ### Phase 5 — cross-family gates
 
 - [ ] Run one pure module, one event-driven actor, one acquisition consumer,
